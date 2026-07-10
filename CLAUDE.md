@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # QLVA — Quản lý vụ án Phòng 2, VKSND Hà Nội
 
 ## Bối cảnh
@@ -48,20 +52,85 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 
 ## Tiến độ đã code
 
-- [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar 6 module + **Import Excel** (đọc
-      DSAT/DSBCT, xem trước, ghi Firestore bằng batch). Import mới nạp trạng thái hiện tại,
-      CHƯA dựng lại lịch sử cũ thành log.
-- [ ] Module Danh sách & chi tiết vụ án (mockup đã duyệt — xem phần "Mockup đã duyệt" bên dưới)
-- [ ] Module Chuyển giai đoạn / Trả hồ sơ (modal xác nhận kỳ dùng chung)
-- [ ] Module Hoàn thành vụ án (luồng tách-để-TĐC/ĐC)
-- [ ] Module Tách vụ án (thủ công)
-- [ ] Module Nhập vụ án
-- [ ] Module Án tồn theo giai đoạn (3 tab lọc)
-- [ ] Module Kỳ báo cáo (mở/chốt kỳ, snapshot tồn cuối kỳ)
-- [ ] Module Dashboard tổng hợp (thẻ số liệu + biểu đồ xu hướng, Chart.js)
-- [ ] Module Xuất Excel (SheetJS, tái tạo DSAT/DSBCT/TỔNG HỢP/án tồn theo đúng format gốc)
-- [ ] Module Nhật ký thao tác
-- [ ] Sinh mã QR (thư viện qrcode.js) + trang in A4 sau khi lưu vụ án
+- [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (nay 7 module, xem `MODULES`) +
+      **Import Excel** (đọc DSAT/DSBCT, xem trước, ghi Firestore bằng batch) + công cụ dựng
+      lại lịch sử cho dữ liệu import cũ (xem mục riêng bên dưới).
+- [x] Module Danh sách & chi tiết vụ án: 2 cột (danh sách dạng bảng lọc theo giai đoạn/KSV,
+      đủ cột mã vụ/tên vụ/giai đoạn/trạng thái/hạn ĐT + menu hành động nhanh `⋯` mỗi dòng
+      (Chuyển giai đoạn/Giải quyết) + chi tiết dạng bảng key-value kiểu Excel, có
+      gridline/zebra-row/badge màu theo giai đoạn-trạng thái — xem
+      `MAU_GIAI_DOAN`/`MAU_TRANG_THAI`/`Badge`), form **Thêm vụ án** (vụ + nhiều bị can trong 1
+      form, tội danh nhiều dòng Tội chính/Bổ sung), sinh `maNoiSinh` tự động qua transaction,
+      tự tính `dieuLuat`/`loaiKhoiTo`. Nút **Sửa thông tin vụ án** và **Sửa** trên từng dòng bị
+      can (sửa lỗi nhập liệu thường — không ghi log, không hỏi kỳ, khác với các hành động
+      nghiệp vụ). KSV/ĐTV vẫn là ô nhập tay nhưng có gợi ý (`<datalist>`) từ danh sách
+      `canbo` — xem module Cán bộ bên dưới.
+- [x] Module Cán bộ: thêm/sửa KSV, ĐTV, cán bộ thống kê (collection `canbo`). Các ô KSV
+      chính/KSV hỗ trợ/ĐTV ở form Thêm vụ án và Sửa thông tin vụ án vẫn lưu **tên dạng chuỗi**
+      (không phải ref cứng tới `canbo`) — lựa chọn có chủ đích để tương thích dữ liệu đã có
+      sẵn (từ Import Excel và các vụ tạo trước khi có module này), `<datalist>` chỉ gợi ý.
+- [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
+      (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
+      kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
+      lại không tạo trùng, vụ đã có log sẽ bị bỏ qua) nhưng KHÔNG dựng lại được các lần gia
+      hạn/trả hồ sơ trước khi import — dữ liệu đó không còn lưu vết trong Excel gốc.
+- [x] Các hành động nghiệp vụ trên 1 vụ án (nút ở panel chi tiết, đều qua `ModalXacNhanKy`
+      dùng chung + hook `useHanhDongVuAn`): Chuyển giai đoạn, Trả hồ sơ, Gia hạn điều tra,
+      Hoàn thành vụ án (gộp cả 5 hình thức da_xet_xu/chuyen_di/tam_dinh_chi/dinh_chi/an_huy —
+      tự động tách vụ khi TĐC/ĐC chỉ áp dụng 1 phần bị can, xem hàm `tachVuAn`), Tách vụ án
+      thủ công, Nhập vào vụ khác, Phục hồi (từ tạm đình chỉ).
+- [x] Module Án tồn theo giai đoạn (3 tab lọc, cảnh báo màu đỏ/vàng theo hạn điều tra).
+- [x] Module Kỳ báo cáo (mở kỳ mới có chặn trùng kỳ đang mở, chốt kỳ tự snapshot tồn cuối kỳ
+      theo từng cơ quan vào `tonCuoiKy`).
+- [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
+      xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
+- [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
+      gần nhất — có ghi rõ giới hạn trên UI, không cắt âm thầm).
+- [x] Xuất Excel (nút trong module Danh sách, SheetJS dựng lại DSAT/DSBCT/TỔNG HỢP từ dữ liệu
+      hiện tại) — **cần đối chiếu lại định dạng cột với file gốc**, đây là bản dựng hợp lý dựa
+      theo mapping cột lúc import, chưa có file gốc để so khớp pixel-perfect.
+- [x] Sinh mã QR + in A4 (nút "In mã QR" ở panel chi tiết, thư viện `qrcode` qua CDN, in qua
+      CSS `@media print` ẩn hết phần còn lại của trang — xem `#qr-in-a4`).
+
+### Ghi chú hạ tầng quan trọng (đã xử lý, đừng lặp lại)
+- Firestore **database** và **Security Rules** phải được khởi tạo thủ công qua Firebase
+  Console — không có cách nào tạo qua REST API/API key công khai. Đã tạo xong; rules hiện tại
+  cho phép `request.auth != null` đọc/ghi toàn bộ (không phân quyền theo vai trò).
+- CDN `@babel/standalone` phải **ghim version cụ thể** (hiện tại `@7.25.6`) — bản không ghim
+  version từng nhảy lên major 8.x không tương thích và làm trắng màn hình toàn bộ app.
+- Firestore compat SDK bản đang dùng (10.12.2) **không hỗ trợ `.count()`** (aggregation query)
+  — dùng `.get()` rồi lấy `.size` thay thế.
+- Query `lichsuChuyenGiaiDoan` lọc theo `maVuAn` + sắp xếp `thoiDiemGhi` cần composite index
+  (đã tạo). Nếu thêm query dạng where+orderBy khác field mới sau này, khả năng cũng cần index
+  mới — kiểm tra console lỗi Firestore, nó luôn kèm link tạo index trực tiếp.
+
+## Chạy & phát triển
+
+Không có bước build, không có test/lint tự động, không có `package.json` — đây là chủ đích
+(xem "Yêu cầu bắt buộc" ở trên), không phải thiếu sót cần bổ sung tooling. Cách kiểm tra thay
+đổi: mở trực tiếp `qlva.html` bằng trình duyệt (double-click hoặc `file://`), đăng nhập bằng
+tài khoản Firebase Auth thật của project `qlahsp2`. Babel standalone compile JSX ngay trong
+trình duyệt lúc tải trang, nên lỗi cú pháp JSX sẽ hiện ở console (F12), không có bước biên dịch
+riêng để bắt lỗi trước.
+
+## Kiến trúc code trong `qlva.html`
+
+Toàn bộ code nằm trong 1 thẻ `<script type="text/babel">`, chia theo khối comment
+`// ====== TÊN KHỐI ======` theo thứ tự: tiện ích dùng chung (parse ngày/số Excel) → từng màn
+hình đăng nhập/module → khung chính `AppShell` → root `App`. Khi thêm module mới, theo đúng
+pattern đã có:
+
+1. Viết component module mới (ví dụ `DanhSachVuAnModule`) ở khối riêng, đặt trước `AppShell`.
+2. Thêm 1 dòng vào mảng `MODULES` (đang ở ngay trên `AppShell`) với `ready: true`.
+3. Thêm 1 nhánh `{tab === "id" && <ComponentMoi />}` trong `<main>` của `AppShell`.
+
+`auth` và `db` (Firebase Auth/Firestore instance) là biến global khai báo ở thẻ `<script>` thường
+phía trên (ngoài khối Babel) — mọi module dùng thẳng, không cần truyền qua props hay context.
+Không có router: điều hướng module chỉ là state `tab` trong `AppShell`, không đổi URL.
+
+`ImportExcelModule` đọc dữ liệu bằng **chỉ số cột cố định** (`r[0]`, `r[1]`...) khớp đúng layout
+file Excel gốc (header ở dòng 2, dữ liệu từ dòng 3 — `range: 2` trong `sheet_to_json`). Nếu sau
+này đổi cấu trúc cột của file Excel gốc, phải sửa lại các chỉ số này ở `parseWorkbook`.
 
 ## Mockup đã duyệt (mô tả bằng lời — không có file ảnh, tham khảo khi code UI)
 

@@ -1,0 +1,2814 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>QLVA — Quản lý vụ án Phòng 2</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  @media print {
+    body * { visibility: hidden; }
+    #qr-in-a4, #qr-in-a4 * { visibility: visible; }
+    #qr-in-a4 { position: fixed; inset: 0; }
+  }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+<div id="root"></div>
+
+<script>
+// ====== CẤU HÌNH FIREBASE ======
+const firebaseConfig = {
+  apiKey: "AIzaSyBqa0wf-xndiq0e-458NYVYnMDRIDPXksE",
+  authDomain: "qlahsp2.firebaseapp.com",
+  projectId: "qlahsp2",
+  storageBucket: "qlahsp2.firebasestorage.app",
+  messagingSenderId: "123634921382",
+  appId: "1:123634921382:web:60d702327326c9ab32a967",
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo } = React;
+
+// ====================================================================
+// TIỆN ÍCH DÙNG CHUNG
+// ====================================================================
+
+// Excel lưu ngày dạng số serial hoặc Date object hoặc text "dd/mm/yyyy" —
+// hàm này cố gắng chuẩn hoá về đối tượng Date, trả về null nếu không đọc được.
+function parseExcelDate(v) {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) return v;
+  if (typeof v === "number") {
+    // Excel serial date -> JS Date (mốc 1899-12-30)
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return isNaN(d) ? null : d;
+  }
+  if (typeof v === "string") {
+    const m = v.match(/(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})/);
+    if (m) {
+      let [, dd, mm, yy] = m;
+      yy = yy.length === 2 ? "20" + yy : yy;
+      const d = new Date(+yy, +mm - 1, +dd);
+      return isNaN(d) ? null : d;
+    }
+  }
+  return null;
+}
+
+// Cột KTVA/KTBC dạng text "108/28.3.23" — số quyết định + ngày ghép chung,
+// tách lấy phần ngày ở sau dấu "/".
+function splitSoNgayQuyetDinh(v) {
+  if (typeof v !== "string") return { so: "", ngay: null };
+  const idx = v.indexOf("/");
+  if (idx === -1) return { so: v, ngay: null };
+  return { so: v.slice(0, idx), ngay: parseExcelDate(v.slice(idx + 1)) };
+}
+
+function fmtDate(d) {
+  if (!d) return "—";
+  const dt = d.toDate ? d.toDate() : (d instanceof Date ? d : new Date(d));
+  if (isNaN(dt)) return "—";
+  return dt.toLocaleDateString("vi-VN");
+}
+
+function fromInputDate(s) {
+  if (!s) return null;
+  const [y, m, dd] = s.split("-").map(Number);
+  return new Date(y, m - 1, dd);
+}
+
+function toInputDate(d) {
+  if (!d) return "";
+  const dt = d.toDate ? d.toDate() : (d instanceof Date ? d : new Date(d));
+  if (isNaN(dt)) return "";
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+function hienThiMa(vuAn) {
+  return vuAn.maNganhCap || vuAn.maNoiSinh;
+}
+
+function pad4(n) {
+  return String(n).padStart(4, "0");
+}
+
+// Sinh mã vụ án mới qua transaction trên boDemMaVu/{YYMM} (theo ngày QĐ KTVA) —
+// tránh trùng số khi nhiều người tạo vụ án cùng lúc.
+async function sinhMaVuAnMoi(ngayQdKtva) {
+  const d = ngayQdKtva instanceof Date && !isNaN(ngayQdKtva) ? ngayQdKtva : new Date();
+  const yymm = String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, "0");
+  const counterRef = db.collection("boDemMaVu").doc(yymm);
+  const seq = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(counterRef);
+    const next = (snap.exists ? (snap.data().soHienTai || 0) : 0) + 1;
+    tx.set(counterRef, { soHienTai: next }, { merge: true });
+    return next;
+  });
+  return `QLVA_E01.53_${yymm}_${pad4(seq)}`;
+}
+
+function tinhDieuLuat(biCanRows) {
+  const all = biCanRows.flatMap(bc => (bc.toiDanh || []).map(s => s.trim()).filter(Boolean));
+  return [...new Set(all)].join("; ");
+}
+
+function tinhTenVu(biCanList) {
+  const coTen = biCanList.filter(bc => bc.hoTen && bc.hoTen.trim());
+  if (coTen.length === 0) return "";
+  return coTen[0].hoTen.trim() + (coTen.length > 1 ? " và đồng phạm" : "");
+}
+
+// loaiKhoiTo: "ban_dau" cho bị can có ngayKhoiTo sớm nhất trong vụ, còn lại "bo_sung".
+// Nhận thẳng mảng Date|null (song song với danh sách bị can) — dùng khi đã có Date sẵn (đọc từ Firestore).
+function tinhLoaiKhoiToTheoNgay(ngayList) {
+  const coNgay = ngayList.filter(Boolean);
+  if (coNgay.length === 0) return ngayList.map(() => "ban_dau");
+  const minTime = Math.min(...coNgay.map(d => d.getTime()));
+  return ngayList.map(d => (d && d.getTime() === minTime) ? "ban_dau" : "bo_sung");
+}
+// Biến thể nhận biCanRows dạng form (ngayKhoiTo là chuỗi input-date) — dùng lúc tạo vụ mới.
+function tinhLoaiKhoiTo(biCanRows) {
+  return tinhLoaiKhoiToTheoNgay(biCanRows.map(bc => bc.ngayKhoiTo ? fromInputDate(bc.ngayKhoiTo) : null));
+}
+
+const NHAN_GIAI_DOAN = { dieu_tra: "Điều tra", truy_to: "Truy tố", xet_xu: "Xét xử" };
+const NHAN_TRANG_THAI = {
+  dang_giai_quyet: "Đang giải quyết", da_xet_xu: "Đã xét xử", an_huy: "Án huỷ",
+  chuyen_di: "Chuyển đi", tam_dinh_chi: "Tạm đình chỉ", dinh_chi: "Đình chỉ",
+  da_nhap: "Đã nhập vào vụ khác",
+};
+const NHAN_NGUON = {
+  an_khoi_to_moi: "Án khởi tố mới", tin_bao_khoi_to_len: "Tin báo khởi tố lên",
+  an_noi_khac_chuyen_den: "Án nơi khác chuyển đến", phuc_hoi_dieu_tra: "Phục hồi điều tra",
+};
+const NHAN_SU_KIEN = {
+  khoi_to_vu: "Khởi tố vụ", khoi_to_bican: "Khởi tố bị can", chuyen_giai_doan: "Chuyển giai đoạn",
+  tra_ho_so: "Trả hồ sơ", gia_han_dieu_tra: "Gia hạn điều tra", phuc_hoi: "Phục hồi",
+  ket_luan_dieu_tra: "Kết luận điều tra", ket_luan_dieu_tra_bo_sung: "Kết luận điều tra bổ sung",
+  cao_trang: "Cáo trạng", cao_trang_bo_sung: "Cáo trạng bổ sung", hoan_thanh: "Hoàn thành",
+  tach_vu: "Tách vụ", nhap_vu: "Nhập vụ",
+};
+
+const MAU_GIAI_DOAN = { dieu_tra: "bg-blue-100 text-blue-700", truy_to: "bg-purple-100 text-purple-700", xet_xu: "bg-emerald-100 text-emerald-700" };
+const MAU_TRANG_THAI = {
+  dang_giai_quyet: "bg-green-100 text-green-700", da_xet_xu: "bg-blue-100 text-blue-700", an_huy: "bg-red-100 text-red-700",
+  chuyen_di: "bg-slate-200 text-slate-600", tam_dinh_chi: "bg-amber-100 text-amber-700", dinh_chi: "bg-red-100 text-red-700",
+  da_nhap: "bg-slate-200 text-slate-600",
+};
+function Badge({ mau, children }) {
+  return <span className={`text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap ${mau || "bg-slate-100 text-slate-600"}`}>{children}</span>;
+}
+
+const THU_TU_GIAI_DOAN = ["dieu_tra", "truy_to", "xet_xu"];
+function giaiDoanKeTiep(gd) {
+  const i = THU_TU_GIAI_DOAN.indexOf(gd);
+  return i >= 0 && i < THU_TU_GIAI_DOAN.length - 1 ? THU_TU_GIAI_DOAN[i + 1] : null;
+}
+function giaiDoanTruoc(gd) {
+  const i = THU_TU_GIAI_DOAN.indexOf(gd);
+  return i > 0 ? THU_TU_GIAI_DOAN[i - 1] : null;
+}
+
+// Điền sẵn các field mặc định (null) của 1 dòng log — mỗi nơi ghi log chỉ cần
+// truyền phần khác mặc định, tránh lặp lại 14 field mỗi lần.
+function taoSuKien(overrides) {
+  return {
+    maVuAn: null, loaiSuKien: null, maBiCan: null,
+    tuGiaiDoan: null, denGiaiDoan: null, hanCu: null, hanMoi: null,
+    hinhThucHoanThanh: null, vuTachRa: null, lyDoTach: null, vuNhapVao: null,
+    ngaySuKien: new Date(), kyThongKe: null, lichSuSuaKy: [], ghiChu: "",
+    nguoiThucHien: "", thoiDiemGhi: new Date(),
+    ...overrides,
+  };
+}
+
+// Tách 1 phần bị can của vuGoc ra vụ mới — dùng chung cho luồng "Hoàn thành vụ án"
+// (khi TĐC/ĐC chỉ áp dụng 1 phần bị can) và luồng "Tách vụ án" thủ công.
+// Trả về batch CHƯA commit để nơi gọi ghi thêm log rồi tự commit.
+async function tachVuAn({ vuGoc, biCanTachIds, biCanList, trangThaiVuMoi, nguoiThucHien }) {
+  const refGoc = db.collection("vuan").doc(vuGoc.id);
+  const maVuMoi = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(refGoc);
+    const soMoi = (snap.data().soDemTach || 0) + 1;
+    tx.update(refGoc, { soDemTach: soMoi });
+    return `${vuGoc.id}_${soMoi}`;
+  });
+
+  const biCanO = biCanList.filter(bc => biCanTachIds.has(bc.id));
+  const biCanConLai = biCanList.filter(bc => !biCanTachIds.has(bc.id));
+  const now = new Date();
+
+  const batch = db.batch();
+  batch.set(db.collection("vuan").doc(maVuMoi), {
+    maNoiSinh: maVuMoi, maNganhCap: null,
+    tenVu: tinhTenVu(biCanO) || vuGoc.tenVu,
+    nguon: vuGoc.nguon, nguonChiTiet: vuGoc.nguonChiTiet || "",
+    hanDieuTra: vuGoc.hanDieuTra || null, soQdKtva: vuGoc.soQdKtva || "", ngayQdKtva: vuGoc.ngayQdKtva || null,
+    ksvChinh: vuGoc.ksvChinh || "", ksvHoTro: vuGoc.ksvHoTro || [], dtvCbdt: vuGoc.dtvCbdt || "",
+    donViThuLy: vuGoc.donViThuLy || "", dieuLuat: tinhDieuLuat(biCanO),
+    coQuanThuLy: vuGoc.coQuanThuLy, trangThai: trangThaiVuMoi,
+    noiChuyenDen: "", nhapVaoVu: null, vuGoc: vuGoc.id, soDemTach: 0,
+    anDiem: vuGoc.anDiem || false, uyQuyenXetXu: vuGoc.uyQuyenXetXu || "", phienToaRutKN: vuGoc.phienToaRutKN || false,
+    ghiChu: "", ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+  });
+  biCanO.forEach(bc => batch.update(db.collection("bican").doc(bc.id), { maVuAn: maVuMoi }));
+  batch.update(refGoc, {
+    dieuLuat: tinhDieuLuat(biCanConLai), tenVu: tinhTenVu(biCanConLai) || vuGoc.tenVu,
+    ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+  });
+  return { maVuMoi, batch, now };
+}
+
+// Hook dùng chung cho mọi modal thao tác nghiệp vụ: gom bước "điền form" -> "xác nhận kỳ"
+// -> "ghi vào Firestore", tránh lặp lại state loading/lỗi ở từng modal.
+function useHanhDongVuAn() {
+  const [hienModalKy, setHienModalKy] = useState(false);
+  const [dangLuu, setDangLuu] = useState(false);
+  const [loi, setLoi] = useState("");
+  const thucThiRef = React.useRef(null);
+
+  const batDauXacNhanKy = (thucThi) => {
+    thucThiRef.current = thucThi;
+    setLoi("");
+    setHienModalKy(true);
+  };
+  const onXacNhanKy = async (kyId) => {
+    setHienModalKy(false);
+    setDangLuu(true);
+    try {
+      await thucThiRef.current(kyId);
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi lưu: " + err.message);
+      setDangLuu(false);
+    }
+  };
+  return { hienModalKy, dangLuu, loi, setLoi, batDauXacNhanKy, onXacNhanKy, onHuyKy: () => setHienModalKy(false) };
+}
+
+const NHAN_VAI_TRO = { ksv: "Kiểm sát viên", dtv: "Điều tra viên", can_bo_thong_ke: "Cán bộ thống kê", khac: "Khác" };
+
+// Danh sách cán bộ đang công tác, dùng làm gợi ý (datalist) cho các ô KSV/ĐTV nhập tay.
+function useDanhSachCanBo() {
+  const [ds, setDs] = useState([]);
+  useEffect(() => {
+    return db.collection("canbo").where("trangThai", "==", "dang_cong_tac").onSnapshot(
+      snap => setDs(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error(err)
+    );
+  }, []);
+  return ds;
+}
+
+function ChonBiCan({ biCanList, chon, onDoi }) {
+  return (
+    <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-auto">
+      {biCanList.map(bc => (
+        <label key={bc.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
+          <input type="checkbox" checked={chon.has(bc.id)} onChange={() => onDoi(bc.id)} />
+          <span className="font-medium">{bc.hoTen}</span>
+          <span className="text-xs text-slate-400">{(bc.toiDanh || []).filter(Boolean).join(", ")}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+// ====================================================================
+// MÀN HÌNH ĐĂNG NHẬP
+// ====================================================================
+function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = (e) => {
+    e.preventDefault();
+    setErr(""); setLoading(true);
+    auth.signInWithEmailAndPassword(email, pw)
+      .catch(e2 => setErr("Không đăng nhập được — kiểm tra lại email/mật khẩu."))
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <form onSubmit={submit} className="bg-white border border-slate-200 rounded-xl shadow-sm p-8 w-[360px]">
+        <div className="text-lg font-semibold mb-1">QLVA — Phòng 2</div>
+        <div className="text-sm text-slate-500 mb-6">Đăng nhập để tiếp tục</div>
+        <label className="text-xs text-slate-500 block mb-1">Email</label>
+        <input value={email} onChange={e=>setEmail(e.target.value)}
+               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-4"
+               placeholder="ten@vksnd.gov.vn" />
+        <label className="text-xs text-slate-500 block mb-1">Mật khẩu</label>
+        <input type="password" value={pw} onChange={e=>setPw(e.target.value)}
+               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-4" />
+        {err && <div className="text-xs text-red-600 mb-3">{err}</div>}
+        <button disabled={loading}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50">
+          {loading ? "Đang đăng nhập..." : "Đăng nhập"}
+        </button>
+        <div className="text-xs text-slate-400 mt-4">
+          Chưa có tài khoản? Liên hệ quản trị để được tạo trong Firebase Console → Authentication → Users.
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ====================================================================
+// MODULE: IMPORT EXCEL
+// ====================================================================
+// Với vụ án đã import trước đây mà chưa có dòng nhật ký nào (khoi_to_vu/khoi_to_bican...),
+// dựng 1 dòng khoi_to_vu + 1 dòng khoi_to_bican/bị can theo thông tin hiện có. KHÔNG dựng lại
+// được các lần gia hạn/trả hồ sơ trước khi import — dữ liệu đó không còn vết tích trong Excel gốc.
+// An toàn chạy nhiều lần: vụ đã có ít nhất 1 dòng log sẽ tự bỏ qua.
+async function dungLaiLichSu(onTienDo) {
+  const vuSnap = await db.collection("vuan").get();
+  const vuList = vuSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  let daDung = 0, boQua = 0;
+  let batch = db.batch();
+  let opsInBatch = 0;
+  const now = new Date();
+  const ghiChuKhoiPhuc = "Khôi phục từ dữ liệu import Excel — không có lịch sử chi tiết trước thời điểm import.";
+
+  for (let i = 0; i < vuList.length; i++) {
+    const v = vuList[i];
+    const coLogSnap = await db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", v.id).limit(1).get();
+    if (!coLogSnap.empty) {
+      boQua++;
+      onTienDo(i + 1, vuList.length, daDung, boQua);
+      continue;
+    }
+
+    const ngaySuKienVu = v.ngayQdKtva || v.ngayTao || now;
+    batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+      maVuAn: v.id, loaiSuKien: "khoi_to_vu", ngaySuKien: ngaySuKienVu, kyThongKe: null,
+      ghiChu: ghiChuKhoiPhuc, nguoiThucHien: "he_thong", thoiDiemGhi: now,
+    }));
+    opsInBatch++;
+
+    const bcSnap = await db.collection("bican").where("maVuAn", "==", v.id).get();
+    bcSnap.docs.forEach(bd => {
+      const bc = bd.data();
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: v.id, loaiSuKien: "khoi_to_bican", maBiCan: bd.id,
+        ngaySuKien: bc.ngayKhoiTo || ngaySuKienVu, kyThongKe: null,
+        ghiChu: ghiChuKhoiPhuc, nguoiThucHien: "he_thong", thoiDiemGhi: now,
+      }));
+      opsInBatch++;
+    });
+
+    daDung++;
+    if (opsInBatch >= 400) { await batch.commit(); batch = db.batch(); opsInBatch = 0; }
+    onTienDo(i + 1, vuList.length, daDung, boQua);
+  }
+  if (opsInBatch > 0) await batch.commit();
+  return { daDung, boQua, tong: vuList.length };
+}
+
+function DungLaiLichSuTool() {
+  const [dangChay, setDangChay] = useState(false);
+  const [tienDo, setTienDo] = useState(null);
+  const [ketQua, setKetQua] = useState(null);
+  const [loi, setLoi] = useState("");
+
+  const chay = async () => {
+    setDangChay(true); setLoi(""); setKetQua(null); setTienDo(null);
+    try {
+      const kq = await dungLaiLichSu((da, tong, daDung, boQua) => setTienDo({ da, tong, daDung, boQua }));
+      setKetQua(kq);
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi: " + err.message);
+    } finally {
+      setDangChay(false);
+    }
+  };
+
+  return (
+    <div className="max-w-3xl mt-8 pt-6 border-t border-slate-200">
+      <h3 className="text-sm font-semibold text-slate-700 mb-2">Dựng lại lịch sử cho dữ liệu đã import trước đây</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Quét toàn bộ vụ án chưa có dòng nhật ký nào, tự tạo 1 sự kiện "Khởi tố vụ" + "Khởi tố bị can"
+        theo thông tin hiện có. Không dựng lại được các lần gia hạn/trả hồ sơ trước khi import — dữ
+        liệu đó không còn lưu vết trong Excel gốc. An toàn chạy nhiều lần, vụ đã có nhật ký sẽ tự bỏ qua.
+      </p>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-3 mb-3">{loi}</div>}
+      {dangChay && tienDo && (
+        <div className="text-xs text-slate-500 mb-3">
+          Đang xử lý {tienDo.da}/{tienDo.tong} vụ — đã dựng {tienDo.daDung}, bỏ qua {tienDo.boQua} (đã có log từ trước)...
+        </div>
+      )}
+      {ketQua && (
+        <div className="bg-green-50 border border-green-200 text-green-700 text-xs rounded-lg p-3 mb-3">
+          Xong: đã dựng lịch sử cho {ketQua.daDung}/{ketQua.tong} vụ, bỏ qua {ketQua.boQua} vụ đã có nhật ký từ trước.
+        </div>
+      )}
+      <button onClick={chay} disabled={dangChay}
+              className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+        {dangChay ? "Đang xử lý..." : "Dựng lại lịch sử"}
+      </button>
+    </div>
+  );
+}
+
+function ImportExcelModule() {
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState(null); // { vuAnList, biCanList, warnings }
+  const [status, setStatus] = useState("idle"); // idle | parsing | ready | writing | done | error
+  const [progress, setProgress] = useState(0);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const onFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setFileName(file.name);
+    setStatus("parsing");
+    setErrorMsg("");
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: "array", cellDates: true });
+        const result = parseWorkbook(wb);
+        setPreview(result);
+        setStatus("ready");
+      } catch (err) {
+        console.error(err);
+        setErrorMsg("Không đọc được file. Kiểm tra lại đây có đúng là file Excel gốc (có sheet DSAT và DSBCT) không.");
+        setStatus("error");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  function parseWorkbook(wb) {
+    const warnings = [];
+    if (!wb.SheetNames.includes("DSAT")) warnings.push('Không tìm thấy sheet "DSAT".');
+    if (!wb.SheetNames.includes("DSBCT")) warnings.push('Không tìm thấy sheet "DSBCT".');
+
+    // Header nằm ở dòng 2 (index 1), dữ liệu bắt đầu dòng 3 (index 2) —
+    // đúng cấu trúc thật của file gốc.
+    const readSheet = (name) => {
+      const ws = wb.Sheets[name];
+      if (!ws) return [];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, range: 2, defval: null });
+      return rows.filter(r => r && r[0]); // bỏ dòng trống / không có mã vụ án
+    };
+
+    const dsatRows = readSheet("DSAT");
+    const dsbctRows = readSheet("DSBCT");
+
+    // ---- DSBCT trước, để tổng hợp điều luật + đếm bị can cho từng vụ ----
+    const biCanByVu = {};
+    const biCanList = dsbctRows.map(r => {
+      const maVuAn = String(r[0]).trim();
+      const hoTen = r[8] || "";
+      const namSinh = typeof r[9] === "number" ? r[9] : null;
+      const diaChi = r[10] || "";
+      const dieuChinh = r[11] != null ? String(r[11]) : "";
+      const dangVien = r[12] ? "co" : "khong";
+      const { ngay: ngayKhoiTo } = splitSoNgayQuyetDinh(r[13]);
+      const hanGiam = parseExcelDate(r[17]);
+      const bienPhap = hanGiam ? "giam" : "tai_ngoai";
+      const bc = {
+        maVuAn, hoTen, namSinh, diaChi,
+        toiDanh: dieuChinh ? [dieuChinh] : [""],
+        dangVien, gioiTinh: "nam", danToc: "Kinh",
+        bienPhapNganChan: bienPhap, hanTamGiam: bienPhap === "giam" ? hanGiam : null,
+        ngayKhoiTo,
+      };
+      biCanByVu[maVuAn] = (biCanByVu[maVuAn] || 0) + 1;
+      return bc;
+    });
+
+    // ---- DSAT ----
+    const vuAnList = dsatRows.map(r => {
+      const maNganhCap = String(r[0]).trim();
+      const coQuanThuLy = r[1] ? "dieu_tra" : (r[2] ? "truy_to" : (r[3] ? "xet_xu" : "dieu_tra"));
+      const hoTenDaiDien = r[10] || "";
+      const soBiCan = biCanByVu[maNganhCap] || (typeof r[9] === "number" ? r[9] : 0);
+      const tenVu = hoTenDaiDien + (soBiCan > 1 ? " và đồng phạm" : "");
+      const { so: soQdKtva, ngay: ngayQdKtva } = splitSoNgayQuyetDinh(r[12]);
+      let trangThai = "dang_giai_quyet";
+      if (r[41]) trangThai = "an_huy";
+      else if (r[30] || r[31]) trangThai = "dinh_chi";
+      else if (r[28] || r[29]) trangThai = "tam_dinh_chi";
+      else if (r[40]) trangThai = "da_xet_xu";
+
+      return {
+        maNganhCap, maNoiSinh: null, tenVu, coQuanThuLy, trangThai,
+        soQdKtva, ngayQdKtva,
+        hanDieuTra: parseExcelDate(r[16]),
+        ksvChinh: r[13] || "", ksvHoTro: r[14] ? [r[14]] : [],
+        dtvCbdt: r[19] || "", donViThuLy: r[20] || "",
+        anDiem: !!r[21], ghiChu: r[42] || "",
+        nguon: mapNguon(r[18]),
+        soBiCanExcel: soBiCan,
+      };
+    });
+
+    return { vuAnList, biCanList, warnings };
+  }
+
+  function mapNguon(v) {
+    const s = (v || "").toString().toUpperCase();
+    if (s.includes("TB")) return "tin_bao_khoi_to_len";
+    if (s.includes("PH")) return "phuc_hoi_dieu_tra";
+    if (s.includes("CHUYỂN") || s.includes("CD")) return "an_noi_khac_chuyen_den";
+    return "an_khoi_to_moi";
+  }
+
+  const ghiVaoCoSoDuLieu = async () => {
+    if (!preview) return;
+    setStatus("writing");
+    setProgress(0);
+    try {
+      const { vuAnList, biCanList } = preview;
+      const total = vuAnList.length + biCanList.length;
+      let done = 0;
+
+      // Ghi vụ án — document ID = maNganhCap (đã unique sẵn từ hệ thống cũ)
+      let batch = db.batch();
+      let opsInBatch = 0;
+      for (const va of vuAnList) {
+        const ref = db.collection("vuan").doc(va.maNganhCap);
+        batch.set(ref, { ...va, ngayTao: new Date(), nguonNhapLieu: "import_excel" }, { merge: true });
+        opsInBatch++; done++;
+        if (opsInBatch >= 400) {
+          await batch.commit(); batch = db.batch(); opsInBatch = 0;
+        }
+        if (done % 25 === 0) setProgress(Math.round(done / total * 100));
+      }
+      if (opsInBatch > 0) await batch.commit();
+
+      // Ghi bị can — mỗi bị can 1 document tự sinh ID, kèm ref maVuAn
+      batch = db.batch(); opsInBatch = 0;
+      for (const bc of biCanList) {
+        const ref = db.collection("bican").doc();
+        batch.set(ref, { ...bc, ngayTao: new Date(), nguonNhapLieu: "import_excel" });
+        opsInBatch++; done++;
+        if (opsInBatch >= 400) {
+          await batch.commit(); batch = db.batch(); opsInBatch = 0;
+        }
+        if (done % 25 === 0) setProgress(Math.round(done / total * 100));
+      }
+      if (opsInBatch > 0) await batch.commit();
+
+      setProgress(100);
+      setStatus("done");
+    } catch (err) {
+      console.error(err);
+      setErrorMsg("Lỗi khi ghi vào Firestore: " + err.message);
+      setStatus("error");
+    }
+  };
+
+  return (
+    <div className="max-w-3xl">
+      <h2 className="text-lg font-semibold mb-1">Import dữ liệu từ Excel</h2>
+      <p className="text-sm text-slate-500 mb-6">
+        Tải lên file Excel gốc (có sheet <code className="bg-slate-100 px-1 rounded">DSAT</code> và{" "}
+        <code className="bg-slate-100 px-1 rounded">DSBCT</code>). Dữ liệu sẽ được xem trước, chưa ghi vào hệ thống cho đến khi anh xác nhận.
+      </p>
+
+      {status !== "writing" && status !== "done" && (
+        <label className="block border-2 border-dashed border-indigo-300 rounded-xl p-8 text-center cursor-pointer hover:bg-indigo-50/50 transition mb-4">
+          <input type="file" accept=".xlsx,.xls" className="hidden" onChange={onFile} />
+          <div className="text-indigo-600 font-medium mb-1">Chọn file Excel...</div>
+          <div className="text-xs text-slate-400">{fileName || "Chưa chọn file"}</div>
+        </label>
+      )}
+
+      {status === "parsing" && <div className="text-sm text-slate-500">Đang đọc file...</div>}
+
+      {status === "error" && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{errorMsg}</div>
+      )}
+
+      {status === "ready" && preview && (
+        <div>
+          {preview.warnings.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg p-3 mb-4">
+              {preview.warnings.map((w,i) => <div key={i}>⚠ {w}</div>)}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-2xl font-semibold">{preview.vuAnList.length}</div>
+              <div className="text-xs text-slate-500">vụ án đọc được</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-2xl font-semibold">{preview.biCanList.length}</div>
+              <div className="text-xs text-slate-500">bị can đọc được</div>
+            </div>
+          </div>
+
+          <div className="text-sm font-medium text-slate-600 mb-2">Xem trước 5 vụ án đầu tiên</div>
+          <div className="border border-slate-200 rounded-xl overflow-hidden mb-6">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="text-left p-2">Mã vụ (ngành cấp)</th>
+                  <th className="text-left p-2">Tên vụ</th>
+                  <th className="text-left p-2">Cơ quan</th>
+                  <th className="text-left p-2">Trạng thái</th>
+                  <th className="text-left p-2">Hạn ĐT</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.vuAnList.slice(0,5).map((v,i) => (
+                  <tr key={i} className="border-t border-slate-100">
+                    <td className="p-2">{v.maNganhCap}</td>
+                    <td className="p-2">{v.tenVu}</td>
+                    <td className="p-2">{v.coQuanThuLy}</td>
+                    <td className="p-2">{v.trangThai}</td>
+                    <td className="p-2">{fmtDate(v.hanDieuTra)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-500 mb-4">
+            Lưu ý: bước import này nạp đúng <b>trạng thái hiện tại</b> của từng vụ/bị can. Lịch sử chuyển giai đoạn
+            trước đây (gia hạn, trả hồ sơ các lần cũ...) chưa được dựng lại thành nhật ký — dữ liệu mới phát sinh
+            từ nay trở đi sẽ được ghi log đầy đủ theo đúng schema.
+          </div>
+
+          <button onClick={ghiVaoCoSoDuLieu}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+            Ghi {preview.vuAnList.length + preview.biCanList.length} bản ghi vào hệ thống
+          </button>
+        </div>
+      )}
+
+      {status === "writing" && (
+        <div>
+          <div className="text-sm text-slate-600 mb-2">Đang ghi vào hệ thống... {progress}%</div>
+          <div className="w-full bg-slate-200 rounded-full h-2">
+            <div className="bg-indigo-600 h-2 rounded-full transition-all" style={{width: progress + "%"}}></div>
+          </div>
+        </div>
+      )}
+
+      {status === "done" && (
+        <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg p-4">
+          ✓ Đã nhập xong dữ liệu vào hệ thống. Anh có thể chuyển sang module "Danh sách vụ án" để xem lại.
+        </div>
+      )}
+
+      <DungLaiLichSuTool />
+    </div>
+  );
+}
+
+// ====================================================================
+// MODAL DÙNG CHUNG: XÁC NHẬN KỲ BÁO CÁO
+// Mọi thao tác nghiệp vụ ghi log đều đi qua modal này để hỏi "tính vào kỳ nào" —
+// mặc định kỳ đang mở, cho đổi sang kỳ khác. Chưa có module Kỳ báo cáo nên nếu
+// Firestore chưa có bản ghi kybaocao nào thì vẫn cho tiếp tục với kyThongKe = null.
+// ====================================================================
+function ModalXacNhanKy({ open, onXacNhan, onHuy }) {
+  const [danhSachKy, setDanhSachKy] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [kyChon, setKyChon] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setDangTai(true);
+    db.collection("kybaocao").orderBy("ngayBatDau", "desc").get()
+      .then(snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setDanhSachKy(list);
+        const dangMo = list.find(k => k.trangThai === "dang_mo");
+        setKyChon(dangMo ? dangMo.id : (list[0] ? list[0].id : ""));
+      })
+      .catch(err => console.error(err))
+      .finally(() => setDangTai(false));
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-lg p-6 w-[420px]">
+        <div className="text-base font-semibold mb-1">Tính vào kỳ báo cáo nào?</div>
+        <div className="text-xs text-slate-500 mb-4">Có thể sửa lại sau, hệ thống lưu lịch sử sửa kỳ.</div>
+        {dangTai && <div className="text-sm text-slate-400 mb-4">Đang tải danh sách kỳ...</div>}
+        {!dangTai && danhSachKy.length === 0 && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mb-4">
+            Chưa có kỳ báo cáo nào trong hệ thống (module Kỳ báo cáo chưa xây dựng). Thao tác vẫn
+            được lưu nhưng chưa gán vào kỳ nào — gán lại sau khi có module Kỳ báo cáo.
+          </div>
+        )}
+        {!dangTai && danhSachKy.length > 0 && (
+          <select value={kyChon} onChange={e => setKyChon(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-4">
+            {danhSachKy.map(k => (
+              <option key={k.id} value={k.id}>{k.tenKy}{k.trangThai === "dang_mo" ? " (đang mở)" : ""}</option>
+            ))}
+          </select>
+        )}
+        <div className="flex justify-end gap-2">
+          <button onClick={onHuy} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+          <button onClick={() => onXacNhan(kyChon || null)}
+                  className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">
+            Xác nhận
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ====================================================================
+// CÁC MODAL HÀNH ĐỘNG NGHIỆP VỤ TRÊN 1 VỤ ÁN
+// Mỗi modal: điền form -> ModalXacNhanKy -> ghi Firestore. Dùng chung useHanhDongVuAn.
+// ====================================================================
+function KhungModalHanhDong({ tieuDe, rong, children }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
+      <div className={`bg-white rounded-xl shadow-lg p-6 ${rong ? "w-[520px]" : "w-[420px]"} max-w-[95vw]`}>
+        <div className="text-base font-semibold mb-4">{tieuDe}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ChuyenGiaiDoanModal({ vuAn, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [ngay, setNgay] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+  const denGiaiDoan = giaiDoanKeTiep(vuAn.coQuanThuLy);
+
+  const luu = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày chuyển giai đoạn."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), { coQuanThuLy: denGiaiDoan, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "chuyen_giai_doan", tuGiaiDoan: vuAn.coQuanThuLy, denGiaiDoan,
+        ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+      onXong();
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe={`Chuyển giai đoạn: ${NHAN_GIAI_DOAN[vuAn.coQuanThuLy]} → ${NHAN_GIAI_DOAN[denGiaiDoan]}`}>
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Ngày chuyển giai đoạn</label>
+      <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+function TraHoSoModal({ vuAn, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [ngay, setNgay] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+  const denGiaiDoan = giaiDoanTruoc(vuAn.coQuanThuLy);
+
+  const luu = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày trả hồ sơ."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), { coQuanThuLy: denGiaiDoan, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "tra_ho_so", tuGiaiDoan: vuAn.coQuanThuLy, denGiaiDoan,
+        ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+      onXong();
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe={`Trả hồ sơ: ${NHAN_GIAI_DOAN[vuAn.coQuanThuLy]} → ${NHAN_GIAI_DOAN[denGiaiDoan]}`}>
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Ngày trả hồ sơ</label>
+      <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Lý do / ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [hanMoi, setHanMoi] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+
+  const luu = () => {
+    if (!hanMoi) { hd.setLoi("Cần nhập hạn điều tra mới."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const hanMoiDate = fromInputDate(hanMoi);
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), { hanDieuTra: hanMoiDate, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "gia_han_dieu_tra", hanCu: vuAn.hanDieuTra || null, hanMoi: hanMoiDate,
+        ngaySuKien: now, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+      onXong();
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Gia hạn điều tra">
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <div className="text-xs text-slate-500 mb-3">Hạn hiện hành: {fmtDate(vuAn.hanDieuTra)}</div>
+      <label className="text-xs text-slate-500 block mb-1">Hạn điều tra mới</label>
+      <input type="date" value={hanMoi} onChange={e => setHanMoi(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+function PhucHoiModal({ vuAn, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [ngay, setNgay] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+
+  const luu = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày phục hồi."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), { trangThai: "dang_giai_quyet", ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "phuc_hoi",
+        ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+      onXong();
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Phục hồi vụ án (từ Tạm đình chỉ)">
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Ngày phục hồi</label>
+      <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+const TUY_CHON_HOAN_THANH = [
+  ["da_xet_xu", "Đã xét xử"], ["chuyen_di", "Chuyển đi"], ["tam_dinh_chi", "Tạm đình chỉ"],
+  ["dinh_chi", "Đình chỉ"], ["an_huy", "Án huỷ"],
+];
+
+function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [vuAn, setVuAn] = useState(null);
+  const [biCanList, setBiCanList] = useState(null);
+  const [hinhThuc, setHinhThuc] = useState("da_xet_xu");
+  const [ngay, setNgay] = useState("");
+  const [noiChuyenDen, setNoiChuyenDen] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+  const [chonBiCan, setChonBiCan] = useState(new Set());
+
+  useEffect(() => {
+    Promise.all([
+      db.collection("vuan").doc(vuAnId).get(),
+      db.collection("bican").where("maVuAn", "==", vuAnId).get(),
+    ]).then(([vuSnap, bcSnap]) => {
+      setVuAn({ id: vuSnap.id, ...vuSnap.data() });
+      const bc = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setBiCanList(bc);
+      setChonBiCan(new Set(bc.map(b => b.id)));
+    }).catch(err => { console.error(err); hd.setLoi("Lỗi khi tải dữ liệu vụ án: " + err.message); });
+  }, [vuAnId]);
+
+  if (!vuAn || !biCanList) {
+    return (
+      <KhungModalHanhDong tieuDe="Hoàn thành vụ án" rong>
+        <div className="text-sm text-slate-400">Đang tải dữ liệu vụ án...</div>
+        <div className="flex justify-end mt-4"><button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Đóng</button></div>
+      </KhungModalHanhDong>
+    );
+  }
+
+  const laTdcDc = hinhThuc === "tam_dinh_chi" || hinhThuc === "dinh_chi";
+  const laMotPhan = laTdcDc && biCanList.length > 0 && chonBiCan.size > 0 && chonBiCan.size < biCanList.length;
+
+  const doiChonBiCan = (id) => setChonBiCan(s => {
+    const moi = new Set(s);
+    moi.has(id) ? moi.delete(id) : moi.add(id);
+    return moi;
+  });
+
+  const luu = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày quyết định."); return; }
+    if (hinhThuc === "chuyen_di" && !noiChuyenDen.trim()) { hd.setLoi("Cần nhập nơi chuyển đến."); return; }
+    if (laTdcDc && biCanList.length > 0 && chonBiCan.size === 0) { hd.setLoi("Cần chọn ít nhất 1 bị can thuộc diện."); return; }
+
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const ngaySuKien = fromInputDate(ngay);
+
+      if (!laMotPhan) {
+        const batch = db.batch();
+        batch.update(db.collection("vuan").doc(vuAn.id), {
+          trangThai: hinhThuc, noiChuyenDen: hinhThuc === "chuyen_di" ? noiChuyenDen.trim() : "",
+          ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        });
+        batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+          maVuAn: vuAn.id, loaiSuKien: "hoan_thanh", hinhThucHoanThanh: hinhThuc,
+          ngaySuKien, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+        }));
+        await batch.commit();
+      } else {
+        const { maVuMoi, batch } = await tachVuAn({
+          vuGoc: vuAn, biCanTachIds: chonBiCan, biCanList, trangThaiVuMoi: hinhThuc, nguoiThucHien,
+        });
+        batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+          maVuAn: vuAn.id, loaiSuKien: "tach_vu", vuTachRa: maVuMoi,
+          lyDoTach: hinhThuc === "tam_dinh_chi" ? "de_tam_dinh_chi" : "de_dinh_chi",
+          ngaySuKien, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+        }));
+        batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+          maVuAn: maVuMoi, loaiSuKien: "hoan_thanh", hinhThucHoanThanh: hinhThuc,
+          ngaySuKien, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+        }));
+        await batch.commit();
+      }
+      onXong();
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Hoàn thành vụ án" rong>
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Hình thức</label>
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        {TUY_CHON_HOAN_THANH.map(([v, l]) => (
+          <button key={v} onClick={() => setHinhThuc(v)}
+                  className={`text-xs rounded-lg py-2 border ${hinhThuc === v ? "bg-indigo-600 text-white border-indigo-600" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {hinhThuc === "chuyen_di" && (
+        <>
+          <label className="text-xs text-slate-500 block mb-1">Nơi chuyển đến</label>
+          <input value={noiChuyenDen} onChange={e => setNoiChuyenDen(e.target.value)} className={oInput + " mb-3"} />
+        </>
+      )}
+      {laTdcDc && biCanList.length > 0 && (
+        <div className="mb-3">
+          <label className="text-xs text-slate-500 block mb-1">
+            Áp dụng cho bị can nào (chọn toàn bộ = áp lên cả vụ; chọn 1 phần = hệ thống tự tách vụ)
+          </label>
+          <ChonBiCan biCanList={biCanList} chon={chonBiCan} onDoi={doiChonBiCan} />
+        </div>
+      )}
+      <label className="text-xs text-slate-500 block mb-1">Ngày quyết định</label>
+      <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+function TachVuAnModal({ vuAnId, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [vuAn, setVuAn] = useState(null);
+  const [biCanList, setBiCanList] = useState(null);
+  const [chonBiCan, setChonBiCan] = useState(() => new Set());
+  const [lyDo, setLyDo] = useState("khac_toi_danh");
+  const [ngay, setNgay] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+
+  useEffect(() => {
+    Promise.all([
+      db.collection("vuan").doc(vuAnId).get(),
+      db.collection("bican").where("maVuAn", "==", vuAnId).get(),
+    ]).then(([vuSnap, bcSnap]) => {
+      setVuAn({ id: vuSnap.id, ...vuSnap.data() });
+      setBiCanList(bcSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }).catch(err => { console.error(err); hd.setLoi("Lỗi khi tải dữ liệu vụ án: " + err.message); });
+  }, [vuAnId]);
+
+  if (!vuAn || !biCanList) {
+    return (
+      <KhungModalHanhDong tieuDe="Tách vụ án" rong>
+        <div className="text-sm text-slate-400">Đang tải dữ liệu vụ án...</div>
+        <div className="flex justify-end mt-4"><button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Đóng</button></div>
+      </KhungModalHanhDong>
+    );
+  }
+
+  const doiChonBiCan = (id) => setChonBiCan(s => {
+    const moi = new Set(s);
+    moi.has(id) ? moi.delete(id) : moi.add(id);
+    return moi;
+  });
+
+  const luu = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày tách vụ."); return; }
+    if (chonBiCan.size === 0) { hd.setLoi("Cần chọn ít nhất 1 bị can để tách ra vụ mới."); return; }
+    if (chonBiCan.size >= biCanList.length) { hd.setLoi("Chọn hết bị can thì không cần tách — dùng nút Hoàn thành/Chuyển giai đoạn trên vụ hiện tại."); return; }
+
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const { maVuMoi, batch } = await tachVuAn({
+        vuGoc: vuAn, biCanTachIds: chonBiCan, biCanList, trangThaiVuMoi: "dang_giai_quyet", nguoiThucHien,
+      });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "tach_vu", vuTachRa: maVuMoi, lyDoTach: lyDo,
+        ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+      onXong(maVuMoi);
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Tách vụ án" rong>
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Chọn bị can tách ra vụ mới</label>
+      <div className="mb-3"><ChonBiCan biCanList={biCanList} chon={chonBiCan} onDoi={doiChonBiCan} /></div>
+      <label className="text-xs text-slate-500 block mb-1">Lý do tách</label>
+      <select value={lyDo} onChange={e => setLyDo(e.target.value)} className={oInput + " mb-3"}>
+        <option value="khac_toi_danh">Khác tội danh</option>
+        <option value="khac">Khác</option>
+      </select>
+      <label className="text-xs text-slate-500 block mb-1">Ngày tách</label>
+      <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+function NhapVuModal({ vuAn, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [tuKhoa, setTuKhoa] = useState("");
+  const [ketQua, setKetQua] = useState([]);
+  const [dichId, setDichId] = useState(null);
+  const [dichTen, setDichTen] = useState("");
+  const [ngay, setNgay] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+
+  useEffect(() => {
+    if (!tuKhoa.trim()) { setKetQua([]); return; }
+    const k = tuKhoa.trim().toLowerCase();
+    const huy = db.collection("vuan").orderBy("ngayTao", "desc").limit(300).get().then(snap => {
+      const list = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet")
+        .filter(v => (hienThiMa(v) || "").toLowerCase().includes(k) || (v.tenVu || "").toLowerCase().includes(k))
+        .slice(0, 10);
+      setKetQua(list);
+    });
+    return () => {};
+  }, [tuKhoa, vuAn.id]);
+
+  const luu = () => {
+    if (!dichId) { hd.setLoi("Cần chọn vụ đích để nhập vào."); return; }
+    if (!ngay) { hd.setLoi("Cần nhập ngày nhập vụ."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const bcSnap = await db.collection("bican").where("maVuAn", "==", vuAn.id).get();
+      const batch = db.batch();
+      bcSnap.docs.forEach(d => batch.update(d.ref, { maVuAn: dichId }));
+      batch.update(db.collection("vuan").doc(vuAn.id), {
+        trangThai: "da_nhap", nhapVaoVu: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "nhap_vu", vuNhapVao: dichId,
+        ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+
+      // Điều luật vụ đích cần tính lại sau khi có thêm bị can — đọc lại toàn bộ rồi cập nhật riêng.
+      const bcDichSnap = await db.collection("bican").where("maVuAn", "==", dichId).get();
+      const bcDichList = bcDichSnap.docs.map(d => d.data());
+      await db.collection("vuan").doc(dichId).update({ dieuLuat: tinhDieuLuat(bcDichList) });
+
+      onXong(dichId);
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Nhập vụ án vào vụ khác" rong>
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Tìm vụ đích (theo mã vụ hoặc tên vụ)</label>
+      <input value={tuKhoa} onChange={e => { setTuKhoa(e.target.value); setDichId(null); }} className={oInput + " mb-2"} />
+      {ketQua.length > 0 && !dichId && (
+        <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 mb-3 max-h-40 overflow-auto">
+          {ketQua.map(v => (
+            <button key={v.id} onClick={() => { setDichId(v.id); setDichTen(v.tenVu); setTuKhoa(""); setKetQua([]); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50">
+              <div className="text-xs text-slate-400">{hienThiMa(v)}</div>
+              <div>{v.tenVu}</div>
+            </button>
+          ))}
+        </div>
+      )}
+      {dichId && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-sm mb-3 flex items-center justify-between">
+          <span>Nhập vào: <b>{dichTen}</b></span>
+          <button onClick={() => setDichId(null)} className="text-xs text-indigo-600">Đổi</button>
+        </div>
+      )}
+      <label className="text-xs text-slate-500 block mb-1">Ngày nhập vụ</label>
+      <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+// ====================================================================
+// MODULE: DANH SÁCH & CHI TIẾT VỤ ÁN
+// ====================================================================
+const oInput = "w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm";
+
+function Truong({ nhan, children, rong2, rong4 }) {
+  return (
+    <div className={rong4 ? "col-span-4" : rong2 ? "col-span-2" : ""}>
+      <label className="text-xs text-slate-500 block mb-1">{nhan}</label>
+      {children}
+    </div>
+  );
+}
+
+function moiBiCan(id) {
+  return {
+    id, hoTen: "", namSinh: "", gioiTinh: "nam", danToc: "Kinh", dangVien: "khong",
+    diaChi: "", toiDanh: [""], bienPhapNganChan: "tai_ngoai", hanTamGiam: "", ngayKhoiTo: "",
+  };
+}
+
+function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
+  const dsCanBo = useDanhSachCanBo();
+  const idRef = React.useRef(1);
+  const [maNganhCap, setMaNganhCap] = useState("");
+  const [tenVu, setTenVu] = useState("");
+  const [tenVuDaSua, setTenVuDaSua] = useState(false);
+  const [nguon, setNguon] = useState("an_khoi_to_moi");
+  const [nguonChiTiet, setNguonChiTiet] = useState("");
+  const [soQdKtva, setSoQdKtva] = useState("");
+  const [ngayQdKtva, setNgayQdKtva] = useState("");
+  const [hanDieuTra, setHanDieuTra] = useState("");
+  const [ksvChinh, setKsvChinh] = useState("");
+  const [ksvHoTro, setKsvHoTro] = useState("");
+  const [dtvCbdt, setDtvCbdt] = useState("");
+  const [donViThuLy, setDonViThuLy] = useState("");
+  const [coQuanThuLy, setCoQuanThuLy] = useState("dieu_tra");
+  const [dieuLuatNhapTay, setDieuLuatNhapTay] = useState("");
+  const [anDiem, setAnDiem] = useState(false);
+  const [uyQuyenXetXu, setUyQuyenXetXu] = useState("");
+  const [phienToaRutKN, setPhienToaRutKN] = useState(false);
+  const [ghiChu, setGhiChu] = useState("");
+  const [biCanRows, setBiCanRows] = useState([moiBiCan(0)]);
+
+  const [loi, setLoi] = useState("");
+  const [hienModalKy, setHienModalKy] = useState(false);
+  const [dangLuu, setDangLuu] = useState(false);
+
+  useEffect(() => {
+    if (tenVuDaSua) return;
+    const coTen = biCanRows.filter(bc => bc.hoTen.trim());
+    if (coTen.length === 0) { setTenVu(""); return; }
+    setTenVu(coTen[0].hoTen.trim() + (coTen.length > 1 ? " và đồng phạm" : ""));
+  }, [biCanRows, tenVuDaSua]);
+
+  const themBiCan = () => {
+    idRef.current += 1;
+    setBiCanRows(rows => [...rows, moiBiCan(idRef.current)]);
+  };
+  const xoaBiCan = (id) => setBiCanRows(rows => rows.filter(r => r.id !== id));
+  const suaBiCan = (id, patch) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r));
+  const themToiDanh = (id) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, toiDanh: [...r.toiDanh, ""] } : r));
+  const xoaToiDanh = (id, idx) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, toiDanh: r.toiDanh.filter((_, i) => i !== idx) } : r));
+  const suaToiDanh = (id, idx, val) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, toiDanh: r.toiDanh.map((t, i) => i === idx ? val : t) } : r));
+
+  const coBiCanHopLe = biCanRows.filter(r => r.hoTen.trim());
+
+  const onBamLuu = () => {
+    if (!ngayQdKtva) { setLoi("Cần nhập ngày quyết định khởi tố vụ án (dùng để sinh mã vụ án)."); return; }
+    if (!tenVu.trim()) { setLoi("Cần nhập tên vụ, hoặc thêm ít nhất 1 bị can để hệ thống tự đặt tên."); return; }
+    setLoi("");
+    setHienModalKy(true);
+  };
+
+  const onXacNhanKy = async (kyId) => {
+    setHienModalKy(false);
+    setDangLuu(true);
+    try {
+      const ngayQd = fromInputDate(ngayQdKtva);
+      const maNoiSinh = await sinhMaVuAnMoi(ngayQd);
+      const dieuLuatCuoi = coBiCanHopLe.length > 0 ? tinhDieuLuat(biCanRows) : dieuLuatNhapTay.trim();
+      const loaiKhoiToList = tinhLoaiKhoiTo(biCanRows);
+      const nguoiThucHien = (currentUser && currentUser.email) || "";
+      const now = new Date();
+
+      const batch = db.batch();
+      batch.set(db.collection("vuan").doc(maNoiSinh), {
+        maNoiSinh, maNganhCap: maNganhCap.trim() || null, tenVu: tenVu.trim(),
+        nguon, nguonChiTiet: nguon === "an_noi_khac_chuyen_den" ? nguonChiTiet.trim() : "",
+        hanDieuTra: hanDieuTra ? fromInputDate(hanDieuTra) : null,
+        soQdKtva: soQdKtva.trim(), ngayQdKtva: ngayQd,
+        ksvChinh: ksvChinh.trim(), ksvHoTro: ksvHoTro.split(",").map(s => s.trim()).filter(Boolean),
+        dtvCbdt: dtvCbdt.trim(), donViThuLy: donViThuLy.trim(),
+        dieuLuat: dieuLuatCuoi, coQuanThuLy, trangThai: "dang_giai_quyet",
+        noiChuyenDen: "", nhapVaoVu: null, vuGoc: null, soDemTach: 0,
+        anDiem, uyQuyenXetXu: uyQuyenXetXu.trim(), phienToaRutKN, ghiChu: ghiChu.trim(),
+        ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), {
+        maVuAn: maNoiSinh, loaiSuKien: "khoi_to_vu", maBiCan: null,
+        tuGiaiDoan: null, denGiaiDoan: null, hanCu: null, hanMoi: null,
+        hinhThucHoanThanh: null, vuTachRa: null, lyDoTach: null, vuNhapVao: null,
+        ngaySuKien: ngayQd, kyThongKe: kyId, lichSuSuaKy: [], ghiChu: "",
+        nguoiThucHien, thoiDiemGhi: now,
+      });
+
+      biCanRows.forEach((bc, i) => {
+        if (!bc.hoTen.trim()) return;
+        const bcRef = db.collection("bican").doc();
+        const ngayKT = bc.ngayKhoiTo ? fromInputDate(bc.ngayKhoiTo) : null;
+        const toiDanhSach = bc.toiDanh.map(s => s.trim()).filter(Boolean);
+        batch.set(bcRef, {
+          maVuAn: maNoiSinh, hoTen: bc.hoTen.trim(), namSinh: bc.namSinh ? Number(bc.namSinh) : null,
+          gioiTinh: bc.gioiTinh, toiDanh: toiDanhSach.length ? toiDanhSach : [""],
+          dangVien: bc.dangVien, diaChi: bc.diaChi.trim(), bienPhapNganChan: bc.bienPhapNganChan,
+          hanTamGiam: bc.bienPhapNganChan === "giam" && bc.hanTamGiam ? fromInputDate(bc.hanTamGiam) : null,
+          danToc: bc.danToc.trim() || "Kinh", ngayKhoiTo: ngayKT,
+          loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
+          ngayTao: now, nguoiTao: nguoiThucHien,
+        });
+        batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), {
+          maVuAn: maNoiSinh, loaiSuKien: "khoi_to_bican", maBiCan: bcRef.id,
+          tuGiaiDoan: null, denGiaiDoan: null, hanCu: null, hanMoi: null,
+          hinhThucHoanThanh: null, vuTachRa: null, lyDoTach: null, vuNhapVao: null,
+          ngaySuKien: ngayKT || ngayQd, kyThongKe: kyId, lichSuSuaKy: [], ghiChu: "",
+          nguoiThucHien, thoiDiemGhi: now,
+        });
+      });
+
+      await batch.commit();
+      onDaLuu(maNoiSinh);
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi lưu: " + err.message);
+      setDangLuu(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-40 overflow-auto py-8">
+      <div className="bg-white rounded-xl shadow-lg w-[900px] max-w-[95vw] p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Thêm vụ án mới</h3>
+          <button onClick={onDong} className="text-slate-400 hover:text-slate-600 text-sm">Đóng ✕</button>
+        </div>
+
+        {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+
+        <div className="text-sm font-medium text-slate-600 mb-2">Thông tin vụ án</div>
+        <div className="grid grid-cols-4 gap-3 mb-3">
+          <Truong nhan="Mã ngành cấp (nếu có)">
+            <input value={maNganhCap} onChange={e => setMaNganhCap(e.target.value)} className={oInput} placeholder="Chưa có thì để trống" />
+          </Truong>
+          <Truong nhan="Tên vụ" rong2>
+            <input value={tenVu} onChange={e => { setTenVu(e.target.value); setTenVuDaSua(true); }} className={oInput} />
+          </Truong>
+          <Truong nhan="Cơ quan đang thụ lý">
+            <select value={coQuanThuLy} onChange={e => setCoQuanThuLy(e.target.value)} className={oInput}>
+              <option value="dieu_tra">Điều tra</option>
+              <option value="truy_to">Truy tố</option>
+              <option value="xet_xu">Xét xử</option>
+            </select>
+          </Truong>
+
+          <Truong nhan="Nguồn">
+            <select value={nguon} onChange={e => setNguon(e.target.value)} className={oInput}>
+              <option value="an_khoi_to_moi">Án khởi tố mới</option>
+              <option value="tin_bao_khoi_to_len">Tin báo khởi tố lên</option>
+              <option value="an_noi_khac_chuyen_den">Án nơi khác chuyển đến</option>
+              <option value="phuc_hoi_dieu_tra">Phục hồi điều tra</option>
+            </select>
+          </Truong>
+          {nguon === "an_noi_khac_chuyen_den" && (
+            <Truong nhan="Chi tiết nguồn">
+              <input value={nguonChiTiet} onChange={e => setNguonChiTiet(e.target.value)} className={oInput} />
+            </Truong>
+          )}
+          <Truong nhan="Số QĐ khởi tố VA">
+            <input value={soQdKtva} onChange={e => setSoQdKtva(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="Ngày QĐ khởi tố VA *">
+            <input type="date" value={ngayQdKtva} onChange={e => setNgayQdKtva(e.target.value)} className={oInput} />
+          </Truong>
+
+          <Truong nhan="Hạn điều tra">
+            <input type="date" value={hanDieuTra} onChange={e => setHanDieuTra(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="KSV chính">
+            <input value={ksvChinh} onChange={e => setKsvChinh(e.target.value)} list="ds-ksv" className={oInput} />
+          </Truong>
+          <Truong nhan="KSV hỗ trợ (cách nhau dấu phẩy)">
+            <input value={ksvHoTro} onChange={e => setKsvHoTro(e.target.value)} list="ds-ksv" className={oInput} />
+          </Truong>
+          <Truong nhan="ĐTV / CBĐT">
+            <input value={dtvCbdt} onChange={e => setDtvCbdt(e.target.value)} list="ds-dtv" className={oInput} />
+          </Truong>
+          <datalist id="ds-ksv">{dsCanBo.filter(c => c.vaiTro === "ksv").map(c => <option key={c.id} value={c.hoTen} />)}</datalist>
+          <datalist id="ds-dtv">{dsCanBo.filter(c => c.vaiTro === "dtv").map(c => <option key={c.id} value={c.hoTen} />)}</datalist>
+
+          <Truong nhan="Đơn vị thụ lý">
+            <input value={donViThuLy} onChange={e => setDonViThuLy(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="Điều luật" rong2>
+            {coBiCanHopLe.length > 0 ? (
+              <input disabled value={tinhDieuLuat(biCanRows)} className={oInput + " bg-slate-50 text-slate-400"} />
+            ) : (
+              <input value={dieuLuatNhapTay} onChange={e => setDieuLuatNhapTay(e.target.value)} className={oInput} placeholder="Chưa có bị can — nhập tay" />
+            )}
+          </Truong>
+          <Truong nhan="Uỷ quyền xét xử">
+            <input value={uyQuyenXetXu} onChange={e => setUyQuyenXetXu(e.target.value)} className={oInput} />
+          </Truong>
+
+          <label className="flex items-center gap-2 text-sm mt-5">
+            <input type="checkbox" checked={anDiem} onChange={e => setAnDiem(e.target.checked)} /> Án điểm
+          </label>
+          <label className="flex items-center gap-2 text-sm mt-5">
+            <input type="checkbox" checked={phienToaRutKN} onChange={e => setPhienToaRutKN(e.target.checked)} /> Phiên toà rút kinh nghiệm
+          </label>
+        </div>
+        <Truong nhan="Ghi chú">
+          <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput} />
+        </Truong>
+
+        <div className="flex items-center justify-between mt-6 mb-2">
+          <div className="text-sm font-medium text-slate-600">Bị can ({biCanRows.length})</div>
+          <button onClick={themBiCan} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">+ Thêm bị can</button>
+        </div>
+
+        <div className="space-y-3">
+          {biCanRows.map((bc, idx) => (
+            <div key={bc.id} className="border border-slate-200 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-slate-500">Bị can #{idx + 1}</div>
+                {biCanRows.length > 1 && (
+                  <button onClick={() => xoaBiCan(bc.id)} className="text-xs text-red-500 hover:text-red-700">Xoá</button>
+                )}
+              </div>
+              <div className="grid grid-cols-4 gap-3">
+                <Truong nhan="Họ tên">
+                  <input value={bc.hoTen} onChange={e => suaBiCan(bc.id, { hoTen: e.target.value })} className={oInput} />
+                </Truong>
+                <Truong nhan="Năm sinh">
+                  <input type="number" value={bc.namSinh} onChange={e => suaBiCan(bc.id, { namSinh: e.target.value })} className={oInput} />
+                </Truong>
+                <Truong nhan="Giới tính">
+                  <select value={bc.gioiTinh} onChange={e => suaBiCan(bc.id, { gioiTinh: e.target.value })} className={oInput}>
+                    <option value="nam">Nam</option><option value="nu">Nữ</option>
+                  </select>
+                </Truong>
+                <Truong nhan="Dân tộc">
+                  <input value={bc.danToc} onChange={e => suaBiCan(bc.id, { danToc: e.target.value })} className={oInput} />
+                </Truong>
+
+                <Truong nhan="Đảng viên">
+                  <select value={bc.dangVien} onChange={e => suaBiCan(bc.id, { dangVien: e.target.value })} className={oInput}>
+                    <option value="khong">Không</option><option value="co">Có</option>
+                  </select>
+                </Truong>
+                <Truong nhan="Biện pháp ngăn chặn">
+                  <select value={bc.bienPhapNganChan} onChange={e => suaBiCan(bc.id, { bienPhapNganChan: e.target.value })} className={oInput}>
+                    <option value="tai_ngoai">Tại ngoại</option><option value="giam">Tạm giam</option>
+                  </select>
+                </Truong>
+                {bc.bienPhapNganChan === "giam" && (
+                  <Truong nhan="Hạn tạm giam">
+                    <input type="date" value={bc.hanTamGiam} onChange={e => suaBiCan(bc.id, { hanTamGiam: e.target.value })} className={oInput} />
+                  </Truong>
+                )}
+                <Truong nhan="Ngày khởi tố bị can">
+                  <input type="date" value={bc.ngayKhoiTo} onChange={e => suaBiCan(bc.id, { ngayKhoiTo: e.target.value })} className={oInput} />
+                </Truong>
+
+                <Truong nhan="Địa chỉ" rong4>
+                  <textarea value={bc.diaChi} onChange={e => suaBiCan(bc.id, { diaChi: e.target.value })}
+                            rows={1} className={oInput + " resize-y"} style={{ minHeight: "36px" }} />
+                </Truong>
+              </div>
+
+              <div className="mt-2">
+                <div className="text-xs text-slate-500 mb-1">Tội danh</div>
+                <div className="space-y-1">
+                  {bc.toiDanh.map((t, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="text-[10px] w-14 shrink-0 text-slate-400">{i === 0 ? "Tội chính" : "Bổ sung"}</span>
+                      <input value={t} onChange={e => suaToiDanh(bc.id, i, e.target.value)} className={oInput + " flex-1"} />
+                      {bc.toiDanh.length > 1 && (
+                        <button onClick={() => xoaToiDanh(bc.id, i)} className="text-xs text-red-500">✕</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => themToiDanh(bc.id)} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm điều luật</button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-6">
+          <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+          <button onClick={onBamLuu} disabled={dangLuu}
+                  className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+            {dangLuu ? "Đang lưu..." : "Lưu vụ án"}
+          </button>
+        </div>
+      </div>
+
+      <ModalXacNhanKy open={hienModalKy} onHuy={() => setHienModalKy(false)} onXacNhan={onXacNhanKy} />
+    </div>
+  );
+}
+
+function MenuHanhDongNhanh({ vuAn, onMoHanhDong }) {
+  const [mo, setMo] = useState(false);
+  const coTheChuyen = vuAn.trangThai === "dang_giai_quyet" && vuAn.coQuanThuLy !== "xet_xu";
+  const coTheGiaiQuyet = vuAn.trangThai === "dang_giai_quyet";
+  if (!coTheChuyen && !coTheGiaiQuyet) return <span className="text-slate-300">—</span>;
+
+  return (
+    <div className="relative inline-block" onClick={e => e.stopPropagation()}>
+      <button onClick={() => setMo(m => !m)}
+              className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded px-2 py-1 leading-none font-bold">
+        ⋯
+      </button>
+      {mo && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setMo(false)}></div>
+          <div className="absolute right-0 mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1 text-sm">
+            {coTheChuyen && (
+              <button onClick={() => { setMo(false); onMoHanhDong(vuAn, "chuyen_giai_doan"); }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-slate-50">Chuyển giai đoạn</button>
+            )}
+            {coTheGiaiQuyet && (
+              <button onClick={() => { setMo(false); onMoHanhDong(vuAn, "hoan_thanh"); }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-slate-50">Giải quyết (hoàn thành)</button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Sửa các trường thông tin thường (không phải trạng thái/giai đoạn/điều luật — những trường đó
+// chỉ đổi qua các hành động nghiệp vụ có ghi log). Không ghi log, không hỏi kỳ — đây là sửa lỗi
+// nhập liệu, không phải 1 sự kiện nghiệp vụ.
+function SuaVuAnForm({ vuAn, onDong, onXong }) {
+  const dsCanBo = useDanhSachCanBo();
+  const [maNganhCap, setMaNganhCap] = useState(vuAn.maNganhCap || "");
+  const [tenVu, setTenVu] = useState(vuAn.tenVu || "");
+  const [nguon, setNguon] = useState(vuAn.nguon || "an_khoi_to_moi");
+  const [nguonChiTiet, setNguonChiTiet] = useState(vuAn.nguonChiTiet || "");
+  const [soQdKtva, setSoQdKtva] = useState(vuAn.soQdKtva || "");
+  const [ngayQdKtva, setNgayQdKtva] = useState(toInputDate(vuAn.ngayQdKtva));
+  const [hanDieuTra, setHanDieuTra] = useState(toInputDate(vuAn.hanDieuTra));
+  const [ksvChinh, setKsvChinh] = useState(vuAn.ksvChinh || "");
+  const [ksvHoTro, setKsvHoTro] = useState((vuAn.ksvHoTro || []).join(", "));
+  const [dtvCbdt, setDtvCbdt] = useState(vuAn.dtvCbdt || "");
+  const [donViThuLy, setDonViThuLy] = useState(vuAn.donViThuLy || "");
+  const [uyQuyenXetXu, setUyQuyenXetXu] = useState(vuAn.uyQuyenXetXu || "");
+  const [anDiem, setAnDiem] = useState(!!vuAn.anDiem);
+  const [phienToaRutKN, setPhienToaRutKN] = useState(!!vuAn.phienToaRutKN);
+  const [ghiChu, setGhiChu] = useState(vuAn.ghiChu || "");
+  const [loi, setLoi] = useState("");
+  const [dangLuu, setDangLuu] = useState(false);
+
+  const luu = async () => {
+    if (!tenVu.trim()) { setLoi("Cần nhập tên vụ."); return; }
+    if (!ngayQdKtva) { setLoi("Cần nhập ngày QĐ khởi tố VA."); return; }
+    setDangLuu(true);
+    try {
+      const nguoiThucHien = auth.currentUser?.email || "";
+      await db.collection("vuan").doc(vuAn.id).update({
+        maNganhCap: maNganhCap.trim() || null, tenVu: tenVu.trim(),
+        nguon, nguonChiTiet: nguon === "an_noi_khac_chuyen_den" ? nguonChiTiet.trim() : "",
+        soQdKtva: soQdKtva.trim(), ngayQdKtva: fromInputDate(ngayQdKtva),
+        hanDieuTra: hanDieuTra ? fromInputDate(hanDieuTra) : null,
+        ksvChinh: ksvChinh.trim(), ksvHoTro: ksvHoTro.split(",").map(s => s.trim()).filter(Boolean),
+        dtvCbdt: dtvCbdt.trim(), donViThuLy: donViThuLy.trim(), uyQuyenXetXu: uyQuyenXetXu.trim(),
+        anDiem, phienToaRutKN, ghiChu: ghiChu.trim(),
+        ngayCapNhat: new Date(), nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi lưu: " + err.message);
+      setDangLuu(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-40 overflow-auto py-8">
+      <div className="bg-white rounded-xl shadow-lg w-[900px] max-w-[95vw] p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Sửa thông tin vụ án</h3>
+          <button onClick={onDong} className="text-slate-400 hover:text-slate-600 text-sm">Đóng ✕</button>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mb-4">
+          Chỉ sửa thông tin thường (KSV, đơn vị, ghi chú...). Muốn đổi giai đoạn/trạng thái, dùng các nút hành động ở panel chi tiết.
+        </div>
+        {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+
+        <div className="grid grid-cols-4 gap-3 mb-3">
+          <Truong nhan="Mã ngành cấp (nếu có)">
+            <input value={maNganhCap} onChange={e => setMaNganhCap(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="Tên vụ" rong2>
+            <input value={tenVu} onChange={e => setTenVu(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="Nguồn">
+            <select value={nguon} onChange={e => setNguon(e.target.value)} className={oInput}>
+              <option value="an_khoi_to_moi">Án khởi tố mới</option>
+              <option value="tin_bao_khoi_to_len">Tin báo khởi tố lên</option>
+              <option value="an_noi_khac_chuyen_den">Án nơi khác chuyển đến</option>
+              <option value="phuc_hoi_dieu_tra">Phục hồi điều tra</option>
+            </select>
+          </Truong>
+          {nguon === "an_noi_khac_chuyen_den" && (
+            <Truong nhan="Chi tiết nguồn">
+              <input value={nguonChiTiet} onChange={e => setNguonChiTiet(e.target.value)} className={oInput} />
+            </Truong>
+          )}
+          <Truong nhan="Số QĐ khởi tố VA">
+            <input value={soQdKtva} onChange={e => setSoQdKtva(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="Ngày QĐ khởi tố VA">
+            <input type="date" value={ngayQdKtva} onChange={e => setNgayQdKtva(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="Hạn điều tra">
+            <input type="date" value={hanDieuTra} onChange={e => setHanDieuTra(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="KSV chính">
+            <input value={ksvChinh} onChange={e => setKsvChinh(e.target.value)} list="ds-ksv-sua" className={oInput} />
+          </Truong>
+          <Truong nhan="KSV hỗ trợ (cách nhau dấu phẩy)">
+            <input value={ksvHoTro} onChange={e => setKsvHoTro(e.target.value)} list="ds-ksv-sua" className={oInput} />
+          </Truong>
+          <Truong nhan="ĐTV / CBĐT">
+            <input value={dtvCbdt} onChange={e => setDtvCbdt(e.target.value)} list="ds-dtv-sua" className={oInput} />
+          </Truong>
+          <Truong nhan="Đơn vị thụ lý">
+            <input value={donViThuLy} onChange={e => setDonViThuLy(e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="Uỷ quyền xét xử">
+            <input value={uyQuyenXetXu} onChange={e => setUyQuyenXetXu(e.target.value)} className={oInput} />
+          </Truong>
+          <label className="flex items-center gap-2 text-sm mt-5">
+            <input type="checkbox" checked={anDiem} onChange={e => setAnDiem(e.target.checked)} /> Án điểm
+          </label>
+          <label className="flex items-center gap-2 text-sm mt-5">
+            <input type="checkbox" checked={phienToaRutKN} onChange={e => setPhienToaRutKN(e.target.checked)} /> Phiên toà rút kinh nghiệm
+          </label>
+          <datalist id="ds-ksv-sua">{dsCanBo.filter(c => c.vaiTro === "ksv").map(c => <option key={c.id} value={c.hoTen} />)}</datalist>
+          <datalist id="ds-dtv-sua">{dsCanBo.filter(c => c.vaiTro === "dtv").map(c => <option key={c.id} value={c.hoTen} />)}</datalist>
+        </div>
+        <Truong nhan="Ghi chú">
+          <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput} />
+        </Truong>
+
+        <div className="flex justify-end gap-2 mt-6">
+          <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+          <button onClick={luu} disabled={dangLuu}
+                  className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+            {dangLuu ? "Đang lưu..." : "Lưu"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Sửa 1 bị can — sau khi lưu, tính lại dieuLuat + loaiKhoiTo cho TOÀN BỘ bị can của vụ (vì
+// ngayKhoiTo/toiDanh đổi có thể làm thay đổi ai là "ban đầu" và điều luật gộp cấp vụ).
+function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
+  const [hoTen, setHoTen] = useState(biCan.hoTen || "");
+  const [namSinh, setNamSinh] = useState(biCan.namSinh || "");
+  const [gioiTinh, setGioiTinh] = useState(biCan.gioiTinh || "nam");
+  const [danToc, setDanToc] = useState(biCan.danToc || "Kinh");
+  const [dangVien, setDangVien] = useState(biCan.dangVien || "khong");
+  const [diaChi, setDiaChi] = useState(biCan.diaChi || "");
+  const [bienPhapNganChan, setBienPhapNganChan] = useState(biCan.bienPhapNganChan || "tai_ngoai");
+  const [hanTamGiam, setHanTamGiam] = useState(toInputDate(biCan.hanTamGiam));
+  const [ngayKhoiTo, setNgayKhoiTo] = useState(toInputDate(biCan.ngayKhoiTo));
+  const [toiDanh, setToiDanh] = useState(biCan.toiDanh && biCan.toiDanh.length ? biCan.toiDanh : [""]);
+  const [loi, setLoi] = useState("");
+  const [dangLuu, setDangLuu] = useState(false);
+
+  const themToiDanh = () => setToiDanh(t => [...t, ""]);
+  const xoaToiDanh = (i) => setToiDanh(t => t.filter((_, idx) => idx !== i));
+  const suaToiDanh = (i, val) => setToiDanh(t => t.map((x, idx) => idx === i ? val : x));
+
+  const luu = async () => {
+    if (!hoTen.trim()) { setLoi("Cần nhập họ tên."); return; }
+    setDangLuu(true);
+    try {
+      const toiDanhSach = toiDanh.map(s => s.trim()).filter(Boolean);
+      await db.collection("bican").doc(biCan.id).update({
+        hoTen: hoTen.trim(), namSinh: namSinh ? Number(namSinh) : null, gioiTinh, danToc: danToc.trim() || "Kinh",
+        dangVien, diaChi: diaChi.trim(), bienPhapNganChan,
+        hanTamGiam: bienPhapNganChan === "giam" && hanTamGiam ? fromInputDate(hanTamGiam) : null,
+        ngayKhoiTo: ngayKhoiTo ? fromInputDate(ngayKhoiTo) : null,
+        toiDanh: toiDanhSach.length ? toiDanhSach : [""],
+      });
+
+      // Tính lại dieuLuat + loaiKhoiTo cho cả vụ vì bị can này vừa đổi.
+      const bcSnap = await db.collection("bican").where("maVuAn", "==", vuAn.id).get();
+      const bcList = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const dieuLuatMoi = tinhDieuLuat(bcList);
+      const loaiKhoiToMoi = tinhLoaiKhoiToTheoNgay(bcList.map(bc => bc.ngayKhoiTo ? (bc.ngayKhoiTo.toDate ? bc.ngayKhoiTo.toDate() : new Date(bc.ngayKhoiTo)) : null));
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi });
+      bcList.forEach((bc, i) => {
+        if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
+      });
+      await batch.commit();
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi lưu: " + err.message);
+      setDangLuu(false);
+    }
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe={`Sửa bị can: ${biCan.hoTen}`} rong>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <div className="grid grid-cols-4 gap-3 mb-3">
+        <Truong nhan="Họ tên"><input value={hoTen} onChange={e => setHoTen(e.target.value)} className={oInput} /></Truong>
+        <Truong nhan="Năm sinh"><input type="number" value={namSinh} onChange={e => setNamSinh(e.target.value)} className={oInput} /></Truong>
+        <Truong nhan="Giới tính">
+          <select value={gioiTinh} onChange={e => setGioiTinh(e.target.value)} className={oInput}>
+            <option value="nam">Nam</option><option value="nu">Nữ</option>
+          </select>
+        </Truong>
+        <Truong nhan="Dân tộc"><input value={danToc} onChange={e => setDanToc(e.target.value)} className={oInput} /></Truong>
+        <Truong nhan="Đảng viên">
+          <select value={dangVien} onChange={e => setDangVien(e.target.value)} className={oInput}>
+            <option value="khong">Không</option><option value="co">Có</option>
+          </select>
+        </Truong>
+        <Truong nhan="Biện pháp ngăn chặn">
+          <select value={bienPhapNganChan} onChange={e => setBienPhapNganChan(e.target.value)} className={oInput}>
+            <option value="tai_ngoai">Tại ngoại</option><option value="giam">Tạm giam</option>
+          </select>
+        </Truong>
+        {bienPhapNganChan === "giam" && (
+          <Truong nhan="Hạn tạm giam"><input type="date" value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
+        )}
+        <Truong nhan="Ngày khởi tố bị can"><input type="date" value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} className={oInput} /></Truong>
+        <Truong nhan="Địa chỉ" rong4>
+          <textarea value={diaChi} onChange={e => setDiaChi(e.target.value)} rows={1} className={oInput + " resize-y"} style={{ minHeight: "36px" }} />
+        </Truong>
+      </div>
+      <div className="mb-4">
+        <div className="text-xs text-slate-500 mb-1">Tội danh</div>
+        <div className="space-y-1">
+          {toiDanh.map((t, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="text-[10px] w-14 shrink-0 text-slate-400">{i === 0 ? "Tội chính" : "Bổ sung"}</span>
+              <input value={t} onChange={e => suaToiDanh(i, e.target.value)} className={oInput + " flex-1"} />
+              {toiDanh.length > 1 && <button onClick={() => xoaToiDanh(i)} className="text-xs text-red-500">✕</button>}
+            </div>
+          ))}
+        </div>
+        <button onClick={themToiDanh} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm điều luật</button>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={dangLuu}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {dangLuu ? "Đang lưu..." : "Lưu"}
+        </button>
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
+function DanhSachPanel({ selectedId, onSelect }) {
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [giaiDoan, setGiaiDoan] = useState("tat_ca");
+  const [ksv, setKsv] = useState("tat_ca");
+  const [tuKhoa, setTuKhoa] = useState("");
+  const [hanhDongNhanh, setHanhDongNhanh] = useState(null);
+
+  useEffect(() => {
+    const unsub = db.collection("vuan").orderBy("ngayTao", "desc").onSnapshot(
+      snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+      err => { console.error(err); setDangTai(false); }
+    );
+    return unsub;
+  }, []);
+
+  const dsKsv = useMemo(() => [...new Set(list.map(v => v.ksvChinh).filter(Boolean))], [list]);
+
+  const filtered = useMemo(() => list.filter(v => {
+    if (giaiDoan !== "tat_ca" && v.coQuanThuLy !== giaiDoan) return false;
+    if (ksv !== "tat_ca" && v.ksvChinh !== ksv) return false;
+    if (tuKhoa.trim()) {
+      const k = tuKhoa.trim().toLowerCase();
+      const hit = (hienThiMa(v) || "").toLowerCase().includes(k) || (v.tenVu || "").toLowerCase().includes(k);
+      if (!hit) return false;
+    }
+    return true;
+  }), [list, giaiDoan, ksv, tuKhoa]);
+
+  return (
+    <div className="w-[640px] shrink-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
+      <div className="p-3 border-b border-slate-100 space-y-2 bg-slate-50/60">
+        <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)} placeholder="Tìm theo mã vụ hoặc tên vụ..."
+               className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white" />
+        <div className="flex gap-1">
+          {[["tat_ca", "Tất cả"], ["dieu_tra", "Điều tra"], ["truy_to", "Truy tố"], ["xet_xu", "Xét xử"]].map(([v, l]) => (
+            <button key={v} onClick={() => setGiaiDoan(v)}
+                    className={`flex-1 text-xs rounded-lg py-1.5 font-medium ${giaiDoan === v ? "bg-indigo-600 text-white" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <select value={ksv} onChange={e => setKsv(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white">
+          <option value="tat_ca">Tất cả KSV</option>
+          {dsKsv.map(k => <option key={k} value={k}>{k}</option>)}
+        </select>
+      </div>
+      <div className="flex-1 overflow-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead className="bg-slate-100 text-slate-500 text-xs sticky top-0 z-10">
+            <tr>
+              <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Mã vụ</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Tên vụ / KSV</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Giai đoạn</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Trạng thái</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Hạn ĐT</th>
+              <th className="text-right px-2 py-2 border-b border-slate-200 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {dangTai && <tr><td colSpan={6} className="p-4 text-slate-400">Đang tải...</td></tr>}
+            {!dangTai && filtered.length === 0 && (
+              <tr><td colSpan={6} className="p-4 text-slate-400">Không có vụ án nào khớp.</td></tr>
+            )}
+            {filtered.map((v, i) => (
+              <tr key={v.id} onClick={() => onSelect(v.id)}
+                  className={`cursor-pointer border-b border-l-4 border-slate-100 ${
+                    selectedId === v.id ? "bg-indigo-50 border-l-indigo-500"
+                      : i % 2 === 0 ? "bg-white border-l-transparent hover:bg-slate-50" : "bg-slate-50/70 border-l-transparent hover:bg-slate-100"
+                  }`}>
+                <td className="px-3 py-2 text-xs text-slate-500 align-top whitespace-nowrap">{hienThiMa(v)}</td>
+                <td className="px-3 py-2 align-top">
+                  <div className="font-medium text-slate-800">{v.tenVu || "(chưa đặt tên)"}</div>
+                  {v.ksvChinh && <div className="text-xs text-slate-400 mt-0.5">{v.ksvChinh}</div>}
+                </td>
+                <td className="px-3 py-2 align-top"><Badge mau={MAU_GIAI_DOAN[v.coQuanThuLy]}>{NHAN_GIAI_DOAN[v.coQuanThuLy] || v.coQuanThuLy}</Badge></td>
+                <td className="px-3 py-2 align-top"><Badge mau={MAU_TRANG_THAI[v.trangThai]}>{NHAN_TRANG_THAI[v.trangThai] || v.trangThai}</Badge></td>
+                <td className={`px-3 py-2 align-top text-xs whitespace-nowrap ${mauCanhBaoHan(v.hanDieuTra)}`}>
+                  {v.coQuanThuLy === "dieu_tra" ? fmtDate(v.hanDieuTra) : "—"}
+                </td>
+                <td className="px-2 py-2 align-top text-right">
+                  <MenuHanhDongNhanh vuAn={v} onMoHanhDong={(vuAn, loai) => setHanhDongNhanh({ vuAn, loai })} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-400 bg-slate-50/60">{filtered.length} / {list.length} vụ án</div>
+
+      {hanhDongNhanh?.loai === "chuyen_giai_doan" && (
+        <ChuyenGiaiDoanModal vuAn={hanhDongNhanh.vuAn} onDong={() => setHanhDongNhanh(null)} onXong={() => setHanhDongNhanh(null)} />
+      )}
+      {hanhDongNhanh?.loai === "hoan_thanh" && (
+        <HoanThanhVuAnModal vuAnId={hanhDongNhanh.vuAn.id} onDong={() => setHanhDongNhanh(null)} onXong={() => setHanhDongNhanh(null)} />
+      )}
+    </div>
+  );
+}
+
+function HangThongTin({ items }) {
+  return (
+    <tr className="border-b border-slate-100 last:border-b-0">
+      {items.map(([nhan, giaTri], i) => (
+        <React.Fragment key={i}>
+          <td className="bg-slate-50 text-xs text-slate-500 px-3 py-2 whitespace-nowrap w-32 align-top border-r border-slate-100">{nhan}</td>
+          <td className="px-3 py-2 text-slate-700 align-top">{giaTri || "—"}</td>
+        </React.Fragment>
+      ))}
+    </tr>
+  );
+}
+
+function NutHanhDong({ nhan, onClick }) {
+  return (
+    <button onClick={onClick}
+            className="text-xs px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 font-medium">
+      {nhan}
+    </button>
+  );
+}
+
+function InQRModal({ vuAn, onDong }) {
+  const canvasRef = React.useRef(null);
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    QRCode.toCanvas(canvasRef.current, hienThiMa(vuAn), { width: 480, margin: 1 }, (err) => { if (err) console.error(err); });
+  }, [vuAn]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 print:bg-white overflow-auto">
+      <div id="qr-in-a4" className="bg-white flex flex-col items-center justify-center print:absolute print:inset-0"
+           style={{ width: "210mm", minHeight: "297mm" }}>
+        <div className="text-sm text-slate-400 mb-8 print:hidden">Xem trước trang in A4 — bấm "In" để in thật (khổ QR ~5x5cm).</div>
+        <canvas ref={canvasRef} style={{ width: "5cm", height: "5cm" }}></canvas>
+        <div className="mt-4 text-lg font-mono">{hienThiMa(vuAn)}</div>
+        <div className="mt-2 text-sm text-slate-500">{vuAn.tenVu}</div>
+        <div className="mt-10 flex gap-2 print:hidden">
+          <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Đóng</button>
+          <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChiTietPanel({ vuAnId, onDoiSelected }) {
+  const [vuAn, setVuAn] = useState(null);
+  const [biCanList, setBiCanList] = useState([]);
+  const [lichSu, setLichSu] = useState([]);
+  const [modalMo, setModalMo] = useState(null);
+  const [biCanDangSua, setBiCanDangSua] = useState(null);
+
+  useEffect(() => {
+    setModalMo(null);
+    setBiCanDangSua(null);
+    if (!vuAnId) { setVuAn(null); return; }
+    return db.collection("vuan").doc(vuAnId).onSnapshot(doc => {
+      setVuAn(doc.exists ? { id: doc.id, ...doc.data() } : null);
+    });
+  }, [vuAnId]);
+
+  useEffect(() => {
+    if (!vuAnId) { setBiCanList([]); return; }
+    return db.collection("bican").where("maVuAn", "==", vuAnId).onSnapshot(
+      snap => setBiCanList(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error(err)
+    );
+  }, [vuAnId]);
+
+  useEffect(() => {
+    if (!vuAnId) { setLichSu([]); return; }
+    return db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", vuAnId).orderBy("thoiDiemGhi", "desc").onSnapshot(
+      snap => setLichSu(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error(err)
+    );
+  }, [vuAnId]);
+
+  if (!vuAnId) {
+    return (
+      <div className="flex-1 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 text-sm">
+        Chọn 1 vụ án ở danh sách bên trái để xem chi tiết.
+      </div>
+    );
+  }
+  if (!vuAn) {
+    return <div className="flex-1 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 text-sm">Đang tải...</div>;
+  }
+
+  return (
+    <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl overflow-auto min-h-0">
+      <div className="p-5 border-b border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs text-slate-400 mb-1">{hienThiMa(vuAn)}</div>
+            <div className="text-base font-semibold">{vuAn.tenVu || "(chưa đặt tên)"}</div>
+          </div>
+          <div className="flex gap-2 flex-wrap justify-end">
+            {vuAn.trangThai === "dang_giai_quyet" && vuAn.coQuanThuLy !== "xet_xu" && (
+              <NutHanhDong nhan="Chuyển giai đoạn" onClick={() => setModalMo("chuyen_giai_doan")} />
+            )}
+            {vuAn.trangThai === "dang_giai_quyet" && vuAn.coQuanThuLy !== "dieu_tra" && (
+              <NutHanhDong nhan="Trả hồ sơ" onClick={() => setModalMo("tra_ho_so")} />
+            )}
+            {vuAn.trangThai === "dang_giai_quyet" && vuAn.coQuanThuLy === "dieu_tra" && (
+              <NutHanhDong nhan="Gia hạn điều tra" onClick={() => setModalMo("gia_han")} />
+            )}
+            {vuAn.trangThai === "dang_giai_quyet" && (
+              <NutHanhDong nhan="Hoàn thành vụ án" onClick={() => setModalMo("hoan_thanh")} />
+            )}
+            {vuAn.trangThai === "dang_giai_quyet" && biCanList.length >= 2 && (
+              <NutHanhDong nhan="Tách vụ án" onClick={() => setModalMo("tach")} />
+            )}
+            {vuAn.trangThai === "dang_giai_quyet" && (
+              <NutHanhDong nhan="Nhập vào vụ khác" onClick={() => setModalMo("nhap")} />
+            )}
+            {vuAn.trangThai === "tam_dinh_chi" && (
+              <NutHanhDong nhan="Phục hồi" onClick={() => setModalMo("phuc_hoi")} />
+            )}
+            <NutHanhDong nhan="In mã QR" onClick={() => setModalMo("qr")} />
+            <NutHanhDong nhan="Sửa thông tin" onClick={() => setModalMo("sua_thong_tin")} />
+          </div>
+        </div>
+        <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden mt-4">
+          <tbody>
+            <HangThongTin items={[
+              ["Giai đoạn", <Badge mau={MAU_GIAI_DOAN[vuAn.coQuanThuLy]}>{NHAN_GIAI_DOAN[vuAn.coQuanThuLy] || vuAn.coQuanThuLy}</Badge>],
+              ["Trạng thái", <Badge mau={MAU_TRANG_THAI[vuAn.trangThai]}>{NHAN_TRANG_THAI[vuAn.trangThai] || vuAn.trangThai}</Badge>],
+            ]} />
+            <HangThongTin items={[["Nguồn", NHAN_NGUON[vuAn.nguon] || vuAn.nguon], ["KSV chính", vuAn.ksvChinh]]} />
+            <HangThongTin items={[["KSV hỗ trợ", (vuAn.ksvHoTro || []).join(", ")], ["ĐTV/CBĐT", vuAn.dtvCbdt]]} />
+            <HangThongTin items={[["Đơn vị thụ lý", vuAn.donViThuLy], ["Điều luật", vuAn.dieuLuat]]} />
+            <HangThongTin items={[["Số/ngày QĐ KTVA", `${vuAn.soQdKtva || "—"} — ${fmtDate(vuAn.ngayQdKtva)}`], ["Hạn điều tra", fmtDate(vuAn.hanDieuTra)]]} />
+            <HangThongTin items={[["Án điểm", vuAn.anDiem ? "Có" : "Không"], ["Ghi chú", vuAn.ghiChu]]} />
+          </tbody>
+        </table>
+      </div>
+
+      <div className="p-5 border-b border-slate-100">
+        <div className="text-sm font-medium text-slate-600 mb-2">Bị can ({biCanList.length})</div>
+        {biCanList.length === 0 && <div className="text-sm text-slate-400">Chưa có bị can nào.</div>}
+        {biCanList.length > 0 && (
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="text-left p-2">Họ tên</th>
+                  <th className="text-left p-2">Năm sinh</th>
+                  <th className="text-left p-2">Tội danh</th>
+                  <th className="text-left p-2">Biện pháp</th>
+                  <th className="text-left p-2">Loại khởi tố</th>
+                  <th className="text-left p-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {biCanList.map((bc, i) => (
+                  <tr key={bc.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
+                    <td className="p-2 font-medium text-slate-700">{bc.hoTen}</td>
+                    <td className="p-2">{bc.namSinh || "—"}</td>
+                    <td className="p-2">{(bc.toiDanh || []).filter(Boolean).join(", ") || "—"}</td>
+                    <td className="p-2">
+                      <Badge mau={bc.bienPhapNganChan === "giam" ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600"}>
+                        {bc.bienPhapNganChan === "giam" ? "Tạm giam" : "Tại ngoại"}
+                      </Badge>
+                    </td>
+                    <td className="p-2">{bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "Ban đầu"}</td>
+                    <td className="p-2">
+                      <button onClick={() => setBiCanDangSua(bc)} className="text-indigo-600 hover:text-indigo-700 font-medium">Sửa</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="p-5">
+        <div className="text-sm font-medium text-slate-600 mb-2">Lịch sử</div>
+        {lichSu.length === 0 && <div className="text-sm text-slate-400">Chưa có sự kiện nào.</div>}
+        {lichSu.length > 0 && (
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="text-left p-2 w-24">Ngày</th>
+                  <th className="text-left p-2">Sự kiện</th>
+                  <th className="text-left p-2">Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lichSu.map((ls, i) => (
+                  <tr key={ls.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
+                    <td className="p-2 text-slate-400 whitespace-nowrap">{fmtDate(ls.ngaySuKien)}</td>
+                    <td className="p-2"><Badge>{NHAN_SU_KIEN[ls.loaiSuKien] || ls.loaiSuKien}</Badge></td>
+                    <td className="p-2 text-slate-500">{ls.ghiChu || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {modalMo === "chuyen_giai_doan" && (
+        <ChuyenGiaiDoanModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {modalMo === "tra_ho_so" && (
+        <TraHoSoModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {modalMo === "gia_han" && (
+        <GiaHanDieuTraModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {modalMo === "phuc_hoi" && (
+        <PhucHoiModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {modalMo === "hoan_thanh" && (
+        <HoanThanhVuAnModal vuAnId={vuAn.id} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {modalMo === "tach" && (
+        <TachVuAnModal vuAnId={vuAn.id} onDong={() => setModalMo(null)}
+                        onXong={(maVuMoi) => { setModalMo(null); onDoiSelected && onDoiSelected(maVuMoi); }} />
+      )}
+      {modalMo === "nhap" && (
+        <NhapVuModal vuAn={vuAn} onDong={() => setModalMo(null)}
+                     onXong={(dichId) => { setModalMo(null); onDoiSelected && onDoiSelected(dichId); }} />
+      )}
+      {modalMo === "qr" && <InQRModal vuAn={vuAn} onDong={() => setModalMo(null)} />}
+      {modalMo === "sua_thong_tin" && (
+        <SuaVuAnForm vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {biCanDangSua && (
+        <SuaBiCanForm biCan={biCanDangSua} vuAn={vuAn} onDong={() => setBiCanDangSua(null)} onXong={() => setBiCanDangSua(null)} />
+      )}
+    </div>
+  );
+}
+
+async function xuatExcel(setDangXuat, setLoiXuat) {
+  setDangXuat(true);
+  setLoiXuat("");
+  try {
+    const [vuSnap, bcSnap] = await Promise.all([db.collection("vuan").get(), db.collection("bican").get()]);
+    const vuList = vuSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const bcList = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const bcByVu = {};
+    bcList.forEach(bc => { (bcByVu[bc.maVuAn] = bcByVu[bc.maVuAn] || []).push(bc); });
+
+    const dsatHeader = ["Mã vụ", "Tên vụ", "Cơ quan đang thụ lý", "Trạng thái", "Số bị can",
+      "KSV chính", "KSV hỗ trợ", "ĐTV/CBĐT", "Đơn vị thụ lý", "Điều luật",
+      "Số QĐ KTVA", "Ngày QĐ KTVA", "Hạn điều tra", "Án điểm", "Nguồn", "Ghi chú"];
+    const dsatRows = vuList.map(v => [
+      hienThiMa(v), v.tenVu, NHAN_GIAI_DOAN[v.coQuanThuLy] || v.coQuanThuLy, NHAN_TRANG_THAI[v.trangThai] || v.trangThai,
+      (bcByVu[v.id] || []).length, v.ksvChinh, (v.ksvHoTro || []).join(", "), v.dtvCbdt, v.donViThuLy, v.dieuLuat,
+      v.soQdKtva, fmtDate(v.ngayQdKtva), fmtDate(v.hanDieuTra), v.anDiem ? "x" : "", NHAN_NGUON[v.nguon] || v.nguon, v.ghiChu,
+    ]);
+
+    const dsbctHeader = ["Mã vụ", "Họ tên bị can", "Năm sinh", "Giới tính", "Dân tộc", "Địa chỉ",
+      "Tội danh", "Đảng viên", "Biện pháp ngăn chặn", "Hạn tạm giam", "Ngày khởi tố", "Loại khởi tố"];
+    const dsbctRows = bcList.map(bc => [
+      bc.maVuAn, bc.hoTen, bc.namSinh, bc.gioiTinh === "nu" ? "Nữ" : "Nam", bc.danToc, bc.diaChi,
+      (bc.toiDanh || []).filter(Boolean).join("; "), bc.dangVien === "co" ? "x" : "",
+      bc.bienPhapNganChan === "giam" ? "Tạm giam" : "Tại ngoại", fmtDate(bc.hanTamGiam),
+      fmtDate(bc.ngayKhoiTo), bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "Ban đầu",
+    ]);
+
+    const tongHopRows = THU_TU_GIAI_DOAN.map(gd => [
+      NHAN_GIAI_DOAN[gd], vuList.filter(v => v.coQuanThuLy === gd && v.trangThai === "dang_giai_quyet").length,
+    ]);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([dsatHeader, ...dsatRows]), "DSAT");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([dsbctHeader, ...dsbctRows]), "DSBCT");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Giai đoạn", "Đang tồn"], ...tongHopRows]), "TỔNG HỢP");
+    XLSX.writeFile(wb, `QLVA_xuat_${toInputDateNhanh(new Date())}.xlsx`);
+  } catch (err) {
+    console.error(err);
+    setLoiXuat("Lỗi khi xuất Excel: " + err.message);
+  } finally {
+    setDangXuat(false);
+  }
+}
+function toInputDateNhanh(d) {
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function DanhSachVuAnModule({ currentUser }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [dangXuat, setDangXuat] = useState(false);
+  const [loiXuat, setLoiXuat] = useState("");
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">Danh sách vụ án</h2>
+        <div className="flex gap-2 items-center">
+          {loiXuat && <span className="text-xs text-red-600">{loiXuat}</span>}
+          <button onClick={() => xuatExcel(setDangXuat, setLoiXuat)} disabled={dangXuat}
+                  title="Xuất toàn bộ dữ liệu hiện tại — nên đối chiếu lại định dạng cột với file gốc"
+                  className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+            {dangXuat ? "Đang xuất..." : "Xuất Excel"}
+          </button>
+          <button onClick={() => setShowForm(true)}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+            + Thêm vụ án
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 flex gap-4 min-h-0">
+        <DanhSachPanel selectedId={selectedId} onSelect={setSelectedId} />
+        <ChiTietPanel vuAnId={selectedId} onDoiSelected={setSelectedId} />
+      </div>
+      {showForm && (
+        <ThemVuAnForm
+          currentUser={currentUser}
+          onDong={() => setShowForm(false)}
+          onDaLuu={(id) => { setShowForm(false); setSelectedId(id); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ====================================================================
+// MODULE: KỲ BÁO CÁO
+// ====================================================================
+async function chotKyBaoCao(ky, ngayChot, nguoiChot) {
+  const dems = await Promise.all(THU_TU_GIAI_DOAN.map(gd =>
+    db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get()
+  ));
+  const tonCuoiKy = {};
+  THU_TU_GIAI_DOAN.forEach((gd, i) => { tonCuoiKy[gd] = dems[i].size; });
+  await db.collection("kybaocao").doc(ky.id).update({
+    trangThai: "da_chot", ngayChot, nguoiChot, thoiDiemChot: new Date(), tonCuoiKy,
+  });
+}
+
+function MoKyMoiForm({ onDong, onXong }) {
+  const [tenKy, setTenKy] = useState("");
+  const [ngayBatDau, setNgayBatDau] = useState("");
+  const [loi, setLoi] = useState("");
+  const [dangLuu, setDangLuu] = useState(false);
+
+  const luu = async () => {
+    if (!tenKy.trim() || !ngayBatDau) { setLoi("Cần nhập tên kỳ và ngày bắt đầu."); return; }
+    setDangLuu(true);
+    try {
+      const dangMo = await db.collection("kybaocao").where("trangThai", "==", "dang_mo").limit(1).get();
+      if (!dangMo.empty) {
+        setLoi(`Đang có kỳ "${dangMo.docs[0].data().tenKy}" chưa chốt — cần chốt kỳ đó trước khi mở kỳ mới.`);
+        setDangLuu(false);
+        return;
+      }
+      await db.collection("kybaocao").add({
+        tenKy: tenKy.trim(), ngayBatDau: fromInputDate(ngayBatDau), ngayChot: null,
+        trangThai: "dang_mo", nguoiChot: "", thoiDiemChot: null, tonCuoiKy: null,
+      });
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi lưu: " + err.message);
+      setDangLuu(false);
+    }
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Mở kỳ báo cáo mới">
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Tên kỳ</label>
+      <input value={tenKy} onChange={e => setTenKy(e.target.value)} placeholder="VD: 07/2026" className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ngày bắt đầu</label>
+      <input type="date" value={ngayBatDau} onChange={e => setNgayBatDau(e.target.value)} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={dangLuu}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {dangLuu ? "Đang lưu..." : "Mở kỳ"}
+        </button>
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
+function ChotKyForm({ ky, onDong, onXong }) {
+  const [ngayChot, setNgayChot] = useState("");
+  const [loi, setLoi] = useState("");
+  const [dangLuu, setDangLuu] = useState(false);
+
+  const luu = async () => {
+    if (!ngayChot) { setLoi("Cần nhập ngày chốt kỳ."); return; }
+    setDangLuu(true);
+    try {
+      await chotKyBaoCao(ky, fromInputDate(ngayChot), auth.currentUser?.email || "");
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi chốt kỳ: " + err.message);
+      setDangLuu(false);
+    }
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe={`Chốt kỳ "${ky.tenKy}"`}>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <div className="text-xs text-slate-500 mb-3">
+        Hệ thống sẽ tự chụp số "Còn" của từng cơ quan tại thời điểm chốt để làm "Án cũ" cho kỳ sau.
+        Sau khi chốt, không thao tác nào ghi log mới vào kỳ này được nữa.
+      </div>
+      <label className="text-xs text-slate-500 block mb-1">Ngày chốt</label>
+      <input type="date" value={ngayChot} onChange={e => setNgayChot(e.target.value)} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={dangLuu}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {dangLuu ? "Đang chốt..." : "Chốt kỳ"}
+        </button>
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
+function KyBaoCaoModule() {
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [hienMoKy, setHienMoKy] = useState(false);
+  const [kyDangChot, setKyDangChot] = useState(null);
+
+  useEffect(() => {
+    return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
+      snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+      err => { console.error(err); setDangTai(false); }
+    );
+  }, []);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">Kỳ báo cáo</h2>
+        <button onClick={() => setHienMoKy(true)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+          + Mở kỳ mới
+        </button>
+      </div>
+
+      {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
+      {!dangTai && list.length === 0 && <div className="text-sm text-slate-400">Chưa có kỳ báo cáo nào.</div>}
+      {list.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs">
+              <tr>
+                <th className="text-left p-3">Tên kỳ</th>
+                <th className="text-left p-3">Ngày bắt đầu</th>
+                <th className="text-left p-3">Ngày chốt</th>
+                <th className="text-left p-3">Trạng thái</th>
+                <th className="text-left p-3">Tồn cuối kỳ (ĐT / TT / XX)</th>
+                <th className="text-left p-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map(ky => (
+                <tr key={ky.id} className="border-t border-slate-100">
+                  <td className="p-3 font-medium">{ky.tenKy}</td>
+                  <td className="p-3">{fmtDate(ky.ngayBatDau)}</td>
+                  <td className="p-3">{fmtDate(ky.ngayChot)}</td>
+                  <td className="p-3">
+                    <span className={`text-xs px-2 py-0.5 rounded ${ky.trangThai === "dang_mo" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}>
+                      {ky.trangThai === "dang_mo" ? "Đang mở" : "Đã chốt"}
+                    </span>
+                  </td>
+                  <td className="p-3 text-xs text-slate-500">
+                    {ky.tonCuoiKy ? `${ky.tonCuoiKy.dieu_tra ?? 0} / ${ky.tonCuoiKy.truy_to ?? 0} / ${ky.tonCuoiKy.xet_xu ?? 0}` : "—"}
+                  </td>
+                  <td className="p-3">
+                    {ky.trangThai === "dang_mo" && (
+                      <button onClick={() => setKyDangChot(ky)} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Chốt kỳ</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {hienMoKy && <MoKyMoiForm onDong={() => setHienMoKy(false)} onXong={() => setHienMoKy(false)} />}
+      {kyDangChot && <ChotKyForm ky={kyDangChot} onDong={() => setKyDangChot(null)} onXong={() => setKyDangChot(null)} />}
+    </div>
+  );
+}
+
+// ====================================================================
+// MODULE: ÁN TỒN THEO GIAI ĐOẠN
+// ====================================================================
+function mauCanhBaoHan(han) {
+  if (!han) return "";
+  const d = han.toDate ? han.toDate() : new Date(han);
+  if (isNaN(d)) return "";
+  const conLai = Math.ceil((d - new Date()) / 86400000);
+  if (conLai < 0) return "text-red-600 font-medium";
+  if (conLai <= 15) return "text-amber-600 font-medium";
+  return "";
+}
+
+function AnTonModule() {
+  const [giaiDoan, setGiaiDoan] = useState("dieu_tra");
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+
+  useEffect(() => {
+    setDangTai(true);
+    return db.collection("vuan")
+      .where("coQuanThuLy", "==", giaiDoan).where("trangThai", "==", "dang_giai_quyet")
+      .onSnapshot(
+        snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+        err => { console.error(err); setDangTai(false); }
+      );
+  }, [giaiDoan]);
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-4">Án tồn theo giai đoạn</h2>
+      <div className="flex gap-1 mb-4 w-fit bg-slate-100 rounded-lg p-1">
+        {THU_TU_GIAI_DOAN.map(gd => (
+          <button key={gd} onClick={() => setGiaiDoan(gd)}
+                  className={`text-sm px-4 py-1.5 rounded-md ${giaiDoan === gd ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
+            {NHAN_GIAI_DOAN[gd]}
+          </button>
+        ))}
+      </div>
+
+      {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
+      {!dangTai && list.length === 0 && <div className="text-sm text-slate-400">Không còn án tồn ở giai đoạn này.</div>}
+      {list.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs">
+              <tr>
+                <th className="text-left p-3">Mã vụ</th>
+                <th className="text-left p-3">Tên vụ</th>
+                <th className="text-left p-3">KSV chính</th>
+                <th className="text-left p-3">Điều luật</th>
+                {giaiDoan === "dieu_tra" && <th className="text-left p-3">Hạn điều tra</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((v, i) => (
+                <tr key={v.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"} hover:bg-indigo-50/50`}>
+                  <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{hienThiMa(v)}</td>
+                  <td className="p-3 font-medium text-slate-800">{v.tenVu}</td>
+                  <td className="p-3">{v.ksvChinh || "—"}</td>
+                  <td className="p-3 text-xs">{v.dieuLuat || "—"}</td>
+                  {giaiDoan === "dieu_tra" && (
+                    <td className={`p-3 ${mauCanhBaoHan(v.hanDieuTra)}`}>{fmtDate(v.hanDieuTra)}</td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="text-xs text-slate-400 mt-3">{list.length} vụ đang tồn ở giai đoạn {NHAN_GIAI_DOAN[giaiDoan]}. Vào "Danh sách vụ án" và tìm theo mã vụ để xem/thao tác chi tiết.</div>
+    </div>
+  );
+}
+
+// ====================================================================
+// MODULE: DASHBOARD
+// ====================================================================
+function ChartCotChong({ labels, datasets }) {
+  const canvasRef = React.useRef(null);
+  const chartRef = React.useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(canvasRef.current, {
+      type: "bar",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+        plugins: { legend: { position: "bottom" } },
+      },
+    });
+    return () => { chartRef.current && chartRef.current.destroy(); };
+  }, [labels, datasets]);
+
+  return <canvas ref={canvasRef} height="90"></canvas>;
+}
+
+function DashboardModule() {
+  const [dem, setDem] = useState(null);
+  const [canhBao, setCanhBao] = useState([]);
+  const [kyList, setKyList] = useState([]);
+
+  useEffect(() => {
+    let huy = false;
+    Promise.all(THU_TU_GIAI_DOAN.map(gd =>
+      db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get()
+    )).then(res => {
+      if (huy) return;
+      const d = {};
+      THU_TU_GIAI_DOAN.forEach((gd, i) => { d[gd] = res[i].size; });
+      setDem(d);
+    }).catch(err => console.error(err));
+    return () => { huy = true; };
+  }, []);
+
+  useEffect(() => {
+    return db.collection("vuan").where("coQuanThuLy", "==", "dieu_tra").where("trangThai", "==", "dang_giai_quyet")
+      .onSnapshot(snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(v => v.hanDieuTra)
+          .map(v => ({ ...v, conLai: Math.ceil(((v.hanDieuTra.toDate ? v.hanDieuTra.toDate() : new Date(v.hanDieuTra)) - new Date()) / 86400000) }))
+          .filter(v => v.conLai <= 15)
+          .sort((a, b) => a.conLai - b.conLai);
+        setCanhBao(list);
+      }, err => console.error(err));
+  }, []);
+
+  useEffect(() => {
+    return db.collection("kybaocao").orderBy("ngayBatDau", "asc").onSnapshot(
+      snap => setKyList(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error(err)
+    );
+  }, []);
+
+  const labels = kyList.map(k => k.tenKy);
+  const datasets = THU_TU_GIAI_DOAN.map((gd, i) => ({
+    label: NHAN_GIAI_DOAN[gd],
+    data: kyList.map(k => k.tonCuoiKy ? (k.tonCuoiKy[gd] ?? 0) : (dem ? dem[gd] : 0)),
+    backgroundColor: ["#6366f1", "#0ea5e9", "#f59e0b"][i],
+  }));
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-4">Dashboard</h2>
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        {THU_TU_GIAI_DOAN.map(gd => (
+          <div key={gd} className="bg-white border border-slate-200 rounded-xl p-4">
+            <div className="text-2xl font-semibold">{dem ? dem[gd] : "…"}</div>
+            <div className="text-xs text-slate-500">Đang tồn — {NHAN_GIAI_DOAN[gd]}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6">
+        <div className="text-sm font-medium text-slate-600 mb-3">Xu hướng tồn theo kỳ</div>
+        {kyList.length === 0 ? (
+          <div className="text-sm text-slate-400">Chưa có kỳ báo cáo nào để vẽ xu hướng.</div>
+        ) : (
+          <ChartCotChong labels={labels} datasets={datasets} />
+        )}
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-4">
+        <div className="text-sm font-medium text-slate-600 mb-3">Cảnh báo hạn điều tra sắp hết / đã quá hạn</div>
+        {canhBao.length === 0 && <div className="text-sm text-slate-400">Không có vụ nào sắp/đã hết hạn điều tra.</div>}
+        {canhBao.length > 0 && (
+          <div className="space-y-1">
+            {canhBao.map(v => (
+              <div key={v.id} className="flex items-center justify-between text-sm py-1.5 border-b border-slate-50 last:border-0">
+                <div><span className="text-xs text-slate-400 mr-2">{hienThiMa(v)}</span>{v.tenVu}</div>
+                <div className={v.conLai < 0 ? "text-red-600 font-medium" : "text-amber-600 font-medium"}>
+                  {v.conLai < 0 ? `Quá hạn ${-v.conLai} ngày` : `Còn ${v.conLai} ngày`}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ====================================================================
+// MODULE: NHẬT KÝ THAO TÁC
+// ====================================================================
+function NhatKyModule() {
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [locLoai, setLocLoai] = useState("tat_ca");
+
+  useEffect(() => {
+    return db.collection("lichsuChuyenGiaiDoan").orderBy("thoiDiemGhi", "desc").limit(300).onSnapshot(
+      snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+      err => { console.error(err); setDangTai(false); }
+    );
+  }, []);
+
+  const filtered = useMemo(() => locLoai === "tat_ca" ? list : list.filter(ls => ls.loaiSuKien === locLoai), [list, locLoai]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">Nhật ký thao tác</h2>
+        <select value={locLoai} onChange={e => setLocLoai(e.target.value)} className={oInput + " w-64"}>
+          <option value="tat_ca">Tất cả loại sự kiện</option>
+          {Object.entries(NHAN_SU_KIEN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </div>
+      {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
+      {!dangTai && filtered.length === 0 && <div className="text-sm text-slate-400">Không có sự kiện nào.</div>}
+      {filtered.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs">
+              <tr>
+                <th className="text-left p-3">Thời điểm</th>
+                <th className="text-left p-3">Mã vụ</th>
+                <th className="text-left p-3">Loại sự kiện</th>
+                <th className="text-left p-3">Người thực hiện</th>
+                <th className="text-left p-3">Ghi chú</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(ls => (
+                <tr key={ls.id} className="border-t border-slate-100">
+                  <td className="p-3 text-xs text-slate-500">{fmtDate(ls.thoiDiemGhi)}</td>
+                  <td className="p-3 text-xs">{ls.maVuAn}</td>
+                  <td className="p-3">{NHAN_SU_KIEN[ls.loaiSuKien] || ls.loaiSuKien}</td>
+                  <td className="p-3 text-xs text-slate-500">{ls.nguoiThucHien}</td>
+                  <td className="p-3 text-xs text-slate-500">{ls.ghiChu}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="text-xs text-slate-400 mt-3">Hiển thị {filtered.length} sự kiện gần nhất (tối đa 300).</div>
+    </div>
+  );
+}
+
+// ====================================================================
+// MODULE: CÁN BỘ
+// ====================================================================
+function CanBoForm({ canBo, onDong, onXong }) {
+  const [hoTen, setHoTen] = useState(canBo?.hoTen || "");
+  const [vaiTro, setVaiTro] = useState(canBo?.vaiTro || "ksv");
+  const [trangThai, setTrangThai] = useState(canBo?.trangThai || "dang_cong_tac");
+  const [loi, setLoi] = useState("");
+  const [dangLuu, setDangLuu] = useState(false);
+
+  const luu = async () => {
+    if (!hoTen.trim()) { setLoi("Cần nhập họ tên."); return; }
+    setDangLuu(true);
+    try {
+      const data = { hoTen: hoTen.trim(), vaiTro, trangThai };
+      if (canBo) await db.collection("canbo").doc(canBo.id).update(data);
+      else await db.collection("canbo").add(data);
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi lưu: " + err.message);
+      setDangLuu(false);
+    }
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe={canBo ? "Sửa cán bộ" : "Thêm cán bộ"}>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Họ tên</label>
+      <input value={hoTen} onChange={e => setHoTen(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Vai trò</label>
+      <select value={vaiTro} onChange={e => setVaiTro(e.target.value)} className={oInput + " mb-3"}>
+        <option value="ksv">Kiểm sát viên</option>
+        <option value="dtv">Điều tra viên</option>
+        <option value="can_bo_thong_ke">Cán bộ thống kê</option>
+        <option value="khac">Khác</option>
+      </select>
+      <label className="text-xs text-slate-500 block mb-1">Trạng thái</label>
+      <select value={trangThai} onChange={e => setTrangThai(e.target.value)} className={oInput + " mb-4"}>
+        <option value="dang_cong_tac">Đang công tác</option>
+        <option value="da_chuyen_don_vi">Đã chuyển đơn vị</option>
+      </select>
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={dangLuu}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {dangLuu ? "Đang lưu..." : "Lưu"}
+        </button>
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
+function CanBoModule() {
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [dangSua, setDangSua] = useState(null);
+
+  useEffect(() => {
+    return db.collection("canbo").orderBy("hoTen", "asc").onSnapshot(
+      snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+      err => { console.error(err); setDangTai(false); }
+    );
+  }, []);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">Cán bộ</h2>
+        <button onClick={() => setDangSua("moi")}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+          + Thêm cán bộ
+        </button>
+      </div>
+      {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
+      {!dangTai && list.length === 0 && <div className="text-sm text-slate-400">Chưa có cán bộ nào.</div>}
+      {list.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs">
+              <tr>
+                <th className="text-left p-3">Họ tên</th>
+                <th className="text-left p-3">Vai trò</th>
+                <th className="text-left p-3">Trạng thái</th>
+                <th className="text-left p-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((cb, i) => (
+                <tr key={cb.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
+                  <td className="p-3 font-medium text-slate-800">{cb.hoTen}</td>
+                  <td className="p-3">{NHAN_VAI_TRO[cb.vaiTro] || cb.vaiTro}</td>
+                  <td className="p-3">
+                    <Badge mau={cb.trangThai === "dang_cong_tac" ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-600"}>
+                      {cb.trangThai === "dang_cong_tac" ? "Đang công tác" : "Đã chuyển đơn vị"}
+                    </Badge>
+                  </td>
+                  <td className="p-3 text-right">
+                    <button onClick={() => setDangSua(cb)} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Sửa</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {dangSua && (
+        <CanBoForm canBo={dangSua === "moi" ? null : dangSua} onDong={() => setDangSua(null)} onXong={() => setDangSua(null)} />
+      )}
+    </div>
+  );
+}
+
+// ====================================================================
+// KHUNG CHÍNH (SIDEBAR + NỘI DUNG)
+// ====================================================================
+const MODULES = [
+  { id: "import", label: "Import Excel", ready: true },
+  { id: "list", label: "Danh sách vụ án", ready: true },
+  { id: "ton", label: "Án tồn theo giai đoạn", ready: true },
+  { id: "ky", label: "Kỳ báo cáo", ready: true },
+  { id: "dashboard", label: "Dashboard", ready: true },
+  { id: "log", label: "Nhật ký thao tác", ready: true },
+  { id: "canbo", label: "Cán bộ", ready: true },
+];
+
+function AppShell({ user }) {
+  const [tab, setTab] = useState("import");
+
+  return (
+    <div className="min-h-screen flex">
+      <aside className="w-60 bg-slate-900 text-slate-300 flex flex-col shrink-0">
+        <div className="px-4 py-5 border-b border-slate-800">
+          <div className="text-white font-semibold">QLVA</div>
+          <div className="text-xs text-slate-500">Phòng 2 — VKSND Hà Nội</div>
+        </div>
+        <nav className="flex-1 py-2">
+          {MODULES.map(m => (
+            <button key={m.id} onClick={() => setTab(m.id)}
+              className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between
+                ${tab === m.id ? "bg-indigo-600 text-white" : "hover:bg-slate-800"}`}>
+              <span>{m.label}</span>
+              {!m.ready && <span className="text-[10px] text-slate-500">sắp có</span>}
+            </button>
+          ))}
+        </nav>
+        <div className="px-4 py-3 border-t border-slate-800 text-xs">
+          <div className="text-slate-400 mb-2 truncate">{user.email}</div>
+          <button onClick={() => auth.signOut()} className="text-slate-500 hover:text-slate-300">Đăng xuất</button>
+        </div>
+      </aside>
+      <main className="flex-1 p-8 overflow-auto">
+        {tab === "import" && <ImportExcelModule />}
+        {tab === "list" && <DanhSachVuAnModule currentUser={user} />}
+        {tab === "ton" && <AnTonModule />}
+        {tab === "ky" && <KyBaoCaoModule />}
+        {tab === "dashboard" && <DashboardModule />}
+        {tab === "log" && <NhatKyModule />}
+        {tab === "canbo" && <CanBoModule />}
+      </main>
+    </div>
+  );
+}
+
+function App() {
+  const [user, setUser] = useState(undefined); // undefined = đang kiểm tra, null = chưa đăng nhập
+
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged(u => setUser(u));
+    return unsub;
+  }, []);
+
+  if (user === undefined) {
+    return <div className="min-h-screen flex items-center justify-center text-slate-400 text-sm">Đang tải...</div>;
+  }
+  if (user === null) return <LoginScreen />;
+  return <AppShell user={user} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
