@@ -2315,11 +2315,151 @@ function ChotKyForm({ ky, onDong, onXong }) {
   );
 }
 
+// Tính báo cáo chi tiết 1 kỳ theo từng giai đoạn — luôn tính từ log (lichsuChuyenGiaiDoan),
+// không suy ra từ trạng thái hiện tại (đúng nguyên tắc "log là nguồn sự thật duy nhất").
+// hoan_thanh không lưu tuGiaiDoan (chỉ hinhThucHoanThanh) nên dùng coQuanThuLy hiện tại của vụ
+// làm proxy giai đoạn đã hoàn thành — hợp lệ vì hệ thống không đổi coQuanThuLy sau khi hoàn thành.
+async function tinhBaoCaoKy(ky, kyTruoc) {
+  const baoCao = {};
+  for (const gd of THU_TU_GIAI_DOAN) {
+    const tonDauKy = (kyTruoc && kyTruoc.tonCuoiKy) ? (kyTruoc.tonCuoiKy[gd] ?? 0) : 0;
+
+    let soMoi;
+    if (gd === "dieu_tra") {
+      const logSnap = await db.collection("lichsuChuyenGiaiDoan")
+        .where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "khoi_to_vu").get();
+      const nguonDem = { an_khoi_to_moi: 0, tin_bao_khoi_to_len: 0, an_noi_khac_chuyen_den: 0, phuc_hoi_dieu_tra: 0 };
+      for (const d of logSnap.docs) {
+        const vuDoc = await db.collection("vuan").doc(d.data().maVuAn).get();
+        const nguon = vuDoc.data()?.nguon;
+        if (nguon in nguonDem) nguonDem[nguon]++;
+      }
+      soMoi = { tong: logSnap.size, ...nguonDem };
+    } else {
+      const [chuyenDen, traVe] = await Promise.all([
+        db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "chuyen_giai_doan").where("denGiaiDoan", "==", gd).get(),
+        db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "tra_ho_so").where("denGiaiDoan", "==", gd).get(),
+      ]);
+      soMoi = { tong: chuyenDen.size + traVe.size, chuyenDenTu: chuyenDen.size, traVeTu: traVe.size };
+    }
+
+    const [chuyenDi, traDi, hoanThanhSnap] = await Promise.all([
+      db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "chuyen_giai_doan").where("tuGiaiDoan", "==", gd).get(),
+      db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "tra_ho_so").where("tuGiaiDoan", "==", gd).get(),
+      db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "hoan_thanh").get(),
+    ]);
+    const hoanThanhTheoGD = { da_xet_xu: 0, chuyen_di: 0, tam_dinh_chi: 0, dinh_chi: 0, an_huy: 0 };
+    for (const d of hoanThanhSnap.docs) {
+      const l = d.data();
+      const vuDoc = await db.collection("vuan").doc(l.maVuAn).get();
+      if (vuDoc.data()?.coQuanThuLy === gd) hoanThanhTheoGD[l.hinhThucHoanThanh] = (hoanThanhTheoGD[l.hinhThucHoanThanh] || 0) + 1;
+    }
+
+    let tonCuoiKy;
+    if (ky.trangThai === "da_chot" && ky.tonCuoiKy) {
+      tonCuoiKy = ky.tonCuoiKy[gd] ?? 0;
+    } else {
+      const hienTaiSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
+      tonCuoiKy = hienTaiSnap.size;
+    }
+
+    const vuTonSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
+    let soBiCanTon = 0;
+    for (const d of vuTonSnap.docs) {
+      const bcSnap = await db.collection("bican").where("maVuAn", "==", d.id).get();
+      soBiCanTon += bcSnap.size;
+    }
+
+    baoCao[gd] = { tonDauKy, soMoi, chuyenDi: chuyenDi.size, traDi: traDi.size, hoanThanhTheoGD, tonCuoiKy, soVuTon: vuTonSnap.size, soBiCanTon };
+  }
+  return baoCao;
+}
+
+function HangBaoCaoTieuDe({ nhan }) {
+  return <tr className="bg-slate-50"><td colSpan={4} className="p-2 text-xs font-semibold text-slate-500">{nhan}</td></tr>;
+}
+function HangBaoCao({ nhan, data, lay, damNet }) {
+  return (
+    <tr className={`border-t border-slate-100 ${damNet ? "font-semibold bg-indigo-50/40" : ""}`}>
+      <td className="p-2 text-slate-600">{nhan}</td>
+      {THU_TU_GIAI_DOAN.map(gd => <td key={gd} className="p-2 text-right">{lay(data[gd]) ?? 0}</td>)}
+    </tr>
+  );
+}
+
+function KyChiTietModal({ ky, kyTruoc, onDong }) {
+  const [dangTai, setDangTai] = useState(true);
+  const [baoCao, setBaoCao] = useState(null);
+  const [loi, setLoi] = useState("");
+
+  useEffect(() => {
+    let huy = false;
+    tinhBaoCaoKy(ky, kyTruoc)
+      .then(bc => { if (!huy) { setBaoCao(bc); setDangTai(false); } })
+      .catch(err => { console.error(err); if (!huy) { setLoi("Lỗi khi tính báo cáo: " + err.message); setDangTai(false); } });
+    return () => { huy = true; };
+  }, [ky.id]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-40 overflow-auto py-8">
+      <div className="bg-white rounded-xl shadow-lg w-[900px] max-w-[95vw] p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Báo cáo kỳ "{ky.tenKy}"</h3>
+          <button onClick={onDong} className="text-slate-400 hover:text-slate-600 text-sm">Đóng ✕</button>
+        </div>
+        {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+        {dangTai && <div className="text-sm text-slate-400">Đang tính toán số liệu (có thể mất vài giây)...</div>}
+        {baoCao && (
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-slate-600">
+                <tr>
+                  <th className="text-left p-2"></th>
+                  {THU_TU_GIAI_DOAN.map(gd => <th key={gd} className="text-right p-2">{NHAN_GIAI_DOAN[gd]}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                <HangBaoCao nhan="Tồn đầu kỳ" data={baoCao} lay={b => b.tonDauKy} damNet />
+                <HangBaoCaoTieuDe nhan="Số mới" />
+                <HangBaoCao nhan="— Án khởi tố mới" data={baoCao} lay={b => b.soMoi.an_khoi_to_moi} />
+                <HangBaoCao nhan="— Tin báo khởi tố lên" data={baoCao} lay={b => b.soMoi.tin_bao_khoi_to_len} />
+                <HangBaoCao nhan="— Án nơi khác chuyển đến" data={baoCao} lay={b => b.soMoi.an_noi_khac_chuyen_den} />
+                <HangBaoCao nhan="— Phục hồi điều tra" data={baoCao} lay={b => b.soMoi.phuc_hoi_dieu_tra} />
+                <HangBaoCao nhan="— Chuyển đến từ giai đoạn trước" data={baoCao} lay={b => b.soMoi.chuyenDenTu} />
+                <HangBaoCao nhan="— Trả về từ giai đoạn sau" data={baoCao} lay={b => b.soMoi.traVeTu} />
+                <HangBaoCao nhan="Tổng số mới" data={baoCao} lay={b => b.soMoi.tong} damNet />
+                <HangBaoCaoTieuDe nhan="Đã giải quyết / ra khỏi giai đoạn" />
+                <HangBaoCao nhan="— Chuyển giai đoạn (kết thúc giai đoạn này)" data={baoCao} lay={b => b.chuyenDi} />
+                <HangBaoCao nhan="— Trả hồ sơ (ra khỏi giai đoạn này)" data={baoCao} lay={b => b.traDi} />
+                <HangBaoCao nhan="— Đã xét xử" data={baoCao} lay={b => b.hoanThanhTheoGD.da_xet_xu} />
+                <HangBaoCao nhan="— Chuyển đi" data={baoCao} lay={b => b.hoanThanhTheoGD.chuyen_di} />
+                <HangBaoCao nhan="— Tạm đình chỉ" data={baoCao} lay={b => b.hoanThanhTheoGD.tam_dinh_chi} />
+                <HangBaoCao nhan="— Đình chỉ" data={baoCao} lay={b => b.hoanThanhTheoGD.dinh_chi} />
+                <HangBaoCao nhan="— Án huỷ" data={baoCao} lay={b => b.hoanThanhTheoGD.an_huy} />
+                <HangBaoCao nhan="Tồn cuối kỳ" data={baoCao} lay={b => b.tonCuoiKy} damNet />
+                <HangBaoCaoTieuDe nhan="Số tồn hiện tại (tại thời điểm xem)" />
+                <HangBaoCao nhan="— Số vụ" data={baoCao} lay={b => b.soVuTon} />
+                <HangBaoCao nhan="— Số bị can" data={baoCao} lay={b => b.soBiCanTon} />
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!dangTai && ky.trangThai === "dang_mo" && (
+          <div className="text-xs text-slate-400 mt-3">
+            Kỳ đang mở — "Tồn cuối kỳ" đang lấy số tồn hiện tại, sẽ chốt số chính thức khi bấm "Chốt kỳ".
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function KyBaoCaoModule() {
   const [list, setList] = useState([]);
   const [dangTai, setDangTai] = useState(true);
   const [hienMoKy, setHienMoKy] = useState(false);
   const [kyDangChot, setKyDangChot] = useState(null);
+  const [kyDangXem, setKyDangXem] = useState(null);
 
   useEffect(() => {
     return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
@@ -2354,8 +2494,9 @@ function KyBaoCaoModule() {
               </tr>
             </thead>
             <tbody>
-              {list.map(ky => (
-                <tr key={ky.id} className="border-t border-slate-100">
+              {list.map((ky, i) => (
+                <tr key={ky.id} onClick={() => setKyDangXem(ky)}
+                    className={`border-t border-slate-100 cursor-pointer hover:bg-indigo-50/50 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
                   <td className="p-3 font-medium">{ky.tenKy}</td>
                   <td className="p-3">{fmtDate(ky.ngayBatDau)}</td>
                   <td className="p-3">{fmtDate(ky.ngayChot)}</td>
@@ -2369,7 +2510,8 @@ function KyBaoCaoModule() {
                   </td>
                   <td className="p-3">
                     {ky.trangThai === "dang_mo" && (
-                      <button onClick={() => setKyDangChot(ky)} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Chốt kỳ</button>
+                      <button onClick={(e) => { e.stopPropagation(); setKyDangChot(ky); }}
+                              className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Chốt kỳ</button>
                     )}
                   </td>
                 </tr>
@@ -2378,9 +2520,17 @@ function KyBaoCaoModule() {
           </table>
         </div>
       )}
+      {list.length > 0 && <div className="text-xs text-slate-400 mt-2">Bấm vào 1 dòng để xem báo cáo chi tiết theo giai đoạn.</div>}
 
       {hienMoKy && <MoKyMoiForm onDong={() => setHienMoKy(false)} onXong={() => setHienMoKy(false)} />}
       {kyDangChot && <ChotKyForm ky={kyDangChot} onDong={() => setKyDangChot(null)} onXong={() => setKyDangChot(null)} />}
+      {kyDangXem && (
+        <KyChiTietModal
+          ky={kyDangXem}
+          kyTruoc={list[list.findIndex(k => k.id === kyDangXem.id) + 1] || null}
+          onDong={() => setKyDangXem(null)}
+        />
+      )}
     </div>
   );
 }

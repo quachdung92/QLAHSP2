@@ -81,7 +81,16 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       thủ công, Nhập vào vụ khác, Phục hồi (từ tạm đình chỉ).
 - [x] Module Án tồn theo giai đoạn (3 tab lọc, cảnh báo màu đỏ/vàng theo hạn điều tra).
 - [x] Module Kỳ báo cáo (mở kỳ mới có chặn trùng kỳ đang mở, chốt kỳ tự snapshot tồn cuối kỳ
-      theo từng cơ quan vào `tonCuoiKy`).
+      theo từng cơ quan vào `tonCuoiKy`). Bấm vào 1 dòng kỳ mở ra **báo cáo chi tiết theo giai
+      đoạn** (`KyChiTietModal`/`tinhBaoCaoKy`): tồn đầu kỳ (lấy từ `tonCuoiKy` của kỳ liền
+      trước) + số mới (Điều tra: theo `nguon` của vụ — án mới/tin báo lên/chuyển đến/phục hồi;
+      Truy tố & Xét xử: theo `chuyen_giai_doan`/`tra_ho_so` có `denGiaiDoan` trùng) + đã giải
+      quyết (chuyển giai đoạn ra, trả hồ sơ ra, và `hoan_thanh` theo từng `hinhThucHoanThanh`)
+      + tồn cuối kỳ + số vụ/số bị can đang tồn hiện tại — luôn tính trực tiếp từ
+      `lichsuChuyenGiaiDoan` theo đúng nguyên tắc "log là nguồn sự thật duy nhất", không suy ra
+      từ trạng thái hiện tại. Lưu ý: sự kiện `hoan_thanh` không lưu `tuGiaiDoan`, nên hàm dùng
+      `coQuanThuLy` hiện tại của vụ làm proxy xác định đã hoàn thành từ giai đoạn nào — an toàn
+      vì hệ thống không đổi `coQuanThuLy` sau khi vụ đã hoàn thành.
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
