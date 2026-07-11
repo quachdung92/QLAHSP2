@@ -55,11 +55,20 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 - [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (nay 7 module, xem `MODULES`) +
       **Import Excel** (đọc DSAT/DSBCT, xem trước, ghi Firestore bằng batch) + công cụ dựng
       lại lịch sử cho dữ liệu import cũ (xem mục riêng bên dưới).
-- [x] Module Danh sách & chi tiết vụ án: 2 cột (danh sách dạng bảng lọc theo giai đoạn/KSV,
-      đủ cột mã vụ/tên vụ/giai đoạn/trạng thái/hạn ĐT + menu hành động nhanh `⋯` mỗi dòng
-      (Chuyển giai đoạn/Giải quyết) + chi tiết dạng bảng key-value kiểu Excel, có
-      gridline/zebra-row/badge màu theo giai đoạn-trạng thái — xem
-      `MAU_GIAI_DOAN`/`MAU_TRANG_THAI`/`Badge`), form **Thêm vụ án** (vụ + nhiều bị can trong 1
+- [x] Module Danh sách & chi tiết vụ án: 2 cột — danh sách là panel CHÍNH (`flex-1`, chiếm phần
+      lớn chiều rộng), chi tiết là panel PHỤ cố định `w-[420px]` bên phải (đảo ngược so với thiết
+      kế ban đầu theo yêu cầu người dùng). Danh sách có: ô tìm kiếm khớp cả mã vụ/tên vụ/điều
+      luật/tên bị can, tab lọc giai đoạn/KSV, cột **Bị can** (mặc định chỉ hiện bị can đầu +
+      link "+N bị can khác" để mở rộng, state `moRongBiCan`), cột **Kỳ mới**/**Kỳ giải quyết**
+      (tính qua `tinhKyTheoVuAn` — kỳ mới lấy từ sự kiện `khoi_to_vu`, kỳ giải quyết lấy từ
+      `hoan_thanh` GẦN NHẤT vì vụ có thể phục hồi rồi giải quyết lại; vụ tách ra không có "kỳ
+      mới" vì không có sự kiện `khoi_to_vu` riêng — đúng, không phải vụ mới thật), 2 nút thao
+      tác **Chuyển giai đoạn**/**Hoàn thành** hiện trực tiếp trên mỗi dòng (không phải menu `⋯`
+      ẩn như trước). Đầu trang có `ThongKeKyHienTai` — thẻ nhỏ đếm nhanh số vụ mới/đã giải quyết
+      trong kỳ đang mở, để tiện theo dõi mà không cần mở riêng module Kỳ báo cáo. Panel chi tiết
+      dùng bảng key-value **1 cột/hàng** (không phải 2 cột/hàng như link thiết kế cũ) để không bị
+      tràn chữ với bề rộng 420px, có gridline/zebra-row/badge màu theo giai đoạn-trạng thái — xem
+      `MAU_GIAI_DOAN`/`MAU_TRANG_THAI`/`Badge`. Form **Thêm vụ án** (vụ + nhiều bị can trong 1
       form, tội danh nhiều dòng Tội chính/Bổ sung), sinh `maNoiSinh` tự động qua transaction,
       tự tính `dieuLuat`/`loaiKhoiTo`. Nút **Sửa thông tin vụ án** và **Sửa** trên từng dòng bị
       can (sửa lỗi nhập liệu thường — không ghi log, không hỏi kỳ, khác với các hành động
@@ -78,19 +87,59 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       dùng chung + hook `useHanhDongVuAn`): Chuyển giai đoạn, Trả hồ sơ, Gia hạn điều tra,
       Hoàn thành vụ án (gộp cả 5 hình thức da_xet_xu/chuyen_di/tam_dinh_chi/dinh_chi/an_huy —
       tự động tách vụ khi TĐC/ĐC chỉ áp dụng 1 phần bị can, xem hàm `tachVuAn`), Tách vụ án
-      thủ công, Nhập vào vụ khác, Phục hồi (từ tạm đình chỉ).
+      thủ công, **Nhập vào vụ khác** (ghi sự kiện `nhap_vu` trên vụ nguồn NHƯ CŨ, cộng thêm 1 sự
+      kiện `duoc_nhap_vu` mới trên vụ ĐÍCH — vụ nguồn tuy không xoá (`trangThai: "da_nhap"`) nhưng
+      trước đây lịch sử vụ đích không có dấu vết gì về việc đã nhận nhập; giờ lưu sẵn mã
+      vụ/tên vụ/KSV của vụ nguồn dạng chuỗi trong `ghiChu` của sự kiện `duoc_nhap_vu` để tra soát
+      nhanh ngay trên lịch sử vụ đích), Phục hồi (từ tạm đình chỉ).
 - [x] Module Án tồn theo giai đoạn (3 tab lọc, cảnh báo màu đỏ/vàng theo hạn điều tra).
+- [x] Module Án đã giải quyết (`AnDaGiaiQuyetModule`) — 5 tab theo `trangThai` cụ thể (Đã xét
+      xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ, danh sách `TAB_DA_GIAI_QUYET`), cùng dạng bảng
+      với Án tồn theo giai đoạn nhưng lấy `ngày quyết định` từ sự kiện `hoan_thanh` trong log
+      (không phải `ngayCapNhat` của `vuan` — field đó có thể bị đổi bởi "Sửa thông tin" sau này
+      nên không đáng tin làm ngày quyết định thật).
 - [x] Module Kỳ báo cáo (mở kỳ mới có chặn trùng kỳ đang mở, chốt kỳ tự snapshot tồn cuối kỳ
       theo từng cơ quan vào `tonCuoiKy`). Bấm vào 1 dòng kỳ mở ra **báo cáo chi tiết theo giai
       đoạn** (`KyChiTietModal`/`tinhBaoCaoKy`): tồn đầu kỳ (lấy từ `tonCuoiKy` của kỳ liền
-      trước) + số mới (Điều tra: theo `nguon` của vụ — án mới/tin báo lên/chuyển đến/phục hồi;
-      Truy tố & Xét xử: theo `chuyen_giai_doan`/`tra_ho_so` có `denGiaiDoan` trùng) + đã giải
-      quyết (chuyển giai đoạn ra, trả hồ sơ ra, và `hoan_thanh` theo từng `hinhThucHoanThanh`)
-      + tồn cuối kỳ + số vụ/số bị can đang tồn hiện tại — luôn tính trực tiếp từ
-      `lichsuChuyenGiaiDoan` theo đúng nguyên tắc "log là nguồn sự thật duy nhất", không suy ra
-      từ trạng thái hiện tại. Lưu ý: sự kiện `hoan_thanh` không lưu `tuGiaiDoan`, nên hàm dùng
-      `coQuanThuLy` hiện tại của vụ làm proxy xác định đã hoàn thành từ giai đoạn nào — an toàn
-      vì hệ thống không đổi `coQuanThuLy` sau khi vụ đã hoàn thành.
+      trước) + số mới + đã giải quyết + tồn cuối kỳ + số vụ/số bị can đang tồn hiện tại — luôn
+      tính trực tiếp từ `lichsuChuyenGiaiDoan` theo đúng nguyên tắc "log là nguồn sự thật duy
+      nhất", không suy ra từ trạng thái hiện tại. Lưu ý: sự kiện `hoan_thanh` không lưu
+      `tuGiaiDoan`, nên hàm dùng `coQuanThuLy` hiện tại của vụ làm proxy xác định đã hoàn thành
+      từ giai đoạn nào — an toàn vì hệ thống không đổi `coQuanThuLy` sau khi vụ đã hoàn thành.
+      **Công thức "số mới" đã sửa lại (2026-07-11), áp dụng THỐNG NHẤT cho cả 3 giai đoạn** —
+      trước đó Điều tra được code riêng (gán mọi sự kiện `khoi_to_vu` vào Điều tra bất kể vụ
+      khởi tạo trực tiếp ở giai đoạn nào, và thiếu hẳn "trả về từ giai đoạn sau"), khiến
+      `tồn đầu kỳ + mới − giải quyết ≠ tồn cuối kỳ`. Công thức đúng: mới ở 1 giai đoạn = khởi tố
+      trực tiếp vào đúng giai đoạn đó (`khoi_to_vu` có `denGiaiDoan` trùng — vụ nhập tay/import
+      có thể vào thẳng Truy tố/Xét xử) + **vụ tách ra** (`tach_vu` có `denGiaiDoan` trùng — 1
+      bản ghi `vuan` mới xuất hiện ở giai đoạn vụ gốc đang ở lúc tách, PHẢI tính "vào" thì mới
+      khớp với việc nó bị tính "ra" nếu giải quyết luôn trong kỳ) + chuyển đến từ giai đoạn trước
+      (`chuyen_giai_doan`, không áp dụng cho Điều tra) + trả về từ giai đoạn sau (`tra_ho_so`, CÓ
+      áp dụng cho Điều tra — viện trả hồ sơ điều tra bổ sung). Cả `khoi_to_vu` và `tach_vu` đều
+      ghi `denGiaiDoan` ngay lúc tạo (`ThemVuAnForm`, `dungLaiLichSu`, `tachVuAn`'s callers) — dữ
+      liệu cũ tạo trước ngày sửa không có field này (`null`), đã chạy script backfill 1 lần tính
+      lại từ lịch sử chuyển giai đoạn thật của từng vụ (không backfill lại nếu import dữ liệu cũ
+      lần nữa thì nhớ set `denGiaiDoan` ngay từ đầu, đừng lặp lại lỗi này). Ngoài `hoan_thanh`,
+      vụ bị **nhập vào vụ khác** (`nhap_vu`, `trangThai` → `da_nhap`) cũng RA KHỎI "tồn" và phải
+      tính vào "Đã giải quyết / ra khỏi giai đoạn" (`soNhapVu`, dòng "— Nhập vào vụ khác") —
+      dùng cùng kiểu proxy `coQuanThuLy` hiện tại như `hoan_thanh`, cùng lý do (không đổi sau khi
+      nhập). Thiếu khoản này thì công thức lệch y hệt kiểu lỗi tách vụ đã sửa ở trên.
+- [x] **Xuất Excel báo cáo tháng** (nút "Xuất Excel báo cáo tháng" trong `KyChiTietModal`, hàm
+      `xuatBaoCaoThangExcel`, **dùng ExcelJS** qua CDN riêng — không dùng `XLSX`/SheetJS như phần
+      xuất Excel khác trong app, vì bản SheetJS CDN đang dùng ở đây là bản miễn phí KHÔNG ghi
+      được style dù có set `cell.s`/`cellStyles:true` — đã kiểm chứng bằng cách giải nén file
+      `.xlsx` xuất ra xem `cellXfs` luôn rỗng. ExcelJS ghi style thật, dùng cho **wrap text mặc
+      định trên mọi ô** của báo cáo tháng cho dễ đọc, xem hàm `themSheetDanhSach`) — 12 sheet:
+      Tổng hợp báo cáo (dump đúng bảng trên màn hình) + DS án mới + DS toà trả DTBS + DS viện trả
+      DTBS + DS đã xét xử/chuyển đi/tạm đình chỉ/đình chỉ/án huỷ mới (mỗi hình thức 1 sheet, gộp
+      cả 3 giai đoạn) + DS nhập vào vụ khác + **DS án tồn TÁCH RIÊNG 1 sheet/giai đoạn** (không
+      gộp chung 1 sheet như bản đầu tiên — theo yêu cầu người dùng, dễ lọc/in riêng từng giai
+      đoạn hơn). Toàn bộ danh sách dựng từ CHÍNH object `baoCao` mà `tinhBaoCaoKy` đã trả về
+      (field `ds` trong mỗi `baoCao[gd]`, thu thập song song lúc tính số liệu qua
+      `vuAnTuLogDocs`) — không tính lại riêng — nên số dòng mỗi sheet danh sách LUÔN khớp đúng số
+      trên sheet Tổng hợp và trên báo cáo đang xem trên màn hình. Nếu sửa công thức
+      `tinhBaoCaoKy` sau này, nhớ cập nhật đồng bộ cả phần `ds` tương ứng, đừng để 2 bên lệch
+      nhau.
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
@@ -98,8 +147,12 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 - [x] Xuất Excel (nút trong module Danh sách, SheetJS dựng lại DSAT/DSBCT/TỔNG HỢP từ dữ liệu
       hiện tại) — **cần đối chiếu lại định dạng cột với file gốc**, đây là bản dựng hợp lý dựa
       theo mapping cột lúc import, chưa có file gốc để so khớp pixel-perfect.
-- [x] Sinh mã QR + in A4 (nút "In mã QR" ở panel chi tiết, thư viện `qrcode` qua CDN, in qua
-      CSS `@media print` ẩn hết phần còn lại của trang — xem `#qr-in-a4`).
+- [x] Sinh mã QR + in A4 (nút "In mã QR" ở panel chi tiết, thư viện `qrcodejs` qua CDN — xem ghi
+      chú hạ tầng bên dưới về vụ đổi thư viện). In qua `ReactDOM.createPortal` vào `#qr-print-root`
+      (sibling của `#root`, khai báo sẵn trong `<body>`) — khi in, CSS `@media print` chỉ ẩn
+      `#root` (`display:none`), không ẩn `#qr-print-root`, nên khối QR không bị nằm ngoài luồng
+      của phần app đã ẩn. Nếu 2 vụ có `maNganhCap`, hiện thêm 1 mã QR mã ngành cấp bên trái mã QR
+      mã vụ (component `KhoiQR` dùng chung).
 
 ### Ghi chú hạ tầng quan trọng (đã xử lý, đừng lặp lại)
 - Firestore **database** và **Security Rules** phải được khởi tạo thủ công qua Firebase
@@ -112,15 +165,32 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 - Query `lichsuChuyenGiaiDoan` lọc theo `maVuAn` + sắp xếp `thoiDiemGhi` cần composite index
   (đã tạo). Nếu thêm query dạng where+orderBy khác field mới sau này, khả năng cũng cần index
   mới — kiểm tra console lỗi Firestore, nó luôn kèm link tạo index trực tiếp.
+- CDN QR: package npm `qrcode` (dùng cho `InQRModal`) **không có bản build/UMD sẵn** trong các
+  bản publish gần đây — đường dẫn cũ `qrcode@1.5.3/build/qrcode.min.js` trả về 404 (khiến
+  `QRCode is not defined`, mã QR không hiện). Đã đổi sang thư viện `qrcodejs`
+  (`cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js`) — API khác hẳn: dùng
+  `new QRCode(divElement, {text, width, height})` vẽ vào 1 `<div>` chứa canvas tự sinh, không
+  phải `QRCode.toCanvas(canvas, text, cb)`. Nếu sau này đổi thư viện QR khác, nhớ kiểm tra CDN
+  trả về đúng file JS (không phải 404/HTML) trước khi tin tưởng.
+- In A4 (`InQRModal`) từng bị lỗi in ra nhiều trang giống nhau: CSS cũ dùng
+  `body * { visibility: hidden }` để ẩn phần app khi in, nhưng `visibility:hidden` vẫn giữ
+  nguyên chỗ trong layout — khi danh sách vụ án dài (nhiều dữ liệu), trình duyệt tính ra nhiều
+  trang in dựa theo chiều cao ẩn đó, và khối QR (`position:fixed`) bị lặp lại trên mỗi trang.
+  Đã sửa bằng `#root { display: none }` (bỏ hẳn khỏi layout) + render khung QR qua
+  `ReactDOM.createPortal` vào `#qr-print-root` nằm ngoài `#root` — xem mục Tiến độ đã code ở
+  trên. Nếu thêm màn hình in mới sau này, dùng lại đúng pattern này (portal ra ngoài `#root`),
+  đừng quay lại kiểu `visibility:hidden`.
 
 ## Chạy & phát triển
 
 Không có bước build, không có test/lint tự động, không có `package.json` — đây là chủ đích
 (xem "Yêu cầu bắt buộc" ở trên), không phải thiếu sót cần bổ sung tooling. Cách kiểm tra thay
 đổi: mở trực tiếp `qlva.html` bằng trình duyệt (double-click hoặc `file://`), đăng nhập bằng
-tài khoản Firebase Auth thật của project `qlahsp2`. Babel standalone compile JSX ngay trong
-trình duyệt lúc tải trang, nên lỗi cú pháp JSX sẽ hiện ở console (F12), không có bước biên dịch
-riêng để bắt lỗi trước.
+tài khoản Firebase Auth thật của project `qlahsp2`. Nếu `file://` gặp lỗi CORS/console im lặng
+không tải được, phục vụ qua server tĩnh cục bộ đơn giản (VD `python -m http.server 8765` rồi mở
+`http://localhost:8765/qlva.html`) — không cần build, chỉ là HTTP server thô. Babel standalone
+compile JSX ngay trong trình duyệt lúc tải trang, nên lỗi cú pháp JSX sẽ hiện ở console (F12),
+không có bước biên dịch riêng để bắt lỗi trước.
 
 ## Kiến trúc code trong `qlva.html`
 
