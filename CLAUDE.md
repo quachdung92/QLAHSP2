@@ -104,6 +104,11 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       mới** — chỉ hiện khi vụ có sự kiện `tra_ho_so` với `denGiaiDoan: "dieu_tra"` (viện trả hồ
       sơ điều tra bổ sung), bấm vào dòng đó cũng mở `SuaKyModal` sửa được. Không đụng tới "Kỳ mới"
       gốc (`khoi_to_vu`) — 2 khái niệm tách biệt, không gộp chung 1 ô.
+      **Ẩn/hiện cột (2026-07-11)** — danh sách đã lên 13 cột, nút **"Cột hiển thị"** (component
+      `ChonCotHienThi`, popover checkbox, đóng khi click ra ngoài qua 1 backdrop `fixed inset-0`)
+      cho ẩn bớt các cột KHÔNG PHẢI định danh chính (Mã vụ/Tên vụ/thao tác luôn hiện, không cho
+      ẩn — xem mảng `DS_COT_TUY_CHON`). Lựa chọn lưu vào `localStorage` (khoá `qlva_danhsach_cotAn`)
+      nên nhớ giữa các lần mở lại trang, không cần đăng nhập lại mỗi lần chọn.
       Panel chi tiết dùng bảng key-value **1 cột/hàng** (không phải 2 cột/hàng như thiết kế cũ) để
       không bị tràn chữ với bề rộng 420px, có gridline/zebra-row/badge màu theo giai đoạn-trạng
       thái — xem `MAU_GIAI_DOAN`/`MAU_TRANG_THAI`/`Badge`. Form **Thêm vụ án** (vụ + nhiều bị can
@@ -197,6 +202,39 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       tính vào "Đã giải quyết / ra khỏi giai đoạn" (`soNhapVu`, dòng "— Nhập vào vụ khác") —
       dùng cùng kiểu proxy `coQuanThuLy` hiện tại như `hoan_thanh`, cùng lý do (không đổi sau khi
       nhập). Thiếu khoản này thì công thức lệch y hệt kiểu lỗi tách vụ đã sửa ở trên.
+      **Lưu sẵn báo cáo kỳ đã chốt (2026-07-11)** — trước đây MỖI LẦN bấm xem 1 kỳ (kể cả kỳ đã
+      chốt từ lâu, số liệu không đổi) đều quét lại toàn bộ `lichsuChuyenGiaiDoan` (hàng chục
+      query + đọc từng doc `vuan` cho mỗi dòng danh sách), rất chậm và tốn Firestore read không
+      cần thiết — người dùng yêu cầu lưu lại kết quả. Hàm tính đầy đủ đổi tên thành
+      `tinhBaoCaoKyTuLog` (logic không đổi); `tinhBaoCaoKy` (hàm nơi hiển thị gọi) giờ là wrapper:
+      kỳ **đã chốt VÀ có `baoCaoLuu`** thì dùng lại thẳng `kybaocao.baoCaoLuu` (ghi lúc chốt qua
+      `chotKyBaoCao`), chỉ tính LIVE lại phần "Số tồn hiện tại" (`soVuTon`/`soBiCanTon`/`dsTon`
+      qua `tinhTonHienTaiTheoGD`) vì phần đó theo đúng thiết kế cũ luôn phải là số tại-thời-điểm-
+      xem, không thuộc riêng về 1 kỳ nào. `tachBaoCaoLuu` tách phần "đông cứng" ra khỏi phần
+      live trước khi lưu. Kỳ đang mở hoặc kỳ đã chốt trước khi có tính năng này (chưa có
+      `baoCaoLuu`) vẫn tự tính đầy đủ như cũ, không bắt buộc backfill. Nút **"Tính lại số liệu"**
+      (chỉ hiện với kỳ đã chốt, gọi `tinhLaiBaoCaoLuu`) cho phép tính lại và ghi đè `baoCaoLuu`
+      khi cần — dùng khi có **"Sửa kỳ"** (xem Nhật ký thao tác) tác động tới sự kiện thuộc kỳ đã
+      chốt đó, xem cảnh báo ở `SuaKyModal` bên dưới. **KHÔNG** đụng tới `tonCuoiKy` khi tính lại
+      (số "Còn" chốt là trạng thái `vuan` thật tại thời điểm chốt, độc lập với việc gán
+      `kyThongKe` của từng sự kiện log nên "Sửa kỳ" không làm sai số này — chỉ làm sai các dòng
+      "số mới"/"đã giải quyết" đếm theo `kyThongKe`).
+      **Báo cáo tổng hợp nhiều kỳ (2026-07-11)** — tích chọn (checkbox) nhiều dòng kỳ rồi bấm
+      "Xem báo cáo tổng hợp" (VD tích đủ 12 kỳ tháng ra báo cáo năm, đúng yêu cầu người dùng)
+      → `TongHopNhieuKyModal`/`tinhBaoCaoTongHopNhieuKy`: gọi lại `tinhBaoCaoKy` cho TỪNG kỳ được
+      chọn (nên kỳ đã chốt vẫn dùng cache, tổng hợp cả năm vẫn nhanh) rồi SUM các dòng số mới/đã
+      giải quyết, ghép nối các mảng danh sách chi tiết; "Tồn đầu kỳ" lấy từ kỳ SỚM NHẤT được
+      chọn, "Tồn cuối kỳ" lấy từ kỳ MUỘN NHẤT — chỉ đúng nghĩa nếu các kỳ chọn liên tiếp nhau,
+      không ép buộc bằng code (không chặn chọn kỳ rời rạc), chỉ ghi chú nhắc trên UI. Bảng hiển
+      thị dùng chung component `BangBaoCaoChiTiet` (đã tách ra từ `KyChiTietModal` để dùng lại ở
+      đây — 2 nơi cùng nhận đúng 1 dạng dữ liệu `baoCao[gd]`), nút xuất Excel cũng dùng lại
+      `xuatBaoCaoThangExcel` (chỉ cần field `tenKy` để đặt tên file, không phụ thuộc gì khác từ
+      `ky` nên tái dùng được thẳng cho báo cáo gộp).
+      **Sửa kỳ vào kỳ đã chốt (2026-07-11)** — `SuaKyModal` (module Nhật ký thao tác) giờ kiểm
+      tra nếu kỳ CŨ hoặc kỳ MỚI của sự kiện đang sửa đã `da_chot`, hiện cảnh báo đỏ giải thích
+      báo cáo đã lưu (`baoCaoLuu`) của kỳ đó sẽ không tự cập nhật, và bắt tick ô "Tôi hiểu và vẫn
+      muốn sửa" mới cho bấm Lưu (không chặn hẳn — sửa sai sót sau khi chốt vẫn là nhu cầu hợp lệ,
+      chỉ đảm bảo người dùng biết cần vào Kỳ báo cáo bấm "Tính lại số liệu" sau đó).
 - [x] **Xuất Excel báo cáo tháng** (nút "Xuất Excel báo cáo tháng" trong `KyChiTietModal`, hàm
       `xuatBaoCaoThangExcel`, **dùng ExcelJS** qua CDN riêng — không dùng `XLSX`/SheetJS như phần
       xuất Excel khác trong app, vì bản SheetJS CDN đang dùng ở đây là bản miễn phí KHÔNG ghi
