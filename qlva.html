@@ -3614,10 +3614,90 @@ function DashboardModule() {
 // ====================================================================
 // MODULE: NHẬT KÝ THAO TÁC
 // ====================================================================
+function tenKyTuId(id, danhSachKy) {
+  if (!id) return "— Không gán kỳ —";
+  const k = danhSachKy.find(k => k.id === id);
+  return k ? k.tenKy : "(kỳ đã xoá)";
+}
+
+// Sửa lại kỳ báo cáo đã gán cho 1 sự kiện log — cho phép chỉnh sau khi thao tác nghiệp vụ đã
+// ghi, đúng theo nguyên tắc thiết kế "sửa được sau, có audit trail lichSuSuaKy" (mục 3, CLAUDE.md).
+// Không dùng cho sự kiện giao_nhan_ho_so — loại đó cố ý không gán kỳ, không tính vào số liệu kỳ.
+function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
+  const [kyChon, setKyChon] = useState(suKien.kyThongKe || "");
+  const [lyDo, setLyDo] = useState("");
+  const [dangLuu, setDangLuu] = useState(false);
+  const [loi, setLoi] = useState("");
+
+  const luu = async () => {
+    const kyMoi = kyChon || null;
+    const kyCu = suKien.kyThongKe || null;
+    if (kyMoi === kyCu) { setLoi("Chưa đổi kỳ nào so với hiện tại."); return; }
+    setDangLuu(true);
+    try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      await db.collection("lichsuChuyenGiaiDoan").doc(suKien.id).update({
+        kyThongKe: kyMoi,
+        lichSuSuaKy: firebase.firestore.FieldValue.arrayUnion({
+          tuKy: kyCu, denKy: kyMoi, lyDo: lyDo.trim(), nguoiThucHien, thoiDiem: now,
+        }),
+      });
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi lưu: " + err.message);
+      setDangLuu(false);
+    }
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Sửa kỳ báo cáo cho sự kiện">
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600 mb-4">
+        <div className="font-medium">{NHAN_SU_KIEN[suKien.loaiSuKien] || suKien.loaiSuKien}</div>
+        <div className="text-slate-400 mt-0.5">{suKien.maVuAn} — {fmtDate(suKien.thoiDiemGhi)}</div>
+      </div>
+      <label className="text-xs text-slate-500 block mb-1">Kỳ báo cáo</label>
+      <select value={kyChon} onChange={e => setKyChon(e.target.value)} className={oInput + " mb-3"}>
+        <option value="">— Không gán kỳ —</option>
+        {danhSachKy.map(k => (
+          <option key={k.id} value={k.id}>{k.tenKy}{k.trangThai === "dang_mo" ? " (đang mở)" : ""}</option>
+        ))}
+      </select>
+      <label className="text-xs text-slate-500 block mb-1">Lý do sửa (không bắt buộc)</label>
+      <textarea value={lyDo} onChange={e => setLyDo(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      {suKien.lichSuSuaKy && suKien.lichSuSuaKy.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 mb-4 space-y-1">
+          <div className="font-medium">Đã từng sửa kỳ:</div>
+          {suKien.lichSuSuaKy.map((s, i) => (
+            <div key={i}>
+              {fmtDate(s.thoiDiem)}: {tenKyTuId(s.tuKy, danhSachKy)} → {tenKyTuId(s.denKy, danhSachKy)}
+              {s.nguoiThucHien ? ` (${s.nguoiThucHien})` : ""}{s.lyDo ? ` — ${s.lyDo}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={dangLuu}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {dangLuu ? "Đang lưu..." : "Lưu"}
+        </button>
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
 function NhatKyModule() {
   const [list, setList] = useState([]);
   const [dangTai, setDangTai] = useState(true);
   const [locLoai, setLocLoai] = useState("tat_ca");
+  const [locKy, setLocKy] = useState("tat_ca");
+  const [sortCot, setSortCot] = useState(null);
+  const [sortChieu, setSortChieu] = useState("asc");
+  const [danhSachKy, setDanhSachKy] = useState([]);
+  const [dangSuaKy, setDangSuaKy] = useState(null);
 
   useEffect(() => {
     return db.collection("lichsuChuyenGiaiDoan").orderBy("thoiDiemGhi", "desc").limit(300).onSnapshot(
@@ -3626,46 +3706,106 @@ function NhatKyModule() {
     );
   }, []);
 
-  const filtered = useMemo(() => locLoai === "tat_ca" ? list : list.filter(ls => ls.loaiSuKien === locLoai), [list, locLoai]);
+  useEffect(() => {
+    return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
+      snap => setDanhSachKy(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error(err)
+    );
+  }, []);
+
+  const kyTenTheoId = useMemo(() => {
+    const m = {};
+    danhSachKy.forEach(k => { m[k.id] = k.tenKy; });
+    return m;
+  }, [danhSachKy]);
+  const kyMillisTheoId = useMemo(() => {
+    const m = {};
+    danhSachKy.forEach(k => { m[k.id] = k.ngayBatDau?.toMillis?.() ?? 0; });
+    return m;
+  }, [danhSachKy]);
+
+  const filtered = useMemo(() => list.filter(ls => {
+    if (locLoai !== "tat_ca" && ls.loaiSuKien !== locLoai) return false;
+    if (locKy === "chua_gan") return !ls.kyThongKe;
+    if (locKy !== "tat_ca" && ls.kyThongKe !== locKy) return false;
+    return true;
+  }), [list, locLoai, locKy]);
+
+  const sorted = useMemo(() => {
+    if (sortCot !== "ky") return filtered;
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      const va = a.kyThongKe ? (kyMillisTheoId[a.kyThongKe] || 0) : -1;
+      const vb = b.kyThongKe ? (kyMillisTheoId[b.kyThongKe] || 0) : -1;
+      const cmp = va - vb;
+      return sortChieu === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [filtered, sortCot, sortChieu, kyMillisTheoId]);
+
+  const bamSort = (cot) => {
+    if (sortCot === cot) setSortChieu(c => c === "asc" ? "desc" : "asc");
+    else { setSortCot(cot); setSortChieu("asc"); }
+  };
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold">Nhật ký thao tác</h2>
-        <select value={locLoai} onChange={e => setLocLoai(e.target.value)} className={oInput + " w-64"}>
-          <option value="tat_ca">Tất cả loại sự kiện</option>
-          {Object.entries(NHAN_SU_KIEN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
+        <div className="flex gap-2">
+          <select value={locKy} onChange={e => setLocKy(e.target.value)} className={oInput + " w-56"}>
+            <option value="tat_ca">Tất cả kỳ</option>
+            <option value="chua_gan">— Chưa gán kỳ —</option>
+            {danhSachKy.map(k => <option key={k.id} value={k.id}>{k.tenKy}{k.trangThai === "dang_mo" ? " (đang mở)" : ""}</option>)}
+          </select>
+          <select value={locLoai} onChange={e => setLocLoai(e.target.value)} className={oInput + " w-56"}>
+            <option value="tat_ca">Tất cả loại sự kiện</option>
+            {Object.entries(NHAN_SU_KIEN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </div>
       </div>
       {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
-      {!dangTai && filtered.length === 0 && <div className="text-sm text-slate-400">Không có sự kiện nào.</div>}
-      {filtered.length > 0 && (
+      {!dangTai && sorted.length === 0 && <div className="text-sm text-slate-400">Không có sự kiện nào.</div>}
+      {sorted.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm border-collapse">
             <thead className="bg-slate-50 text-slate-500 text-xs">
               <tr>
                 <th className="text-left p-3">Thời điểm</th>
                 <th className="text-left p-3">Mã vụ</th>
                 <th className="text-left p-3">Loại sự kiện</th>
+                <ThSort nhan="Kỳ" cot="ky" sortCot={sortCot} sortChieu={sortChieu} onBam={bamSort} />
                 <th className="text-left p-3">Người thực hiện</th>
                 <th className="text-left p-3">Ghi chú</th>
+                <th className="text-right p-3"></th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map(ls => (
+              {sorted.map(ls => (
                 <tr key={ls.id} className="border-t border-slate-100">
-                  <td className="p-3 text-xs text-slate-500">{fmtDate(ls.thoiDiemGhi)}</td>
+                  <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{fmtDate(ls.thoiDiemGhi)}</td>
                   <td className="p-3 text-xs">{ls.maVuAn}</td>
                   <td className="p-3">{NHAN_SU_KIEN[ls.loaiSuKien] || ls.loaiSuKien}</td>
+                  <td className="p-3 text-xs whitespace-nowrap">
+                    {ls.kyThongKe ? (kyTenTheoId[ls.kyThongKe] || "(kỳ đã xoá)") : <span className="text-slate-400">—</span>}
+                  </td>
                   <td className="p-3 text-xs text-slate-500">{ls.nguoiThucHien}</td>
                   <td className="p-3 text-xs text-slate-500">{ls.ghiChu}</td>
+                  <td className="p-3 text-right whitespace-nowrap">
+                    {ls.loaiSuKien !== "giao_nhan_ho_so" && (
+                      <button onClick={() => setDangSuaKy(ls)} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Sửa kỳ</button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      <div className="text-xs text-slate-400 mt-3">Hiển thị {filtered.length} sự kiện gần nhất (tối đa 300).</div>
+      <div className="text-xs text-slate-400 mt-3">Hiển thị {sorted.length} sự kiện gần nhất (tối đa 300).</div>
+      {dangSuaKy && (
+        <SuaKyModal suKien={dangSuaKy} danhSachKy={danhSachKy} onDong={() => setDangSuaKy(null)} onXong={() => setDangSuaKy(null)} />
+      )}
     </div>
   );
 }

@@ -191,7 +191,21 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
-      gần nhất — có ghi rõ giới hạn trên UI, không cắt âm thầm).
+      gần nhất — có ghi rõ giới hạn trên UI, không cắt âm thầm). **Sửa kỳ báo cáo cho từng sự
+      kiện** (2026-07-11) — trước đây nguyên tắc thiết kế #3 đã nói log "sửa được sau, có audit
+      trail `lichSuSuaKy`" nhưng chưa từng có UI thật sự để làm việc đó, field `lichSuSuaKy` chỉ
+      là mảng rỗng mặc định không ai ghi vào. Nay có cột **"Kỳ"** hiển thị tên kỳ của từng sự
+      kiện (bấm tiêu đề để sort theo thời gian thực của kỳ — dùng `ngayBatDau` của `kybaocao`
+      làm giá trị so sánh, KHÔNG sort theo chuỗi tên "Tháng N/YYYY" vì sai thứ tự y hệt lý do đã
+      né ở cột Kỳ mới/Kỳ giải quyết của Danh sách vụ án) + bộ lọc riêng theo kỳ (gồm cả lựa chọn
+      "Chưa gán kỳ") để tìm nhanh các sự kiện cần chỉnh. Nút **"Sửa kỳ"** trên mỗi dòng (trừ
+      `giao_nhan_ho_so` — loại này cố ý không tham gia số liệu theo kỳ nên không cho gán) mở
+      `SuaKyModal`: đổi `kyThongKe` của đúng 1 sự kiện, đồng thời `arrayUnion` 1 phần tử vào
+      `lichSuSuaKy` (`tuKy`/`denKy`/`lyDo`/`nguoiThucHien`/`thoiDiem`) để giữ vết ai sửa từ kỳ
+      nào sang kỳ nào — hiện ngay trong modal ở lần mở sau. Sửa kỳ ở đây tác động trực tiếp tới
+      số liệu báo cáo kỳ (Kỳ báo cáo/Dashboard/Xuất Excel đều tính từ `kyThongKe` của
+      `lichsuChuyenGiaiDoan`), nên chỉ áp dụng cho các loại sự kiện nghiệp vụ thật, không áp
+      dụng cho log hành chính.
 - [x] Xuất Excel (nút trong module Danh sách, SheetJS dựng lại DSAT/DSBCT/TỔNG HỢP từ dữ liệu
       hiện tại) — **cần đối chiếu lại định dạng cột với file gốc**, đây là bản dựng hợp lý dựa
       theo mapping cột lúc import, chưa có file gốc để so khớp pixel-perfect.
