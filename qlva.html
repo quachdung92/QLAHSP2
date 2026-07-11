@@ -234,9 +234,15 @@ function tinhKyTheoVuAn(logEvents, kyTenTheoId) {
 // vì đây cũng là mốc tính vào số liệu báo cáo kỳ (VD: tháng 8 có 3 vụ kết thúc điều tra, tháng 9
 // có 2 vụ chuyển toà) — chỉ giữ sự kiện GẦN NHẤT mỗi loại/mỗi vụ vì 1 vụ có thể bị trả hồ sơ rồi
 // chuyển giai đoạn lại nhiều lần.
+// "Vào Truy tố" tính GỘP cả 2 đường: chuyển giai đoạn tới (viện nhận từ điều tra) VÀ trả hồ sơ
+// tới (toà trả hồ sơ về truy tố) — vụ đang ở Truy tố có thể do 1 trong 2 lý do này, chỉ giữ sự
+// kiện gần nhất; nơi gọi tự phân biệt "trả bổ sung" hay không qua suKien.loaiSuKien === "tra_ho_so".
+// "Trả về Điều tra" là trường hợp riêng (giai đoạn Điều tra chỉ vào được qua khởi tố mới hoặc bị
+// trả hồ sơ — không có "chuyển giai đoạn tới" vì Điều tra là giai đoạn đầu).
 function timSuKienKyTheoVuAn(logEvents) {
   const moiLoai = () => ({});
-  const suKienMoi = moiLoai(), suKienHoanThanh = moiLoai(), suKienChuyenTruyTo = moiLoai(), suKienChuyenXetXu = moiLoai();
+  const suKienMoi = moiLoai(), suKienHoanThanh = moiLoai(), suKienVaoTruyTo = moiLoai(),
+        suKienVaoXetXu = moiLoai(), suKienTraVeDieuTra = moiLoai();
   const layMillis = l => l.thoiDiemGhi?.toMillis ? l.thoiDiemGhi.toMillis() : 0;
   const giuGanNhat = (map, l) => {
     const cu = map[l.maVuAn];
@@ -245,10 +251,11 @@ function timSuKienKyTheoVuAn(logEvents) {
   for (const l of logEvents) {
     if (l.loaiSuKien === "khoi_to_vu") suKienMoi[l.maVuAn] = l;
     else if (l.loaiSuKien === "hoan_thanh") giuGanNhat(suKienHoanThanh, l);
-    else if (l.loaiSuKien === "chuyen_giai_doan" && l.denGiaiDoan === "truy_to") giuGanNhat(suKienChuyenTruyTo, l);
-    else if (l.loaiSuKien === "chuyen_giai_doan" && l.denGiaiDoan === "xet_xu") giuGanNhat(suKienChuyenXetXu, l);
+    else if ((l.loaiSuKien === "chuyen_giai_doan" || l.loaiSuKien === "tra_ho_so") && l.denGiaiDoan === "truy_to") giuGanNhat(suKienVaoTruyTo, l);
+    else if (l.loaiSuKien === "chuyen_giai_doan" && l.denGiaiDoan === "xet_xu") giuGanNhat(suKienVaoXetXu, l);
+    else if (l.loaiSuKien === "tra_ho_so" && l.denGiaiDoan === "dieu_tra") giuGanNhat(suKienTraVeDieuTra, l);
   }
-  return { suKienMoi, suKienHoanThanh, suKienChuyenTruyTo, suKienChuyenXetXu };
+  return { suKienMoi, suKienHoanThanh, suKienVaoTruyTo, suKienVaoXetXu, suKienTraVeDieuTra };
 }
 
 function taoSuKien(overrides) {
@@ -1997,7 +2004,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
 
 // Ô hiển thị 1 kỳ báo cáo, bấm vào để sửa lại ngay tại danh sách (thay vì phải qua module Nhật
 // ký thao tác tìm đúng dòng) — dùng SuaKyModal dùng chung. "—" (xám, không bấm được) khi vụ chưa
-// có sự kiện tương ứng (VD chưa chuyển sang Truy tố thì chưa có "Kỳ chuyển Truy tố").
+// có sự kiện tương ứng (VD chưa chuyển sang Truy tố thì chưa có "Kỳ vào Truy tố").
 function OKy({ suKien, kyTenTheoId, onSua }) {
   if (!suKien) return <span className="text-slate-300">—</span>;
   const ten = suKien.kyThongKe ? (kyTenTheoId[suKien.kyThongKe] || "(kỳ đã xoá)") : "— Chưa gán kỳ —";
@@ -2051,7 +2058,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
 
   useEffect(() => {
     const unsub = db.collection("lichsuChuyenGiaiDoan")
-      .where("loaiSuKien", "in", ["khoi_to_vu", "hoan_thanh", "chuyen_giai_doan"]).onSnapshot(
+      .where("loaiSuKien", "in", ["khoi_to_vu", "hoan_thanh", "chuyen_giai_doan", "tra_ho_so"]).onSnapshot(
       snap => setLogKyEvents(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.error(err)
     );
@@ -2063,7 +2070,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
     () => [...kyBaoCaoList].sort((a, b) => (b.ngayBatDau?.toMillis?.() ?? 0) - (a.ngayBatDau?.toMillis?.() ?? 0)),
     [kyBaoCaoList]
   );
-  const { suKienMoi, suKienHoanThanh, suKienChuyenTruyTo, suKienChuyenXetXu } = useMemo(
+  const { suKienMoi, suKienHoanThanh, suKienVaoTruyTo, suKienVaoXetXu, suKienTraVeDieuTra } = useMemo(
     () => timSuKienKyTheoVuAn(logKyEvents), [logKyEvents]
   );
   const [dangSuaKy, setDangSuaKy] = useState(null);
@@ -2161,7 +2168,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
               <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Giai đoạn</th>
               <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Trạng thái</th>
               <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Kỳ mới</th>
-              <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Kỳ chuyển Truy tố</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Kỳ vào Truy tố</th>
               <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Kỳ chuyển Xét xử</th>
               <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Kỳ giải quyết</th>
               <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Số QĐ KTVA</th>
@@ -2209,12 +2216,21 @@ function DanhSachPanel({ selectedId, onSelect }) {
                 <td className="px-3 py-2 align-top"><Badge mau={MAU_TRANG_THAI[v.trangThai]}>{NHAN_TRANG_THAI[v.trangThai] || v.trangThai}</Badge></td>
                 <td className="px-3 py-2 align-top text-xs whitespace-nowrap text-slate-600">
                   <OKy suKien={suKienMoi[v.id]} kyTenTheoId={kyTenTheoId} onSua={setDangSuaKy} />
+                  {suKienTraVeDieuTra[v.id] && (
+                    <button onClick={e => { e.stopPropagation(); setDangSuaKy(suKienTraVeDieuTra[v.id]); }}
+                            className="block mt-0.5 text-[11px] text-amber-600 hover:text-amber-700 hover:underline text-left">
+                      ↩ Trả bổ sung: {suKienTraVeDieuTra[v.id].kyThongKe ? (kyTenTheoId[suKienTraVeDieuTra[v.id].kyThongKe] || "(kỳ đã xoá)") : "— Chưa gán kỳ —"}
+                    </button>
+                  )}
                 </td>
                 <td className="px-3 py-2 align-top text-xs whitespace-nowrap text-slate-600">
-                  <OKy suKien={suKienChuyenTruyTo[v.id]} kyTenTheoId={kyTenTheoId} onSua={setDangSuaKy} />
+                  <OKy suKien={suKienVaoTruyTo[v.id]} kyTenTheoId={kyTenTheoId} onSua={setDangSuaKy} />
+                  {suKienVaoTruyTo[v.id]?.loaiSuKien === "tra_ho_so" && (
+                    <div className="mt-0.5 text-[11px] text-amber-600">↩ Trả bổ sung</div>
+                  )}
                 </td>
                 <td className="px-3 py-2 align-top text-xs whitespace-nowrap text-slate-600">
-                  <OKy suKien={suKienChuyenXetXu[v.id]} kyTenTheoId={kyTenTheoId} onSua={setDangSuaKy} />
+                  <OKy suKien={suKienVaoXetXu[v.id]} kyTenTheoId={kyTenTheoId} onSua={setDangSuaKy} />
                 </td>
                 <td className="px-3 py-2 align-top text-xs whitespace-nowrap text-slate-600">
                   <OKy suKien={suKienHoanThanh[v.id]} kyTenTheoId={kyTenTheoId} onSua={setDangSuaKy} />

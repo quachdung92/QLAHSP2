@@ -80,19 +80,30 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       10" < "Tháng 2"). Đầu trang có `ThongKeKyHienTai` — thẻ nhỏ đếm nhanh số vụ mới/đã giải
       quyết trong kỳ đang mở, để tiện theo dõi mà không cần mở riêng module Kỳ báo cáo. Panel
       (2026-07-11) **Bấm vào ô kỳ để sửa ngay tại danh sách** — cột Kỳ mới/Kỳ giải quyết giờ
-      bấm được (component `OKy` dùng chung), cộng thêm 2 cột mới **Kỳ chuyển Truy tố**/**Kỳ
-      chuyển Xét xử** (kỳ của sự kiện `chuyen_giai_doan` GẦN NHẤT ứng với `denGiaiDoan` tương
-      ứng — vì đây cũng là mốc tính vào số liệu báo cáo kỳ, VD tháng 8 có 3 vụ kết thúc điều tra
-      chuyển Truy tố, tháng 9 có 2 vụ chuyển Xét xử; giữ "gần nhất" vì 1 vụ có thể bị trả hồ sơ
-      rồi chuyển giai đoạn lại nhiều lần). Bấm vào 1 ô kỳ (nếu vụ đã có sự kiện tương ứng, không
-      phải "—") mở thẳng `SuaKyModal` (dùng chung với Nhật ký thao tác, xem mục Module Nhật ký
-      thao tác) để sửa kỳ ngay, không cần qua Nhật ký thao tác tìm đúng dòng — tiện hơn cho cán
-      bộ thống kê. Dùng hàm `timSuKienKyTheoVuAn` (khác `tinhKyTheoVuAn` cũ vẫn giữ nguyên cho
-      Xuất Excel — hàm cũ trả về CHUỖI TÊN kỳ, hàm mới trả về CHÍNH sự kiện log kèm `id` vì
-      `SuaKyModal` cần `id` để biết sửa đúng dòng nào). KHÔNG sort được các cột Kỳ này (như đã
-      quyết định trước đây với Kỳ mới/Kỳ giải quyết — hiển thị dạng chuỗi "Tháng N/YYYY" nên sort
-      chuỗi sẽ sai thứ tự thời gian); ai cần sort theo kỳ thì dùng module Nhật ký thao tác (đã hỗ
-      trợ sort đúng theo thời gian thực của kỳ).
+      bấm được (component `OKy` dùng chung), cộng thêm 2 cột mới **Kỳ vào Truy tố**/**Kỳ chuyển
+      Xét xử** (kỳ của sự kiện GẦN NHẤT đưa vụ vào giai đoạn đó — vì đây cũng là mốc tính vào số
+      liệu báo cáo kỳ, VD tháng 8 có 3 vụ kết thúc điều tra chuyển Truy tố, tháng 9 có 2 vụ
+      chuyển Xét xử; giữ "gần nhất" vì 1 vụ có thể bị trả hồ sơ rồi chuyển giai đoạn lại nhiều
+      lần). Bấm vào 1 ô kỳ (nếu vụ đã có sự kiện tương ứng, không phải "—") mở thẳng `SuaKyModal`
+      (dùng chung với Nhật ký thao tác, xem mục Module Nhật ký thao tác) để sửa kỳ ngay, không
+      cần qua Nhật ký thao tác tìm đúng dòng — tiện hơn cho cán bộ thống kê. Dùng hàm
+      `timSuKienKyTheoVuAn` (khác `tinhKyTheoVuAn` cũ vẫn giữ nguyên cho Xuất Excel — hàm cũ trả
+      về CHUỖI TÊN kỳ, hàm mới trả về CHÍNH sự kiện log kèm `id` vì `SuaKyModal` cần `id` để biết
+      sửa đúng dòng nào). KHÔNG sort được các cột Kỳ này (như đã quyết định trước đây với Kỳ
+      mới/Kỳ giải quyết — hiển thị dạng chuỗi "Tháng N/YYYY" nên sort chuỗi sẽ sai thứ tự thời
+      gian); ai cần sort theo kỳ thì dùng module Nhật ký thao tác (đã hỗ trợ sort đúng theo thời
+      gian thực của kỳ). **Ghi chú "↩ Trả bổ sung"** (2026-07-11) — giai đoạn Điều tra/Truy tố
+      còn vào được qua đường **trả hồ sơ** (`tra_ho_so`, không chỉ qua khởi tố mới/chuyển giai
+      đoạn tới), và đây vẫn tính vào số liệu báo cáo kỳ y hệt (sheet "DS viện trả DTBS"/"DS toà
+      trả DTBS" của Xuất Excel báo cáo tháng), nên: (1) "Kỳ vào Truy tố" GỘP cả sự kiện
+      `chuyen_giai_doan` (viện nhận từ điều tra) LẪN `tra_ho_so` có `denGiaiDoan: "truy_to"`
+      (toà trả hồ sơ về truy tố) — giữ sự kiện gần nhất trong cả 2 loại; nếu sự kiện thắng là
+      `tra_ho_so` thì hiện thêm dòng nhỏ màu vàng "↩ Trả bổ sung" ngay dưới tên kỳ để phân biệt
+      với chuyển giai đoạn thông thường; (2) riêng **Điều tra** không có cột "kỳ vào" kiểu này
+      (giai đoạn đầu, không có "chuyển giai đoạn tới") nên thêm 1 dòng phụ riêng dưới ô **Kỳ
+      mới** — chỉ hiện khi vụ có sự kiện `tra_ho_so` với `denGiaiDoan: "dieu_tra"` (viện trả hồ
+      sơ điều tra bổ sung), bấm vào dòng đó cũng mở `SuaKyModal` sửa được. Không đụng tới "Kỳ mới"
+      gốc (`khoi_to_vu`) — 2 khái niệm tách biệt, không gộp chung 1 ô.
       Panel chi tiết dùng bảng key-value **1 cột/hàng** (không phải 2 cột/hàng như thiết kế cũ) để
       không bị tràn chữ với bề rộng 420px, có gridline/zebra-row/badge màu theo giai đoạn-trạng
       thái — xem `MAU_GIAI_DOAN`/`MAU_TRANG_THAI`/`Badge`. Form **Thêm vụ án** (vụ + nhiều bị can
