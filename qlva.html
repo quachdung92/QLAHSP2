@@ -2858,14 +2858,19 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
 // làm proxy giai đoạn đã hoàn thành — hợp lệ vì hệ thống không đổi coQuanThuLy sau khi hoàn thành.
 // Lấy vụ án hiện tại ứng với từng dòng log (dùng cho cả số liệu tổng hợp lẫn danh sách chi tiết
 // khi xuất Excel — cùng 1 nguồn dữ liệu nên số dòng danh sách LUÔN khớp đúng số trên báo cáo).
+// Tất cả query vuan + bican chạy song song (Promise.all) để nhanh hơn tuần tự
 async function vuAnTuLogDocs(logDocs) {
-  const ds = [];
-  for (const d of logDocs) {
+  const results = await Promise.all(logDocs.map(async d => {
     const l = d.data();
-    const vuDoc = await db.collection("vuan").doc(l.maVuAn).get();
-    if (vuDoc.exists) ds.push({ id: vuDoc.id, ...vuDoc.data(), _log: l });
-  }
-  return ds;
+    const [vuDoc, bcSnap] = await Promise.all([
+      db.collection("vuan").doc(l.maVuAn).get(),
+      db.collection("bican").where("maVuAn", "==", l.maVuAn).get(),
+    ]);
+    if (!vuDoc.exists) return null;
+    const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
+    return { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh };
+  }));
+  return results.filter(Boolean);
 }
 
 // Tính đầy đủ (luôn quét lichsuChuyenGiaiDoan) — TỐN NHIỀU query, chỉ nên gọi khi thật sự cần
@@ -2922,14 +2927,18 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     ]);
     const hoanThanhTheoGD = { da_xet_xu: 0, chuyen_di: 0, tam_dinh_chi: 0, dinh_chi: 0, an_huy: 0 };
     const dsHoanThanhTheoGD = { da_xet_xu: [], chuyen_di: [], tam_dinh_chi: [], dinh_chi: [], an_huy: [] };
-    for (const d of hoanThanhSnap.docs) {
+    await Promise.all(hoanThanhSnap.docs.map(async d => {
       const l = d.data();
-      const vuDoc = await db.collection("vuan").doc(l.maVuAn).get();
-      if (vuDoc.exists && vuDoc.data().coQuanThuLy === gd) {
-        hoanThanhTheoGD[l.hinhThucHoanThanh] = (hoanThanhTheoGD[l.hinhThucHoanThanh] || 0) + 1;
-        dsHoanThanhTheoGD[l.hinhThucHoanThanh].push({ id: vuDoc.id, ...vuDoc.data(), _log: l });
-      }
-    }
+      const [vuDoc, bcSnap] = await Promise.all([
+        db.collection("vuan").doc(l.maVuAn).get(),
+        db.collection("bican").where("maVuAn", "==", l.maVuAn).get(),
+      ]);
+      if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
+      const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
+      const entry = { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh };
+      hoanThanhTheoGD[l.hinhThucHoanThanh] = (hoanThanhTheoGD[l.hinhThucHoanThanh] || 0) + 1;
+      dsHoanThanhTheoGD[l.hinhThucHoanThanh].push(entry);
+    }));
 
     // Vụ bị nhập vào vụ khác (trangThai -> "da_nhap") cũng RA KHỎI "tồn" giống hoàn thành —
     // coQuanThuLy không đổi khi nhập vụ nên dùng làm proxy giống hoan_thanh (an toàn vì hệ
@@ -2937,14 +2946,17 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     // quyết sẽ KHÔNG khớp tồn cuối kỳ mỗi khi có nhập vụ trong kỳ (giống lỗi tách vụ đã sửa).
     let soNhapVu = 0;
     const dsNhapVu = [];
-    for (const d of nhapVuSnap.docs) {
+    await Promise.all(nhapVuSnap.docs.map(async d => {
       const l = d.data();
-      const vuDoc = await db.collection("vuan").doc(l.maVuAn).get();
-      if (vuDoc.exists && vuDoc.data().coQuanThuLy === gd) {
-        soNhapVu++;
-        dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l });
-      }
-    }
+      const [vuDoc, bcSnap] = await Promise.all([
+        db.collection("vuan").doc(l.maVuAn).get(),
+        db.collection("bican").where("maVuAn", "==", l.maVuAn).get(),
+      ]);
+      if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
+      const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
+      soNhapVu++;
+      dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh });
+    }));
 
     let tonCuoiKy;
     if (ky.trangThai === "da_chot" && ky.tonCuoiKy) {
@@ -2979,12 +2991,12 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
 // chưa (nhãn UI ghi rõ "tại thời điểm xem"), tách riêng để tái dùng khi đọc từ baoCaoLuu.
 async function tinhTonHienTaiTheoGD(gd) {
   const vuTonSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
-  const dsTon = vuTonSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  let soBiCanTon = 0;
-  for (const d of vuTonSnap.docs) {
+  const dsTon = await Promise.all(vuTonSnap.docs.map(async d => {
     const bcSnap = await db.collection("bican").where("maVuAn", "==", d.id).get();
-    soBiCanTon += bcSnap.size;
-  }
+    const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
+    return { id: d.id, ...d.data(), _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh };
+  }));
+  const soBiCanTon = dsTon.reduce((s, v) => s + v._soBiCan, 0);
   return { soVuTon: vuTonSnap.size, soBiCanTon, dsTon };
 }
 
@@ -3084,82 +3096,63 @@ function HangBaoCaoTieuDe({ nhan }) {
   return <tr className="bg-slate-50"><td colSpan={4} className="p-2 text-xs font-semibold text-slate-500">{nhan}</td></tr>;
 }
 
-// Modal chi tiết số liệu: lazy-load bị can khi mở → nhóm theo tội danh (lv1) → vụ cụ thể (lv2)
+// Modal chi tiết số liệu: nhóm theo tội danh (lv1) → từng vụ cụ thể (lv2)
+// dsList đã có _soBiCan và _toiDanhChinh từ lúc tính báo cáo — không fetch thêm
 function ChiTietSoLieuModal({ nhan, dsList, onDong }) {
-  const [enriched, setEnriched] = useState(null); // null = đang tải
   const [moNhom, setMoNhom] = useState({});
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      // Chạy song song tất cả query bican (không sequential) để nhanh hơn
-      const result = await Promise.all(dsList.map(async v => {
-        const bcSnap = await db.collection("bican").where("maVuAn", "==", v.id).get();
-        const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
-        return { ...v, _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh };
-      }));
-      if (!cancelled) setEnriched(result);
-    }
-    load();
-    return () => { cancelled = true; };
-  }, []);
-
   const nhomTheoToiDanh = React.useMemo(() => {
-    if (!enriched) return [];
     const m = {};
-    for (const v of enriched) {
+    for (const v of dsList) {
       const td = v._toiDanhChinh || "(Chưa có tội danh)";
       if (!m[td]) m[td] = [];
       m[td].push(v);
     }
     return Object.entries(m).sort((a, b) => b[1].length - a[1].length);
-  }, [enriched]);
+  }, [dsList]);
 
-  const tongBC = enriched ? enriched.reduce((s, v) => s + (v._soBiCan || 0), 0) : null;
+  const tongBC = dsList.reduce((s, v) => s + (v._soBiCan || 0), 0);
 
   return (
     <KhungModalHanhDong tieuDe="Chi tiết số liệu">
       <div className="text-sm font-semibold text-slate-700 mb-1">{nhan}</div>
       <div className="text-xs text-slate-500 mb-4">
         <span className="font-medium text-slate-700">{dsList.length} vụ</span>
-        {tongBC !== null && <> / <span className="font-medium text-slate-700">{tongBC} bị can</span></>}
+        {" / "}
+        <span className="font-medium text-slate-700">{tongBC} bị can</span>
       </div>
-      {!enriched ? (
-        <div className="text-sm text-slate-400 text-center py-6">Đang tải danh sách bị can...</div>
-      ) : (
-        <div className="space-y-2 max-h-[400px] overflow-y-auto mb-4">
-          {nhomTheoToiDanh.map(([td, vuList]) => {
-            const bcNhom = vuList.reduce((s, v) => s + (v._soBiCan || 0), 0);
-            const daMo = !!moNhom[td];
-            return (
-              <div key={td} className="border border-slate-200 rounded-lg overflow-hidden">
-                <button
-                  className="w-full flex items-center justify-between p-2 bg-slate-50 hover:bg-slate-100 text-left"
-                  onClick={() => setMoNhom(s => ({ ...s, [td]: !s[td] }))}>
-                  <span className="text-sm font-medium text-slate-700 truncate pr-2">{td || "—"}</span>
-                  <span className="text-xs text-slate-500 shrink-0">
-                    {vuList.length} vụ / {bcNhom} BC {daMo ? "▲" : "▼"}
-                  </span>
-                </button>
-                {daMo && (
-                  <div className="divide-y divide-slate-100">
-                    {vuList.map(v => (
-                      <div key={v.id} className="px-3 py-2">
-                        <div className="text-xs font-medium text-slate-800">{hienThiMa(v)} — {v.tenVu || "—"}</div>
-                        <div className="text-xs text-slate-500 mt-0.5">
-                          KSV: {v.ksvChinh || "—"} · {v._soBiCan} bị can
-                          {v._log?.ngaySuKien ? ` · ${fmtDate(v._log.ngaySuKien)}` : ""}
-                          {v._log?.soQuyetDinh ? ` · Số QĐ: ${v._log.soQuyetDinh}` : ""}
-                        </div>
+      <div className="space-y-2 max-h-[400px] overflow-y-auto mb-4">
+        {nhomTheoToiDanh.map(([td, vuList]) => {
+          const bcNhom = vuList.reduce((s, v) => s + (v._soBiCan || 0), 0);
+          const daMo = !!moNhom[td];
+          return (
+            <div key={td} className="border border-slate-200 rounded-lg overflow-hidden">
+              <button
+                className="w-full flex items-center justify-between p-2 bg-slate-50 hover:bg-slate-100 text-left"
+                onClick={() => setMoNhom(s => ({ ...s, [td]: !s[td] }))}>
+                <span className="text-sm font-medium text-slate-700 truncate pr-2">{td || "—"}</span>
+                <span className="text-xs text-slate-500 shrink-0">
+                  {vuList.length} vụ / {bcNhom} BC {daMo ? "▲" : "▼"}
+                </span>
+              </button>
+              {daMo && (
+                <div className="divide-y divide-slate-100">
+                  {vuList.map(v => (
+                    <div key={v.id} className="px-3 py-2">
+                      <div className="text-xs font-medium text-slate-800">{hienThiMa(v)} — {v.tenVu || "—"}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        KSV: {v.ksvChinh || "—"} · {v._soBiCan || 0} bị can
+                        {v._log?.ngaySuKien ? ` · ${fmtDate(v._log.ngaySuKien)}` : ""}
+                        {v._log?.soQuyetDinh ? ` · Số QĐ: ${v._log.soQuyetDinh}` : ""}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
       <div className="flex justify-end">
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700">Đóng</button>
       </div>
@@ -3167,7 +3160,7 @@ function ChiTietSoLieuModal({ nhan, dsList, onDong }) {
   );
 }
 
-// HangBaoCao: ô số bấm được (nếu có layDs và > 0) → mở ChiTietSoLieuModal
+// HangBaoCao: hiển thị "X vụ / Y BC" khi có ds, bấm mở ChiTietSoLieuModal
 function HangBaoCao({ nhan, data, lay, layDs, damNet, onMoChiTiet }) {
   return (
     <tr className={`border-t border-slate-100 ${damNet ? "font-semibold bg-indigo-50/40" : ""}`}>
@@ -3175,15 +3168,17 @@ function HangBaoCao({ nhan, data, lay, layDs, damNet, onMoChiTiet }) {
       {THU_TU_GIAI_DOAN.map(gd => {
         const val = lay(data[gd]) ?? 0;
         const ds = layDs ? layDs(data[gd]) : null;
+        const soBC = ds ? ds.reduce((s, v) => s + (v._soBiCan || 0), 0) : null;
         const coThe = ds && ds.length > 0 && onMoChiTiet;
         return (
-          <td key={gd} className="p-2 text-right">
+          <td key={gd} className="p-2 text-right tabular-nums">
             {coThe ? (
-              <button
-                className="text-indigo-700 font-medium hover:underline"
-                onClick={() => onMoChiTiet(`${nhan} — ${NHAN_GIAI_DOAN[gd]}`, ds)}>
-                {val}
+              <button className="text-indigo-700 hover:underline w-full text-right" onClick={() => onMoChiTiet(`${nhan} — ${NHAN_GIAI_DOAN[gd]}`, ds)}>
+                {val} vụ
+                {soBC !== null && <span className="text-slate-400 font-normal"> / {soBC} BC</span>}
               </button>
+            ) : soBC !== null && ds && ds.length > 0 ? (
+              <span>{val} vụ<span className="text-slate-400"> / {soBC} BC</span></span>
             ) : (
               <span>{val}</span>
             )}
