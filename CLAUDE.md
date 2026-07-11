@@ -79,7 +79,21 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       đó là chuỗi hiển thị "Tháng N/YYYY", sort theo chuỗi sẽ sai thứ tự thời gian (VD "Tháng
       10" < "Tháng 2"). Đầu trang có `ThongKeKyHienTai` — thẻ nhỏ đếm nhanh số vụ mới/đã giải
       quyết trong kỳ đang mở, để tiện theo dõi mà không cần mở riêng module Kỳ báo cáo. Panel
-      chi tiết dùng bảng key-value **1 cột/hàng** (không phải 2 cột/hàng như thiết kế cũ) để
+      (2026-07-11) **Bấm vào ô kỳ để sửa ngay tại danh sách** — cột Kỳ mới/Kỳ giải quyết giờ
+      bấm được (component `OKy` dùng chung), cộng thêm 2 cột mới **Kỳ chuyển Truy tố**/**Kỳ
+      chuyển Xét xử** (kỳ của sự kiện `chuyen_giai_doan` GẦN NHẤT ứng với `denGiaiDoan` tương
+      ứng — vì đây cũng là mốc tính vào số liệu báo cáo kỳ, VD tháng 8 có 3 vụ kết thúc điều tra
+      chuyển Truy tố, tháng 9 có 2 vụ chuyển Xét xử; giữ "gần nhất" vì 1 vụ có thể bị trả hồ sơ
+      rồi chuyển giai đoạn lại nhiều lần). Bấm vào 1 ô kỳ (nếu vụ đã có sự kiện tương ứng, không
+      phải "—") mở thẳng `SuaKyModal` (dùng chung với Nhật ký thao tác, xem mục Module Nhật ký
+      thao tác) để sửa kỳ ngay, không cần qua Nhật ký thao tác tìm đúng dòng — tiện hơn cho cán
+      bộ thống kê. Dùng hàm `timSuKienKyTheoVuAn` (khác `tinhKyTheoVuAn` cũ vẫn giữ nguyên cho
+      Xuất Excel — hàm cũ trả về CHUỖI TÊN kỳ, hàm mới trả về CHÍNH sự kiện log kèm `id` vì
+      `SuaKyModal` cần `id` để biết sửa đúng dòng nào). KHÔNG sort được các cột Kỳ này (như đã
+      quyết định trước đây với Kỳ mới/Kỳ giải quyết — hiển thị dạng chuỗi "Tháng N/YYYY" nên sort
+      chuỗi sẽ sai thứ tự thời gian); ai cần sort theo kỳ thì dùng module Nhật ký thao tác (đã hỗ
+      trợ sort đúng theo thời gian thực của kỳ).
+      Panel chi tiết dùng bảng key-value **1 cột/hàng** (không phải 2 cột/hàng như thiết kế cũ) để
       không bị tràn chữ với bề rộng 420px, có gridline/zebra-row/badge màu theo giai đoạn-trạng
       thái — xem `MAU_GIAI_DOAN`/`MAU_TRANG_THAI`/`Badge`. Form **Thêm vụ án** (vụ + nhiều bị can
       trong 1 form, tội danh nhiều dòng Tội chính/Bổ sung), sinh `maNoiSinh` tự động qua
