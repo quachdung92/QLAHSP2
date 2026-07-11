@@ -3251,7 +3251,7 @@ function ChiTietSoLieuModal({ nhan, dsList, onDong }) {
 
   const tongBC = dsList.reduce((s, v) => s + (v._soBiCan || 0), 0);
 
-  return (
+  return (<>
     <KhungModalHanhDong tieuDe="Chi tiết số liệu">
       <div className="text-sm font-semibold text-slate-700 mb-1">{nhan}</div>
       <div className="text-xs text-slate-500 mb-4">
@@ -3300,7 +3300,7 @@ function ChiTietSoLieuModal({ nhan, dsList, onDong }) {
       </div>
     </KhungModalHanhDong>
     {xemVuAnId && <ChiTietVuAnModal vuAnId={xemVuAnId} onDong={() => setXemVuAnId(null)} />}
-  );
+  </>);
 }
 
 // HangBaoCao: hiển thị "X vụ / Y BC" khi có ds, bấm mở ChiTietSoLieuModal
