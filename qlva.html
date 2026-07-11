@@ -111,6 +111,24 @@ function hienThiMa(vuAn) {
   return vuAn.maNganhCap || vuAn.maNoiSinh;
 }
 
+// ── Cache bị can theo phiên (session) ────────────────────────────────────────
+// Tránh query Firestore lặp lại cho cùng 1 vụ khi xem báo cáo nhiều lần.
+// Key = maVuAn, value = { soBiCan, toiDanhChinh }.
+// Gọi xoaBiCanCache(maVuAn) sau bất kỳ thao tác tạo/sửa bị can để dữ liệu
+// cũ không bị dùng lại.
+const _biCanCache = {};
+function xoaBiCanCache(maVuAn) { delete _biCanCache[maVuAn]; }
+
+async function layBiCanInfo(maVuAn) {
+  if (_biCanCache[maVuAn]) return _biCanCache[maVuAn];
+  const bcSnap = await db.collection("bican").where("maVuAn", "==", maVuAn).get();
+  const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
+  const info = { soBiCan: bcSnap.size, toiDanhChinh };
+  _biCanCache[maVuAn] = info;
+  return info;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function pad4(n) {
   return String(n).padStart(4, "0");
 }
@@ -1160,6 +1178,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
           ngaySuKien, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
         }));
         await batch.commit();
+        xoaBiCanCache(vuAn.id);
       }
       onXong();
     });
@@ -1267,6 +1286,7 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
+      xoaBiCanCache(vuAn.id);
       onXong(maVuMoi);
     });
   };
@@ -1563,6 +1583,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
       });
 
       await batch.commit();
+      xoaBiCanCache(maNoiSinh);
       onDaLuu(maNoiSinh);
     } catch (err) {
       console.error(err);
@@ -1940,6 +1961,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
       });
       await batch.commit();
+      xoaBiCanCache(vuAn.id);
       onXong();
     } catch (err) {
       console.error(err);
@@ -2858,17 +2880,16 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
 // làm proxy giai đoạn đã hoàn thành — hợp lệ vì hệ thống không đổi coQuanThuLy sau khi hoàn thành.
 // Lấy vụ án hiện tại ứng với từng dòng log (dùng cho cả số liệu tổng hợp lẫn danh sách chi tiết
 // khi xuất Excel — cùng 1 nguồn dữ liệu nên số dòng danh sách LUÔN khớp đúng số trên báo cáo).
-// Tất cả query vuan + bican chạy song song (Promise.all) để nhanh hơn tuần tự
+// Tất cả query vuan + bican chạy song song (Promise.all); bị can dùng cache phiên
 async function vuAnTuLogDocs(logDocs) {
   const results = await Promise.all(logDocs.map(async d => {
     const l = d.data();
-    const [vuDoc, bcSnap] = await Promise.all([
+    const [vuDoc, bcInfo] = await Promise.all([
       db.collection("vuan").doc(l.maVuAn).get(),
-      db.collection("bican").where("maVuAn", "==", l.maVuAn).get(),
+      layBiCanInfo(l.maVuAn),
     ]);
     if (!vuDoc.exists) return null;
-    const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
-    return { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh };
+    return { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
   }));
   return results.filter(Boolean);
 }
@@ -2929,13 +2950,12 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     const dsHoanThanhTheoGD = { da_xet_xu: [], chuyen_di: [], tam_dinh_chi: [], dinh_chi: [], an_huy: [] };
     await Promise.all(hoanThanhSnap.docs.map(async d => {
       const l = d.data();
-      const [vuDoc, bcSnap] = await Promise.all([
+      const [vuDoc, bcInfo] = await Promise.all([
         db.collection("vuan").doc(l.maVuAn).get(),
-        db.collection("bican").where("maVuAn", "==", l.maVuAn).get(),
+        layBiCanInfo(l.maVuAn),
       ]);
       if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
-      const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
-      const entry = { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh };
+      const entry = { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
       hoanThanhTheoGD[l.hinhThucHoanThanh] = (hoanThanhTheoGD[l.hinhThucHoanThanh] || 0) + 1;
       dsHoanThanhTheoGD[l.hinhThucHoanThanh].push(entry);
     }));
@@ -2948,14 +2968,13 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     const dsNhapVu = [];
     await Promise.all(nhapVuSnap.docs.map(async d => {
       const l = d.data();
-      const [vuDoc, bcSnap] = await Promise.all([
+      const [vuDoc, bcInfo] = await Promise.all([
         db.collection("vuan").doc(l.maVuAn).get(),
-        db.collection("bican").where("maVuAn", "==", l.maVuAn).get(),
+        layBiCanInfo(l.maVuAn),
       ]);
       if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
-      const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
       soNhapVu++;
-      dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh });
+      dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh });
     }));
 
     let tonCuoiKy;
@@ -2992,9 +3011,8 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
 async function tinhTonHienTaiTheoGD(gd) {
   const vuTonSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
   const dsTon = await Promise.all(vuTonSnap.docs.map(async d => {
-    const bcSnap = await db.collection("bican").where("maVuAn", "==", d.id).get();
-    const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
-    return { id: d.id, ...d.data(), _soBiCan: bcSnap.size, _toiDanhChinh: toiDanhChinh };
+    const bcInfo = await layBiCanInfo(d.id);
+    return { id: d.id, ...d.data(), _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
   }));
   const soBiCanTon = dsTon.reduce((s, v) => s + v._soBiCan, 0);
   return { soVuTon: vuTonSnap.size, soBiCanTon, dsTon };
@@ -3119,7 +3137,7 @@ function ChiTietSoLieuModal({ nhan, dsList, onDong }) {
       <div className="text-xs text-slate-500 mb-4">
         <span className="font-medium text-slate-700">{dsList.length} vụ</span>
         {" / "}
-        <span className="font-medium text-slate-700">{tongBC} bị can</span>
+        <span className="font-medium text-orange-500">{tongBC} bị can</span>
       </div>
       <div className="space-y-2 max-h-[400px] overflow-y-auto mb-4">
         {nhomTheoToiDanh.map(([td, vuList]) => {
@@ -3131,8 +3149,11 @@ function ChiTietSoLieuModal({ nhan, dsList, onDong }) {
                 className="w-full flex items-center justify-between p-2 bg-slate-50 hover:bg-slate-100 text-left"
                 onClick={() => setMoNhom(s => ({ ...s, [td]: !s[td] }))}>
                 <span className="text-sm font-medium text-slate-700 truncate pr-2">{td || "—"}</span>
-                <span className="text-xs text-slate-500 shrink-0">
-                  {vuList.length} vụ / {bcNhom} BC {daMo ? "▲" : "▼"}
+                <span className="text-xs shrink-0">
+                  <span className="text-slate-600">{vuList.length} vụ</span>
+                  {" / "}
+                  <span className="text-orange-500 font-medium">{bcNhom} BC</span>
+                  {" "}{daMo ? "▲" : "▼"}
                 </span>
               </button>
               {daMo && (
@@ -3175,10 +3196,10 @@ function HangBaoCao({ nhan, data, lay, layDs, damNet, onMoChiTiet }) {
             {coThe ? (
               <button className="text-indigo-700 hover:underline w-full text-right" onClick={() => onMoChiTiet(`${nhan} — ${NHAN_GIAI_DOAN[gd]}`, ds)}>
                 {val} vụ
-                {soBC !== null && <span className="text-slate-400 font-normal"> / {soBC} BC</span>}
+                {soBC !== null && <span className="text-orange-500 font-normal"> / {soBC} BC</span>}
               </button>
             ) : soBC !== null && ds && ds.length > 0 ? (
-              <span>{val} vụ<span className="text-slate-400"> / {soBC} BC</span></span>
+              <span>{val} vụ<span className="text-orange-500"> / {soBC} BC</span></span>
             ) : (
               <span>{val}</span>
             )}
