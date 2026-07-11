@@ -18,8 +18,9 @@ Firebase project: `qlahsp2` (config đã có sẵn trong `qlva.html`). Firestore
 
 ## Schema Firestore — xem chi tiết đầy đủ trong `schema_csdl_he_thong_quan_ly_an_v2.md`
 
-Tóm tắt nhanh 6 collection: `vuan`, `bican`, `lichsuChuyenGiaiDoan` (log sự kiện, append-only —
-nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, `canbo`, `boDemMaVu` (bộ đếm sinh mã).
+Tóm tắt nhanh 7 collection: `vuan`, `bican`, `lichsuChuyenGiaiDoan` (log sự kiện, append-only —
+nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, `canbo`, `boDemMaVu` (bộ đếm sinh mã),
+`phienGiaoNhan` (phiên giao/nhận hồ sơ — xem module Giao nhận hồ sơ bên dưới).
 
 ## Nguyên tắc thiết kế cốt lõi (đã thống nhất qua nhiều vòng, KHÔNG tự ý đổi)
 
@@ -84,6 +85,21 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       chính/KSV hỗ trợ/ĐTV ở form Thêm vụ án và Sửa thông tin vụ án vẫn lưu **tên dạng chuỗi**
       (không phải ref cứng tới `canbo`) — lựa chọn có chủ đích để tương thích dữ liệu đã có
       sẵn (từ Import Excel và các vụ tạo trước khi có module này), `<datalist>` chỉ gợi ý.
+- [x] Module **Giao nhận hồ sơ** (`GiaoNhanHoSoModule`) — thiết kế để dùng với đầu đọc mã QR
+      không dây 2.4GHz kiểu "giả lập bàn phím" (cắm đầu thu USB, không cần driver/app riêng —
+      quét là gõ thẳng chuỗi mã vụ + Enter vào ô đang focus, y hệt gõ tay). Luồng: chọn loại
+      giao dịch (Giao/Nhận) → tạo 1 `phienGiaoNhan` (trạng thái `dang_mo`) → ô input luôn
+      auto-focus, mỗi lần nhận sự kiện `submit` (Enter) ghi NGAY 1 sự kiện `giao_nhan_ho_so` vào
+      `lichsuChuyenGiaiDoan` (không hỏi kỳ báo cáo — giống "Sửa thông tin", đây là log hành
+      chính lưu vết ai giữ hồ sơ, không phải sự kiện nghiệp vụ đổi giai đoạn/trạng thái, không
+      ảnh hưởng số liệu báo cáo kỳ) → hiện ngay trong bảng "đã quét trong phiên", sửa/xoá được
+      từng dòng tại chỗ cho tới khi bấm **"Lưu phiên"** (khoá lại, không sửa/quét thêm được nữa).
+      Người giao/người nhận mặc định lấy từ chính vụ án đó (`dtvCbdt`/`ksvChinh`), nhưng luôn
+      sửa tự do được (input + `<datalist>` gợi ý từ `canbo`, không ép buộc). Không có ràng buộc
+      thứ tự giao/nhận (quét là ghi, không kiểm tra hồ sơ đang "ở đâu" trước đó) — quyết định có
+      chủ đích để giữ thao tác quét nhanh, đơn giản như sổ giao nhận giấy truyền thống. **"In
+      phiên"** xuất "Biên bản giao nhận hồ sơ" khổ A4 (bảng danh sách + 2 chỗ ký Bên giao/Bên
+      nhận) qua cùng cơ chế portal `#qr-print-root` đã dùng cho In mã QR (xem `BienBanGiaoNhanIn`).
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy

@@ -170,6 +170,7 @@ const NHAN_SU_KIEN = {
   ket_luan_dieu_tra: "Kết luận điều tra", ket_luan_dieu_tra_bo_sung: "Kết luận điều tra bổ sung",
   cao_trang: "Cáo trạng", cao_trang_bo_sung: "Cáo trạng bổ sung", hoan_thanh: "Hoàn thành",
   tach_vu: "Tách vụ", nhap_vu: "Nhập vụ", duoc_nhap_vu: "Nhận nhập vụ",
+  giao_nhan_ho_so: "Giao nhận hồ sơ",
 };
 
 const MAU_GIAI_DOAN = { dieu_tra: "bg-blue-100 text-blue-700", truy_to: "bg-purple-100 text-purple-700", xet_xu: "bg-emerald-100 text-emerald-700" };
@@ -3071,6 +3072,288 @@ function AnDaGiaiQuyetModule() {
 }
 
 // ====================================================================
+// MODULE: GIAO NHẬN HỒ SƠ
+// Dùng với đầu đọc mã QR không dây (giả lập bàn phím — gõ chuỗi mã vụ + Enter). Không hỏi kỳ
+// báo cáo (giống "Sửa thông tin" — đây là log hành chính lưu vết ai giữ hồ sơ, không phải sự
+// kiện nghiệp vụ làm đổi giai đoạn/trạng thái, không ảnh hưởng số liệu báo cáo kỳ).
+// ====================================================================
+function fmtNgayGio(d) {
+  if (!d) return "—";
+  const dt = d.toDate ? d.toDate() : (d instanceof Date ? d : new Date(d));
+  if (isNaN(dt)) return "—";
+  return `${dt.toLocaleDateString("vi-VN")} ${dt.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
+  const [dangSua, setDangSua] = useState(false);
+  const [nguoiGiao, setNguoiGiao] = useState(dong.nguoiGiao || "");
+  const [nguoiNhan, setNguoiNhan] = useState(dong.nguoiNhan || "");
+
+  const luu = async () => {
+    await onSua(dong.id, { nguoiGiao: nguoiGiao.trim(), nguoiNhan: nguoiNhan.trim() });
+    setDangSua(false);
+  };
+
+  return (
+    <tr className="border-t border-slate-100">
+      <td className="p-3 text-slate-400">{stt}</td>
+      <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{dong.maVuAn}</td>
+      <td className="p-3 font-medium text-slate-800">{dong.tenVu || "—"}</td>
+      {dangSua ? (
+        <>
+          <td className="p-2"><input value={nguoiGiao} onChange={e => setNguoiGiao(e.target.value)} list="ds-canbo-gnhs" className={oInput} /></td>
+          <td className="p-2"><input value={nguoiNhan} onChange={e => setNguoiNhan(e.target.value)} list="ds-canbo-gnhs" className={oInput} /></td>
+        </>
+      ) : (
+        <>
+          <td className="p-3">{dong.nguoiGiao || "—"}</td>
+          <td className="p-3">{dong.nguoiNhan || "—"}</td>
+        </>
+      )}
+      <td className="p-3 text-xs text-slate-400 whitespace-nowrap">{fmtNgayGio(dong.thoiDiemGhi)}</td>
+      {!khoaSua && (
+        <td className="p-3 whitespace-nowrap">
+          {dangSua ? (
+            <>
+              <button onClick={luu} className="text-indigo-600 hover:text-indigo-700 font-medium mr-2">Lưu</button>
+              <button onClick={() => setDangSua(false)} className="text-slate-400 hover:text-slate-600">Huỷ</button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => setDangSua(true)} className="text-indigo-600 hover:text-indigo-700 font-medium mr-2">Sửa</button>
+              <button onClick={() => onXoa(dong.id)} className="text-red-500 hover:text-red-700">Xoá</button>
+            </>
+          )}
+        </td>
+      )}
+    </tr>
+  );
+}
+
+// Render qua portal vào #qr-print-root (đã dùng chung cho In mã QR) — xem chú thích @media
+// print ở <head>: #root bị ẩn hẳn khi in, #qr-print-root thì không nên nội dung in ở đây luôn
+// đứng vững dù #root có dài tới đâu.
+function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
+  const dsInDung = [...dsQuet].reverse(); // in theo thứ tự quét trước lên trên
+  const noiDung = (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 print:bg-white overflow-auto py-8">
+      <div id="bbgn-in-a4" className="bg-white p-10" style={{ width: "210mm", minHeight: "297mm" }}>
+        <div className="text-sm text-slate-400 mb-6 print:hidden">Xem trước trang in A4 — bấm "In" để in thật.</div>
+        <div className="text-center mb-6">
+          <div className="text-lg font-bold uppercase">Biên bản giao nhận hồ sơ</div>
+          <div className="text-sm text-slate-500 mt-1">
+            {phien.loaiGiaoDich === "giao" ? "Giao hồ sơ" : "Nhận hồ sơ"} — Lập lúc {fmtNgayGio(phien.thoiDiemLuu || phien.thoiDiemBatDau)}
+          </div>
+        </div>
+        <table className="w-full text-sm border border-slate-800 border-collapse">
+          <thead>
+            <tr>
+              <th className="border border-slate-800 p-2">STT</th>
+              <th className="border border-slate-800 p-2">Mã vụ</th>
+              <th className="border border-slate-800 p-2">Tên vụ</th>
+              <th className="border border-slate-800 p-2">Người giao</th>
+              <th className="border border-slate-800 p-2">Người nhận</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dsInDung.map((d, i) => (
+              <tr key={d.id}>
+                <td className="border border-slate-800 p-2 text-center">{i + 1}</td>
+                <td className="border border-slate-800 p-2">{d.maVuAn}</td>
+                <td className="border border-slate-800 p-2">{d.tenVu}</td>
+                <td className="border border-slate-800 p-2">{d.nguoiGiao || "—"}</td>
+                <td className="border border-slate-800 p-2">{d.nguoiNhan || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="mt-16 flex justify-between text-sm">
+          <div className="text-center">
+            <div className="font-medium">Bên giao</div>
+            <div className="text-xs text-slate-400 mt-16">(Ký, ghi rõ họ tên)</div>
+          </div>
+          <div className="text-center">
+            <div className="font-medium">Bên nhận</div>
+            <div className="text-xs text-slate-400 mt-16">(Ký, ghi rõ họ tên)</div>
+          </div>
+        </div>
+        <div className="mt-10 flex justify-center gap-2 print:hidden">
+          <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Đóng</button>
+          <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+        </div>
+      </div>
+    </div>
+  );
+  return ReactDOM.createPortal(noiDung, document.getElementById("qr-print-root"));
+}
+
+function GiaoNhanHoSoModule({ currentUser }) {
+  const dsCanBo = useDanhSachCanBo();
+  const [phien, setPhien] = useState(null);
+  const [dsQuet, setDsQuet] = useState([]);
+  const [maQuet, setMaQuet] = useState("");
+  const [loiQuet, setLoiQuet] = useState("");
+  const [dangXuLy, setDangXuLy] = useState(false);
+  const [hienBienBan, setHienBienBan] = useState(false);
+  const inputRef = React.useRef(null);
+
+  // Không dùng orderBy kèm where ở đây để khỏi cần composite index mới — sắp xếp lại phía client.
+  useEffect(() => {
+    if (!phien) { setDsQuet([]); return; }
+    return db.collection("lichsuChuyenGiaiDoan").where("phienGiaoNhanId", "==", phien.id).onSnapshot(
+      snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        list.sort((a, b) => (b.thoiDiemGhi?.toMillis?.() || 0) - (a.thoiDiemGhi?.toMillis?.() || 0));
+        setDsQuet(list);
+      },
+      err => console.error(err)
+    );
+  }, [phien?.id]);
+
+  useEffect(() => {
+    if (phien && phien.trangThai === "dang_mo") inputRef.current?.focus();
+  }, [phien, dsQuet]);
+
+  const batDauPhien = async (loaiGiaoDich) => {
+    const now = new Date();
+    const ref = await db.collection("phienGiaoNhan").add({
+      loaiGiaoDich, nguoiThucHien: currentUser?.email || "",
+      thoiDiemBatDau: now, trangThai: "dang_mo", thoiDiemLuu: null,
+    });
+    setPhien({ id: ref.id, loaiGiaoDich, trangThai: "dang_mo", thoiDiemBatDau: now });
+  };
+
+  const xuLyQuet = async (e) => {
+    e.preventDefault();
+    const ma = maQuet.trim();
+    if (!ma || dangXuLy) return;
+    setDangXuLy(true);
+    setLoiQuet("");
+    try {
+      const vuDoc = await db.collection("vuan").doc(ma).get();
+      if (!vuDoc.exists) {
+        setLoiQuet(`Không tìm thấy vụ án có mã "${ma}".`);
+        return;
+      }
+      const vuAn = vuDoc.data();
+      const nguoiGiaoMacDinh = vuAn.dtvCbdt || vuAn.ksvChinh || "";
+      const nguoiNhanMacDinh = vuAn.ksvChinh || "";
+      const now = new Date();
+      await db.collection("lichsuChuyenGiaiDoan").add(taoSuKien({
+        maVuAn: ma, loaiSuKien: "giao_nhan_ho_so", ngaySuKien: now, kyThongKe: null,
+        nguoiThucHien: currentUser?.email || "", thoiDiemGhi: now,
+        phienGiaoNhanId: phien.id, loaiGiaoDich: phien.loaiGiaoDich, tenVu: vuAn.tenVu || "",
+        nguoiGiao: nguoiGiaoMacDinh, nguoiNhan: nguoiNhanMacDinh,
+        ghiChu: phien.loaiGiaoDich === "giao" ? `Giao cho: ${nguoiNhanMacDinh || "—"}` : `Nhận từ: ${nguoiGiaoMacDinh || "—"}`,
+      }));
+    } catch (err) {
+      console.error(err);
+      setLoiQuet("Lỗi khi ghi nhận: " + err.message);
+    } finally {
+      setMaQuet("");
+      setDangXuLy(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  const suaNguoi = (id, patch) => db.collection("lichsuChuyenGiaiDoan").doc(id).update(patch).catch(err => console.error(err));
+  const xoaDong = (id) => db.collection("lichsuChuyenGiaiDoan").doc(id).delete().catch(err => console.error(err));
+
+  const luuPhien = async () => {
+    const now = new Date();
+    await db.collection("phienGiaoNhan").doc(phien.id).update({ trangThai: "da_luu", thoiDiemLuu: now });
+    setPhien(p => ({ ...p, trangThai: "da_luu", thoiDiemLuu: now }));
+  };
+
+  if (!phien) {
+    return (
+      <div>
+        <h2 className="text-lg font-semibold mb-4">Giao nhận hồ sơ</h2>
+        <div className="text-sm text-slate-500 mb-4">Chọn loại giao dịch để bắt đầu 1 phiên quét mới.</div>
+        <div className="flex gap-3">
+          <button onClick={() => batDauPhien("giao")}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-5 py-3 text-sm font-medium">
+            Bắt đầu phiên — Giao hồ sơ
+          </button>
+          <button onClick={() => batDauPhien("nhan")}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-5 py-3 text-sm font-medium">
+            Bắt đầu phiên — Nhận hồ sơ
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-semibold">Giao nhận hồ sơ</h2>
+          <div className="text-sm text-slate-500 mt-0.5 flex items-center gap-2">
+            Phiên hiện tại:
+            <Badge mau={phien.loaiGiaoDich === "giao" ? "bg-indigo-100 text-indigo-700" : "bg-emerald-100 text-emerald-700"}>
+              {phien.loaiGiaoDich === "giao" ? "Giao hồ sơ" : "Nhận hồ sơ"}
+            </Badge>
+            {phien.trangThai === "da_luu" && <Badge mau="bg-slate-200 text-slate-600">Đã lưu</Badge>}
+          </div>
+        </div>
+        <div className="flex gap-2">
+          {phien.trangThai === "dang_mo" && (
+            <button onClick={luuPhien} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+              Lưu phiên
+            </button>
+          )}
+          <button onClick={() => setHienBienBan(true)} disabled={dsQuet.length === 0}
+                  className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+            In phiên
+          </button>
+          <button onClick={() => setPhien(null)} className="text-sm text-slate-500 hover:text-slate-700 px-2">Phiên mới</button>
+        </div>
+      </div>
+
+      {phien.trangThai === "dang_mo" && (
+        <form onSubmit={xuLyQuet} className="mb-4">
+          {loiQuet && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-2">{loiQuet}</div>}
+          <input ref={inputRef} value={maQuet} onChange={e => setMaQuet(e.target.value)}
+                 autoFocus placeholder="Quét mã QR vụ án vào đây..."
+                 className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 text-base focus:border-indigo-500 focus:outline-none" />
+        </form>
+      )}
+
+      <datalist id="ds-canbo-gnhs">{dsCanBo.map(c => <option key={c.id} value={c.hoTen} />)}</datalist>
+
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-500 text-xs">
+            <tr>
+              <th className="text-left p-3 w-10">STT</th>
+              <th className="text-left p-3">Mã vụ</th>
+              <th className="text-left p-3">Tên vụ</th>
+              <th className="text-left p-3">Người giao</th>
+              <th className="text-left p-3">Người nhận</th>
+              <th className="text-left p-3">Thời điểm</th>
+              {phien.trangThai === "dang_mo" && <th className="text-left p-3"></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {dsQuet.length === 0 && (
+              <tr><td colSpan={7} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
+            )}
+            {dsQuet.map((d, i) => (
+              <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}
+                            khoaSua={phien.trangThai !== "dang_mo"} onSua={suaNguoi} onXoa={xoaDong} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="text-xs text-slate-400 mt-3">{dsQuet.length} hồ sơ đã quét trong phiên này.</div>
+
+      {hienBienBan && <BienBanGiaoNhanIn phien={phien} dsQuet={dsQuet} onDong={() => setHienBienBan(false)} />}
+    </div>
+  );
+}
+
+// ====================================================================
 // MODULE: DASHBOARD
 // ====================================================================
 function ChartCotChong({ labels, datasets }) {
@@ -3359,6 +3642,7 @@ const MODULES = [
   { id: "import", label: "Import Excel", ready: true },
   { id: "list", label: "Danh sách vụ án", ready: true },
   { id: "dagiaiquyet", label: "Án đã giải quyết", ready: true },
+  { id: "giaonhan", label: "Giao nhận hồ sơ", ready: true },
   { id: "ky", label: "Kỳ báo cáo", ready: true },
   { id: "dashboard", label: "Dashboard", ready: true },
   { id: "log", label: "Nhật ký thao tác", ready: true },
@@ -3394,6 +3678,7 @@ function AppShell({ user }) {
         {tab === "import" && <ImportExcelModule />}
         {tab === "list" && <DanhSachVuAnModule currentUser={user} />}
         {tab === "dagiaiquyet" && <AnDaGiaiQuyetModule />}
+        {tab === "giaonhan" && <GiaoNhanHoSoModule currentUser={user} />}
         {tab === "ky" && <KyBaoCaoModule />}
         {tab === "dashboard" && <DashboardModule />}
         {tab === "log" && <NhatKyModule />}
