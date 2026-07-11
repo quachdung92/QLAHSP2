@@ -154,6 +154,18 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       của phần app đã ẩn. Nếu 2 vụ có `maNganhCap`, hiện thêm 1 mã QR mã ngành cấp bên trái mã QR
       mã vụ (component `KhoiQR` dùng chung).
 
+### Bố cục cuộn trang (đã xử lý, đừng lặp lại)
+`AppShell`'s khung ngoài dùng `h-screen overflow-hidden` (KHÔNG phải `min-h-screen`) — bug cũ:
+`min-h-screen` chỉ đặt chiều cao TỐI THIỂU, không chặn nội dung cao hơn viewport phát triển thêm,
+nên khi 1 module có nội dung dài (ví dụ Danh sách vụ án nhiều dòng) sẽ đẩy toàn bộ trang cuộn
+theo trình duyệt (`body` cuộn) thay vì chỉ cuộn bên trong bảng — kéo cả sidebar/tiêu đề/tab lọc/
+panel chi tiết trôi mất theo. Với `h-screen`, `<main className="flex-1 p-8 overflow-auto">` mới
+thực sự trở thành vùng cuộn giới hạn, và các panel con (`DanhSachPanel`, `ChiTietPanel`) tự cuộn
+độc lập bên trong `overflow-auto` + `min-h-0` của chính chúng. Khi thêm module mới có nội dung
+có thể dài, đảm bảo toàn bộ chuỗi cha (module → `AppShell` → `<main>`) giữ đúng pattern
+`h-full`/`min-h-0`/`overflow-auto` ở đúng tầng cần cuộn, đừng để `overflow-auto` "chết" vì cha nó
+dùng `min-h-*` thay vì `h-*`.
+
 ### Ghi chú hạ tầng quan trọng (đã xử lý, đừng lặp lại)
 - Firestore **database** và **Security Rules** phải được khởi tạo thủ công qua Firebase
   Console — không có cách nào tạo qua REST API/API key công khai. Đã tạo xong; rules hiện tại
