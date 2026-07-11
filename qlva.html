@@ -3086,11 +3086,12 @@ function fmtNgayGio(d) {
 
 function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
   const [dangSua, setDangSua] = useState(false);
-  const [nguoiGiao, setNguoiGiao] = useState(dong.nguoiGiao || "");
-  const [nguoiNhan, setNguoiNhan] = useState(dong.nguoiNhan || "");
+  const [ksv, setKsv] = useState(dong.nguoiGiao || "");
+  const [dtv, setDtv] = useState(dong.nguoiNhan || "");
+  const [nguoiNhanThucTe, setNguoiNhanThucTe] = useState(dong.nguoiNhanThucTe || "");
 
   const luu = async () => {
-    await onSua(dong.id, { nguoiGiao: nguoiGiao.trim(), nguoiNhan: nguoiNhan.trim() });
+    await onSua(dong.id, { nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim() });
     setDangSua(false);
   };
 
@@ -3098,16 +3099,23 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
     <tr className="border-t border-slate-100">
       <td className="p-3 text-slate-400">{stt}</td>
       <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{dong.maVuAn}</td>
-      <td className="p-3 font-medium text-slate-800">{dong.tenVu || "—"}</td>
+      <td className="p-3">
+        <div className="font-medium text-slate-800">{dong.tenVu || "—"}</div>
+        <div className="text-xs text-slate-400 mt-0.5">
+          QĐ KTVA: {dong.soQdKtva || "—"} — {fmtDate(dong.ngayQdKtva)}
+        </div>
+      </td>
       {dangSua ? (
         <>
-          <td className="p-2"><input value={nguoiGiao} onChange={e => setNguoiGiao(e.target.value)} list="ds-canbo-gnhs" className={oInput} /></td>
-          <td className="p-2"><input value={nguoiNhan} onChange={e => setNguoiNhan(e.target.value)} list="ds-canbo-gnhs" className={oInput} /></td>
+          <td className="p-2"><input value={ksv} onChange={e => setKsv(e.target.value)} list="ds-canbo-gnhs" className={oInput} /></td>
+          <td className="p-2"><input value={dtv} onChange={e => setDtv(e.target.value)} list="ds-canbo-gnhs" className={oInput} /></td>
+          <td className="p-2"><input value={nguoiNhanThucTe} onChange={e => setNguoiNhanThucTe(e.target.value)} list="ds-canbo-gnhs" className={oInput} placeholder="Ghi rõ nếu khác ĐTV" /></td>
         </>
       ) : (
         <>
           <td className="p-3">{dong.nguoiGiao || "—"}</td>
           <td className="p-3">{dong.nguoiNhan || "—"}</td>
+          <td className="p-3">{dong.nguoiNhanThucTe || <span className="text-slate-300">—</span>}</td>
         </>
       )}
       <td className="p-3 text-xs text-slate-400 whitespace-nowrap">{fmtNgayGio(dong.thoiDiemGhi)}</td>
@@ -3145,38 +3153,33 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
             {phien.loaiGiaoDich === "giao" ? "Giao hồ sơ" : "Nhận hồ sơ"} — Lập lúc {fmtNgayGio(phien.thoiDiemLuu || phien.thoiDiemBatDau)}
           </div>
         </div>
-        <table className="w-full text-sm border border-slate-800 border-collapse">
+        <table className="w-full text-sm border border-slate-800 border-collapse table-fixed">
           <thead>
             <tr>
-              <th className="border border-slate-800 p-2">STT</th>
-              <th className="border border-slate-800 p-2">Mã vụ</th>
+              <th className="border border-slate-800 p-2 w-8">STT</th>
+              <th className="border border-slate-800 p-2 w-24">Mã vụ</th>
               <th className="border border-slate-800 p-2">Tên vụ</th>
-              <th className="border border-slate-800 p-2">Người giao</th>
-              <th className="border border-slate-800 p-2">Người nhận</th>
+              <th className="border border-slate-800 p-2 w-24">KSV</th>
+              <th className="border border-slate-800 p-2 w-24">ĐTV</th>
+              <th className="border border-slate-800 p-2 w-32">Người nhận thực tế / Ký tên</th>
             </tr>
           </thead>
           <tbody>
             {dsInDung.map((d, i) => (
               <tr key={d.id}>
-                <td className="border border-slate-800 p-2 text-center">{i + 1}</td>
-                <td className="border border-slate-800 p-2">{d.maVuAn}</td>
-                <td className="border border-slate-800 p-2">{d.tenVu}</td>
-                <td className="border border-slate-800 p-2">{d.nguoiGiao || "—"}</td>
-                <td className="border border-slate-800 p-2">{d.nguoiNhan || "—"}</td>
+                <td className="border border-slate-800 p-2 text-center align-top">{i + 1}</td>
+                <td className="border border-slate-800 p-2 align-top text-xs break-words">{d.maVuAn}</td>
+                <td className="border border-slate-800 p-2 align-top">
+                  <div>{d.tenVu}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">QĐ KTVA: {d.soQdKtva || "—"} — {fmtDate(d.ngayQdKtva)}</div>
+                </td>
+                <td className="border border-slate-800 p-2 align-top">{d.nguoiGiao || "—"}</td>
+                <td className="border border-slate-800 p-2 align-top">{d.nguoiNhan || "—"}</td>
+                <td className="border border-slate-800 p-2 align-top">{d.nguoiNhanThucTe || ""}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        <div className="mt-16 flex justify-between text-sm">
-          <div className="text-center">
-            <div className="font-medium">Bên giao</div>
-            <div className="text-xs text-slate-400 mt-16">(Ký, ghi rõ họ tên)</div>
-          </div>
-          <div className="text-center">
-            <div className="font-medium">Bên nhận</div>
-            <div className="text-xs text-slate-400 mt-16">(Ký, ghi rõ họ tên)</div>
-          </div>
-        </div>
         <div className="mt-10 flex justify-center gap-2 print:hidden">
           <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Đóng</button>
           <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
@@ -3236,15 +3239,18 @@ function GiaoNhanHoSoModule({ currentUser }) {
         return;
       }
       const vuAn = vuDoc.data();
-      const nguoiGiaoMacDinh = vuAn.dtvCbdt || vuAn.ksvChinh || "";
-      const nguoiNhanMacDinh = vuAn.ksvChinh || "";
+      // "KSV" (lưu ở field nguoiGiao) / "ĐTV" (lưu ở field nguoiNhan) chỉ để THỂ HIỆN hồ sơ của
+      // ai (lấy sẵn từ chính vụ án), không phải người thực giao/nhận. Người thực tế cầm/ký nhận
+      // hồ sơ có thể khác (VD người khác đi nhận thay) — ghi riêng ở nguoiNhanThucTe, để trống
+      // mặc định, điền tay khi cần.
       const now = new Date();
       await db.collection("lichsuChuyenGiaiDoan").add(taoSuKien({
         maVuAn: ma, loaiSuKien: "giao_nhan_ho_so", ngaySuKien: now, kyThongKe: null,
         nguoiThucHien: currentUser?.email || "", thoiDiemGhi: now,
         phienGiaoNhanId: phien.id, loaiGiaoDich: phien.loaiGiaoDich, tenVu: vuAn.tenVu || "",
-        nguoiGiao: nguoiGiaoMacDinh, nguoiNhan: nguoiNhanMacDinh,
-        ghiChu: phien.loaiGiaoDich === "giao" ? `Giao cho: ${nguoiNhanMacDinh || "—"}` : `Nhận từ: ${nguoiGiaoMacDinh || "—"}`,
+        soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
+        nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "",
+        ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
       }));
     } catch (err) {
       console.error(err);
@@ -3327,17 +3333,18 @@ function GiaoNhanHoSoModule({ currentUser }) {
           <thead className="bg-slate-50 text-slate-500 text-xs">
             <tr>
               <th className="text-left p-3 w-10">STT</th>
-              <th className="text-left p-3">Mã vụ</th>
+              <th className="text-left p-3 w-32">Mã vụ</th>
               <th className="text-left p-3">Tên vụ</th>
-              <th className="text-left p-3">Người giao</th>
-              <th className="text-left p-3">Người nhận</th>
+              <th className="text-left p-3">KSV</th>
+              <th className="text-left p-3">ĐTV</th>
+              <th className="text-left p-3">Người nhận thực tế</th>
               <th className="text-left p-3">Thời điểm</th>
               {phien.trangThai === "dang_mo" && <th className="text-left p-3"></th>}
             </tr>
           </thead>
           <tbody>
             {dsQuet.length === 0 && (
-              <tr><td colSpan={7} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
+              <tr><td colSpan={8} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
             )}
             {dsQuet.map((d, i) => (
               <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}
