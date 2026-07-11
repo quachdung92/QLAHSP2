@@ -91,7 +91,7 @@ function fmtDate(d) {
   if (!d) return "—";
   const dt = d.toDate ? d.toDate() : (d instanceof Date ? d : new Date(d));
   if (isNaN(dt)) return "—";
-  return dt.toLocaleDateString("vi-VN");
+  return `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}/${dt.getFullYear()}`;
 }
 
 function fromInputDate(s) {
@@ -3114,56 +3114,246 @@ function HangBaoCaoTieuDe({ nhan }) {
   return <tr className="bg-slate-50"><td colSpan={4} className="p-2 text-xs font-semibold text-slate-500">{nhan}</td></tr>;
 }
 
-// Modal xem chi tiết 1 vụ án (read-only, dùng ở lv3 từ báo cáo kỳ)
+// Modal xem/sửa chi tiết 1 vụ án (dùng ở lv3 từ báo cáo kỳ)
 function ChiTietVuAnModal({ vuAnId, onDong }) {
   const [vuAn, setVuAn] = useState(null);
   const [biCanList, setBiCanList] = useState([]);
   const [lichSu, setLichSu] = useState([]);
+  const [editMode, setEditMode] = useState(false);
+  const [ed, setEd] = useState({});          // editData — tên ngắn để dùng inline
+  const [hienModalKy, setHienModalKy] = useState(false);
+  const [dangLuu, setDangLuu] = useState(false);
+  const [loi, setLoi] = useState("");
+  const dsCanBo = useDanhSachCanBo();
 
   useEffect(() => {
     if (!vuAnId) return;
-    const unsub1 = db.collection("vuan").doc(vuAnId).onSnapshot(doc => {
+    const u1 = db.collection("vuan").doc(vuAnId).onSnapshot(doc => {
       setVuAn(doc.exists ? { id: doc.id, ...doc.data() } : null);
     });
-    const unsub2 = db.collection("bican").where("maVuAn", "==", vuAnId).onSnapshot(
+    const u2 = db.collection("bican").where("maVuAn", "==", vuAnId).onSnapshot(
       snap => setBiCanList(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     );
-    const unsub3 = db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", vuAnId).orderBy("thoiDiemGhi", "desc").onSnapshot(
-      snap => setLichSu(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-    );
-    return () => { unsub1(); unsub2(); unsub3(); };
+    const u3 = db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", vuAnId)
+      .orderBy("thoiDiemGhi", "desc").onSnapshot(
+        snap => setLichSu(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      );
+    return () => { u1(); u2(); u3(); };
   }, [vuAnId]);
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-[640px] max-w-[96vw] max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 shrink-0">
-          <div>
-            {vuAn && <div className="text-xs text-slate-400">{hienThiMa(vuAn)}</div>}
-            <div className="text-base font-semibold">{vuAn?.tenVu || "Đang tải..."}</div>
-          </div>
-          <button onClick={onDong} className="text-red-400 hover:text-red-600 text-sm font-medium">Đóng ✕</button>
+  function batDauSua() {
+    if (!vuAn) return;
+    setEd({
+      maNganhCap: vuAn.maNganhCap || "",
+      tenVu: vuAn.tenVu || "",
+      nguon: vuAn.nguon || "an_khoi_to_moi",
+      nguonChiTiet: vuAn.nguonChiTiet || "",
+      soQdKtva: vuAn.soQdKtva || "",
+      ngayQdKtva: toInputDate(vuAn.ngayQdKtva),
+      hanDieuTra: toInputDate(vuAn.hanDieuTra),
+      ksvChinh: vuAn.ksvChinh || "",
+      ksvHoTro: (vuAn.ksvHoTro || []).join(", "),
+      dtvCbdt: vuAn.dtvCbdt || "",
+      donViThuLy: vuAn.donViThuLy || "",
+      uyQuyenXetXu: vuAn.uyQuyenXetXu || "",
+      anDiem: !!vuAn.anDiem,
+      phienToaRutKN: !!vuAn.phienToaRutKN,
+      dieuLuat: vuAn.dieuLuat || "",
+      ghiChu: vuAn.ghiChu || "",
+    });
+    setLoi("");
+    setEditMode(true);
+  }
+
+  function huyEdit() { setEditMode(false); setEd({}); setLoi(""); }
+
+  const set = (f, v) => setEd(p => ({ ...p, [f]: v }));
+
+  async function onXacNhanKy(kyId) {
+    setHienModalKy(false);
+    setDangLuu(true);
+    try {
+      if (!ed.tenVu.trim()) throw new Error("Cần nhập tên vụ.");
+      if (!ed.ngayQdKtva) throw new Error("Cần nhập ngày QĐ khởi tố VA.");
+      const updates = {
+        maNganhCap: ed.maNganhCap.trim() || null,
+        tenVu: ed.tenVu.trim(),
+        nguon: ed.nguon,
+        nguonChiTiet: ed.nguon === "an_noi_khac_chuyen_den" ? ed.nguonChiTiet.trim() : "",
+        soQdKtva: ed.soQdKtva.trim(),
+        ngayQdKtva: fromInputDate(ed.ngayQdKtva),
+        hanDieuTra: ed.hanDieuTra ? fromInputDate(ed.hanDieuTra) : null,
+        ksvChinh: ed.ksvChinh.trim(),
+        ksvHoTro: ed.ksvHoTro.split(",").map(s => s.trim()).filter(Boolean),
+        dtvCbdt: ed.dtvCbdt.trim(),
+        donViThuLy: ed.donViThuLy.trim(),
+        uyQuyenXetXu: ed.uyQuyenXetXu.trim(),
+        anDiem: ed.anDiem,
+        phienToaRutKN: ed.phienToaRutKN,
+        ghiChu: ed.ghiChu.trim(),
+        ngayCapNhat: new Date(),
+        nguoiCapNhatCuoi: auth.currentUser?.email || "",
+      };
+      if (biCanList.length === 0) updates.dieuLuat = ed.dieuLuat.trim();
+      await db.collection("vuan").doc(vuAnId).update(updates);
+      await db.collection("lichsuChuyenGiaiDoan").add({
+        maVuAn: vuAnId, loaiSuKien: "sua_thong_tin",
+        thoiDiemGhi: firebase.firestore.FieldValue.serverTimestamp(),
+        ngaySuKien: new Date().toISOString().slice(0, 10),
+        kyThongKe: kyId, ghiChu: "Cập nhật thông tin vụ án",
+        nguoiThucHien: auth.currentUser?.email || "",
+        lichSuSuaKy: [], soQuyetDinh: "",
+      });
+      // Tính lại baoCaoLuu nếu kỳ đã chốt (nguon ảnh hưởng phân loại soMoi)
+      try {
+        const kyDoc = await db.collection("kybaocao").doc(kyId).get();
+        if (kyDoc.exists && kyDoc.data().trangThai === "da_chot") {
+          const ky = { id: kyDoc.id, ...kyDoc.data() };
+          const allSnap = await db.collection("kybaocao").orderBy("ngayBatDau").get();
+          const sorted = allSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          const idx = sorted.findIndex(k => k.id === kyId);
+          const kyTruoc = idx > 0 ? sorted[idx - 1] : null;
+          await tinhLaiBaoCaoLuu(ky, kyTruoc);
+        }
+      } catch (e) { console.warn("Không tính lại được baoCaoLuu:", e); }
+      setEditMode(false);
+      setEd({});
+    } catch (err) {
+      setLoi("Lỗi: " + err.message);
+    } finally {
+      setDangLuu(false);
+    }
+  }
+
+  // Phần form edit — dùng lại oInput và Truong giống SuaVuAnForm
+  const FormSua = () => (
+    <div className="p-5 border-b border-slate-100">
+      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+        Chỉ sửa thông tin thường. Muốn đổi giai đoạn/trạng thái dùng các nút hành động ở Danh sách vụ án.
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Truong nhan="Mã ngành cấp (nếu có)">
+          <input value={ed.maNganhCap} onChange={e => set("maNganhCap", e.target.value)} className={oInput} />
+        </Truong>
+        <Truong nhan="Tên vụ">
+          <input value={ed.tenVu} onChange={e => set("tenVu", e.target.value)} className={oInput} />
+        </Truong>
+        <Truong nhan="Nguồn">
+          <select value={ed.nguon} onChange={e => set("nguon", e.target.value)} className={oInput}>
+            <option value="an_khoi_to_moi">Án khởi tố mới</option>
+            <option value="tin_bao_khoi_to_len">Tin báo khởi tố lên</option>
+            <option value="an_noi_khac_chuyen_den">Án nơi khác chuyển đến</option>
+            <option value="phuc_hoi_dieu_tra">Phục hồi điều tra</option>
+          </select>
+        </Truong>
+        {ed.nguon === "an_noi_khac_chuyen_den" && (
+          <Truong nhan="Chi tiết nguồn">
+            <input value={ed.nguonChiTiet} onChange={e => set("nguonChiTiet", e.target.value)} className={oInput} />
+          </Truong>
+        )}
+        <Truong nhan="Số QĐ khởi tố VA">
+          <input value={ed.soQdKtva} onChange={e => set("soQdKtva", e.target.value)} className={oInput} />
+        </Truong>
+        <Truong nhan="Ngày QĐ khởi tố VA">
+          <input type="date" value={ed.ngayQdKtva} onChange={e => set("ngayQdKtva", e.target.value)} className={oInput} />
+        </Truong>
+        <Truong nhan="Hạn điều tra">
+          <input type="date" value={ed.hanDieuTra} onChange={e => set("hanDieuTra", e.target.value)} className={oInput} />
+        </Truong>
+        <Truong nhan="KSV chính">
+          <input value={ed.ksvChinh} onChange={e => set("ksvChinh", e.target.value)} list="dl-ksv-ctvam" className={oInput} />
+        </Truong>
+        <Truong nhan="KSV hỗ trợ (cách nhau dấu phẩy)">
+          <input value={ed.ksvHoTro} onChange={e => set("ksvHoTro", e.target.value)} list="dl-ksv-ctvam" className={oInput} />
+        </Truong>
+        <Truong nhan="ĐTV / CBĐT">
+          <input value={ed.dtvCbdt} onChange={e => set("dtvCbdt", e.target.value)} list="dl-dtv-ctvam" className={oInput} />
+        </Truong>
+        <Truong nhan="Đơn vị thụ lý">
+          <input value={ed.donViThuLy} onChange={e => set("donViThuLy", e.target.value)} className={oInput} />
+        </Truong>
+        <Truong nhan="Uỷ quyền xét xử">
+          <input value={ed.uyQuyenXetXu} onChange={e => set("uyQuyenXetXu", e.target.value)} className={oInput} />
+        </Truong>
+        {biCanList.length === 0 && (
+          <Truong nhan="Điều luật">
+            <input value={ed.dieuLuat} onChange={e => set("dieuLuat", e.target.value)} className={oInput} />
+          </Truong>
+        )}
+        <div className="flex items-center gap-4 mt-1">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={ed.anDiem} onChange={e => set("anDiem", e.target.checked)} /> Án điểm
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={ed.phienToaRutKN} onChange={e => set("phienToaRutKN", e.target.checked)} /> Phiên toà rút kinh nghiệm
+          </label>
         </div>
+        <datalist id="dl-ksv-ctvam">{dsCanBo.filter(c => c.vaiTro === "ksv").map(c => <option key={c.id} value={c.hoTen} />)}</datalist>
+        <datalist id="dl-dtv-ctvam">{dsCanBo.filter(c => c.vaiTro === "dtv").map(c => <option key={c.id} value={c.hoTen} />)}</datalist>
+      </div>
+      <div className="mt-3">
+        <Truong nhan="Ghi chú">
+          <textarea rows={2} value={ed.ghiChu} onChange={e => set("ghiChu", e.target.value)} className={oInput} />
+        </Truong>
+      </div>
+    </div>
+  );
+
+  return (<>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-[720px] max-w-[96vw] max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 shrink-0 gap-2">
+          <div className="flex-1 min-w-0">
+            {vuAn && <div className="text-xs text-slate-400 mb-0.5">{hienThiMa(vuAn)}</div>}
+            <div className="text-base font-semibold truncate">{vuAn?.tenVu || "Đang tải..."}</div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {vuAn && !editMode && (
+              <button onClick={batDauSua} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-50 hover:bg-indigo-100 text-indigo-700">✏️ Sửa</button>
+            )}
+            {editMode && (<>
+              <button onClick={huyEdit} className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-600 hover:bg-red-50">Huỷ</button>
+              <button onClick={() => { setLoi(""); setHienModalKy(true); }} disabled={dangLuu}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50">
+                {dangLuu ? "Đang lưu..." : "Lưu thay đổi"}
+              </button>
+            </>)}
+            <button onClick={onDong} className="text-red-400 hover:text-red-600 text-sm font-medium">Đóng ✕</button>
+          </div>
+        </div>
+        {loi && <div className="px-5 py-1.5 bg-red-50 border-b border-red-200 text-xs text-red-700">{loi}</div>}
         {!vuAn ? (
           <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Đang tải...</div>
         ) : (
           <div className="overflow-y-auto flex-1">
-            <div className="p-5 border-b border-slate-100">
-              <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
-                <tbody>
-                  <HangThongTin items={[["Giai đoạn", <Badge mau={MAU_GIAI_DOAN[vuAn.coQuanThuLy]}>{NHAN_GIAI_DOAN[vuAn.coQuanThuLy]}</Badge>]]} />
-                  <HangThongTin items={[["Trạng thái", <Badge mau={MAU_TRANG_THAI[vuAn.trangThai]}>{NHAN_TRANG_THAI[vuAn.trangThai]}</Badge>]]} />
-                  <HangThongTin items={[["Nguồn", NHAN_NGUON[vuAn.nguon] || vuAn.nguon]]} />
-                  <HangThongTin items={[["KSV chính", vuAn.ksvChinh]]} />
-                  <HangThongTin items={[["KSV hỗ trợ", (vuAn.ksvHoTro || []).join(", ")]]} />
-                  <HangThongTin items={[["ĐTV/CBĐT", vuAn.dtvCbdt]]} />
-                  <HangThongTin items={[["Điều luật", vuAn.dieuLuat]]} />
-                  <HangThongTin items={[["Số/ngày QĐ KTVA", `${vuAn.soQdKtva || "—"} — ${fmtDate(vuAn.ngayQdKtva)}`]]} />
-                  <HangThongTin items={[["Hạn điều tra", fmtDate(vuAn.hanDieuTra)]]} />
-                  <HangThongTin items={[["Ghi chú", vuAn.ghiChu]]} />
-                </tbody>
-              </table>
-            </div>
+            {/* Thông tin: chế độ xem hoặc sửa */}
+            {editMode ? <FormSua /> : (
+              <div className="p-5 border-b border-slate-100">
+                <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                  <tbody>
+                    <HangThongTin items={[["Giai đoạn", <Badge mau={MAU_GIAI_DOAN[vuAn.coQuanThuLy]}>{NHAN_GIAI_DOAN[vuAn.coQuanThuLy]}</Badge>]]} />
+                    <HangThongTin items={[["Trạng thái", <Badge mau={MAU_TRANG_THAI[vuAn.trangThai]}>{NHAN_TRANG_THAI[vuAn.trangThai]}</Badge>]]} />
+                    <HangThongTin items={[["Nguồn", NHAN_NGUON[vuAn.nguon] || vuAn.nguon]]} />
+                    {vuAn.nguonChiTiet && <HangThongTin items={[["Chi tiết nguồn", vuAn.nguonChiTiet]]} />}
+                    <HangThongTin items={[["KSV chính", vuAn.ksvChinh || "—"]]} />
+                    <HangThongTin items={[["KSV hỗ trợ", (vuAn.ksvHoTro || []).join(", ") || "—"]]} />
+                    <HangThongTin items={[["ĐTV/CBĐT", vuAn.dtvCbdt || "—"]]} />
+                    <HangThongTin items={[["Điều luật", vuAn.dieuLuat || "—"]]} />
+                    <HangThongTin items={[["Số QĐ KTVA", vuAn.soQdKtva || "—"]]} />
+                    <HangThongTin items={[["Ngày QĐ KTVA", fmtDate(vuAn.ngayQdKtva)]]} />
+                    <HangThongTin items={[["Hạn điều tra", fmtDate(vuAn.hanDieuTra)]]} />
+                    <HangThongTin items={[["Đơn vị thụ lý", vuAn.donViThuLy || "—"]]} />
+                    <HangThongTin items={[["Uỷ quyền xét xử", vuAn.uyQuyenXetXu || "—"]]} />
+                    {(vuAn.anDiem || vuAn.phienToaRutKN) && (
+                      <HangThongTin items={[["Đặc điểm", [vuAn.anDiem && "Án điểm", vuAn.phienToaRutKN && "Phiên toà rút KN"].filter(Boolean).join(", ")]]} />
+                    )}
+                    <HangThongTin items={[["Ghi chú", vuAn.ghiChu || "—"]]} />
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {/* Bị can */}
             <div className="p-5 border-b border-slate-100">
               <div className="text-sm font-medium text-slate-600 mb-2">Bị can ({biCanList.length})</div>
               {biCanList.length === 0 ? (
@@ -3197,6 +3387,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                 </div>
               )}
             </div>
+            {/* Lịch sử */}
             <div className="p-5">
               <div className="text-sm font-medium text-slate-600 mb-2">Lịch sử</div>
               {lichSu.length === 0 ? (
@@ -3230,7 +3421,8 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
         )}
       </div>
     </div>
-  );
+    <ModalXacNhanKy open={hienModalKy} onXacNhan={onXacNhanKy} onHuy={() => setHienModalKy(false)} />
+  </>);
 }
 
 // Modal chi tiết số liệu: nhóm theo tội danh (lv1) → từng vụ cụ thể (lv2)
