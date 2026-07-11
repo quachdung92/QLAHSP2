@@ -233,6 +233,7 @@ function taoSuKien(overrides) {
     maVuAn: null, loaiSuKien: null, maBiCan: null,
     tuGiaiDoan: null, denGiaiDoan: null, hanCu: null, hanMoi: null,
     hinhThucHoanThanh: null, vuTachRa: null, lyDoTach: null, vuNhapVao: null,
+    soQuyetDinh: "", // số QĐ/kết luận/cáo trạng/bản án... gắn với thao tác này, nếu có
     ngaySuKien: new Date(), kyThongKe: null, lichSuSuaKy: [], ghiChu: "",
     nguoiThucHien: "", thoiDiemGhi: new Date(),
     ...overrides,
@@ -833,21 +834,37 @@ function KhungModalHanhDong({ tieuDe, rong, children }) {
   );
 }
 
+// Số quyết định gắn với việc chuyển giai đoạn phụ thuộc giai đoạn ĐẾN: Điều tra->Truy tố là số
+// kết luận điều tra (viện dựa vào đó truy tố), Truy tố->Xét xử là số cáo trạng (viện truy tố
+// bằng cáo trạng, chuyển hồ sơ sang toà). Không có nhãn cho trường hợp khác vì hệ thống chỉ có
+// 3 giai đoạn tuần tự, chuyển tiến luôn đúng 1 trong 2 case này.
+function nhanSoQuyetDinhChuyen(denGiaiDoan) {
+  if (denGiaiDoan === "truy_to") return "Số kết luận điều tra";
+  if (denGiaiDoan === "xet_xu") return "Số cáo trạng";
+  return "Số quyết định";
+}
+
 function ChuyenGiaiDoanModal({ vuAn, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
   const denGiaiDoan = giaiDoanKeTiep(vuAn.coQuanThuLy);
+  const nhanSo = nhanSoQuyetDinhChuyen(denGiaiDoan);
 
   const luu = () => {
     if (!ngay) { hd.setLoi("Cần nhập ngày chuyển giai đoạn."); return; }
     hd.batDauXacNhanKy(async (kyId) => {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
+      const capNhatVuAn = { coQuanThuLy: denGiaiDoan, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien };
+      if (denGiaiDoan === "truy_to") capNhatVuAn.soKetLuanDieuTra = soQuyetDinh.trim();
+      if (denGiaiDoan === "xet_xu") capNhatVuAn.soCaoTrang = soQuyetDinh.trim();
       const batch = db.batch();
-      batch.update(db.collection("vuan").doc(vuAn.id), { coQuanThuLy: denGiaiDoan, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      batch.update(db.collection("vuan").doc(vuAn.id), capNhatVuAn);
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "chuyen_giai_doan", tuGiaiDoan: vuAn.coQuanThuLy, denGiaiDoan,
+        soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
@@ -860,6 +877,8 @@ function ChuyenGiaiDoanModal({ vuAn, onDong, onXong }) {
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <label className="text-xs text-slate-500 block mb-1">Ngày chuyển giai đoạn</label>
       <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">{nhanSo}</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -877,6 +896,7 @@ function ChuyenGiaiDoanModal({ vuAn, onDong, onXong }) {
 function TraHoSoModal({ vuAn, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
   const denGiaiDoan = giaiDoanTruoc(vuAn.coQuanThuLy);
 
@@ -889,6 +909,7 @@ function TraHoSoModal({ vuAn, onDong, onXong }) {
       batch.update(db.collection("vuan").doc(vuAn.id), { coQuanThuLy: denGiaiDoan, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "tra_ho_so", tuGiaiDoan: vuAn.coQuanThuLy, denGiaiDoan,
+        soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
@@ -901,6 +922,8 @@ function TraHoSoModal({ vuAn, onDong, onXong }) {
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <label className="text-xs text-slate-500 block mb-1">Ngày trả hồ sơ</label>
       <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Số quyết định trả hồ sơ điều tra bổ sung</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Lý do / ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -918,6 +941,7 @@ function TraHoSoModal({ vuAn, onDong, onXong }) {
 function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [hanMoi, setHanMoi] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
 
   const luu = () => {
@@ -930,6 +954,7 @@ function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
       batch.update(db.collection("vuan").doc(vuAn.id), { hanDieuTra: hanMoiDate, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "gia_han_dieu_tra", hanCu: vuAn.hanDieuTra || null, hanMoi: hanMoiDate,
+        soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: now, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
@@ -943,6 +968,8 @@ function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
       <div className="text-xs text-slate-500 mb-3">Hạn hiện hành: {fmtDate(vuAn.hanDieuTra)}</div>
       <label className="text-xs text-slate-500 block mb-1">Hạn điều tra mới</label>
       <input type="date" value={hanMoi} onChange={e => setHanMoi(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Số quyết định gia hạn điều tra</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -960,6 +987,7 @@ function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
 function PhucHoiModal({ vuAn, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
 
   const luu = () => {
@@ -970,7 +998,7 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
       const batch = db.batch();
       batch.update(db.collection("vuan").doc(vuAn.id), { trangThai: "dang_giai_quyet", ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
-        maVuAn: vuAn.id, loaiSuKien: "phuc_hoi",
+        maVuAn: vuAn.id, loaiSuKien: "phuc_hoi", soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
@@ -983,6 +1011,8 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <label className="text-xs text-slate-500 block mb-1">Ngày phục hồi</label>
       <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Số quyết định phục hồi điều tra</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -1002,12 +1032,25 @@ const TUY_CHON_HOAN_THANH = [
   ["dinh_chi", "Đình chỉ"], ["an_huy", "Án huỷ"],
 ];
 
+const NHAN_SO_QUYET_DINH_HOAN_THANH = {
+  da_xet_xu: "Số bản án", chuyen_di: "Số quyết định chuyển đi",
+  tam_dinh_chi: "Số quyết định tạm đình chỉ", dinh_chi: "Số quyết định đình chỉ",
+  an_huy: "Số bản án / quyết định huỷ án",
+};
+// Field lưu trên vuan cho từng hình thức hoàn thành (để hiện trong bảng thông tin vụ án) —
+// chỉ "đã xét xử" có field riêng vì "số bản án" là dữ liệu hay tra cứu lại nhất; các hình thức
+// khác vẫn tra được qua cột "Số QĐ" ở bảng Lịch sử, không cần thêm field riêng trên vuan.
+function fieldSoQuyetDinhTrenVuAn(hinhThuc) {
+  return hinhThuc === "da_xet_xu" ? "soBanAn" : null;
+}
+
 function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [vuAn, setVuAn] = useState(null);
   const [biCanList, setBiCanList] = useState(null);
   const [hinhThuc, setHinhThuc] = useState("da_xet_xu");
   const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [noiChuyenDen, setNoiChuyenDen] = useState("");
   const [ghiChu, setGhiChu] = useState("");
   // { [bcId]: "chuyen_han" | "o_lai" | "sao_chep" } — mặc định TẤT CẢ "chuyen_han" (áp hình thức
@@ -1055,14 +1098,18 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       const nguoiThucHien = auth.currentUser?.email || "";
       const ngaySuKien = fromInputDate(ngay);
 
+      const fieldVuAn = fieldSoQuyetDinhTrenVuAn(hinhThuc);
+
       if (!laMotPhan) {
         const batch = db.batch();
         batch.update(db.collection("vuan").doc(vuAn.id), {
           trangThai: hinhThuc, noiChuyenDen: hinhThuc === "chuyen_di" ? noiChuyenDen.trim() : "",
+          ...(fieldVuAn ? { [fieldVuAn]: soQuyetDinh.trim() } : {}),
           ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
         });
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
           maVuAn: vuAn.id, loaiSuKien: "hoan_thanh", hinhThucHoanThanh: hinhThuc,
+          soQuyetDinh: soQuyetDinh.trim(),
           ngaySuKien, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
         }));
         await batch.commit();
@@ -1071,6 +1118,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
           vuGoc: vuAn, biCanTachIds: idsChuyenHan, biCanSaoChepIds: idsSaoChep, biCanList,
           trangThaiVuMoi: hinhThuc, nguoiThucHien,
         });
+        if (fieldVuAn) batch.update(db.collection("vuan").doc(maVuMoi), { [fieldVuAn]: soQuyetDinh.trim() });
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
           maVuAn: vuAn.id, loaiSuKien: "tach_vu", vuTachRa: maVuMoi, denGiaiDoan: vuAn.coQuanThuLy,
           lyDoTach: hinhThuc === "tam_dinh_chi" ? "de_tam_dinh_chi" : "de_dinh_chi",
@@ -1078,6 +1126,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
         }));
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
           maVuAn: maVuMoi, loaiSuKien: "hoan_thanh", hinhThucHoanThanh: hinhThuc,
+          soQuyetDinh: soQuyetDinh.trim(),
           ngaySuKien, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
         }));
         await batch.commit();
@@ -1116,6 +1165,8 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       )}
       <label className="text-xs text-slate-500 block mb-1">Ngày quyết định</label>
       <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">{NHAN_SO_QUYET_DINH_HOAN_THANH[hinhThuc]}</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -1137,6 +1188,7 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
   const [trangThaiBiCan, setTrangThaiBiCan] = useState({});
   const [lyDo, setLyDo] = useState("khac_toi_danh");
   const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
 
   useEffect(() => {
@@ -1181,6 +1233,7 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
       });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "tach_vu", vuTachRa: maVuMoi, lyDoTach: lyDo, denGiaiDoan: vuAn.coQuanThuLy,
+        soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
@@ -1213,6 +1266,8 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
       </select>
       <label className="text-xs text-slate-500 block mb-1">Ngày tách</label>
       <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Số quyết định tách vụ</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -1234,6 +1289,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   const [dichId, setDichId] = useState(null);
   const [dichTen, setDichTen] = useState("");
   const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
 
   useEffect(() => {
@@ -1282,7 +1338,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
         trangThai: "da_nhap", nhapVaoVu: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
-        maVuAn: vuAn.id, loaiSuKien: "nhap_vu", vuNhapVao: dichId,
+        maVuAn: vuAn.id, loaiSuKien: "nhap_vu", vuNhapVao: dichId, soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       // Ghi thêm 1 sự kiện phía vụ ĐÍCH — vụ nguồn tuy vẫn còn trong collection vuan (trangThai
@@ -1291,7 +1347,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       // nhập (không phải ref) — để tra soát nhanh ngay trên lịch sử vụ đích mà không cần lần
       // ngược qua vuNhapVao, kể cả nếu sau này đổi tên/KSV của vụ nguồn.
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
-        maVuAn: dichId, loaiSuKien: "duoc_nhap_vu", vuNhapVao: vuAn.id,
+        maVuAn: dichId, loaiSuKien: "duoc_nhap_vu", vuNhapVao: vuAn.id, soQuyetDinh: soQuyetDinh.trim(),
         ghiChu: `Nhận nhập vụ ${hienThiMa(vuAn)} — "${vuAn.tenVu || "(chưa đặt tên)"}" (KSV: ${vuAn.ksvChinh || "—"}) vào vụ này.`,
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, nguoiThucHien, thoiDiemGhi: now,
       }));
@@ -1330,6 +1386,8 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       )}
       <label className="text-xs text-slate-500 block mb-1">Ngày nhập vụ</label>
       <input type="date" value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Số quyết định nhập vụ</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -2341,6 +2399,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
                 <tr>
                   <th className="text-left p-2 w-24">Ngày</th>
                   <th className="text-left p-2">Sự kiện</th>
+                  <th className="text-left p-2">Số QĐ</th>
                   <th className="text-left p-2">Ghi chú</th>
                 </tr>
               </thead>
@@ -2349,6 +2408,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
                   <tr key={ls.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
                     <td className="p-2 text-slate-400 whitespace-nowrap">{fmtDate(ls.ngaySuKien)}</td>
                     <td className="p-2"><Badge>{NHAN_SU_KIEN[ls.loaiSuKien] || ls.loaiSuKien}</Badge></td>
+                    <td className="p-2 text-slate-500 whitespace-nowrap">{ls.soQuyetDinh || "—"}</td>
                     <td className="p-2 text-slate-500">{ls.ghiChu || "—"}</td>
                   </tr>
                 ))}

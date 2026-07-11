@@ -201,6 +201,19 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       `#root` (`display:none`), không ẩn `#qr-print-root`, nên khối QR không bị nằm ngoài luồng
       của phần app đã ẩn. Nếu 2 vụ có `maNganhCap`, hiện thêm 1 mã QR mã ngành cấp bên trái mã QR
       mã vụ (component `KhoiQR` dùng chung).
+- [x] **Số quyết định** (2026-07-11) — mọi modal hành động nghiệp vụ (Chuyển giai đoạn, Trả hồ sơ,
+      Gia hạn điều tra, Hoàn thành vụ án, Phục hồi, Tách vụ án, Nhập vụ) đều có thêm 1 ô "Số quyết
+      định" để cán bộ ghi số văn bản làm căn cứ, nhãn đổi theo ngữ cảnh: Chuyển giai đoạn Điều
+      tra→Truy tố = "Số kết luận điều tra" (`nhanSoQuyetDinhChuyen`), Truy tố→Xét xử = "Số cáo
+      trạng", Hoàn thành với hình thức Đã xét xử = "Số bản án" (map nhãn theo `hinhThuc` ở
+      `NHAN_SO_QUYET_DINH_HOAN_THANH`), còn lại (Trả hồ sơ/Gia hạn/Phục hồi/Tách vụ/Nhập vụ) nhãn
+      cố định mô tả đúng loại quyết định của hành động đó. Lưu 2 chỗ: (1) field `soQuyetDinh` trên
+      chính sự kiện log (`taoSuKien`, mặc định `""`) — hiện ở cột **"Số QĐ"** mới trong bảng Lịch
+      sử của `ChiTietPanel`; (2) RIÊNG với Chuyển giai đoạn và Hoàn thành/Đã xét xử, còn ghi thêm
+      vào field cấp `vuan` (`soKetLuanDieuTra`/`soCaoTrang`/`soBanAn` — dùng
+      `fieldSoQuyetDinhTrenVuAn(hinhThuc)` để tra field tương ứng) để tra cứu nhanh không cần lật
+      lịch sử. Chỉ lưu số quyết định, KHÔNG bắt buộc nhập (không validate rỗng) — nhiều trường hợp
+      cán bộ chưa có số ngay lúc thao tác, điền bổ sung sau qua sửa lịch sử nếu cần.
 
 ### Bố cục cuộn trang (đã xử lý, đừng lặp lại)
 `AppShell`'s khung ngoài dùng `h-screen overflow-hidden` (KHÔNG phải `min-h-screen`) — bug cũ:
