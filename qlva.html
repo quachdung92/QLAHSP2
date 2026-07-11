@@ -242,7 +242,17 @@ function taoSuKien(overrides) {
 // Tách 1 phần bị can của vuGoc ra vụ mới — dùng chung cho luồng "Hoàn thành vụ án"
 // (khi TĐC/ĐC chỉ áp dụng 1 phần bị can) và luồng "Tách vụ án" thủ công.
 // Trả về batch CHƯA commit để nơi gọi ghi thêm log rồi tự commit.
-async function tachVuAn({ vuGoc, biCanTachIds, biCanList, trangThaiVuMoi, nguoiThucHien }) {
+// biCanTachIds: bị can CHUYỂN HẲN sang vụ mới (biến mất khỏi vụ gốc — hành vi cũ khi tách).
+// biCanSaoChepIds: bị can SAO CHÉP sang vụ mới (giữ nguyên ở CẢ 2 vụ) — dùng cho trường hợp 1
+// bị can có nhiều hành vi, 1 hành vi tách ra xử lý độc lập nhưng người đó vẫn còn hành vi khác ở
+// vụ gốc. Bản sao được gắn `nhomBiCanId` trỏ về đúng 1 định danh chung với bản gốc — để khi
+// NHẬP VỤ lại sau này, hệ thống nhận ra 2 bản ghi bican đó là CÙNG 1 người thay vì tạo trùng
+// (xem NhapVuModal). Cả 2 tham số đều optional Set, mặc định rỗng — vụ 0 bị can vẫn tách được
+// (tạo 1 vụ mới trống, dùng cho "hành vi chưa rõ đối tượng").
+async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trangThaiVuMoi, nguoiThucHien }) {
+  const idsChuyenHan = biCanTachIds || new Set();
+  const idsSaoChep = biCanSaoChepIds || new Set();
+
   const refGoc = db.collection("vuan").doc(vuGoc.id);
   const maVuMoi = await db.runTransaction(async (tx) => {
     const snap = await tx.get(refGoc);
@@ -251,26 +261,34 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanList, trangThaiVuMoi, nguoiT
     return `${vuGoc.id}_${soMoi}`;
   });
 
-  const biCanO = biCanList.filter(bc => biCanTachIds.has(bc.id));
-  const biCanConLai = biCanList.filter(bc => !biCanTachIds.has(bc.id));
+  const biCanChuyenHan = biCanList.filter(bc => idsChuyenHan.has(bc.id));
+  const biCanSaoChep = biCanList.filter(bc => idsSaoChep.has(bc.id));
+  const biCanVuMoi = [...biCanChuyenHan, ...biCanSaoChep]; // để tính tên vụ/điều luật của vụ MỚI
+  const biCanConLaiGoc = biCanList.filter(bc => !idsChuyenHan.has(bc.id)); // sao chép vẫn ở lại gốc
   const now = new Date();
 
   const batch = db.batch();
   batch.set(db.collection("vuan").doc(maVuMoi), {
     maNoiSinh: maVuMoi, maNganhCap: null,
-    tenVu: tinhTenVu(biCanO) || vuGoc.tenVu,
+    tenVu: tinhTenVu(biCanVuMoi) || vuGoc.tenVu,
     nguon: vuGoc.nguon, nguonChiTiet: vuGoc.nguonChiTiet || "",
     hanDieuTra: vuGoc.hanDieuTra || null, soQdKtva: vuGoc.soQdKtva || "", ngayQdKtva: vuGoc.ngayQdKtva || null,
     ksvChinh: vuGoc.ksvChinh || "", ksvHoTro: vuGoc.ksvHoTro || [], dtvCbdt: vuGoc.dtvCbdt || "",
-    donViThuLy: vuGoc.donViThuLy || "", dieuLuat: tinhDieuLuat(biCanO),
+    donViThuLy: vuGoc.donViThuLy || "", dieuLuat: tinhDieuLuat(biCanVuMoi),
     coQuanThuLy: vuGoc.coQuanThuLy, trangThai: trangThaiVuMoi,
     noiChuyenDen: "", nhapVaoVu: null, vuGoc: vuGoc.id, soDemTach: 0,
     anDiem: vuGoc.anDiem || false, uyQuyenXetXu: vuGoc.uyQuyenXetXu || "", phienToaRutKN: vuGoc.phienToaRutKN || false,
     ghiChu: "", ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
   });
-  biCanO.forEach(bc => batch.update(db.collection("bican").doc(bc.id), { maVuAn: maVuMoi }));
+  biCanChuyenHan.forEach(bc => batch.update(db.collection("bican").doc(bc.id), { maVuAn: maVuMoi }));
+  biCanSaoChep.forEach(bc => {
+    const nhomId = bc.nhomBiCanId || bc.id; // lần đầu sao chép: lấy chính ID bản gốc làm định danh nhóm
+    const { id, ...bcData } = bc;
+    batch.set(db.collection("bican").doc(), { ...bcData, maVuAn: maVuMoi, nhomBiCanId: nhomId });
+    if (!bc.nhomBiCanId) batch.update(db.collection("bican").doc(bc.id), { nhomBiCanId: nhomId });
+  });
   batch.update(refGoc, {
-    dieuLuat: tinhDieuLuat(biCanConLai), tenVu: tinhTenVu(biCanConLai) || vuGoc.tenVu,
+    dieuLuat: tinhDieuLuat(biCanConLaiGoc), tenVu: tinhTenVu(biCanConLaiGoc) || vuGoc.tenVu,
     ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
   });
   return { maVuMoi, batch, now };
@@ -317,16 +335,37 @@ function useDanhSachCanBo() {
   return ds;
 }
 
-function ChonBiCan({ biCanList, chon, onDoi }) {
+// trangThai: { [bcId]: "o_lai" | "chuyen_han" | "sao_chep" }. "sao_chep" = bị can này có nhiều
+// hành vi — giữ nguyên ở vụ gốc, đồng thời tạo 1 bản sao ở vụ mới (liên kết qua nhomBiCanId, xem
+// tachVuAn) — hiếm dùng, chỉ khi 1 người có hành vi cần tách xử lý độc lập nhưng vẫn còn hành vi
+// khác ở vụ gốc.
+function ChonBiCan({ biCanList, trangThai, onDoi, nhanO, nhanChuyenHan }) {
+  const NUT = [
+    ["o_lai", nhanO || "Ở lại vụ gốc", "bg-slate-600"],
+    ["chuyen_han", nhanChuyenHan || "Chuyển hẳn", "bg-indigo-600"],
+    ["sao_chep", "Ở cả 2 vụ", "bg-amber-600"],
+  ];
   return (
-    <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-auto">
-      {biCanList.map(bc => (
-        <label key={bc.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
-          <input type="checkbox" checked={chon.has(bc.id)} onChange={() => onDoi(bc.id)} />
-          <span className="font-medium">{bc.hoTen}</span>
-          <span className="text-xs text-slate-400">{(bc.toiDanh || []).filter(Boolean).join(", ")}</span>
-        </label>
-      ))}
+    <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-64 overflow-auto">
+      {biCanList.map(bc => {
+        const gt = trangThai[bc.id] || "o_lai";
+        return (
+          <div key={bc.id} className="px-3 py-2 text-sm">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-medium">{bc.hoTen}</span>
+              <span className="text-xs text-slate-400">{(bc.toiDanh || []).filter(Boolean).join(", ")}</span>
+            </div>
+            <div className="flex gap-1">
+              {NUT.map(([gia, nhan, mauChon]) => (
+                <button key={gia} type="button" onClick={() => onDoi(bc.id, gia)}
+                        className={`text-xs px-2 py-1 rounded font-medium ${gt === gia ? `${mauChon} text-white` : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>
+                  {nhan}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -971,7 +1010,11 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
   const [ngay, setNgay] = useState("");
   const [noiChuyenDen, setNoiChuyenDen] = useState("");
   const [ghiChu, setGhiChu] = useState("");
-  const [chonBiCan, setChonBiCan] = useState(new Set());
+  // { [bcId]: "chuyen_han" | "o_lai" | "sao_chep" } — mặc định TẤT CẢ "chuyen_han" (áp hình thức
+  // lên toàn vụ, không tách) — đổi 1 vài bị can sang "o_lai" (không thuộc diện, ở lại vụ gốc
+  // đang giải quyết) hoặc "sao_chep" (thuộc diện NHƯNG vẫn còn hành vi khác ở vụ gốc, hiếm dùng)
+  // là lúc hệ thống tự tách 1 phần.
+  const [trangThaiBiCan, setTrangThaiBiCan] = useState({});
 
   useEffect(() => {
     Promise.all([
@@ -981,7 +1024,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       setVuAn({ id: vuSnap.id, ...vuSnap.data() });
       const bc = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       setBiCanList(bc);
-      setChonBiCan(new Set(bc.map(b => b.id)));
+      setTrangThaiBiCan(Object.fromEntries(bc.map(b => [b.id, "chuyen_han"])));
     }).catch(err => { console.error(err); hd.setLoi("Lỗi khi tải dữ liệu vụ án: " + err.message); });
   }, [vuAnId]);
 
@@ -994,19 +1037,18 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
     );
   }
 
+  const idsChuyenHan = new Set(Object.keys(trangThaiBiCan).filter(id => trangThaiBiCan[id] === "chuyen_han"));
+  const idsSaoChep = new Set(Object.keys(trangThaiBiCan).filter(id => trangThaiBiCan[id] === "sao_chep"));
+  const idsOLai = new Set(Object.keys(trangThaiBiCan).filter(id => trangThaiBiCan[id] === "o_lai"));
   const laTdcDc = hinhThuc === "tam_dinh_chi" || hinhThuc === "dinh_chi";
-  const laMotPhan = laTdcDc && biCanList.length > 0 && chonBiCan.size > 0 && chonBiCan.size < biCanList.length;
+  const laMotPhan = laTdcDc && biCanList.length > 0 && idsOLai.size > 0 && (idsChuyenHan.size + idsSaoChep.size) > 0;
 
-  const doiChonBiCan = (id) => setChonBiCan(s => {
-    const moi = new Set(s);
-    moi.has(id) ? moi.delete(id) : moi.add(id);
-    return moi;
-  });
+  const doiTrangThaiBiCan = (id, gia) => setTrangThaiBiCan(s => ({ ...s, [id]: gia }));
 
   const luu = () => {
     if (!ngay) { hd.setLoi("Cần nhập ngày quyết định."); return; }
     if (hinhThuc === "chuyen_di" && !noiChuyenDen.trim()) { hd.setLoi("Cần nhập nơi chuyển đến."); return; }
-    if (laTdcDc && biCanList.length > 0 && chonBiCan.size === 0) { hd.setLoi("Cần chọn ít nhất 1 bị can thuộc diện."); return; }
+    if (laTdcDc && biCanList.length > 0 && idsChuyenHan.size + idsSaoChep.size === 0) { hd.setLoi("Cần chọn ít nhất 1 bị can thuộc diện."); return; }
 
     hd.batDauXacNhanKy(async (kyId) => {
       const now = new Date();
@@ -1026,7 +1068,8 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
         await batch.commit();
       } else {
         const { maVuMoi, batch } = await tachVuAn({
-          vuGoc: vuAn, biCanTachIds: chonBiCan, biCanList, trangThaiVuMoi: hinhThuc, nguoiThucHien,
+          vuGoc: vuAn, biCanTachIds: idsChuyenHan, biCanSaoChepIds: idsSaoChep, biCanList,
+          trangThaiVuMoi: hinhThuc, nguoiThucHien,
         });
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
           maVuAn: vuAn.id, loaiSuKien: "tach_vu", vuTachRa: maVuMoi, denGiaiDoan: vuAn.coQuanThuLy,
@@ -1064,9 +1107,11 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       {laTdcDc && biCanList.length > 0 && (
         <div className="mb-3">
           <label className="text-xs text-slate-500 block mb-1">
-            Áp dụng cho bị can nào (chọn toàn bộ = áp lên cả vụ; chọn 1 phần = hệ thống tự tách vụ)
+            Áp dụng cho bị can nào (tất cả "Thuộc diện" = áp lên cả vụ; đổi 1 vài người sang "Ở lại
+            vụ gốc" = hệ thống tự tách; "Ở cả 2 vụ" dùng khi người đó còn hành vi khác chưa xử lý)
           </label>
-          <ChonBiCan biCanList={biCanList} chon={chonBiCan} onDoi={doiChonBiCan} />
+          <ChonBiCan biCanList={biCanList} trangThai={trangThaiBiCan} onDoi={doiTrangThaiBiCan}
+                     nhanO="Ở lại vụ gốc" nhanChuyenHan="Thuộc diện" />
         </div>
       )}
       <label className="text-xs text-slate-500 block mb-1">Ngày quyết định</label>
@@ -1089,7 +1134,7 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [vuAn, setVuAn] = useState(null);
   const [biCanList, setBiCanList] = useState(null);
-  const [chonBiCan, setChonBiCan] = useState(() => new Set());
+  const [trangThaiBiCan, setTrangThaiBiCan] = useState({});
   const [lyDo, setLyDo] = useState("khac_toi_danh");
   const [ngay, setNgay] = useState("");
   const [ghiChu, setGhiChu] = useState("");
@@ -1113,22 +1158,26 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
     );
   }
 
-  const doiChonBiCan = (id) => setChonBiCan(s => {
-    const moi = new Set(s);
-    moi.has(id) ? moi.delete(id) : moi.add(id);
-    return moi;
-  });
+  const doiTrangThaiBiCan = (id, gia) => setTrangThaiBiCan(s => ({ ...s, [id]: gia }));
+
+  const idsChuyenHan = new Set(Object.keys(trangThaiBiCan).filter(id => trangThaiBiCan[id] === "chuyen_han"));
+  const idsSaoChep = new Set(Object.keys(trangThaiBiCan).filter(id => trangThaiBiCan[id] === "sao_chep"));
 
   const luu = () => {
     if (!ngay) { hd.setLoi("Cần nhập ngày tách vụ."); return; }
-    if (chonBiCan.size === 0) { hd.setLoi("Cần chọn ít nhất 1 bị can để tách ra vụ mới."); return; }
-    if (chonBiCan.size >= biCanList.length) { hd.setLoi("Chọn hết bị can thì không cần tách — dùng nút Hoàn thành/Chuyển giai đoạn trên vụ hiện tại."); return; }
+    // Vụ 0 bị can (hoặc chưa chọn ai) vẫn tách được — tạo 1 vụ mới trống, dùng cho trường hợp
+    // "hành vi chưa rõ đối tượng" cần tách ra theo dõi riêng trước khi xác định được bị can.
+    if (biCanList.length > 0 && idsChuyenHan.size === 0 && idsSaoChep.size === 0) {
+      hd.setLoi("Cần chọn ít nhất 1 bị can \"Chuyển hẳn\" hoặc \"Ở cả 2 vụ\" — hoặc để trống toàn bộ nếu vụ mới chưa xác định được bị can.");
+      return;
+    }
 
     hd.batDauXacNhanKy(async (kyId) => {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
       const { maVuMoi, batch } = await tachVuAn({
-        vuGoc: vuAn, biCanTachIds: chonBiCan, biCanList, trangThaiVuMoi: "dang_giai_quyet", nguoiThucHien,
+        vuGoc: vuAn, biCanTachIds: idsChuyenHan, biCanSaoChepIds: idsSaoChep, biCanList,
+        trangThaiVuMoi: "dang_giai_quyet", nguoiThucHien,
       });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "tach_vu", vuTachRa: maVuMoi, lyDoTach: lyDo, denGiaiDoan: vuAn.coQuanThuLy,
@@ -1142,8 +1191,21 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
   return (
     <KhungModalHanhDong tieuDe="Tách vụ án" rong>
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
-      <label className="text-xs text-slate-500 block mb-1">Chọn bị can tách ra vụ mới</label>
-      <div className="mb-3"><ChonBiCan biCanList={biCanList} chon={chonBiCan} onDoi={doiChonBiCan} /></div>
+      {biCanList.length === 0 ? (
+        <div className="bg-slate-50 border border-slate-200 text-slate-600 text-xs rounded-lg p-3 mb-3">
+          Vụ này chưa có bị can nào — tách sẽ tạo 1 vụ mới trống (dùng khi có hành vi chưa xác
+          định được đối tượng, cần theo dõi riêng).
+        </div>
+      ) : (
+        <>
+          <label className="text-xs text-slate-500 block mb-1">
+            Chọn bị can cho vụ mới ("Ở cả 2 vụ" dùng khi 1 người có nhiều hành vi, chỉ tách riêng 1 hành vi)
+          </label>
+          <div className="mb-3">
+            <ChonBiCan biCanList={biCanList} trangThai={trangThaiBiCan} onDoi={doiTrangThaiBiCan} nhanChuyenHan="Chuyển hẳn sang vụ mới" />
+          </div>
+        </>
+      )}
       <label className="text-xs text-slate-500 block mb-1">Lý do tách</label>
       <select value={lyDo} onChange={e => setLyDo(e.target.value)} className={oInput + " mb-3"}>
         <option value="khac_toi_danh">Khác tội danh</option>
@@ -1194,9 +1256,28 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
     hd.batDauXacNhanKy(async (kyId) => {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
-      const bcSnap = await db.collection("bican").where("maVuAn", "==", vuAn.id).get();
+      const [bcSnap, bcDichSnapTruoc] = await Promise.all([
+        db.collection("bican").where("maVuAn", "==", vuAn.id).get(),
+        db.collection("bican").where("maVuAn", "==", dichId).get(),
+      ]);
+      const bcDichTruoc = bcDichSnapTruoc.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }));
+
       const batch = db.batch();
-      bcSnap.docs.forEach(d => batch.update(d.ref, { maVuAn: dichId }));
+      // Nếu bị can nguồn từng bị "sao chép" lúc tách vụ (nhomBiCanId) và vụ đích đã có 1 bản ghi
+      // cùng nhóm — đây chính là trường hợp "1 người, nhiều hành vi, từng tách ra 2 vụ, giờ nhập
+      // lại": gộp tội danh vào bản ghi đã có ở vụ đích thay vì tạo bị can trùng, xoá bản ghi
+      // nguồn. Không tìm thấy trùng thì chuyển vụ như bình thường.
+      bcSnap.docs.forEach(d => {
+        const bc = { id: d.id, ref: d.ref, ...d.data() };
+        const trung = bc.nhomBiCanId ? bcDichTruoc.find(x => x.nhomBiCanId === bc.nhomBiCanId) : null;
+        if (trung) {
+          const toiDanhGop = [...new Set([...(trung.toiDanh || []), ...(bc.toiDanh || [])].filter(Boolean))];
+          batch.update(trung.ref, { toiDanh: toiDanhGop });
+          batch.delete(d.ref);
+        } else {
+          batch.update(d.ref, { maVuAn: dichId });
+        }
+      });
       batch.update(db.collection("vuan").doc(vuAn.id), {
         trangThai: "da_nhap", nhapVaoVu: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
@@ -2180,7 +2261,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
             {vuAn.trangThai === "dang_giai_quyet" && (
               <NutHanhDong nhan="Hoàn thành vụ án" onClick={() => setModalMo("hoan_thanh")} />
             )}
-            {vuAn.trangThai === "dang_giai_quyet" && biCanList.length >= 2 && (
+            {vuAn.trangThai === "dang_giai_quyet" && (
               <NutHanhDong nhan="Tách vụ án" onClick={() => setModalMo("tach")} />
             )}
             {vuAn.trangThai === "dang_giai_quyet" && (

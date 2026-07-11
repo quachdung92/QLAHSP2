@@ -35,6 +35,12 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 5. **Tạm đình chỉ / Đình chỉ không tồn tại độc lập theo bị can.** Nếu chỉ áp dụng cho 1 phần bị
    can của vụ nhiều bị can → hệ thống **tự động tách vụ trước**, rồi áp trạng thái lên vụ mới
    tách. Chọn toàn bộ bị can thì áp thẳng lên vụ hiện tại, không tách.
+   **Tách vụ án nói chung** (thủ công hoặc tự động ở trên) áp dụng được cho MỌI vụ đang giải
+   quyết, kể cả 0 hoặc 1 bị can — vì 1 vụ có thể có nhiều hành vi cần tách xử lý độc lập dù chỉ
+   1 bị can (hoặc hành vi chưa xác định được đối tượng). Khi tách, mỗi bị can chọn 1 trong 3:
+   ở lại vụ gốc / chuyển hẳn sang vụ mới / **ở cả 2 vụ** (sao chép, hiếm dùng — cho trường hợp 1
+   người có nhiều hành vi, chỉ tách 1 hành vi ra xử lý riêng). Bản sao liên kết với bản gốc qua
+   `nhomBiCanId` để **Nhập vụ** sau này nhận ra là cùng 1 người và gộp lại thay vì tạo trùng.
 6. **Mã vụ án tự sinh** — 2 loại:
    - Vụ mới: `QLVA_E01.53_{YYMM theo ngày QĐ KTVA}_{SEQ 4 số, reset mỗi tháng}`.
    - Vụ tách ra: kế thừa mã vụ gốc + hậu tố `_{n}` (n = số lần tách từ chính vụ gốc đó, đếm
@@ -115,12 +121,22 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 - [x] Các hành động nghiệp vụ trên 1 vụ án (nút ở panel chi tiết, đều qua `ModalXacNhanKy`
       dùng chung + hook `useHanhDongVuAn`): Chuyển giai đoạn, Trả hồ sơ, Gia hạn điều tra,
       Hoàn thành vụ án (gộp cả 5 hình thức da_xet_xu/chuyen_di/tam_dinh_chi/dinh_chi/an_huy —
-      tự động tách vụ khi TĐC/ĐC chỉ áp dụng 1 phần bị can, xem hàm `tachVuAn`), Tách vụ án
-      thủ công, **Nhập vào vụ khác** (ghi sự kiện `nhap_vu` trên vụ nguồn NHƯ CŨ, cộng thêm 1 sự
-      kiện `duoc_nhap_vu` mới trên vụ ĐÍCH — vụ nguồn tuy không xoá (`trangThai: "da_nhap"`) nhưng
-      trước đây lịch sử vụ đích không có dấu vết gì về việc đã nhận nhập; giờ lưu sẵn mã
-      vụ/tên vụ/KSV của vụ nguồn dạng chuỗi trong `ghiChu` của sự kiện `duoc_nhap_vu` để tra soát
-      nhanh ngay trên lịch sử vụ đích), Phục hồi (từ tạm đình chỉ).
+      tự động tách vụ khi TĐC/ĐC chỉ áp dụng 1 phần bị can, xem hàm `tachVuAn`), **Tách vụ án**
+      thủ công (nút hiện với MỌI vụ đang giải quyết, kể cả 0 hoặc 1 bị can — 2026-07-11: bỏ điều
+      kiện cũ `biCanList.length >= 2`, vì 1 vụ có thể có nhiều hành vi cần tách xử lý độc lập dù
+      chỉ 1 bị can, hoặc hành vi chưa xác định được đối tượng nào — tách vụ 0 bị can tạo 1 vụ mới
+      trống). `ChonBiCan` giờ là lựa chọn **3 trạng thái** mỗi bị can thay vì checkbox nhị phân:
+      "Ở lại vụ gốc" / "Chuyển hẳn sang vụ mới" / **"Ở cả 2 vụ"** (sao chép — 1 người có nhiều
+      hành vi, chỉ 1 hành vi tách ra nhưng người đó vẫn còn liên quan ở vụ gốc). Bản sao được gắn
+      `nhomBiCanId` trỏ về ID bị can gốc để đánh dấu "2 bản ghi này là CÙNG 1 người" — dùng khi
+      **Nhập vào vụ khác** sau này: nếu bị can vụ nguồn có `nhomBiCanId` trùng với 1 bị can đã có
+      sẵn ở vụ đích, hệ thống GỘP tội danh vào bản ghi đích và xoá bản ghi nguồn thay vì tạo bị
+      can trùng (đã kiểm chứng qua test: tách "ở cả 2 vụ" rồi nhập lại → vụ gốc vẫn đúng 1 bị
+      can, không nhân đôi). **Nhập vào vụ khác** cũng ghi sự kiện `nhap_vu` trên vụ nguồn NHƯ CŨ,
+      cộng thêm 1 sự kiện `duoc_nhap_vu` mới trên vụ ĐÍCH — vụ nguồn tuy không xoá (`trangThai:
+      "da_nhap"`) nhưng trước đây lịch sử vụ đích không có dấu vết gì về việc đã nhận nhập; giờ
+      lưu sẵn mã vụ/tên vụ/KSV của vụ nguồn dạng chuỗi trong `ghiChu` của sự kiện `duoc_nhap_vu`
+      để tra soát nhanh ngay trên lịch sử vụ đích. Phục hồi (từ tạm đình chỉ).
 - [x] Module Án đã giải quyết (`AnDaGiaiQuyetModule`) — 5 tab theo `trangThai` cụ thể (Đã xét
       xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ, danh sách `TAB_DA_GIAI_QUYET`), lấy `ngày quyết
       định` từ sự kiện `hoan_thanh` trong log (không phải `ngayCapNhat` của `vuan` — field đó có
