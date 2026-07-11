@@ -2689,9 +2689,67 @@ async function xuatExcel(setDangXuat, setLoiXuat) {
       NHAN_GIAI_DOAN[gd], vuList.filter(v => v.coQuanThuLy === gd && v.trangThai === "dang_giai_quyet").length,
     ]);
 
+    // === Thống kê tội danh (toàn bộ dữ liệu — theo tội chính của từng bị can) ===
+    const tkTD = {};
+    for (const bc of bcList) {
+      const vu = vuById[bc.maVuAn];
+      if (!vu) continue;
+      const td = (bc.toiDanh || [])[0] || vu.dieuLuat || "(Chưa xác định)";
+      if (!tkTD[td]) tkTD[td] = { vuGQ: new Set(), bcGQ: 0, vuTon: new Set(), bcTon: 0, tgTon: 0, tnTon: 0, vuAll: new Set(), bcAll: 0 };
+      const s = tkTD[td];
+      s.vuAll.add(bc.maVuAn); s.bcAll++;
+      if (vu.trangThai === "dang_giai_quyet") {
+        s.vuTon.add(bc.maVuAn); s.bcTon++;
+        bc.bienPhapNganChan === "giam" ? s.tgTon++ : s.tnTon++;
+      } else { s.vuGQ.add(bc.maVuAn); s.bcGQ++; }
+    }
+    const tkTDHeader = ["Tội danh", "Vụ tồn hiện tại", "BC tồn", "Tạm giam", "Tại ngoại", "Vụ đã GQ", "BC đã GQ", "Tổng vụ", "Tổng BC"];
+    const tkTDRows = Object.entries(tkTD)
+      .sort((a, b) => b[1].bcAll - a[1].bcAll)
+      .map(([td, s]) => [td, s.vuTon.size, s.bcTon, s.tgTon, s.tnTon, s.vuGQ.size, s.bcGQ, s.vuAll.size, s.bcAll]);
+
+    // === Thống kê KSV (theo vụ đang giải quyết / đã giải quyết) ===
+    const tkKSV = {};
+    for (const v of vuList) {
+      const ksv = v.ksvChinh || "(Chưa có KSV)";
+      if (!tkKSV[ksv]) tkKSV[ksv] = { vuTon: 0, bcTon: 0, tgTon: 0, vuGQ: 0, bcGQ: 0 };
+      const s = tkKSV[ksv];
+      const bc_v = bcByVu[v.id] || [];
+      if (v.trangThai === "dang_giai_quyet") {
+        s.vuTon++; s.bcTon += bc_v.length;
+        s.tgTon += bc_v.filter(bc => bc.bienPhapNganChan === "giam").length;
+      } else { s.vuGQ++; s.bcGQ += bc_v.length; }
+    }
+    const tkKSVHeader = ["KSV", "Vụ đang GQ", "BC đang GQ", "Tạm giam", "Vụ đã GQ", "BC đã GQ", "Tổng vụ phụ trách"];
+    const tkKSVRows = Object.entries(tkKSV)
+      .sort((a, b) => b[1].vuTon - a[1].vuTon)
+      .map(([ksv, s]) => [ksv, s.vuTon, s.bcTon, s.tgTon, s.vuGQ, s.bcGQ, s.vuTon + s.vuGQ]);
+
+    // === DS tạm giam (sắp xếp theo hạn tạm giam tăng dần — hết hạn sớm lên đầu) ===
+    const homNay = new Date(); homNay.setHours(0, 0, 0, 0);
+    const tgHeader = ["Mã vụ", "Tên vụ", "Giai đoạn", "KSV chính", "Họ tên BC", "Năm sinh", "Tội danh", "Hạn tạm giam", "Còn lại (ngày)"];
+    const tgRows = bcList
+      .filter(bc => bc.bienPhapNganChan === "giam")
+      .map(bc => {
+        const vu = vuById[bc.maVuAn] || {};
+        const dt = bc.hanTamGiam ? (bc.hanTamGiam.toDate ? bc.hanTamGiam.toDate() : new Date(bc.hanTamGiam)) : null;
+        const conLai = dt ? Math.ceil((dt - homNay) / 86400000) : null;
+        return {
+          row: [hienThiMa(vu) || bc.maVuAn, vu.tenVu || "", NHAN_GIAI_DOAN[vu.coQuanThuLy] || "",
+            vu.ksvChinh || "", bc.hoTen, bc.namSinh, (bc.toiDanh || [])[0] || "",
+            fmtDate(bc.hanTamGiam), conLai !== null ? conLai : ""],
+          dt: dt || new Date(9999, 0, 1),
+        };
+      })
+      .sort((a, b) => a.dt - b.dt)
+      .map(x => x.row);
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([dsatHeader, ...dsatRows]), "DSAT");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([dsbctHeader, ...dsbctRows]), "DSBCT");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([tkTDHeader, ...tkTDRows]), "TK tội danh");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([tkKSVHeader, ...tkKSVRows]), "TK KSV");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([tgHeader, ...tgRows]), "DS tạm giam");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Giai đoạn", "Đang tồn"], ...tongHopRows]), "TỔNG HỢP");
     XLSX.writeFile(wb, `QLVA_xuat_${toInputDateNhanh(new Date())}.xlsx`);
   } catch (err) {
@@ -3619,6 +3677,31 @@ function BangBaoCaoChiTiet({ baoCao }) {
   );
 }
 
+// Helper: gom tất cả vụ IDs có mặt trong 1 object báo cáo kỳ
+function collectVuIdsFromBaoCao(baoCao) {
+  const ids = new Set();
+  for (const gd of THU_TU_GIAI_DOAN) {
+    const d = baoCao[gd]?.ds || {};
+    ["khoiToTrucTiep","tachVu","chuyenDen","traVe","chuyenDi","traDi","nhapVu","tonHienTai"]
+      .forEach(k => (d[k] || []).forEach(v => ids.add(v.id)));
+    for (const ht of HOAN_THANH_TRUONG_TONG) (d.hoanThanh?.[ht] || []).forEach(v => ids.add(v.id));
+  }
+  return [...ids];
+}
+
+// Helper: fetch bị can theo danh sách vụ IDs, chia batch 30 (giới hạn Firestore "in")
+async function fetchBiCanTheoVuIds(vuIds) {
+  if (!vuIds.length) return {};
+  const all = [];
+  for (let i = 0; i < vuIds.length; i += 30) {
+    const snap = await db.collection("bican").where("maVuAn", "in", vuIds.slice(i, i + 30)).get();
+    snap.docs.forEach(d => all.push({ id: d.id, ...d.data() }));
+  }
+  const byVu = {};
+  all.forEach(bc => { (byVu[bc.maVuAn] = byVu[bc.maVuAn] || []).push(bc); });
+  return byVu;
+}
+
 // SheetJS bản CDN đang dùng (miễn phí) KHÔNG ghi được style (đã kiểm chứng — mở file .xlsx xuất
 // ra ra thì cellXfs luôn rỗng dù có set cell.s). Báo cáo tháng cần wrap text mặc định cho dễ đọc
 // nên dùng riêng ExcelJS (script CDN riêng, xem <head>) chỉ cho hàm này — phần Import/Xuất Excel
@@ -3658,7 +3741,86 @@ function hangDsVuAn(v) {
 async function xuatBaoCaoThangExcel(ky, baoCao) {
   const wb = new ExcelJS.Workbook();
 
-  // ---- Sheet 1: Tổng hợp báo cáo (khớp đúng bảng hiển thị trên màn hình) ----
+  // ---- Fetch bị can cho tất cả vụ có trong kỳ (batch, dùng helper) ----
+  const biCanByVu = await fetchBiCanTheoVuIds(collectVuIdsFromBaoCao(baoCao));
+
+  // ---- Gom danh sách vụ theo loại để dùng cho nhiều sheet sau ----
+  const vuMoiMap = new Map();   // vụ "vào" trong kỳ (khởi tố mới / chuyển đến / trả về)
+  const vuTonMap = new Map();   // vụ đang tồn hiện tại
+  const vuGQMap  = new Map();   // vụ "ra" trong kỳ (giải quyết / chuyển đi / trả đi)
+  for (const gd of THU_TU_GIAI_DOAN) {
+    const d = baoCao[gd].ds;
+    [...(d.khoiToTrucTiep||[]),...(d.tachVu||[]),...(d.chuyenDen||[]),...(d.traVe||[])]
+      .forEach(v => { if (!vuMoiMap.has(v.id)) vuMoiMap.set(v.id, {...v, _gdMoi: gd}); });
+    (d.tonHienTai||[]).forEach(v => { if (!vuTonMap.has(v.id)) vuTonMap.set(v.id, {...v, _gd: gd}); });
+    [...(d.chuyenDi||[]),...(d.traDi||[]),...(d.nhapVu||[]),
+     ...HOAN_THANH_TRUONG_TONG.flatMap(ht => d.hoanThanh[ht]||[])]
+      .forEach(v => { if (!vuGQMap.has(v.id)) vuGQMap.set(v.id, {...v, _gd: gd}); });
+  }
+
+  // ---- Helper: build rows bị can cho 1 map vụ ----
+  const BC_HEADER_CHUNG = ["Mã vụ","Tên vụ","Giai đoạn","Họ tên BC","Năm sinh","Dân tộc","Địa chỉ","Tội danh","Biện pháp","Hạn tạm giam","Đảng viên","KSV chính","ĐTV/CBĐT"];
+  const BC_DO_RONG = [16,28,10,20,9,10,22,28,10,13,9,18,18];
+  function buildBcRows(vuMap, gdField = "_gdMoi") {
+    const rows = [];
+    for (const [, vu] of vuMap) {
+      const gdHienThi = NHAN_GIAI_DOAN[vu[gdField] || vu.coQuanThuLy] || "";
+      const bcList_vu = biCanByVu[vu.id] || [];
+      if (bcList_vu.length === 0) {
+        rows.push([hienThiMa(vu), vu.tenVu, gdHienThi, "(Chưa có bị can)", "", "", "", "", "", "", "", vu.ksvChinh||"", vu.dtvCbdt||""]);
+      } else {
+        for (const bc of bcList_vu) {
+          rows.push([hienThiMa(vu), vu.tenVu, gdHienThi,
+            bc.hoTen, bc.namSinh, bc.danToc||"", bc.diaChi||"",
+            (bc.toiDanh||[]).filter(Boolean).join("; ")||"",
+            bc.bienPhapNganChan==="giam"?"Tạm giam":"Tại ngoại",
+            fmtDate(bc.hanTamGiam), bc.dangVien==="co"?"x":"",
+            vu.ksvChinh||"", vu.dtvCbdt||""]);
+        }
+      }
+    }
+    return rows;
+  }
+
+  // ---- Thống kê tội danh trong kỳ (pivot: tội chính → vụ/BC mới/tồn/GQ) ----
+  function tkTD_add(stats, vuMap, cat, gdField) {
+    for (const [, vu] of vuMap) {
+      const bcList_vu = biCanByVu[vu.id] || [];
+      if (bcList_vu.length === 0) {
+        const td = vu._toiDanhChinh || vu.dieuLuat || "(Chưa xác định)";
+        if (!stats[td]) stats[td] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
+        stats[td][`vu${cat}`]++; stats[td][`bc${cat}`]++;
+      } else {
+        const tdVu = (bcList_vu[0].toiDanh||[])[0] || vu.dieuLuat || "(Chưa xác định)";
+        if (!stats[tdVu]) stats[tdVu] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
+        stats[tdVu][`vu${cat}`]++;
+        for (const bc of bcList_vu) {
+          const tdBc = (bc.toiDanh||[])[0] || tdVu;
+          if (!stats[tdBc]) stats[tdBc] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
+          stats[tdBc][`bc${cat}`]++;
+          if (cat==="M" && bc.bienPhapNganChan==="giam") stats[tdBc].tgM++;
+          if (cat==="T" && bc.bienPhapNganChan==="giam") stats[tdBc].tgT++;
+        }
+      }
+    }
+  }
+  const tdStats = {};
+  tkTD_add(tdStats, vuMoiMap, "M", "_gdMoi");
+  tkTD_add(tdStats, vuTonMap,  "T", "_gd");
+  tkTD_add(tdStats, vuGQMap,   "G", "_gd");
+  const tkTDRows = Object.entries(tdStats)
+    .sort((a,b) => (b[1].bcM+b[1].bcT) - (a[1].bcM+a[1].bcT))
+    .map(([td,s]) => [td, s.vuM, s.bcM, s.tgM, s.bcM-s.tgM, s.vuT, s.bcT, s.tgT, s.bcT-s.tgT, s.vuG, s.bcG]);
+
+  // ---- Sheet 1: Thống kê tội danh (pivot tổng hợp nhất — đặt đầu tiên cho dễ dùng) ----
+  themSheetDanhSach(wb, "TK tội danh", [
+    "Tội danh",
+    "Vụ mới","BC mới","TG mới","TN mới",
+    "Vụ tồn","BC tồn","TG tồn","TN tồn",
+    "Vụ GQ","BC GQ",
+  ], tkTDRows, [32, 9,9,9,9, 9,9,9,9, 9,9]);
+
+  // ---- Sheet 2: Tổng hợp báo cáo (khớp đúng bảng hiển thị trên màn hình) ----
   const tongHopHang = [
     ["Tồn đầu kỳ", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonDauKy)],
     ["Số mới", "", "", ""],
@@ -3687,17 +3849,18 @@ async function xuatBaoCaoThangExcel(ky, baoCao) {
   ];
   themSheetDanhSach(wb, "Tổng hợp báo cáo", ["", "Điều tra", "Truy tố", "Xét xử"], tongHopHang, [42, 12, 12, 12]);
 
-  // ---- Sheet 2: Danh sách án mới (khởi tố mới thật tại Điều tra — khớp "Tổng án khởi tố mới") ----
+  // ---- Sheet 3: Danh sách án mới (khởi tố mới thật tại Điều tra) ----
   const dsAnMoiRows = baoCao.dieu_tra.ds.khoiToTrucTiep.map(v => [...hangDsVuAn(v), NHAN_NGUON[v.nguon] || v.nguon]);
   themSheetDanhSach(wb, "DS án mới", [...DS_HEADER_CHUNG, "Nguồn"], dsAnMoiRows, [...DO_RONG_COT_CHUNG, 20]);
 
-  // ---- Sheet 3-4: Tòa/Viện trả hồ sơ điều tra bổ sung (DTBS) ----
-  // "Tòa trả" = trả từ Xét xử về Truy tố (denGiaiDoan=truy_to) — "Viện trả" = trả từ Truy tố về
-  // Điều tra (denGiaiDoan=dieu_tra). Lấy đúng từ soMoi.traVeTu của từng cột nên khớp báo cáo.
+  // ---- Sheet 4: DS bị can mới trong kỳ (tất cả BC của vụ vào trong kỳ) ----
+  themSheetDanhSach(wb, "DS bị can mới", BC_HEADER_CHUNG, buildBcRows(vuMoiMap, "_gdMoi"), BC_DO_RONG);
+
+  // ---- Sheet 5-6: Tòa/Viện trả hồ sơ điều tra bổ sung ----
   themSheetDanhSach(wb, "DS toà trả DTBS", DS_HEADER_CHUNG, baoCao.truy_to.ds.traVe.map(hangDsVuAn), DO_RONG_COT_CHUNG);
   themSheetDanhSach(wb, "DS viện trả DTBS", DS_HEADER_CHUNG, baoCao.dieu_tra.ds.traVe.map(hangDsVuAn), DO_RONG_COT_CHUNG);
 
-  // ---- Sheet 5-9: Danh sách theo từng hình thức giải quyết mới trong kỳ (gộp cả 3 giai đoạn) ----
+  // ---- Sheet 7-11: Danh sách theo từng hình thức giải quyết mới trong kỳ ----
   const tenSheetTheoHinhThuc = [
     ["da_xet_xu", "DS đã xét xử mới"], ["chuyen_di", "DS chuyển đi mới"],
     ["tam_dinh_chi", "DS tạm đình chỉ mới"], ["dinh_chi", "DS đình chỉ mới"], ["an_huy", "DS án huỷ mới"],
@@ -3707,14 +3870,60 @@ async function xuatBaoCaoThangExcel(ky, baoCao) {
     themSheetDanhSach(wb, tenSheet, DS_HEADER_CHUNG, rows, DO_RONG_COT_CHUNG);
   }
 
-  // ---- Sheet: Danh sách nhập vào vụ khác (tra soát: vụ nguồn đã bị nhập vào mã vụ nào) ----
+  // ---- Sheet 12: DS bị can giải quyết trong kỳ ----
+  const bcGQRows = [];
+  for (const gd of THU_TU_GIAI_DOAN) {
+    const d = baoCao[gd].ds;
+    const nhom = [
+      ...HOAN_THANH_TRUONG_TONG.flatMap(ht => (d.hoanThanh[ht]||[]).map(v => ({...v, _ht: NHAN_TRANG_THAI[ht]||ht}))),
+      ...(d.chuyenDi||[]).map(v => ({...v, _ht: "Chuyển sang GĐ tiếp"})),
+      ...(d.traDi||[]).map(v => ({...v, _ht: "Trả hồ sơ GĐ trước"})),
+      ...(d.nhapVu||[]).map(v => ({...v, _ht: "Nhập vào vụ khác"})),
+    ];
+    for (const vu of nhom) {
+      const bcList_vu = biCanByVu[vu.id] || [];
+      const gdHienThi = NHAN_GIAI_DOAN[gd] || "";
+      if (bcList_vu.length === 0) {
+        bcGQRows.push([hienThiMa(vu), vu.tenVu, gdHienThi, vu._ht, fmtDate(vu._log?.ngaySuKien), "(Chưa có bị can)", "", "", "", vu.ksvChinh||""]);
+      } else {
+        for (const bc of bcList_vu) {
+          bcGQRows.push([hienThiMa(vu), vu.tenVu, gdHienThi, vu._ht, fmtDate(vu._log?.ngaySuKien),
+            bc.hoTen, bc.namSinh, (bc.toiDanh||[]).filter(Boolean).join("; ")||"",
+            bc.bienPhapNganChan==="giam"?"Tạm giam":"Tại ngoại", vu.ksvChinh||""]);
+        }
+      }
+    }
+  }
+  themSheetDanhSach(wb, "DS bị can giải quyết", ["Mã vụ","Tên vụ","Giai đoạn","Hình thức GQ","Ngày GQ","Họ tên BC","Năm sinh","Tội danh","Biện pháp","KSV chính"],
+    bcGQRows, [16,28,10,18,12,20,9,28,10,18]);
+
+  // ---- Sheet 13: DS nhập vào vụ khác ----
   const dsNhapVuRows = THU_TU_GIAI_DOAN.flatMap(gd => baoCao[gd].ds.nhapVu)
     .map(v => [...hangDsVuAn(v), v._log?.vuNhapVao || ""]);
   themSheetDanhSach(wb, "DS nhập vào vụ khác", [...DS_HEADER_CHUNG, "Mã vụ đích"], dsNhapVuRows, [...DO_RONG_COT_CHUNG, 20]);
 
-  // ---- Sheet 10-12: Danh sách án tồn — TÁCH RIÊNG 1 sheet / giai đoạn (tại thời điểm xuất —
-  // khớp "Số tồn hiện tại" của đúng giai đoạn đó, không gộp chung như trước) ----
-  const headerTon = ["Mã vụ", "Tên vụ", "Số BC", "Tội danh chính", "KSV chính", "ĐTV/CBĐT", "Điều luật", "Hạn điều tra"];
+  // ---- Sheet 14: DS bị can tồn hiện tại (đầy đủ thông tin từng người) ----
+  const bcTonRows = [];
+  for (const [, vu] of vuTonMap) {
+    const bcList_vu = biCanByVu[vu.id] || [];
+    const gdHienThi = NHAN_GIAI_DOAN[vu.coQuanThuLy] || "";
+    if (bcList_vu.length === 0) {
+      bcTonRows.push([hienThiMa(vu), vu.tenVu, gdHienThi, "(Chưa có bị can)", "", "", "", "", "", "", vu.ksvChinh||"", vu.dtvCbdt||"", fmtDate(vu.hanDieuTra)]);
+    } else {
+      for (const bc of bcList_vu) {
+        bcTonRows.push([hienThiMa(vu), vu.tenVu, gdHienThi,
+          bc.hoTen, bc.namSinh, bc.danToc||"", bc.diaChi||"",
+          (bc.toiDanh||[]).filter(Boolean).join("; ")||"",
+          bc.bienPhapNganChan==="giam"?"Tạm giam":"Tại ngoại",
+          fmtDate(bc.hanTamGiam), vu.ksvChinh||"", vu.dtvCbdt||"", fmtDate(vu.hanDieuTra)]);
+      }
+    }
+  }
+  themSheetDanhSach(wb, "DS bị can tồn", ["Mã vụ","Tên vụ","Giai đoạn","Họ tên BC","Năm sinh","Dân tộc","Địa chỉ","Tội danh","Biện pháp","Hạn tạm giam","KSV chính","ĐTV/CBĐT","Hạn ĐT vụ"],
+    bcTonRows, [16,28,10,20,9,10,22,28,10,13,18,18,13]);
+
+  // ---- Sheet 15-17: Danh sách án tồn theo giai đoạn (1 sheet/GĐ, tách riêng) ----
+  const headerTon = ["Mã vụ","Tên vụ","Số BC","Tội danh chính","KSV chính","ĐTV/CBĐT","Điều luật","Hạn điều tra"];
   for (const gd of THU_TU_GIAI_DOAN) {
     const rows = baoCao[gd].ds.tonHienTai.map(v => [
       hienThiMa(v), v.tenVu, v._soBiCan ?? 0, v._toiDanhChinh || "",
