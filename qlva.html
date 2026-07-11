@@ -2724,7 +2724,7 @@ function DanhSachVuAnModule({ currentUser }) {
         <div className="flex gap-2 items-center">
           {loiXuat && <span className="text-xs text-red-600">{loiXuat}</span>}
           <button onClick={() => xuatExcel(setDangXuat, setLoiXuat)} disabled={dangXuat}
-                  title="Xuất toàn bộ dữ liệu hiện tại — nên đối chiếu lại định dạng cột với file gốc"
+                  title="Xuất toàn bộ dữ liệu hiện tại ra 1 bản DSAT/DSBCT dễ đọc (đã kiểm tra lại mapping cột 2026-07-11, khớp với dữ liệu hệ thống). Đây là bản xem/lưu trữ, KHÔNG dùng để nhập ngược lại qua Import Excel — cột đã gộp/đổi khác cấu trúc file gốc."
                   className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
             {dangXuat ? "Đang xuất..." : "Xuất Excel"}
           </button>

@@ -270,8 +270,19 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       `lichsuChuyenGiaiDoan`), nên chỉ áp dụng cho các loại sự kiện nghiệp vụ thật, không áp
       dụng cho log hành chính.
 - [x] Xuất Excel (nút trong module Danh sách, SheetJS dựng lại DSAT/DSBCT/TỔNG HỢP từ dữ liệu
-      hiện tại) — **cần đối chiếu lại định dạng cột với file gốc**, đây là bản dựng hợp lý dựa
-      theo mapping cột lúc import, chưa có file gốc để so khớp pixel-perfect.
+      hiện tại). **Đã rà soát lại (2026-07-11)** — không có file gốc để so khớp pixel-perfect
+      (người dùng xác nhận không có sẵn), nhưng đã đối chiếu logic `xuatExcel` với chỉ số cột
+      của `parseWorkbook` (mapping lúc Import Excel, xem mục Kiến trúc code) và không phát hiện
+      lỗi/lệch dữ liệu — số bị can tính live từ collection `bican` (không dùng field cache cũ),
+      mọi field label đều tra đúng qua `NHAN_GIAI_DOAN`/`NHAN_TRANG_THAI`/`NHAN_NGUON`. Lưu ý
+      **quan trọng, đừng hiểu nhầm**: đây LÀ bản xem/lưu trữ dễ đọc, KHÔNG phải bản mirror 1:1
+      của DSAT/DSBCT gốc — file gốc DSAT có nhiều cột cờ riêng (Điều tra/Truy tố/Xét xử đang thụ
+      lý, tạm đình chỉ, đình chỉ, đã xét xử, án huỷ... — xem `r[1]`/`r[2]`/`r[3]`/`r[28]`-`r[31]`/
+      `r[40]`/`r[41]` trong `parseWorkbook`) được `xuatExcel` GỘP LẠI thành 2 cột text đơn
+      ("Cơ quan đang thụ lý"/"Trạng thái") cho dễ đọc trên màn hình — nên file xuất ra KHÔNG dùng
+      để nhập ngược lại qua Import Excel được (số cột/thứ tự khác hẳn `parseWorkbook` mong đợi).
+      Nếu sau này có file gốc thật để so khớp pixel-perfect hoặc cần format xuất round-trip được,
+      làm rõ với người dùng trước khi đổi cấu trúc cột.
 - [x] Sinh mã QR + in A4 (nút "In mã QR" ở panel chi tiết, thư viện `qrcodejs` qua CDN — xem ghi
       chú hạ tầng bên dưới về vụ đổi thư viện). In qua `ReactDOM.createPortal` vào `#qr-print-root`
       (sibling của `#root`, khai báo sẵn trong `<body>`) — khi in, CSS `@media print` chỉ ẩn
