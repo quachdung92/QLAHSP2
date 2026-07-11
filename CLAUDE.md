@@ -58,21 +58,27 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 - [x] Module Danh sách & chi tiết vụ án: 2 cột — danh sách là panel CHÍNH (`flex-1`, chiếm phần
       lớn chiều rộng), chi tiết là panel PHỤ cố định `w-[420px]` bên phải (đảo ngược so với thiết
       kế ban đầu theo yêu cầu người dùng). Danh sách có: ô tìm kiếm khớp cả mã vụ/tên vụ/điều
-      luật/tên bị can, tab lọc giai đoạn/KSV, cột **Bị can** (mặc định chỉ hiện bị can đầu +
-      link "+N bị can khác" để mở rộng, state `moRongBiCan`), cột **Kỳ mới**/**Kỳ giải quyết**
-      (tính qua `tinhKyTheoVuAn` — kỳ mới lấy từ sự kiện `khoi_to_vu`, kỳ giải quyết lấy từ
-      `hoan_thanh` GẦN NHẤT vì vụ có thể phục hồi rồi giải quyết lại; vụ tách ra không có "kỳ
-      mới" vì không có sự kiện `khoi_to_vu` riêng — đúng, không phải vụ mới thật), 2 nút thao
-      tác **Chuyển giai đoạn**/**Hoàn thành** hiện trực tiếp trên mỗi dòng (không phải menu `⋯`
-      ẩn như trước). Đầu trang có `ThongKeKyHienTai` — thẻ nhỏ đếm nhanh số vụ mới/đã giải quyết
-      trong kỳ đang mở, để tiện theo dõi mà không cần mở riêng module Kỳ báo cáo. Panel chi tiết
-      dùng bảng key-value **1 cột/hàng** (không phải 2 cột/hàng như link thiết kế cũ) để không bị
-      tràn chữ với bề rộng 420px, có gridline/zebra-row/badge màu theo giai đoạn-trạng thái — xem
-      `MAU_GIAI_DOAN`/`MAU_TRANG_THAI`/`Badge`. Form **Thêm vụ án** (vụ + nhiều bị can trong 1
-      form, tội danh nhiều dòng Tội chính/Bổ sung), sinh `maNoiSinh` tự động qua transaction,
-      tự tính `dieuLuat`/`loaiKhoiTo`. Nút **Sửa thông tin vụ án** và **Sửa** trên từng dòng bị
-      can (sửa lỗi nhập liệu thường — không ghi log, không hỏi kỳ, khác với các hành động
-      nghiệp vụ). KSV/ĐTV vẫn là ô nhập tay nhưng có gợi ý (`<datalist>`) từ danh sách
+      luật/tên bị can, **toggle "Đang giải quyết" / "Tất cả"** (`chiDangGiaiQuyet`, mặc định
+      `true` — thay thế hẳn module "Án tồn theo giai đoạn" cũ đã bị xoá, kết hợp với tab lọc
+      giai đoạn/KSV sẵn có là đủ vai trò của module đó), cột **Bị can** (mặc định chỉ hiện bị
+      can đầu + link "+N bị can khác" để mở rộng, state `moRongBiCan`), cột **Kỳ mới**/**Kỳ giải
+      quyết** (tính qua `tinhKyTheoVuAn` — kỳ mới lấy từ sự kiện `khoi_to_vu`, kỳ giải quyết lấy
+      từ `hoan_thanh` GẦN NHẤT vì vụ có thể phục hồi rồi giải quyết lại; vụ tách ra không có "kỳ
+      mới" vì không có sự kiện `khoi_to_vu` riêng — đúng, không phải vụ mới thật), cột **Số QĐ
+      KTVA**/**Ngày KTVA**, 2 nút thao tác **Chuyển giai đoạn**/**Hoàn thành** hiện trực tiếp
+      trên mỗi dòng (không phải menu `⋯` ẩn như trước). **Sắp xếp**: bấm tiêu đề cột để sort
+      tăng/giảm (component dùng chung `ThSort`, mũi tên ▲/▼ chỉ chiều) — chỉ áp dụng cho Mã
+      vụ/Ngày KTVA/Hạn ĐT (giá trị so sánh rõ ràng); KHÔNG làm sort cho Kỳ mới/Kỳ giải quyết vì
+      đó là chuỗi hiển thị "Tháng N/YYYY", sort theo chuỗi sẽ sai thứ tự thời gian (VD "Tháng
+      10" < "Tháng 2"). Đầu trang có `ThongKeKyHienTai` — thẻ nhỏ đếm nhanh số vụ mới/đã giải
+      quyết trong kỳ đang mở, để tiện theo dõi mà không cần mở riêng module Kỳ báo cáo. Panel
+      chi tiết dùng bảng key-value **1 cột/hàng** (không phải 2 cột/hàng như thiết kế cũ) để
+      không bị tràn chữ với bề rộng 420px, có gridline/zebra-row/badge màu theo giai đoạn-trạng
+      thái — xem `MAU_GIAI_DOAN`/`MAU_TRANG_THAI`/`Badge`. Form **Thêm vụ án** (vụ + nhiều bị can
+      trong 1 form, tội danh nhiều dòng Tội chính/Bổ sung), sinh `maNoiSinh` tự động qua
+      transaction, tự tính `dieuLuat`/`loaiKhoiTo`. Nút **Sửa thông tin vụ án** và **Sửa** trên
+      từng dòng bị can (sửa lỗi nhập liệu thường — không ghi log, không hỏi kỳ, khác với các
+      hành động nghiệp vụ). KSV/ĐTV vẫn là ô nhập tay nhưng có gợi ý (`<datalist>`) từ danh sách
       `canbo` — xem module Cán bộ bên dưới.
 - [x] Module Cán bộ: thêm/sửa KSV, ĐTV, cán bộ thống kê (collection `canbo`). Các ô KSV
       chính/KSV hỗ trợ/ĐTV ở form Thêm vụ án và Sửa thông tin vụ án vẫn lưu **tên dạng chuỗi**
@@ -92,12 +98,15 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       trước đây lịch sử vụ đích không có dấu vết gì về việc đã nhận nhập; giờ lưu sẵn mã
       vụ/tên vụ/KSV của vụ nguồn dạng chuỗi trong `ghiChu` của sự kiện `duoc_nhap_vu` để tra soát
       nhanh ngay trên lịch sử vụ đích), Phục hồi (từ tạm đình chỉ).
-- [x] Module Án tồn theo giai đoạn (3 tab lọc, cảnh báo màu đỏ/vàng theo hạn điều tra).
 - [x] Module Án đã giải quyết (`AnDaGiaiQuyetModule`) — 5 tab theo `trangThai` cụ thể (Đã xét
-      xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ, danh sách `TAB_DA_GIAI_QUYET`), cùng dạng bảng
-      với Án tồn theo giai đoạn nhưng lấy `ngày quyết định` từ sự kiện `hoan_thanh` trong log
-      (không phải `ngayCapNhat` của `vuan` — field đó có thể bị đổi bởi "Sửa thông tin" sau này
-      nên không đáng tin làm ngày quyết định thật).
+      xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ, danh sách `TAB_DA_GIAI_QUYET`), lấy `ngày quyết
+      định` từ sự kiện `hoan_thanh` trong log (không phải `ngayCapNhat` của `vuan` — field đó có
+      thể bị đổi bởi "Sửa thông tin" sau này nên không đáng tin làm ngày quyết định thật).
+      Module **"Án tồn theo giai đoạn" (`AnTonModule`) đã bị XOÁ (2026-07-11)** theo yêu cầu
+      người dùng — vai trò của nó (lọc theo giai đoạn + chỉ xem đang giải quyết + cảnh báo màu
+      hạn điều tra) nay nằm hoàn toàn trong module Danh sách vụ án (toggle "Đang giải quyết" +
+      tab giai đoạn có sẵn), không tạo module riêng nữa. Đừng làm lại module này trừ khi người
+      dùng yêu cầu rõ ràng.
 - [x] Module Kỳ báo cáo (mở kỳ mới có chặn trùng kỳ đang mở, chốt kỳ tự snapshot tồn cuối kỳ
       theo từng cơ quan vào `tonCuoiKy`). Bấm vào 1 dòng kỳ mở ra **báo cáo chi tiết theo giai
       đoạn** (`KyChiTietModal`/`tinhBaoCaoKy`): tồn đầu kỳ (lấy từ `tonCuoiKy` của kỳ liền
