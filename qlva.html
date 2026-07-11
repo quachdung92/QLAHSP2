@@ -4361,18 +4361,42 @@ function CanBoModule() {
 // KHUNG CHÍNH (SIDEBAR + NỘI DUNG)
 // ====================================================================
 const MODULES = [
-  { id: "import", label: "Import Excel", ready: true },
-  { id: "list", label: "Danh sách vụ án", ready: true },
-  { id: "dagiaiquyet", label: "Án đã giải quyết", ready: true },
-  { id: "giaonhan", label: "Giao nhận hồ sơ", ready: true },
-  { id: "ky", label: "Kỳ báo cáo", ready: true },
-  { id: "dashboard", label: "Dashboard", ready: true },
-  { id: "log", label: "Nhật ký thao tác", ready: true },
-  { id: "canbo", label: "Cán bộ", ready: true },
+  { id: "list",        label: "Danh sách vụ án"   },
+  { id: "dagiaiquyet", label: "Án đã giải quyết"  },
+  { id: "giaonhan",    label: "Giao nhận hồ sơ"   },
+  { id: "ky",          label: "Kỳ báo cáo"        },
+  { id: "dashboard",   label: "Dashboard"          },
 ];
 
+// CaiDatModule — gom Import Excel, Nhật ký thao tác, Cán bộ vào 1 chỗ để
+// tránh người dùng bình thường vô tình chạm vào các thao tác quản trị.
+function CaiDatModule() {
+  const [subTab, setSubTab] = useState("log");
+  const tabs = [
+    { id: "log",    label: "Nhật ký thao tác" },
+    { id: "canbo",  label: "Cán bộ"           },
+    { id: "import", label: "Import Excel"      },
+  ];
+  return (
+    <div className="h-full flex flex-col min-h-0">
+      <div className="flex gap-1 mb-6 bg-slate-100 rounded-lg p-1 w-fit shrink-0">
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setSubTab(t.id)}
+            className={`px-4 py-2 text-sm rounded-md font-medium transition-colors
+              ${subTab === t.id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {subTab === "log"    && <NhatKyModule />}
+      {subTab === "canbo"  && <CanBoModule />}
+      {subTab === "import" && <ImportExcelModule />}
+    </div>
+  );
+}
+
 function AppShell({ user }) {
-  const [tab, setTab] = useState("import");
+  const [tab, setTab] = useState("list");
 
   return (
     <div className="h-screen flex overflow-hidden">
@@ -4387,9 +4411,14 @@ function AppShell({ user }) {
               className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between
                 ${tab === m.id ? "bg-indigo-600 text-white" : "hover:bg-slate-800"}`}>
               <span>{m.label}</span>
-              {!m.ready && <span className="text-[10px] text-slate-500">sắp có</span>}
             </button>
           ))}
+          <div className="mx-4 mt-3 mb-1 border-t border-slate-700" />
+          <button onClick={() => setTab("setting")}
+            className={`w-full text-left px-4 py-2.5 text-sm
+              ${tab === "setting" ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-800 hover:text-slate-300"}`}>
+            Cài đặt
+          </button>
         </nav>
         <div className="px-4 py-3 border-t border-slate-800 text-xs">
           <div className="text-slate-400 mb-2 truncate">{user.email}</div>
@@ -4397,14 +4426,12 @@ function AppShell({ user }) {
         </div>
       </aside>
       <main className="flex-1 p-8 overflow-auto">
-        {tab === "import" && <ImportExcelModule />}
-        {tab === "list" && <DanhSachVuAnModule currentUser={user} />}
+        {tab === "list"        && <DanhSachVuAnModule currentUser={user} />}
         {tab === "dagiaiquyet" && <AnDaGiaiQuyetModule />}
-        {tab === "giaonhan" && <GiaoNhanHoSoModule currentUser={user} />}
-        {tab === "ky" && <KyBaoCaoModule />}
-        {tab === "dashboard" && <DashboardModule />}
-        {tab === "log" && <NhatKyModule />}
-        {tab === "canbo" && <CanBoModule />}
+        {tab === "giaonhan"    && <GiaoNhanHoSoModule currentUser={user} />}
+        {tab === "ky"          && <KyBaoCaoModule />}
+        {tab === "dashboard"   && <DashboardModule />}
+        {tab === "setting"     && <CaiDatModule />}
       </main>
     </div>
   );
