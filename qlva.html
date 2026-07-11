@@ -2646,25 +2646,44 @@ async function xuatExcel(setDangXuat, setLoiXuat) {
     const kyTenTheoId = Object.fromEntries(kySnap.docs.map(d => [d.id, d.data().tenKy]));
     const { kyMoi: kyMoiTheoVu, kyGiaiQuyet: kyGiaiQuyetTheoVu } = tinhKyTheoVuAn(logSnap.docs.map(d => d.data()), kyTenTheoId);
 
-    const dsatHeader = ["Mã vụ", "Tên vụ", "Cơ quan đang thụ lý", "Trạng thái", "Số bị can",
-      "KSV chính", "KSV hỗ trợ", "ĐTV/CBĐT", "Đơn vị thụ lý", "Điều luật",
-      "Số QĐ KTVA", "Ngày QĐ KTVA", "Hạn điều tra", "Án điểm", "Nguồn", "Ghi chú",
-      "Kỳ mới", "Kỳ giải quyết"];
+    const vuById = Object.fromEntries(vuList.map(v => [v.id, v]));
+
+    const dsatHeader = [
+      "Mã nội sinh", "Mã ngành cấp", "Tên vụ", "Giai đoạn", "Trạng thái", "Số bị can",
+      "KSV chính", "KSV hỗ trợ", "ĐTV/CBĐT", "Đơn vị thụ lý", "Uỷ quyền xét xử",
+      "Điều luật", "Số QĐ KTVA", "Ngày QĐ KTVA", "Hạn điều tra",
+      "Án điểm", "Phiên toà rút KN", "Nguồn", "Chi tiết nguồn", "Ghi chú",
+      "Kỳ mới", "Kỳ giải quyết",
+    ];
     const dsatRows = vuList.map(v => [
-      hienThiMa(v), v.tenVu, NHAN_GIAI_DOAN[v.coQuanThuLy] || v.coQuanThuLy, NHAN_TRANG_THAI[v.trangThai] || v.trangThai,
-      (bcByVu[v.id] || []).length, v.ksvChinh, (v.ksvHoTro || []).join(", "), v.dtvCbdt, v.donViThuLy, v.dieuLuat,
-      v.soQdKtva, fmtDate(v.ngayQdKtva), fmtDate(v.hanDieuTra), v.anDiem ? "x" : "", NHAN_NGUON[v.nguon] || v.nguon, v.ghiChu,
+      v.maNoiSinh || "", v.maNganhCap || "",
+      v.tenVu, NHAN_GIAI_DOAN[v.coQuanThuLy] || v.coQuanThuLy, NHAN_TRANG_THAI[v.trangThai] || v.trangThai,
+      (bcByVu[v.id] || []).length,
+      v.ksvChinh || "", (v.ksvHoTro || []).join(", "), v.dtvCbdt || "", v.donViThuLy || "", v.uyQuyenXetXu || "",
+      v.dieuLuat || "", v.soQdKtva || "", fmtDate(v.ngayQdKtva), fmtDate(v.hanDieuTra),
+      v.anDiem ? "x" : "", v.phienToaRutKN ? "x" : "", NHAN_NGUON[v.nguon] || v.nguon, v.nguonChiTiet || "", v.ghiChu || "",
       kyMoiTheoVu[v.id] || "", kyGiaiQuyetTheoVu[v.id] || "",
     ]);
 
-    const dsbctHeader = ["Mã vụ", "Họ tên bị can", "Năm sinh", "Giới tính", "Dân tộc", "Địa chỉ",
-      "Tội danh", "Đảng viên", "Biện pháp ngăn chặn", "Hạn tạm giam", "Ngày khởi tố", "Loại khởi tố"];
-    const dsbctRows = bcList.map(bc => [
-      bc.maVuAn, bc.hoTen, bc.namSinh, bc.gioiTinh === "nu" ? "Nữ" : "Nam", bc.danToc, bc.diaChi,
-      (bc.toiDanh || []).filter(Boolean).join("; "), bc.dangVien === "co" ? "x" : "",
-      bc.bienPhapNganChan === "giam" ? "Tạm giam" : "Tại ngoại", fmtDate(bc.hanTamGiam),
-      fmtDate(bc.ngayKhoiTo), bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "Ban đầu",
-    ]);
+    const dsbctHeader = [
+      "Mã vụ", "Tên vụ", "Giai đoạn vụ", "Trạng thái vụ", "KSV chính",
+      "Kỳ mới vụ", "Kỳ giải quyết vụ",
+      "Họ tên bị can", "Năm sinh", "Giới tính", "Dân tộc", "Địa chỉ",
+      "Tội danh", "Đảng viên", "Biện pháp ngăn chặn", "Hạn tạm giam", "Ngày khởi tố", "Loại khởi tố",
+    ];
+    const dsbctRows = bcList.map(bc => {
+      const vu = vuById[bc.maVuAn] || {};
+      return [
+        hienThiMa(vu) || bc.maVuAn, vu.tenVu || "",
+        NHAN_GIAI_DOAN[vu.coQuanThuLy] || "", NHAN_TRANG_THAI[vu.trangThai] || "",
+        vu.ksvChinh || "",
+        kyMoiTheoVu[bc.maVuAn] || "", kyGiaiQuyetTheoVu[bc.maVuAn] || "",
+        bc.hoTen, bc.namSinh, bc.gioiTinh === "nu" ? "Nữ" : "Nam", bc.danToc || "", bc.diaChi || "",
+        (bc.toiDanh || []).filter(Boolean).join("; "), bc.dangVien === "co" ? "x" : "",
+        bc.bienPhapNganChan === "giam" ? "Tạm giam" : "Tại ngoại", fmtDate(bc.hanTamGiam),
+        fmtDate(bc.ngayKhoiTo), bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "Ban đầu",
+      ];
+    });
 
     const tongHopRows = THU_TU_GIAI_DOAN.map(gd => [
       NHAN_GIAI_DOAN[gd], vuList.filter(v => v.coQuanThuLy === gd && v.trangThai === "dang_giai_quyet").length,
@@ -3604,7 +3623,7 @@ function BangBaoCaoChiTiet({ baoCao }) {
 // ra ra thì cellXfs luôn rỗng dù có set cell.s). Báo cáo tháng cần wrap text mặc định cho dễ đọc
 // nên dùng riêng ExcelJS (script CDN riêng, xem <head>) chỉ cho hàm này — phần Import/Xuất Excel
 // khác trong app vẫn dùng XLSX (SheetJS) như cũ, không đụng tới.
-const DO_RONG_COT_CHUNG = [16, 30, 16, 18, 30, 12, 26];
+const DO_RONG_COT_CHUNG = [16, 30, 14, 7, 28, 18, 18, 26, 12, 28];
 function themSheetDanhSach(wb, tenSheet, header, rows, doRongCot) {
   const sheet = wb.addWorksheet(tenSheet.slice(0, 31));
   sheet.columns = header.map((h, i) => ({ width: (doRongCot && doRongCot[i]) || 20 }));
@@ -3622,11 +3641,13 @@ function themSheetDanhSach(wb, tenSheet, header, rows, doRongCot) {
   return sheet;
 }
 
-const DS_HEADER_CHUNG = ["Mã vụ", "Tên vụ", "Trạng thái hiện tại", "KSV chính", "Điều luật", "Ngày sự kiện", "Ghi chú"];
+const DS_HEADER_CHUNG = ["Mã vụ", "Tên vụ", "Trạng thái", "Số BC", "Tội danh chính", "KSV chính", "ĐTV/CBĐT", "Điều luật", "Ngày sự kiện", "Ghi chú"];
 function hangDsVuAn(v) {
   return [
     hienThiMa(v), v.tenVu, NHAN_TRANG_THAI[v.trangThai] || v.trangThai,
-    v.ksvChinh || "", v.dieuLuat || "", fmtDate(v._log?.ngaySuKien), v._log?.ghiChu || "",
+    v._soBiCan ?? 0, v._toiDanhChinh || "",
+    v.ksvChinh || "", v.dtvCbdt || "", v.dieuLuat || "",
+    fmtDate(v._log?.ngaySuKien), v._log?.ghiChu || "",
   ];
 }
 
@@ -3693,12 +3714,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao) {
 
   // ---- Sheet 10-12: Danh sách án tồn — TÁCH RIÊNG 1 sheet / giai đoạn (tại thời điểm xuất —
   // khớp "Số tồn hiện tại" của đúng giai đoạn đó, không gộp chung như trước) ----
-  const headerTon = ["Mã vụ", "Tên vụ", "KSV chính", "Điều luật", "Hạn điều tra"];
+  const headerTon = ["Mã vụ", "Tên vụ", "Số BC", "Tội danh chính", "KSV chính", "ĐTV/CBĐT", "Điều luật", "Hạn điều tra"];
   for (const gd of THU_TU_GIAI_DOAN) {
     const rows = baoCao[gd].ds.tonHienTai.map(v => [
-      hienThiMa(v), v.tenVu, v.ksvChinh || "", v.dieuLuat || "", fmtDate(v.hanDieuTra),
+      hienThiMa(v), v.tenVu, v._soBiCan ?? 0, v._toiDanhChinh || "",
+      v.ksvChinh || "", v.dtvCbdt || "", v.dieuLuat || "", fmtDate(v.hanDieuTra),
     ]);
-    themSheetDanhSach(wb, `DS án tồn ${NHAN_GIAI_DOAN[gd]}`, headerTon, rows, [16, 30, 18, 30, 14]);
+    themSheetDanhSach(wb, `DS án tồn ${NHAN_GIAI_DOAN[gd]}`, headerTon, rows, [16, 30, 7, 28, 18, 18, 26, 14]);
   }
 
   const buffer = await wb.xlsx.writeBuffer();
