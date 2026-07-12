@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QLVA Seed Tool</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: system-ui,sans-serif; max-width: 860px; margin: 32px auto; padding: 0 16px; background: #f8fafc; }
+h1 { font-size: 1.4rem; margin: 0 0 4px; }
+p { margin: 0 0 12px; color: #475569; font-size: .9rem; }
+.card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin: 16px 0; background: #fff; }
+.danger { border-color: #fca5a5; background: #fff5f5; }
+.info { border-color: #93c5fd; background: #eff6ff; }
+.success { border-color: #86efac; background: #f0fdf4; }
+label { font-size: .85rem; color: #374151; }
+input { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .85rem; margin: 4px 8px 4px 4px; width: 220px; }
+button { padding: 8px 18px; border-radius: 6px; border: none; cursor: pointer; font-size: .875rem; font-weight: 600; margin: 4px 4px 4px 0; }
+.btn-r { background: #dc2626; color: #fff; }
+.btn-r:hover { background: #b91c1c; }
+.btn-b { background: #2563eb; color: #fff; }
+.btn-b:hover { background: #1d4ed8; }
+.btn-g { background: #16a34a; color: #fff; }
+.btn-g:hover { background: #15803d; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+#log { background: #0f172a; color: #4ade80; padding: 14px; border-radius: 8px; font-family: monospace; font-size: 11.5px; height: 320px; overflow-y: auto; margin-top: 16px; white-space: pre-wrap; }
+.err { color: #f87171; }
+.warn { color: #fbbf24; }
+code { background: #e2e8f0; border-radius: 4px; padding: 1px 5px; font-size: .8rem; }
+</style>
+</head>
+<body>
+<h1>QLVA Seed Tool</h1>
+<p>Quản lý dữ liệu môi trường PRODUCTION (<code>qlahsp2</code>) và TEST (<code>qlahs-test</code>).</p>
+
+<div class="card danger">
+  <h2 style="margin:0 0 8px;font-size:1rem">⚠ Xoá dữ liệu PRODUCTION — <code>qlahsp2</code></h2>
+  <p>Xoá toàn bộ mock data. <strong>Không thể hoàn tác!</strong> Cần nhập tài khoản production để xác nhận.</p>
+  <label>Email: <input id="pEmail" type="email" placeholder="email@..." value="quach.dung.92@gmail.com"></label>
+  <label>Mật khẩu: <input id="pPass" type="password" placeholder="mật khẩu"></label><br>
+  <button class="btn-r" onclick="xoaProd()">Xoá hết dữ liệu production</button>
+</div>
+
+<div class="card info">
+  <h2 style="margin:0 0 8px;font-size:1rem">🌱 Seed dữ liệu TEST — <code>qlahs-test</code></h2>
+  <p>Tạo 70 vụ án mẫu, 2 kỳ báo cáo (Tháng 6 và 7/2026), đầy đủ kịch bản nghiệp vụ.<br>Tài khoản: <code>admintest@local.com</code> / <code>12345678</code></p>
+  <button class="btn-g" onclick="seedTest()">Seed dữ liệu test (70 vụ)</button>
+  <button class="btn-r" onclick="xoaTest()">Xoá hết dữ liệu test</button>
+</div>
+
+<div id="log">// Nhấn nút để bắt đầu...</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+// ===== FIREBASE INIT =====
+const PROD_CFG = {
+  apiKey: "AIzaSyBqa0wf-xndiq0e-458NYVYnMDRIDPXksE",
+  authDomain: "qlahsp2.firebaseapp.com", projectId: "qlahsp2",
+  storageBucket: "qlahsp2.firebasestorage.app",
+  messagingSenderId: "123634921382", appId: "1:123634921382:web:60d702327326c9ab32a967",
+};
+const TEST_CFG = {
+  apiKey: "AIzaSyDW5jCKNr--YvqUHHVBwkOGeyJMNc6YWGQ",
+  authDomain: "qlahs-test.firebaseapp.com", projectId: "qlahs-test",
+  storageBucket: "qlahs-test.firebasestorage.app",
+  messagingSenderId: "102141956066", appId: "1:102141956066:web:fa31f37992a9b64a5cf3bb",
+};
+const prodApp = firebase.initializeApp(PROD_CFG, "prod");
+const testApp = firebase.initializeApp(TEST_CFG, "test");
+const prodAuth = prodApp.auth(), prodDb = prodApp.firestore();
+const testAuth = testApp.auth(), testDb = testApp.firestore();
+const TS = firebase.firestore.Timestamp;
+
+// ===== HELPERS =====
+const logEl = document.getElementById("log");
+function lg(msg, cls="") { logEl.innerHTML += `<span class="${cls}">${msg}\n</span>`; logEl.scrollTop = 9999; }
+function ts(d) { return TS.fromDate(new Date(d + "T08:00:00+07:00")); }
+function now() { return new Date(); }
+const USER = "admintest@local.com";
+
+// Base event object
+function ev(maVuAn, loai, ky, date, opts={}) {
+  return {
+    maVuAn, loaiSuKien: loai, maBiCan: opts.bc||null,
+    tuGiaiDoan: opts.f||null, denGiaiDoan: opts.t||null,
+    hanCu: opts.hc||null, hanMoi: opts.hm||null,
+    hinhThucHoanThanh: opts.h||null, vuTachRa: opts.tach||null,
+    lyDoTach: opts.lyDo||null, vuNhapVao: opts.nhap||null,
+    soQuyetDinh: opts.q||"", ngaySuKien: ts(date),
+    kyThongKe: ky||null, lichSuSuaKy: [], ghiChu: opts.g||"",
+    nguoiThucHien: USER, thoiDiemGhi: ts(date),
+  };
+}
+
+// Batch writer — splits into chunks of 400
+async function batchWrite(db, ops) {
+  const CHUNK = 400;
+  for (let i = 0; i < ops.length; i += CHUNK) {
+    const b = db.batch();
+    ops.slice(i, i + CHUNK).forEach(op => {
+      if (op.type === "set") b.set(db.collection(op.col).doc(op.id), op.data);
+      else if (op.type === "setA") b.set(db.collection(op.col).doc(), op.data);
+      else if (op.type === "update") b.update(db.collection(op.col).doc(op.id), op.data);
+    });
+    await b.commit();
+    lg(`  Batch ${Math.floor(i/CHUNK)+1}: ${Math.min(i+CHUNK,ops.length)-i} docs viết xong`);
+  }
+}
+
+// Delete all docs in a collection
+async function xoaCollection(db, col) {
+  let total = 0;
+  while (true) {
+    const snap = await db.collection(col).limit(300).get();
+    if (snap.empty) break;
+    const b = db.batch();
+    snap.docs.forEach(d => b.delete(d.ref));
+    await b.commit();
+    total += snap.docs.length;
+  }
+  return total;
+}
+
+// ===== KỲ IDs =====
+const KY5 = "ky_thang_05_2026", KY6 = "ky_thang_06_2026", KY7 = "ky_thang_07_2026";
+
+// ===== STATIC DATA =====
+const CANBO = [
+  { id:"cb01", hoTen:"Nguyễn Thị An", chucVu:"ksv" },
+  { id:"cb02", hoTen:"Trần Văn Bình", chucVu:"ksv" },
+  { id:"cb03", hoTen:"Lê Thị Cẩm", chucVu:"ksv" },
+  { id:"cb04", hoTen:"Phạm Văn Dũng", chucVu:"ksv" },
+  { id:"cb05", hoTen:"Hoàng Thị Lan", chucVu:"ksv" },
+  { id:"cb06", hoTen:"Đinh Văn Nam", chucVu:"dtv" },
+  { id:"cb07", hoTen:"Vũ Thị Oanh", chucVu:"dtv" },
+  { id:"cb08", hoTen:"Bùi Văn Phúc", chucVu:"dtv" },
+  { id:"cb09", hoTen:"Đặng Thị Quỳnh", chucVu:"dtv" },
+  { id:"cb10", hoTen:"Trần Thị Hương", chucVu:"thongke" },
+];
+
+const KY_DOCS = [
+  { id:KY5, tenKy:"Tháng 5/2026", ngayBatDau:"2026-04-16", ngayKetThuc:"2026-05-15",
+    trangThai:"da_chot", nguoiTao:USER, thoiDiemTao:ts("2026-04-16"), thoiDiemChot:ts("2026-05-16"),
+    baoCaoLuu:null,
+    tonCuoiKy:{ dieu_tra:{soVu:12,soBiCan:18}, truy_to:{soVu:7,soBiCan:10}, xet_xu:{soVu:4,soBiCan:5} } },
+  { id:KY6, tenKy:"Tháng 6/2026", ngayBatDau:"2026-05-16", ngayKetThuc:"2026-06-15",
+    trangThai:"da_chot", nguoiTao:USER, thoiDiemTao:ts("2026-05-16"), thoiDiemChot:ts("2026-06-16"),
+    baoCaoLuu:null,
+    tonCuoiKy:{ dieu_tra:{soVu:20,soBiCan:28}, truy_to:{soVu:9,soBiCan:12}, xet_xu:{soVu:5,soBiCan:6} } },
+  { id:KY7, tenKy:"Tháng 7/2026", ngayBatDau:"2026-06-16", ngayKetThuc:"2026-07-15",
+    trangThai:"dang_mo", nguoiTao:USER, thoiDiemTao:ts("2026-06-16") },
+];
+
+// ===== TỘI DANH shortcuts =====
+const TD = {
+  trom:  ["Tội trộm cắp tài sản (Điều 173 BLHS)","Điều 173 BLHS 2015"],
+  cuop:  ["Tội cướp tài sản (Điều 168 BLHS)","Điều 168 BLHS 2015"],
+  lda:   ["Tội lừa đảo chiếm đoạt tài sản (Điều 174 BLHS)","Điều 174 BLHS 2015"],
+  thuong:["Tội cố ý gây thương tích (Điều 134 BLHS)","Điều 134 BLHS 2015"],
+  giet:  ["Tội giết người (Điều 123 BLHS)","Điều 123 BLHS 2015"],
+  ttu:   ["Tội tàng trữ trái phép chất ma tuý (Điều 249 BLHS)","Điều 249 BLHS 2015"],
+  maban: ["Tội mua bán trái phép chất ma tuý (Điều 251 BLHS)","Điều 251 BLHS 2015"],
+  dg:    ["Tội đánh bạc (Điều 321 BLHS)","Điều 321 BLHS 2015"],
+  tcdg:  ["Tội tổ chức đánh bạc (Điều 322 BLHS)","Điều 322 BLHS 2015"],
+  huy:   ["Tội huỷ hoại tài sản (Điều 178 BLHS)","Điều 178 BLHS 2015"],
+  thamO: ["Tội tham ô tài sản (Điều 353 BLHS)","Điều 353 BLHS 2015"],
+  vipgt: ["Tội vi phạm QĐATGT đường bộ (Điều 260 BLHS)","Điều 260 BLHS 2015"],
+};
+
+// bc(hoTen, namSinh, gt, toiKey, bcId_for_log) → bican doc data + placeholder id
+let _bcIdCounter = 1;
+function mkBC(vuId, hoTen, ns, gt, tdk, dt="Kinh") {
+  const bcId = `bc_${vuId}_${_bcIdCounter++}`;
+  return { id: bcId, data: {
+    maVuAn: vuId, hoTen, namSinh: ns, gioiTinh: gt, danToc: dt,
+    toiDanh: [TD[tdk][0]], dieuLuatBC: [TD[tdk][1]],
+    dangVien:"khong", dangVienGiuChucVu:false, quocTich:"Việt Nam",
+    trinhDo:"", taiPham:"khong", loaiBiCan:"ca_nhan",
+    tenPhapNhan:"", maSoThue:"", diaChi:"Hà Nội",
+    bienPhapNganChan:"tam_giam", hanTamGiam:null,
+    ngayKhoiTo:null, loaiKhoiTo:"khoi_to_moi", kyThongKeKhoiTo:null,
+    ngayTao:now(), nguoiTao:USER,
+  }};
+}
+
+function mkVu(id, tenVu, gd, tt, ksv, dtv, ngayKTVA, soQd, hanDT, nguon="cq_dieu_tra", opts={}) {
+  return {
+    maNoiSinh:id, maNganhCap: opts.maNganhCap||null,
+    tenVu, coQuanThuLy:gd, trangThai:tt,
+    ksvChinh:ksv, ksvHoTro:[], dtvCbdt:dtv, donViThuLy:"",
+    dieuLuat: opts.dl||"",
+    vuanToiDanh:[], vuanDieuLuat:[],
+    mucDoNghiemTrong:"nghiem_trong", noiChuyenDen: opts.noiCD||"",
+    nhapVaoVu: opts.nhapVao||null, vuGoc: opts.vuGoc||null, soDemTach: opts.soDemTach||0,
+    anDiem:"", uyQuyenXetXu:"", phienToaRutKN:false,
+    ghiChu: opts.ghiChu||"",
+    soKetLuanDieuTra: opts.kldt||"", soCaoTrang: opts.ct||"", soBanAn: opts.ba||"",
+    nguon, nguonChiTiet:"",
+    hanDieuTra: hanDT?ts(hanDT):null, soQdKtva:soQd, ngayQdKtva:ts(ngayKTVA),
+    ngayTao:ts(ngayKTVA), nguoiTao:USER, ngayCapNhat:ts(ngayKTVA), nguoiCapNhatCuoi:USER,
+  };
+}
+
+// ===== VỤ ÁN DATA =====
+// Trả về { vuDocs[], bcDocs[], logDocs[] }
+function buildData() {
+  const vuDocs=[], bcDocs=[], logDocs=[];
+  _bcIdCounter = 1;
+
+  function addVu(id, tenVu, gd, tt, ksv, dtv, ngayKTVA, soQd, hanDT, nguon, opts, bcDefs, evDefs) {
+    vuDocs.push({ id, data: mkVu(id, tenVu, gd, tt, ksv, dtv, ngayKTVA, soQd, hanDT, nguon, opts) });
+    const bcList = bcDefs.map(([ht,ns,gt,tdk]) => mkBC(id, ht, ns, gt, tdk));
+    bcList.forEach(bc => bcDocs.push({ id: bc.id, data: bc.data }));
+
+    evDefs.forEach(e => {
+      const base = ev(id, e.l, e.k, e.d, e);
+      if (e.l==="khoi_to_bican") {
+        // one per bc
+        bcList.forEach(bc => {
+          const bcEv = {...base, maBiCan:bc.id, id:undefined};
+          logDocs.push({ data: bcEv });
+        });
+      } else {
+        logDocs.push({ data: base });
+      }
+    });
+  }
+
+  // SHORTCUTS
+  const K = ["Nguyễn Thị An","Đinh Văn Nam"];
+  const K2= ["Trần Văn Bình","Vũ Thị Oanh"];
+  const K3= ["Lê Thị Cẩm","Bùi Văn Phúc"];
+  const K4= ["Phạm Văn Dũng","Đặng Thị Quỳnh"];
+  const K5= ["Hoàng Thị Lan","Đinh Văn Nam"];
+
+  // ── KỲ 5 VỤ (mã 2605, ngày KTVA tháng 4/2026) ──────────────────────────
+  // v2605_01: Trộm cắp, đang điều tra, 1 BC
+  addVu("QLVA_E01.53_2605_0001","Vụ án trộm cắp tài sản — Lê Đức Anh",
+    "dieu_tra","dang_giai_quyet",K[0],K[1],"2026-04-20","15/QĐ-KTVA","2026-08-20","cq_dieu_tra",
+    {dl:"Điều 173 BLHS"},
+    [["Lê Đức Anh",1990,"nam","trom"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-20",t:"dieu_tra",q:"15/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-20"}]);
+
+  // v2605_02: Cướp, 2 BC, gia hạn kỳ 5
+  addVu("QLVA_E01.53_2605_0002","Vụ án cướp tài sản — Nguyễn Văn Hùng",
+    "dieu_tra","dang_giai_quyet",K2[0],K2[1],"2026-04-15","12/QĐ-KTVA","2026-10-15","cq_dieu_tra",
+    {dl:"Điều 168 BLHS"},
+    [["Nguyễn Văn Hùng",1988,"nam","cuop"],["Trần Thị Mai",1992,"nu","cuop"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-15",t:"dieu_tra",q:"12/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-15"},
+     {l:"gia_han_dieu_tra",k:KY5,d:"2026-05-10",hc:"2026-07-15",hm:"2026-10-15",q:"25/QĐ-GHDT"}]);
+
+  // v2605_03: Ma tuý, viện trả về DT trong kỳ 6 (đã qua TT rồi bị trả)
+  addVu("QLVA_E01.53_2605_0003","Vụ án ma tuý tàng trữ — Phạm Văn Đức",
+    "dieu_tra","dang_giai_quyet",K3[0],K3[1],"2026-04-18","16/QĐ-KTVA","2026-08-18","cq_dieu_tra",
+    {dl:"Điều 249 BLHS", kldt:"18/KLDT"},
+    [["Phạm Văn Đức",1985,"nam","ttu"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-18",t:"dieu_tra",q:"16/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-18"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-05-05",f:"dieu_tra",t:"truy_to",q:"18/KLDT"},
+     {l:"tra_ho_so",k:KY6,d:"2026-05-25",f:"truy_to",t:"dieu_tra",q:"07/QĐ-THSĐTBS",g:"Cần bổ sung chứng cứ liên quan đồng phạm"}]);
+
+  // v2605_04: Lừa đảo, 2 BC, gia hạn kỳ 5 + kỳ 6
+  addVu("QLVA_E01.53_2605_0004","Vụ án lừa đảo chiếm đoạt tài sản — Hoàng Thị Ngọc",
+    "dieu_tra","dang_giai_quyet",K4[0],K4[1],"2026-04-22","17/QĐ-KTVA","2026-11-22","cq_dieu_tra",
+    {dl:"Điều 174 BLHS"},
+    [["Hoàng Thị Ngọc",1987,"nu","lda"],["Vũ Văn Long",1983,"nam","lda"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-22",t:"dieu_tra",q:"17/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-22"},
+     {l:"gia_han_dieu_tra",k:KY5,d:"2026-05-12",hc:"2026-07-22",hm:"2026-10-22",q:"28/QĐ-GHDT"},
+     {l:"gia_han_dieu_tra",k:KY6,d:"2026-06-01",hc:"2026-10-22",hm:"2026-11-22",q:"35/QĐ-GHDT"}]);
+
+  // v2605_05: Cố ý thương tích → TT kỳ5 → viện trả DT kỳ7
+  addVu("QLVA_E01.53_2605_0005","Vụ án cố ý gây thương tích — Đinh Văn Sơn",
+    "dieu_tra","dang_giai_quyet",K5[0],K5[1],"2026-04-25","19/QĐ-KTVA","2026-10-25","cq_dieu_tra",
+    {dl:"Điều 134 BLHS", kldt:"22/KLDT"},
+    [["Đinh Văn Sơn",1991,"nam","thuong"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-25",t:"dieu_tra",q:"19/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-25"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-05-08",f:"dieu_tra",t:"truy_to",q:"22/KLDT"},
+     {l:"tra_ho_so",k:KY7,d:"2026-06-20",f:"truy_to",t:"dieu_tra",q:"03/QĐ-THSĐTBS",g:"Bổ sung giám định thương tích"}]);
+
+  // v2605_06: Ma tuý mua bán → chuyển TT kỳ5
+  addVu("QLVA_E01.53_2605_0006","Vụ án mua bán ma tuý — Bùi Thị Hà",
+    "truy_to","dang_giai_quyet",K[0],K[1],"2026-04-10","09/QĐ-KTVA","2026-07-10","cq_dieu_tra",
+    {dl:"Điều 251 BLHS", kldt:"11/KLDT"},
+    [["Bùi Thị Hà",1989,"nu","maban"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-10",t:"dieu_tra",q:"09/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-10"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-05-02",f:"dieu_tra",t:"truy_to",q:"11/KLDT"}]);
+
+  // v2605_07: Trộm cắp → chuyển TT kỳ6
+  addVu("QLVA_E01.53_2605_0007","Vụ án trộm cắp tài sản — Cao Văn Minh",
+    "truy_to","dang_giai_quyet",K2[0],K2[1],"2026-04-12","10/QĐ-KTVA","2026-07-12","cq_dieu_tra",
+    {dl:"Điều 173 BLHS", kldt:"14/KLDT"},
+    [["Cao Văn Minh",1994,"nam","trom"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-12",t:"dieu_tra",q:"10/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-12"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-05-20",f:"dieu_tra",t:"truy_to",q:"14/KLDT"}]);
+
+  // v2605_08: Giết người, 2 BC → TT(KY5) → XX(KY5)
+  addVu("QLVA_E01.53_2605_0008","Vụ án giết người — Đặng Văn Hải",
+    "xet_xu","dang_giai_quyet",K3[0],K3[1],"2026-03-20","05/QĐ-KTVA","2026-06-20","cq_dieu_tra",
+    {dl:"Điều 123 BLHS", kldt:"06/KLDT", ct:"04/CT"},
+    [["Đặng Văn Hải",1986,"nam","giet"],["Lý Thị Ngân",1990,"nu","giet"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-03-20",t:"dieu_tra",q:"05/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-03-20"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-04-28",f:"dieu_tra",t:"truy_to",q:"06/KLDT"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-05-10",f:"truy_to",t:"xet_xu",q:"04/CT"}]);
+
+  // v2605_09: Cướp → TT(KY5) → XX(KY6)
+  addVu("QLVA_E01.53_2605_0009","Vụ án cướp tài sản — Tô Văn Sơn",
+    "xet_xu","dang_giai_quyet",K4[0],K4[1],"2026-03-25","06/QĐ-KTVA","2026-06-25","cq_dieu_tra",
+    {dl:"Điều 168 BLHS", kldt:"07/KLDT", ct:"05/CT"},
+    [["Tô Văn Sơn",1992,"nam","cuop"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-03-25",t:"dieu_tra",q:"06/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-03-25"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-05-01",f:"dieu_tra",t:"truy_to",q:"07/KLDT"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-05-22",f:"truy_to",t:"xet_xu",q:"05/CT"}]);
+
+  // v2605_10: Lừa đảo → TT→XX→da_xet_xu kỳ5
+  addVu("QLVA_E01.53_2605_0010","Vụ án lừa đảo — Phan Thị Rạng",
+    "xet_xu","da_xet_xu",K[0],K[1],"2026-02-15","02/QĐ-KTVA","2026-05-15","cq_dieu_tra",
+    {dl:"Điều 174 BLHS", kldt:"03/KLDT", ct:"01/CT", ba:"01/BA"},
+    [["Phan Thị Rạng",1985,"nu","lda"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-02-15",t:"dieu_tra",q:"02/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-02-15"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-03-20",f:"dieu_tra",t:"truy_to",q:"03/KLDT"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-04-15",f:"truy_to",t:"xet_xu",q:"01/CT"},
+     {l:"hoan_thanh",k:KY5,d:"2026-05-08",h:"da_xet_xu",q:"01/BA"}]);
+
+  // v2605_11: Ma tuý → da_xet_xu kỳ6
+  addVu("QLVA_E01.53_2605_0011","Vụ án ma tuý — Lưu Văn Uy",
+    "xet_xu","da_xet_xu",K2[0],K2[1],"2026-02-20","03/QĐ-KTVA","2026-05-20","cq_dieu_tra",
+    {dl:"Điều 249 BLHS", kldt:"04/KLDT", ct:"02/CT", ba:"02/BA"},
+    [["Lưu Văn Uy",1988,"nam","ttu"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-02-20",t:"dieu_tra",q:"03/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-02-20"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-03-25",f:"dieu_tra",t:"truy_to",q:"04/KLDT"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-04-20",f:"truy_to",t:"xet_xu",q:"02/CT"},
+     {l:"hoan_thanh",k:KY6,d:"2026-06-05",h:"da_xet_xu",q:"02/BA"}]);
+
+  // v2605_12: Đánh bạc → tam_dinh_chi kỳ5
+  addVu("QLVA_E01.53_2605_0012","Vụ án đánh bạc — Nông Thị Vân",
+    "dieu_tra","tam_dinh_chi",K3[0],K3[1],"2026-04-05","08/QĐ-KTVA","2026-07-05","cq_dieu_tra",
+    {dl:"Điều 321 BLHS"},
+    [["Nông Thị Vân",1993,"nu","dg"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-05",t:"dieu_tra",q:"08/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-05"},
+     {l:"hoan_thanh",k:KY5,d:"2026-05-05",h:"tam_dinh_chi",q:"10/QĐ-TĐC",g:"Đối tượng bỏ trốn"}]);
+
+  // v2605_13: Cướp → TT(KY5) → viện trả về DT(KY6)
+  addVu("QLVA_E01.53_2605_0013","Vụ án cướp giật — Trịnh Văn Quý",
+    "dieu_tra","dang_giai_quyet",K4[0],K4[1],"2026-04-08","11/QĐ-KTVA","2026-08-08","cq_dieu_tra",
+    {dl:"Điều 168 BLHS", kldt:"13/KLDT"},
+    [["Trịnh Văn Quý",1996,"nam","cuop"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-08",t:"dieu_tra",q:"11/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-08"},
+     {l:"chuyen_giai_doan",k:KY5,d:"2026-05-03",f:"dieu_tra",t:"truy_to",q:"13/KLDT"},
+     {l:"tra_ho_so",k:KY6,d:"2026-06-01",f:"truy_to",t:"dieu_tra",q:"09/QĐ-THSĐTBS",g:"Thiếu chứng cứ về giá trị tài sản bị cướp"}]);
+
+  // v2605_14: Trộm cắp → tam_dinh_chi(KY5) → phục_hồi(KY7) → đang DT
+  addVu("QLVA_E01.53_2605_0014","Vụ án trộm cắp — Chu Văn Xuân",
+    "dieu_tra","dang_giai_quyet",K5[0],K5[1],"2026-04-01","07/QĐ-KTVA","2026-09-01","cq_dieu_tra",
+    {dl:"Điều 173 BLHS"},
+    [["Chu Văn Xuân",1990,"nam","trom"]],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-01",t:"dieu_tra",q:"07/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY5,d:"2026-04-01"},
+     {l:"hoan_thanh",k:KY5,d:"2026-05-03",h:"tam_dinh_chi",q:"09/QĐ-TĐC",g:"Bị can bệnh nặng"},
+     {l:"phuc_hoi",k:KY7,d:"2026-07-02",q:"02/QĐ-PHĐT",g:"Bị can đã khỏe mạnh trở lại"}]);
+
+  // v2605_15: Huỷ hoại, 0 BC (chưa xác định đối tượng)
+  addVu("QLVA_E01.53_2605_0015","Vụ án huỷ hoại tài sản (chưa xác định đối tượng)",
+    "dieu_tra","dang_giai_quyet",K[0],K[1],"2026-04-28","20/QĐ-KTVA","2026-07-28","cq_dieu_tra",
+    {dl:"Điều 178 BLHS"},
+    [],
+    [{l:"khoi_to_vu",k:KY5,d:"2026-04-28",t:"dieu_tra",q:"20/QĐ-KTVA"}]);
+
+  // ── KỲ 6 VỤ ──────────────────────────────────────────────────────────────
+  // v2606_01-09: Vụ đang điều tra kỳ 6
+  const k6cases = [
+    ["Vụ án trộm cắp tài sản — Mạc Văn Thắng",[["Mạc Văn Thắng",1994,"nam","trom"]],"Điều 173 BLHS",K,null,false],
+    ["Vụ án ma tuý tàng trữ — Kiều Thị Linh",[["Kiều Thị Linh",1991,"nu","ttu"]],"Điều 249 BLHS",K2,null,false],
+    ["Vụ án cướp tài sản — Âu Văn Đức",[["Âu Văn Đức",1989,"nam","cuop"],["Phùng Thị Hà",1993,"nu","cuop"]],"Điều 168 BLHS",K3,"2026-10-15",false],
+    ["Vụ án lừa đảo — Quách Văn Khoa",[["Quách Văn Khoa",1987,"nam","lda"]],"Điều 174 BLHS",K4,"2026-11-01",false],
+    ["Vụ án cố ý gây thương tích — Tống Thị Mai",[["Tống Thị Mai",1992,"nu","thuong"],["Đoàn Văn Nghĩa",1990,"nam","thuong"]],"Điều 134 BLHS",K5,null,false],
+    ["Vụ án mua bán ma tuý — Lương Thị Oanh",[["Lương Thị Oanh",1988,"nu","maban"]],"Điều 251 BLHS",K,null,false],
+    ["Vụ án tổ chức đánh bạc — Tạ Văn Phát, Khổng Thị Quế",[["Tạ Văn Phát",1983,"nam","tcdg"],["Khổng Thị Quế",1985,"nu","dg"],["Lê Anh Tuấn",1980,"nam","dg"]],"Điều 322 BLHS",K2,null,false],
+    ["Vụ án cướp giật — Ngô Thị Uyên",[["Ngô Thị Uyên",1996,"nu","cuop"],["Trương Văn Vinh",1994,"nam","cuop"]],"Điều 168 BLHS",K3,null,false],
+    ["Vụ án lừa đảo qua mạng (chưa xác định đối tượng)",[],    "Điều 174 BLHS",K4,null,false],
+  ];
+  k6cases.forEach((c,i) => {
+    const seq = String(i+1).padStart(4,"0");
+    const id = `QLVA_E01.53_2606_${seq}`;
+    const [tenVu, bcs, dl, kTeam, hanGH, maNgc] = c;
+    const han = hanGH || "2026-08-15";
+    const ghEvs = [];
+    if (i===2) ghEvs.push({l:"gia_han_dieu_tra",k:KY6,d:"2026-06-01",hc:"2026-08-15",hm:"2026-10-15",q:`${30+i}/QĐ-GHDT`});
+    if (i===3) { ghEvs.push({l:"gia_han_dieu_tra",k:KY6,d:"2026-06-05",hc:"2026-08-01",hm:"2026-11-01",q:"34/QĐ-GHDT"});
+                 ghEvs.push({l:"gia_han_dieu_tra",k:KY7,d:"2026-07-01",hc:"2026-10-01",hm:"2026-11-01",q:"41/QĐ-GHDT"}); }
+    addVu(id, tenVu, "dieu_tra","dang_giai_quyet", kTeam[0], kTeam[1],
+      "2026-05-"+(16+i), `${21+i}/QĐ-KTVA`, han, "cq_dieu_tra", {dl},
+      bcs,
+      [{l:"khoi_to_vu",k:KY6,d:`2026-05-${16+i}`,t:"dieu_tra",q:`${21+i}/QĐ-KTVA`},
+       {l:"khoi_to_bican",k:KY6,d:`2026-05-${16+i}`},
+       ...ghEvs]);
+  });
+
+  // v2606_10: DT→TT(KY6)→viện trả DT(KY7)
+  addVu("QLVA_E01.53_2606_0010","Vụ án ma tuý — Từ Thị Xuân",
+    "dieu_tra","dang_giai_quyet",K[0],K[1],"2026-05-20","30/QĐ-KTVA","2026-08-20","cq_dieu_tra",
+    {dl:"Điều 249 BLHS", kldt:"36/KLDT"},
+    [["Từ Thị Xuân",1990,"nu","ttu"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-20",t:"dieu_tra",q:"30/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-20"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-10",f:"dieu_tra",t:"truy_to",q:"36/KLDT"},
+     {l:"tra_ho_so",k:KY7,d:"2026-06-25",f:"truy_to",t:"dieu_tra",q:"11/QĐ-THSĐTBS",g:"Thiếu chứng cứ về số lượng ma tuý"}]);
+
+  // v2606_11-12: DT→TT kỳ6, vẫn đang TT
+  addVu("QLVA_E01.53_2606_0011","Vụ án trộm cắp — Cung Văn Yên",
+    "truy_to","dang_giai_quyet",K2[0],K2[1],"2026-05-18","26/QĐ-KTVA","2026-07-18","cq_dieu_tra",
+    {dl:"Điều 173 BLHS", kldt:"38/KLDT"},
+    [["Cung Văn Yên",1993,"nam","trom"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-18",t:"dieu_tra",q:"26/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-18"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-12",f:"dieu_tra",t:"truy_to",q:"38/KLDT"}]);
+
+  addVu("QLVA_E01.53_2606_0012","Vụ án lừa đảo — Diệp Thị Ánh, Giang Văn Bảo",
+    "truy_to","dang_giai_quyet",K3[0],K3[1],"2026-05-19","27/QĐ-KTVA","2026-07-19","cq_dieu_tra",
+    {dl:"Điều 174 BLHS", kldt:"39/KLDT"},
+    [["Diệp Thị Ánh",1988,"nu","lda"],["Giang Văn Bảo",1986,"nam","lda"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-19",t:"dieu_tra",q:"27/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-19"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-14",f:"dieu_tra",t:"truy_to",q:"39/KLDT"}]);
+
+  // v2606_13-14: DT→TT kỳ7
+  addVu("QLVA_E01.53_2606_0013","Vụ án cố ý thương tích — Hứa Thị Chi",
+    "truy_to","dang_giai_quyet",K4[0],K4[1],"2026-05-22","31/QĐ-KTVA","2026-07-22","cq_dieu_tra",
+    {dl:"Điều 134 BLHS", kldt:"42/KLDT"},
+    [["Hứa Thị Chi",1995,"nu","thuong"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-22",t:"dieu_tra",q:"31/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-22"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-06-20",f:"dieu_tra",t:"truy_to",q:"42/KLDT"}]);
+
+  addVu("QLVA_E01.53_2606_0014","Vụ án đánh bạc — Kha Văn Doanh, La Thị Enh",
+    "truy_to","dang_giai_quyet",K5[0],K5[1],"2026-05-23","32/QĐ-KTVA","2026-07-23","cq_dieu_tra",
+    {dl:"Điều 321 BLHS", kldt:"43/KLDT"},
+    [["Kha Văn Doanh",1991,"nam","dg"],["La Thị Enh",1993,"nu","dg"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-23",t:"dieu_tra",q:"32/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-23"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-06-22",f:"dieu_tra",t:"truy_to",q:"43/KLDT"}]);
+
+  // v2606_15: DT→TT(KY6)→XX(KY6)→toà trả TT(KY7)
+  addVu("QLVA_E01.53_2606_0015","Vụ án cướp tài sản — Linh Văn Phú",
+    "truy_to","dang_giai_quyet",K[0],K[1],"2026-05-17","25/QĐ-KTVA","2026-07-17","cq_dieu_tra",
+    {dl:"Điều 168 BLHS", kldt:"37/KLDT", ct:"08/CT"},
+    [["Linh Văn Phú",1987,"nam","cuop"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-17",t:"dieu_tra",q:"25/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-17"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-05",f:"dieu_tra",t:"truy_to",q:"37/KLDT"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-13",f:"truy_to",t:"xet_xu",q:"08/CT"},
+     {l:"tra_ho_so",k:KY7,d:"2026-06-28",f:"xet_xu",t:"truy_to",q:"12/QĐ-THSĐTBS",g:"Toà trả hồ sơ yêu cầu điều tra bổ sung"}]);
+
+  // v2606_16: DT→TT(KY6)→XX(KY6), đang XX
+  addVu("QLVA_E01.53_2606_0016","Vụ án giết người — Ma Thị Hoa",
+    "xet_xu","dang_giai_quyet",K2[0],K2[1],"2026-05-16","24/QĐ-KTVA","2026-07-16","cq_dieu_tra",
+    {dl:"Điều 123 BLHS", kldt:"35/KLDT", ct:"07/CT"},
+    [["Ma Thị Hoa",1989,"nu","giet"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-16",t:"dieu_tra",q:"24/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-16"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-02",f:"dieu_tra",t:"truy_to",q:"35/KLDT"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-11",f:"truy_to",t:"xet_xu",q:"07/CT"}]);
+
+  // v2606_17: DT→TT(KY6)→XX(KY7), đang XX
+  addVu("QLVA_E01.53_2606_0017","Vụ án ma tuý — Na Văn Minh, Oa Thị Ngọc",
+    "xet_xu","dang_giai_quyet",K3[0],K3[1],"2026-05-21","29/QĐ-KTVA","2026-07-21","cq_dieu_tra",
+    {dl:"Điều 251 BLHS", kldt:"40/KLDT", ct:"09/CT"},
+    [["Na Văn Minh",1986,"nam","maban"],["Oa Thị Ngọc",1990,"nu","maban"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-21",t:"dieu_tra",q:"29/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-21"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-08",f:"dieu_tra",t:"truy_to",q:"40/KLDT"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-06-25",f:"truy_to",t:"xet_xu",q:"09/CT"}]);
+
+  // v2606_18-20: da_xet_xu
+  addVu("QLVA_E01.53_2606_0018","Vụ án trộm cắp — Pa Văn Quang",
+    "xet_xu","da_xet_xu",K4[0],K4[1],"2026-05-15","23/QĐ-KTVA","2026-07-15","cq_dieu_tra",
+    {dl:"Điều 173 BLHS", kldt:"33/KLDT", ct:"06/CT", ba:"03/BA"},
+    [["Pa Văn Quang",1992,"nam","trom"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-15",t:"dieu_tra",q:"23/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-15"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-05-28",f:"dieu_tra",t:"truy_to",q:"33/KLDT"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-04",f:"truy_to",t:"xet_xu",q:"06/CT"},
+     {l:"hoan_thanh",k:KY6,d:"2026-06-13",h:"da_xet_xu",q:"03/BA"}]);
+
+  addVu("QLVA_E01.53_2606_0019","Vụ án cố ý thương tích — Ra Thị Sen, Sa Văn Thi",
+    "xet_xu","da_xet_xu",K5[0],K5[1],"2026-05-16","24A/QĐ-KTVA","2026-07-16","cq_dieu_tra",
+    {dl:"Điều 134 BLHS", kldt:"34/KLDT", ct:"06A/CT", ba:"04/BA"},
+    [["Ra Thị Sen",1993,"nu","thuong"],["Sa Văn Thi",1991,"nam","thuong"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-16",t:"dieu_tra",q:"24A/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-16"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-05-29",f:"dieu_tra",t:"truy_to",q:"34/KLDT"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-06",f:"truy_to",t:"xet_xu",q:"06A/CT"},
+     {l:"hoan_thanh",k:KY6,d:"2026-06-14",h:"da_xet_xu",q:"04/BA"}]);
+
+  addVu("QLVA_E01.53_2606_0020","Vụ án lừa đảo — Ta Thị Uyên",
+    "xet_xu","da_xet_xu",K[0],K[1],"2026-05-17","25A/QĐ-KTVA","2026-07-17","cq_dieu_tra",
+    {dl:"Điều 174 BLHS", kldt:"37A/KLDT", ct:"10/CT", ba:"05/BA"},
+    [["Ta Thị Uyên",1989,"nu","lda"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-17",t:"dieu_tra",q:"25A/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-17"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-05-30",f:"dieu_tra",t:"truy_to",q:"37A/KLDT"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-07",f:"truy_to",t:"xet_xu",q:"10/CT"},
+     {l:"hoan_thanh",k:KY7,d:"2026-06-20",h:"da_xet_xu",q:"05/BA"}]);
+
+  // v2606_21-22: tam_dinh_chi kỳ6
+  addVu("QLVA_E01.53_2606_0021","Vụ án tàng trữ ma tuý — Bạch Văn Duy",
+    "dieu_tra","tam_dinh_chi",K2[0],K2[1],"2026-05-24","33/QĐ-KTVA","2026-07-24","cq_dieu_tra",
+    {dl:"Điều 249 BLHS"},
+    [["Bạch Văn Duy",1994,"nam","ttu"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-24",t:"dieu_tra",q:"33/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-24"},
+     {l:"hoan_thanh",k:KY6,d:"2026-06-10",h:"tam_dinh_chi",q:"14/QĐ-TĐC",g:"Bị can bỏ trốn"}]);
+
+  addVu("QLVA_E01.53_2606_0022","Vụ án đánh bạc — Vương Thị Hải, Điền Văn Khang",
+    "dieu_tra","tam_dinh_chi",K3[0],K3[1],"2026-05-25","34/QĐ-KTVA","2026-07-25","cq_dieu_tra",
+    {dl:"Điều 321 BLHS"},
+    [["Vương Thị Hải",1990,"nu","dg"],["Điền Văn Khang",1988,"nam","dg"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-25",t:"dieu_tra",q:"34/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-25"},
+     {l:"hoan_thanh",k:KY6,d:"2026-06-11",h:"tam_dinh_chi",q:"15/QĐ-TĐC"}]);
+
+  // v2606_23: dinh_chi kỳ6
+  addVu("QLVA_E01.53_2606_0023","Vụ án huỷ hoại tài sản — Minh Thị Lam",
+    "dieu_tra","dinh_chi",K4[0],K4[1],"2026-05-26","35/QĐ-KTVA","2026-07-26","cq_dieu_tra",
+    {dl:"Điều 178 BLHS"},
+    [["Minh Thị Lam",1992,"nu","huy"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-26",t:"dieu_tra",q:"35/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-26"},
+     {l:"hoan_thanh",k:KY6,d:"2026-06-12",h:"dinh_chi",q:"05/QĐ-ĐC",g:"Không đủ căn cứ khởi tố bị can"}]);
+
+  // v2606_24: chuyen_di kỳ6
+  addVu("QLVA_E01.53_2606_0024","Vụ án vi phạm giao thông — Nhân Văn Minh",
+    "dieu_tra","chuyen_di",K5[0],K5[1],"2026-05-27","36/QĐ-KTVA","2026-07-27","cq_dieu_tra",
+    {dl:"Điều 260 BLHS", noiCD:"VKSND quận Hoàng Mai"},
+    [["Nhân Văn Minh",1995,"nam","vipgt"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-27",t:"dieu_tra",q:"36/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-27"},
+     {l:"hoan_thanh",k:KY6,d:"2026-06-13",h:"chuyen_di",q:"06/QĐ-CD",g:"Chuyển cho VKSND quận Hoàng Mai thụ lý"}]);
+
+  // v2606_25: Tham ô, 3 BC, có maNganhCap
+  addVu("QLVA_E01.53_2606_0025","Vụ án tham ô tài sản — Nguyễn Thị Bích và đồng phạm",
+    "dieu_tra","dang_giai_quyet",K[0],K[1],"2026-05-28","37/QĐ-KTVA","2026-10-28","cq_dieu_tra",
+    {dl:"Điều 353 BLHS", maNganhCap:"26-TP-2026-001"},
+    [["Nguyễn Thị Bích",1978,"nu","thamO"],["Trần Văn Cường",1975,"nam","thamO"],["Phạm Thị Dịu",1980,"nu","thamO"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-28",t:"dieu_tra",q:"37/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-28"}]);
+
+  // v2606_26: DT→TT(KY6), đang TT, có maNganhCap
+  addVu("QLVA_E01.53_2606_0026","Vụ án mua bán ma tuý — Hoàng Văn Em, Đinh Thị Phương",
+    "truy_to","dang_giai_quyet",K2[0],K2[1],"2026-05-18","26B/QĐ-KTVA","2026-07-18","cq_dieu_tra",
+    {dl:"Điều 251 BLHS", kldt:"44/KLDT", maNganhCap:"26-TP-2026-002"},
+    [["Hoàng Văn Em",1985,"nam","maban"],["Đinh Thị Phương",1988,"nu","maban"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-18",t:"dieu_tra",q:"26B/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-18"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-09",f:"dieu_tra",t:"truy_to",q:"44/KLDT"}]);
+
+  // v2606_27: DT→TT(KY6)→XX(KY7), có maNganhCap
+  addVu("QLVA_E01.53_2606_0027","Vụ án cướp tài sản — Vũ Văn Quân",
+    "xet_xu","dang_giai_quyet",K3[0],K3[1],"2026-05-19","27B/QĐ-KTVA","2026-07-19","cq_dieu_tra",
+    {dl:"Điều 168 BLHS", kldt:"45/KLDT", ct:"11/CT", maNganhCap:"26-TP-2026-003"},
+    [["Vũ Văn Quân",1990,"nam","cuop"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-05-19",t:"dieu_tra",q:"27B/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-05-19"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-10",f:"dieu_tra",t:"truy_to",q:"45/KLDT"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-06-28",f:"truy_to",t:"xet_xu",q:"11/CT"}]);
+
+  // v2606_28-30: thêm DT kỳ6
+  addVu("QLVA_E01.53_2606_0028","Vụ án trộm cắp tài sản — Bùi Thị Hoa",
+    "dieu_tra","dang_giai_quyet",K4[0],K4[1],"2026-06-01","38/QĐ-KTVA","2026-09-01","cq_dieu_tra",
+    {dl:"Điều 173 BLHS"},
+    [["Bùi Thị Hoa",1997,"nu","trom"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-06-01",t:"dieu_tra",q:"38/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-06-01"}]);
+
+  addVu("QLVA_E01.53_2606_0029","Vụ án đánh bạc — Đặng Văn Hùng",
+    "xet_xu","da_xet_xu",K5[0],K5[1],"2026-06-02","39/QĐ-KTVA","2026-08-02","cq_dieu_tra",
+    {dl:"Điều 321 BLHS", kldt:"46/KLDT", ct:"12/CT", ba:"06/BA"},
+    [["Đặng Văn Hùng",1991,"nam","dg"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-06-02",t:"dieu_tra",q:"39/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-06-02"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-07",f:"dieu_tra",t:"truy_to",q:"46/KLDT"},
+     {l:"chuyen_giai_doan",k:KY6,d:"2026-06-13",f:"truy_to",t:"xet_xu",q:"12/CT"},
+     {l:"hoan_thanh",k:KY6,d:"2026-06-15",h:"da_xet_xu",q:"06/BA"}]);
+
+  addVu("QLVA_E01.53_2606_0030","Vụ án lừa đảo qua mạng — Lê Thị Mai",
+    "dieu_tra","dang_giai_quyet",K[0],K[1],"2026-06-05","40/QĐ-KTVA","2026-09-05","cq_dieu_tra",
+    {dl:"Điều 174 BLHS"},
+    [["Lê Thị Mai",1998,"nu","lda"]],
+    [{l:"khoi_to_vu",k:KY6,d:"2026-06-05",t:"dieu_tra",q:"40/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY6,d:"2026-06-05"}]);
+
+  // ── KỲ 7 VỤ ──────────────────────────────────────────────────────────────
+  // v2607_01-10: DT kỳ7 (v01 sẽ bị tách)
+  const k7names = [
+    ["Vụ án trộm cắp — Nguyễn Anh Dũng",[["Nguyễn Anh Dũng",1995,"nam","trom"]],"Điều 173 BLHS",K,false],
+    ["Vụ án cướp giật — Trần Thị Bảo",[["Trần Thị Bảo",1993,"nu","cuop"]],"Điều 168 BLHS",K2,false],
+    ["Vụ án ma tuý tàng trữ — Lê Văn Chiến, Phạm Thị Dân",[["Lê Văn Chiến",1990,"nam","ttu"],["Phạm Thị Dân",1992,"nu","ttu"]],"Điều 249 BLHS",K3,false],
+    ["Vụ án lừa đảo — Hoàng Đức Hải",[["Hoàng Đức Hải",1988,"nam","lda"]],"Điều 174 BLHS",K4,false],
+    ["Vụ án tổ chức đánh bạc — Đinh Thị Liên, Vũ Thị Mỹ, Bùi Văn Nam",[["Đinh Thị Liên",1985,"nu","tcdg"],["Vũ Thị Mỹ",1987,"nu","dg"],["Bùi Văn Nam",1983,"nam","dg"]],"Điều 322 BLHS",K5,false],
+    ["Vụ án cố ý thương tích — Đặng Văn Oai, Hà Thị Phúc",[["Đặng Văn Oai",1994,"nam","thuong"],["Hà Thị Phúc",1996,"nu","thuong"]],"Điều 134 BLHS",K,false],
+    ["Vụ án mua bán ma tuý — Trịnh Văn Quang, Phan Thị Rỳ",[["Trịnh Văn Quang",1986,"nam","maban"],["Phan Thị Rỳ",1989,"nu","maban"]],"Điều 251 BLHS",K2,false],
+    ["Vụ án huỷ hoại tài sản — Tô Văn Sinh",[["Tô Văn Sinh",1992,"nam","huy"]],"Điều 178 BLHS",K3,false],
+    ["Vụ án cướp tài sản — Mai Văn Tùng (gia hạn)",[["Mai Văn Tùng",1991,"nam","cuop"]],"Điều 168 BLHS",K4,true],
+    ["Vụ án trộm cắp (chưa xác định đối tượng)",[],                 "Điều 173 BLHS",K5,false],
+  ];
+  k7names.forEach((c,i) => {
+    const seq = String(i+1).padStart(4,"0");
+    const id = `QLVA_E01.53_2607_${seq}`;
+    const [tenVu, bcs, dl, kTeam, coGiaHan] = c;
+    const ngay = `2026-06-${16+i}`;
+    const evs = [
+      {l:"khoi_to_vu",k:KY7,d:ngay,t:"dieu_tra",q:`${50+i}/QĐ-KTVA`},
+      {l:"khoi_to_bican",k:KY7,d:ngay},
+    ];
+    if (coGiaHan) evs.push({l:"gia_han_dieu_tra",k:KY7,d:"2026-07-05",hc:`2026-09-${16+i}`,hm:`2026-12-${16+i}`,q:`${60+i}/QĐ-GHDT`});
+    // v01 will have soDemTach updated later; keep clean for now
+    addVu(id, tenVu, "dieu_tra","dang_giai_quyet", kTeam[0], kTeam[1],
+      ngay, `${50+i}/QĐ-KTVA`, `2026-09-${16+i}`, "cq_dieu_tra", {dl}, bcs, evs);
+  });
+
+  // v2607_11-13: DT→TT kỳ7
+  [
+    ["Vụ án trộm cắp — Lưu Thị Vy",[["Lưu Thị Vy",1993,"nu","trom"]],"Điều 173 BLHS",K,"11"],
+    ["Vụ án lừa đảo — Nông Văn Xuân, Chu Thị Yến",[["Nông Văn Xuân",1985,"nam","lda"],["Chu Thị Yến",1989,"nu","lda"]],"Điều 174 BLHS",K2,"12"],
+    ["Vụ án cướp — Giáp Văn Zương",[["Giáp Văn Zương",1990,"nam","cuop"]],"Điều 168 BLHS",K3,"13"],
+  ].forEach(([tenVu,bcs,dl,kTeam,n]) => {
+    const id = `QLVA_E01.53_2607_00${n}`;
+    const ngayKT = `2026-06-${20+parseInt(n)-11}`;
+    addVu(id, tenVu, "truy_to","dang_giai_quyet", kTeam[0], kTeam[1],
+      ngayKT, `${60+parseInt(n)}/QĐ-KTVA`, `2026-09-15`, "cq_dieu_tra",
+      {dl, kldt:`${70+parseInt(n)}/KLDT`}, bcs,
+      [{l:"khoi_to_vu",k:KY7,d:ngayKT,t:"dieu_tra",q:`${60+parseInt(n)}/QĐ-KTVA`},
+       {l:"khoi_to_bican",k:KY7,d:ngayKT},
+       {l:"chuyen_giai_doan",k:KY7,d:`2026-07-0${parseInt(n)-10}`,f:"dieu_tra",t:"truy_to",q:`${70+parseInt(n)}/KLDT`}]);
+  });
+
+  // v2607_14-15: DT→TT→XX kỳ7
+  addVu("QLVA_E01.53_2607_0014","Vụ án giết người — Mạc Văn An",
+    "xet_xu","dang_giai_quyet",K4[0],K4[1],"2026-06-17","64/QĐ-KTVA","2026-09-17","cq_dieu_tra",
+    {dl:"Điều 123 BLHS", kldt:"74/KLDT", ct:"13/CT"},
+    [["Mạc Văn An",1987,"nam","giet"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-17",t:"dieu_tra",q:"64/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-17"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-04",f:"dieu_tra",t:"truy_to",q:"74/KLDT"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-10",f:"truy_to",t:"xet_xu",q:"13/CT"}]);
+
+  addVu("QLVA_E01.53_2607_0015","Vụ án mua bán ma tuý — Kiều Thị Bích, Âu Văn Chi",
+    "xet_xu","dang_giai_quyet",K5[0],K5[1],"2026-06-18","65/QĐ-KTVA","2026-09-18","cq_dieu_tra",
+    {dl:"Điều 251 BLHS", kldt:"75/KLDT", ct:"14/CT"},
+    [["Kiều Thị Bích",1989,"nu","maban"],["Âu Văn Chi",1986,"nam","maban"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-18",t:"dieu_tra",q:"65/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-18"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-05",f:"dieu_tra",t:"truy_to",q:"75/KLDT"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-11",f:"truy_to",t:"xet_xu",q:"14/CT"}]);
+
+  // v2607_16-17: da_xet_xu kỳ7
+  addVu("QLVA_E01.53_2607_0016","Vụ án trộm cắp — Phùng Văn Dũng",
+    "xet_xu","da_xet_xu",K[0],K[1],"2026-06-19","66/QĐ-KTVA","2026-09-19","cq_dieu_tra",
+    {dl:"Điều 173 BLHS", kldt:"76/KLDT", ct:"15/CT", ba:"07/BA"},
+    [["Phùng Văn Dũng",1994,"nam","trom"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-19",t:"dieu_tra",q:"66/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-19"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-01",f:"dieu_tra",t:"truy_to",q:"76/KLDT"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-07",f:"truy_to",t:"xet_xu",q:"15/CT"},
+     {l:"hoan_thanh",k:KY7,d:"2026-07-12",h:"da_xet_xu",q:"07/BA"}]);
+
+  addVu("QLVA_E01.53_2607_0017","Vụ án đánh bạc — Quách Thị Em, Tống Văn Phú",
+    "xet_xu","da_xet_xu",K2[0],K2[1],"2026-06-20","67/QĐ-KTVA","2026-09-20","cq_dieu_tra",
+    {dl:"Điều 321 BLHS", kldt:"77/KLDT", ct:"16/CT", ba:"08/BA"},
+    [["Quách Thị Em",1990,"nu","dg"],["Tống Văn Phú",1988,"nam","dg"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-20",t:"dieu_tra",q:"67/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-20"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-02",f:"dieu_tra",t:"truy_to",q:"77/KLDT"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-08",f:"truy_to",t:"xet_xu",q:"16/CT"},
+     {l:"hoan_thanh",k:KY7,d:"2026-07-12",h:"da_xet_xu",q:"08/BA"}]);
+
+  // v2607_18: tam_dinh_chi kỳ7
+  addVu("QLVA_E01.53_2607_0018","Vụ án cướp tài sản — Đoàn Thị Giang",
+    "dieu_tra","tam_dinh_chi",K3[0],K3[1],"2026-06-21","68/QĐ-KTVA","2026-09-21","cq_dieu_tra",
+    {dl:"Điều 168 BLHS"},
+    [["Đoàn Thị Giang",1996,"nu","cuop"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-21",t:"dieu_tra",q:"68/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-21"},
+     {l:"hoan_thanh",k:KY7,d:"2026-07-05",h:"tam_dinh_chi",q:"16/QĐ-TĐC",g:"Bị can bỏ trốn ra nước ngoài"}]);
+
+  // v2607_19: dinh_chi kỳ7
+  addVu("QLVA_E01.53_2607_0019","Vụ án huỷ hoại tài sản — Lương Văn Hải",
+    "dieu_tra","dinh_chi",K4[0],K4[1],"2026-06-22","69/QĐ-KTVA","2026-09-22","cq_dieu_tra",
+    {dl:"Điều 178 BLHS"},
+    [["Lương Văn Hải",1992,"nam","huy"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-22",t:"dieu_tra",q:"69/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-22"},
+     {l:"hoan_thanh",k:KY7,d:"2026-07-06",h:"dinh_chi",q:"06/QĐ-ĐC"}]);
+
+  // v2607_20: an_huy kỳ7
+  addVu("QLVA_E01.53_2607_0020","Vụ án vi phạm giao thông — Tạ Thị Uyên",
+    "xet_xu","an_huy",K5[0],K5[1],"2026-06-16","60/QĐ-KTVA","2026-09-16","cq_dieu_tra",
+    {dl:"Điều 260 BLHS", kldt:"78/KLDT", ct:"17/CT"},
+    [["Tạ Thị Uyên",1993,"nu","vipgt"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-16",t:"dieu_tra",q:"60/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-16"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-06-25",f:"dieu_tra",t:"truy_to",q:"78/KLDT"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-03",f:"truy_to",t:"xet_xu",q:"17/CT"},
+     {l:"hoan_thanh",k:KY7,d:"2026-07-10",h:"an_huy",q:"01/QĐ-AH",g:"Toà tuyên bị cáo vô tội, HĐXX huỷ bản án sơ thẩm"}]);
+
+  // v2607_21: toà trả XX→TT kỳ7
+  addVu("QLVA_E01.53_2607_0021","Vụ án cố ý thương tích — Khổng Văn Bình",
+    "truy_to","dang_giai_quyet",K[0],K[1],"2026-06-17","61/QĐ-KTVA","2026-09-17","cq_dieu_tra",
+    {dl:"Điều 134 BLHS", kldt:"79/KLDT", ct:"18/CT"},
+    [["Khổng Văn Bình",1991,"nam","thuong"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-17",t:"dieu_tra",q:"61/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-17"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-06-28",f:"dieu_tra",t:"truy_to",q:"79/KLDT"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-06",f:"truy_to",t:"xet_xu",q:"18/CT"},
+     {l:"tra_ho_so",k:KY7,d:"2026-07-12",f:"xet_xu",t:"truy_to",q:"13/QĐ-THSĐTBS",g:"Toà trả để VKS xem xét lại tội danh"}]);
+
+  // v2607_22: viện trả TT→DT kỳ7
+  addVu("QLVA_E01.53_2607_0022","Vụ án trộm cắp — Lê Thị Châu",
+    "dieu_tra","dang_giai_quyet",K2[0],K2[1],"2026-06-23","70/QĐ-KTVA","2026-09-23","cq_dieu_tra",
+    {dl:"Điều 173 BLHS", kldt:"80/KLDT"},
+    [["Lê Thị Châu",1997,"nu","trom"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-23",t:"dieu_tra",q:"70/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-23"},
+     {l:"chuyen_giai_doan",k:KY7,d:"2026-07-03",f:"dieu_tra",t:"truy_to",q:"80/KLDT"},
+     {l:"tra_ho_so",k:KY7,d:"2026-07-09",f:"truy_to",t:"dieu_tra",q:"14/QĐ-THSĐTBS",g:"Cần bổ sung kết quả xác minh giá trị tài sản"}]);
+
+  // v2607_23: DT, có maNganhCap
+  addVu("QLVA_E01.53_2607_0023","Vụ án tham ô tài sản — Ngô Văn Dự",
+    "dieu_tra","dang_giai_quyet",K3[0],K3[1],"2026-07-01","71/QĐ-KTVA","2026-10-01","cq_dieu_tra",
+    {dl:"Điều 353 BLHS", maNganhCap:"26-TP-2026-004"},
+    [["Ngô Văn Dự",1975,"nam","thamO"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-07-01",t:"dieu_tra",q:"71/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-07-01"}]);
+
+  // v2607_24: da_nhap (nhập vào 2607_0011)
+  addVu("QLVA_E01.53_2607_0024","Vụ án trộm cắp — Trương Thị Duyên (đã nhập vụ)",
+    "dieu_tra","da_nhap",K4[0],K4[1],"2026-06-24","72/QĐ-KTVA","2026-09-24","cq_dieu_tra",
+    {dl:"Điều 173 BLHS", nhapVao:"QLVA_E01.53_2607_0011"},
+    [["Trương Thị Duyên",1994,"nu","trom"]],
+    [{l:"khoi_to_vu",k:KY7,d:"2026-06-24",t:"dieu_tra",q:"72/QĐ-KTVA"},
+     {l:"khoi_to_bican",k:KY7,d:"2026-06-24"},
+     {l:"nhap_vu",k:KY7,d:"2026-07-08",nhap:"QLVA_E01.53_2607_0011",q:"15/QĐ-NV",g:"Cùng đối tượng, hành vi liên quan vụ 2607_0011"}]);
+
+  // duoc_nhap_vu event on 2607_0011 — add separately
+  logDocs.push({ data: ev("QLVA_E01.53_2607_0011","duoc_nhap_vu",KY7,"2026-07-08",{
+    nhap:"QLVA_E01.53_2607_0024", q:"15/QĐ-NV",
+    g:"Nhận nhập vụ QLVA_E01.53_2607_0024 — \"Vụ án trộm cắp — Trương Thị Duyên\" (KSV: "+K4[0]+") vào vụ này."
+  })});
+
+  // v2607_0001_1: Tách từ 2607_0001 (manual split)
+  addVu("QLVA_E01.53_2607_0001_1","Vụ án cướp tài sản — Nguyễn Anh Dũng (tách vụ)",
+    "dieu_tra","dang_giai_quyet",K[0],K[1],"2026-06-16","50/QĐ-KTVA","2026-09-16","cq_dieu_tra",
+    {dl:"Điều 168 BLHS", vuGoc:"QLVA_E01.53_2607_0001"},
+    [["Nguyễn Anh Dũng",1995,"nam","cuop"]],
+    []);
+  // tach_vu event on parent 2607_0001
+  logDocs.push({ data: ev("QLVA_E01.53_2607_0001","tach_vu",KY7,"2026-07-05",{
+    tach:"QLVA_E01.53_2607_0001_1", lyDo:"manual", t:"dieu_tra",
+    q:"16/QĐ-TV", g:"Tách hành vi cướp ra xử lý riêng"
+  })});
+  // Update parent to reflect split: soDemTach = 1
+  vuDocs.find(v => v.id==="QLVA_E01.53_2607_0001").data.soDemTach = 1;
+
+  return { vuDocs, bcDocs, logDocs };
+}
+
+// ===== SEED TEST DATA =====
+async function seedTest() {
+  lg("\n🌱 Bắt đầu seed dữ liệu test...");
+  try {
+    await testAuth.signInWithEmailAndPassword("admintest@local.com","12345678");
+    lg("✓ Đã đăng nhập test Firebase");
+  } catch(e) { lg("✗ Đăng nhập thất bại: "+e.message,"err"); return; }
+
+  try {
+    const ops = [];
+
+    // canbo
+    CANBO.forEach(c => ops.push({type:"set",col:"canbo",id:c.id,data:{hoTen:c.hoTen,chucVu:c.chucVu,ngayTao:now()}}));
+    lg(`  Chuẩn bị ${CANBO.length} cán bộ`);
+
+    // kybaocao
+    KY_DOCS.forEach(k => ops.push({type:"set",col:"kybaocao",id:k.id,data:k}));
+    lg(`  Chuẩn bị ${KY_DOCS.length} kỳ báo cáo`);
+
+    // boDemMaVu
+    ops.push({type:"set",col:"boDemMaVu",id:"2605",data:{soHienTai:15}});
+    ops.push({type:"set",col:"boDemMaVu",id:"2606",data:{soHienTai:30}});
+    ops.push({type:"set",col:"boDemMaVu",id:"2607",data:{soHienTai:24}});
+
+    // vụ án, bị can, log
+    const { vuDocs, bcDocs, logDocs } = buildData();
+    vuDocs.forEach(v => ops.push({type:"set",col:"vuan",id:v.id,data:v.data}));
+    bcDocs.forEach(b => ops.push({type:"set",col:"bican",id:b.id,data:b.data}));
+    logDocs.forEach(l => ops.push({type:"setA",col:"lichsuChuyenGiaiDoan",data:l.data}));
+
+    lg(`  Tổng: ${vuDocs.length} vụ án, ${bcDocs.length} bị can, ${logDocs.length} sự kiện log`);
+    lg(`  Viết vào Firestore (qlahs-test)...`);
+
+    await batchWrite(testDb, ops);
+    lg("✅ Seed hoàn tất! Mở qlva-dev.html để kiểm tra.", "");
+  } catch(e) { lg("✗ Lỗi: "+e.message+"\n"+e.stack,"err"); }
+}
+
+// ===== CLEAR TEST DATA =====
+async function xoaTest() {
+  if (!confirm("Xoá toàn bộ dữ liệu trong qlahs-test?")) return;
+  lg("\n🗑 Xoá dữ liệu test...");
+  try {
+    await testAuth.signInWithEmailAndPassword("admintest@local.com","12345678");
+    for (const col of ["vuan","bican","lichsuChuyenGiaiDoan","kybaocao","canbo","boDemMaVu","phienGiaoNhan"]) {
+      const n = await xoaCollection(testDb, col);
+      lg(`  ${col}: xoá ${n} docs`);
+    }
+    lg("✅ Đã xoá hết dữ liệu test.");
+  } catch(e) { lg("✗ Lỗi: "+e.message,"err"); }
+}
+
+// ===== CLEAR PRODUCTION DATA =====
+async function xoaProd() {
+  const email = document.getElementById("pEmail").value.trim();
+  const pass  = document.getElementById("pPass").value;
+  if (!email || !pass) { alert("Nhập email và mật khẩu production."); return; }
+  if (!confirm("⚠ XOÁ TOÀN BỘ dữ liệu production qlahsp2? KHÔNG THỂ HOÀN TÁC!")) return;
+  if (!confirm("Xác nhận lần 2: chắc chắn muốn xoá?")) return;
+  lg("\n🗑 Xoá dữ liệu PRODUCTION...");
+  try {
+    await prodAuth.signInWithEmailAndPassword(email, pass);
+    lg("✓ Đã đăng nhập production");
+    for (const col of ["vuan","bican","lichsuChuyenGiaiDoan","kybaocao","canbo","boDemMaVu","phienGiaoNhan"]) {
+      const n = await xoaCollection(prodDb, col);
+      lg(`  ${col}: xoá ${n} docs`);
+    }
+    lg("✅ Đã xoá hết dữ liệu production.");
+  } catch(e) { lg("✗ Lỗi: "+e.message,"err"); }
+}
+</script>
+</body>
+</html>
