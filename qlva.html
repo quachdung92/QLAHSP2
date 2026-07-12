@@ -2186,6 +2186,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       db.collection("vuan").doc(vuAnId).get(),
       db.collection("bican").where("maVuAn", "==", vuAnId).get(),
     ]).then(([vuSnap, bcSnap]) => {
+      if (!vuSnap.exists) { hd.setLoi("Không tìm thấy vụ án."); return; }
       setVuAn({ id: vuSnap.id, ...vuSnap.data() });
       const bc = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       setBiCanList(bc);
@@ -2319,6 +2320,7 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
       db.collection("vuan").doc(vuAnId).get(),
       db.collection("bican").where("maVuAn", "==", vuAnId).get(),
     ]).then(([vuSnap, bcSnap]) => {
+      if (!vuSnap.exists) { hd.setLoi("Không tìm thấy vụ án."); return; }
       setVuAn({ id: vuSnap.id, ...vuSnap.data() });
       setBiCanList(bcSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     }).catch(err => { console.error(err); hd.setLoi("Lỗi khi tải dữ liệu vụ án: " + err.message); });
@@ -2418,8 +2420,10 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
 
   useEffect(() => {
     if (!tuKhoa.trim()) { setKetQua([]); return; }
+    let active = true;
     const k = tuKhoa.trim().toLowerCase();
-    const huy = db.collection("vuan").orderBy("ngayTao", "desc").limit(300).get().then(snap => {
+    db.collection("vuan").orderBy("ngayTao", "desc").limit(300).get().then(snap => {
+      if (!active) return;
       const list = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet")
@@ -2427,7 +2431,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
         .slice(0, 10);
       setKetQua(list);
     });
-    return () => {};
+    return () => { active = false; };
   }, [tuKhoa, vuAn.id]);
 
   const luu = () => {
