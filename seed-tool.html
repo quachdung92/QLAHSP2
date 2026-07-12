@@ -141,15 +141,21 @@ const CANBO = [
 ];
 
 const KY_DOCS = [
-  { id:KY5, tenKy:"Tháng 5/2026", ngayBatDau:"2026-04-16", ngayKetThuc:"2026-05-15",
+  { id:KY5, tenKy:"Tháng 5/2026",
+    ngayBatDau:ts("2026-04-16"), ngayKetThuc:ts("2026-05-15"),
     trangThai:"da_chot", nguoiTao:USER, thoiDiemTao:ts("2026-04-16"), thoiDiemChot:ts("2026-05-16"),
     baoCaoLuu:null,
-    tonCuoiKy:{ dieu_tra:{soVu:12,soBiCan:18}, truy_to:{soVu:7,soBiCan:10}, xet_xu:{soVu:4,soBiCan:5} } },
-  { id:KY6, tenKy:"Tháng 6/2026", ngayBatDau:"2026-05-16", ngayKetThuc:"2026-06-15",
+    // tonCuoiKy: số vụ (số nguyên), tonCuoiBiCan: số bị can (số nguyên) — đúng format code
+    tonCuoiKy:{ dieu_tra:12, truy_to:7, xet_xu:4 },
+    tonCuoiBiCan:{ dieu_tra:18, truy_to:10, xet_xu:5 } },
+  { id:KY6, tenKy:"Tháng 6/2026",
+    ngayBatDau:ts("2026-05-16"), ngayKetThuc:ts("2026-06-15"),
     trangThai:"da_chot", nguoiTao:USER, thoiDiemTao:ts("2026-05-16"), thoiDiemChot:ts("2026-06-16"),
     baoCaoLuu:null,
-    tonCuoiKy:{ dieu_tra:{soVu:20,soBiCan:28}, truy_to:{soVu:9,soBiCan:12}, xet_xu:{soVu:5,soBiCan:6} } },
-  { id:KY7, tenKy:"Tháng 7/2026", ngayBatDau:"2026-06-16", ngayKetThuc:"2026-07-15",
+    tonCuoiKy:{ dieu_tra:20, truy_to:9, xet_xu:5 },
+    tonCuoiBiCan:{ dieu_tra:28, truy_to:12, xet_xu:6 } },
+  { id:KY7, tenKy:"Tháng 7/2026",
+    ngayBatDau:ts("2026-06-16"), ngayKetThuc:ts("2026-07-15"),
     trangThai:"dang_mo", nguoiTao:USER, thoiDiemTao:ts("2026-06-16") },
 ];
 
