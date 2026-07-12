@@ -1,0 +1,30 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "lichsuChuyenGiaiDoan",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "kyThongKe", "order": "ASCENDING" },
+        { "fieldPath": "loaiSuKien", "order": "ASCENDING" },
+        { "fieldPath": "denGiaiDoan", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lichsuChuyenGiaiDoan",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "maVuAn", "order": "ASCENDING" },
+        { "fieldPath": "thoiDiemGhi", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "vuan",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "coQuanThuLy", "order": "ASCENDING" },
+        { "fieldPath": "trangThai", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
