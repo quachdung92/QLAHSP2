@@ -187,6 +187,43 @@ async function layBiCanInfo(maVuAn) {
   _biCanCache[maVuAn] = info;
   return info;
 }
+
+// Batch-read toàn bộ bị can cho nhiều vụ án — 1 "in" query / 30 vụ thay vì N query riêng lẻ.
+// Trả { maVuAn: [bcData, ...] }. Đồng thời cập nhật _biCanCache cho những vụ chưa có.
+async function batchLayBiCanList(maVuAnList) {
+  if (!maVuAnList.length) return {};
+  const result = {};
+  const chunks = [];
+  for (let i = 0; i < maVuAnList.length; i += 30) chunks.push(maVuAnList.slice(i, i + 30));
+  const snaps = await Promise.all(chunks.map(ids =>
+    db.collection("bican").where("maVuAn", "in", ids).get()
+  ));
+  snaps.flatMap(s => s.docs).forEach(doc => {
+    const bc = { id: doc.id, ...doc.data() };
+    if (!result[bc.maVuAn]) result[bc.maVuAn] = [];
+    result[bc.maVuAn].push(bc);
+  });
+  for (const id of maVuAnList) {
+    if (!_biCanCache[id]) {
+      const bcList = result[id] || [];
+      _biCanCache[id] = { soBiCan: bcList.length, toiDanhChinh: bcList[0]?.toiDanh?.[0] || "" };
+    }
+  }
+  return result;
+}
+
+// Batch version của layBiCanInfo — trả { maVuAn: { soBiCan, toiDanhChinh } }, dùng cache phiên.
+async function batchLayBiCanInfo(maVuAnList) {
+  if (!maVuAnList.length) return {};
+  const result = {};
+  const toFetch = maVuAnList.filter(id => !_biCanCache[id]);
+  maVuAnList.filter(id => _biCanCache[id]).forEach(id => { result[id] = _biCanCache[id]; });
+  if (toFetch.length) {
+    await batchLayBiCanList(toFetch);
+    toFetch.forEach(id => { result[id] = _biCanCache[id] || { soBiCan: 0, toiDanhChinh: "" }; });
+  }
+  return result;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 function pad4(n) {
@@ -4293,13 +4330,15 @@ async function tinhSnapTonTheoTD() {
     bc.toiDanh?.[0] ||
     "(chưa xác định)";
 
+  // Batch-load toàn bộ bị can 1 lần — thay thế sequential await trong vòng lặp lồng nhau
+  const allVuIds = dems.flatMap(snap => snap.docs.map(d => d.id));
+  const bicanByVuAn = await batchLayBiCanList(allVuIds);
   const tonCuoiKyTheoTD = {};
   for (let gi = 0; gi < THU_TU_GIAI_DOAN.length; gi++) {
     const gd = THU_TU_GIAI_DOAN[gi];
     for (const vuDoc of dems[gi].docs) {
       const vu = vuDoc.data();
-      const bcSnap = await db.collection("bican").where("maVuAn", "==", vuDoc.id).get();
-      const bcList = bcSnap.docs.map(d => d.data());
+      const bcList = bicanByVuAn[vuDoc.id] || [];
       tonCuoiBiCan[gd] += bcList.length;
       if (bcList.length === 0) {
         const dieuLuatKey = vu.dieuLuat || "(chưa xác định)";
@@ -4446,16 +4485,26 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
 // khi xuất Excel — cùng 1 nguồn dữ liệu nên số dòng danh sách LUÔN khớp đúng số trên báo cáo).
 // Tất cả query vuan + bican chạy song song (Promise.all); bị can dùng cache phiên
 async function vuAnTuLogDocs(logDocs) {
-  const results = await Promise.all(logDocs.map(async d => {
+  if (!logDocs.length) return [];
+  const maVuAnList = [...new Set(logDocs.map(d => d.data().maVuAn))];
+  // Batch-read vuan + bican song song — ceil(N/30)*2 queries thay vì N*2 queries riêng lẻ
+  const vuanChunks = [];
+  for (let i = 0; i < maVuAnList.length; i += 30) vuanChunks.push(maVuAnList.slice(i, i + 30));
+  const [vuanSnaps, bicanMap] = await Promise.all([
+    Promise.all(vuanChunks.map(ids =>
+      db.collection("vuan").where(firebase.firestore.FieldPath.documentId(), "in", ids).get()
+    )),
+    batchLayBiCanInfo(maVuAnList),
+  ]);
+  const vuanMap = {};
+  vuanSnaps.forEach(snap => snap.docs.forEach(d => { vuanMap[d.id] = { id: d.id, ...d.data() }; }));
+  return logDocs.map(d => {
     const l = d.data();
-    const [vuDoc, bcInfo] = await Promise.all([
-      db.collection("vuan").doc(l.maVuAn).get(),
-      layBiCanInfo(l.maVuAn),
-    ]);
-    if (!vuDoc.exists) return null;
-    return { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
-  }));
-  return results.filter(Boolean);
+    const vu = vuanMap[l.maVuAn];
+    if (!vu) return null;
+    const bcInfo = bicanMap[l.maVuAn] || { soBiCan: 0, toiDanhChinh: "" };
+    return { ...vu, _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
+  }).filter(Boolean);
 }
 
 // Tính đầy đủ (luôn quét lichsuChuyenGiaiDoan) — TỐN NHIỀU query, chỉ nên gọi khi thật sự cần
