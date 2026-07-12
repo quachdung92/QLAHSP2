@@ -219,7 +219,7 @@ function buildData() {
       if (e.l==="khoi_to_bican") {
         // one per bc
         bcList.forEach(bc => {
-          const bcEv = {...base, maBiCan:bc.id, id:undefined};
+          const bcEv = {...base, maBiCan:bc.id};
           logDocs.push({ data: bcEv });
         });
       } else {
