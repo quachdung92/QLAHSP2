@@ -225,6 +225,42 @@ async function batchLayBiCanInfo(maVuAnList) {
   return result;
 }
 // ─────────────────────────────────────────────────────────────────────────────
+// TOAST — thông báo ngắn tự biến mất, không chặn thao tác người dùng.
+// Dùng: addToast("Nội dung") hoặc addToast("Lỗi gì đó", "error")
+let _addToast = null;
+function addToast(msg, type = "success") { _addToast?.({ id: Date.now() + Math.random(), msg, type }); }
+
+function ToastContainer() {
+  const [toasts, setToasts] = useState([]);
+  useEffect(() => {
+    _addToast = (t) => {
+      setToasts(p => [...p, t]);
+      setTimeout(() => setToasts(p => p.filter(x => x.id !== t.id)), 3200);
+    };
+    return () => { _addToast = null; };
+  }, []);
+  if (!toasts.length) return null;
+  const cls = { success: "bg-emerald-600", error: "bg-red-600", warn: "bg-amber-500" };
+  const ico = { success: "✓", error: "✕", warn: "⚠" };
+  return ReactDOM.createPortal(
+    <div className="fixed bottom-5 right-5 z-[9999] flex flex-col-reverse gap-2 pointer-events-none">
+      {toasts.map(t => (
+        <div key={t.id} className={`${cls[t.type] || cls.success} text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2`}>
+          <span className="shrink-0">{ico[t.type] || ico.success}</span>
+          <span>{t.msg}</span>
+        </div>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
+// Spinner nhỏ dùng trong button khi đang lưu
+function Spinner({ cls = "w-3.5 h-3.5" }) {
+  return <span className={`${cls} inline-block rounded-full border-2 border-current border-t-transparent animate-spin`} />;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function pad4(n) {
   return String(n).padStart(4, "0");
@@ -447,9 +483,11 @@ function useHanhDongVuAn() {
   const [dangLuu, setDangLuu] = useState(false);
   const [loi, setLoi] = useState("");
   const thucThiRef = React.useRef(null);
+  const onThanhCongRef = React.useRef(null);
 
-  const batDauXacNhanKy = (thucThi) => {
+  const batDauXacNhanKy = (thucThi, onThanhCong) => {
     thucThiRef.current = thucThi;
+    onThanhCongRef.current = onThanhCong || null;
     setLoi("");
     setHienModalKy(true);
   };
@@ -457,10 +495,14 @@ function useHanhDongVuAn() {
     setHienModalKy(false);
     setDangLuu(true);
     try {
-      await thucThiRef.current(kyId);
+      const ketQua = await thucThiRef.current(kyId);
+      addToast(onThanhCongRef.current?.msg || "Đã lưu thành công");
+      onThanhCongRef.current?.fn?.(ketQua);
     } catch (err) {
       console.error(err);
       setLoi("Lỗi khi lưu: " + err.message);
+      addToast("Lỗi khi lưu: " + err.message, "error");
+    } finally {
       setDangLuu(false);
     }
   };
@@ -1965,7 +2007,7 @@ function ChuyenGiaiDoanModal({ vuAn, onDong, onXong }) {
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
-          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
       <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
@@ -2010,7 +2052,7 @@ function TraHoSoModal({ vuAn, onDong, onXong }) {
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
-          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
       <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
@@ -2056,7 +2098,7 @@ function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
-          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
       <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
@@ -2099,7 +2141,7 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
-          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
       <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
@@ -2254,7 +2296,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
-          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
       <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
@@ -2356,7 +2398,7 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
-          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
       <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
@@ -2476,7 +2518,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
-          {hd.dangLuu ? "Đang lưu..." : "Xác nhận"}
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
       <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
@@ -2645,6 +2687,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
       });
 
       await batch.commit();
+      addToast("Đã thêm vụ án");
       xoaBiCanCache(maNoiSinh);
       onDaLuu(maNoiSinh);
     } catch (err) {
@@ -2980,6 +3023,7 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
         vuanDieuLuat: vuanToiDanh.map((_, i) => vuanDieuLuat[i] || ""),
         ngayCapNhat: new Date(), nguoiCapNhatCuoi: nguoiThucHien,
       });
+      addToast("Đã lưu thông tin vụ án");
       onXong();
     } catch (err) {
       console.error(err);
@@ -3164,6 +3208,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
       });
       await batch.commit();
+      addToast("Đã lưu thông tin bị can");
       xoaBiCanCache(vuAn.id);
       onXong();
     } catch (err) {
@@ -3700,7 +3745,15 @@ function DanhSachPanel({ selectedId, onSelect }) {
             </tr>
           </thead>
           <tbody>
-            {dangTai && <tr><td colSpan={soCotHien} className="p-4 text-slate-400">Đang tải...</td></tr>}
+            {dangTai && Array(6).fill(0).map((_, i) => (
+              <tr key={`sk${i}`} className="animate-pulse border-b border-slate-100">
+                <td className="px-3 py-3"><div className="h-3 bg-slate-100 rounded w-24" /></td>
+                <td className="px-3 py-3"><div className="h-3 bg-slate-100 rounded" style={{width:`${55+i*7}%`}} /></td>
+                <td colSpan={soCotHien - 2} className="px-3 py-3">
+                  <div className="h-3 bg-slate-100 rounded w-16" />
+                </td>
+              </tr>
+            ))}
             {!dangTai && sorted.length === 0 && (
               <tr><td colSpan={soCotHien} className="p-4 text-slate-400">Không có vụ án nào khớp.</td></tr>
             )}
@@ -4449,6 +4502,7 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
     setDangLuu(true);
     try {
       await chotKyBaoCao(ky, kyTruoc, fromInputDate(ngayChot), auth.currentUser?.email || "");
+      addToast("Đã chốt kỳ báo cáo");
       onXong();
     } catch (err) {
       console.error(err);
@@ -4843,6 +4897,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
           await tinhLaiBaoCaoLuu(ky, kyTruoc);
         }
       } catch (e) { console.warn("Không tính lại được baoCaoLuu:", e); }
+      addToast("Đã lưu thay đổi");
       setEditMode(false);
       setEd({});
     } catch (err) {
@@ -7302,6 +7357,7 @@ function AppShell({ user }) {
 
   return (
     <div className="h-screen flex overflow-hidden">
+      <ToastContainer />
       <aside className="w-60 bg-slate-900 text-slate-300 flex flex-col shrink-0 overflow-y-auto">
         <div className="px-4 py-5 border-b border-slate-800">
           <div className="text-white font-semibold">QLVA</div>
@@ -7348,7 +7404,13 @@ function App() {
   }, []);
 
   if (user === undefined) {
-    return <div className="min-h-screen flex items-center justify-center text-slate-400 text-sm">Đang tải...</div>;
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-slate-50">
+        <div className="text-slate-700 font-bold text-xl tracking-wide">QLVA</div>
+        <div className="text-slate-400 text-xs">Phòng 2 — VKSND Hà Nội</div>
+        <Spinner cls="w-5 h-5 text-indigo-400 mt-2" />
+      </div>
+    );
   }
   if (user === null) return <LoginScreen />;
   return <AppShell user={user} />;
