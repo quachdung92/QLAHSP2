@@ -6617,14 +6617,26 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
 
   // ---- Sheets chi tiết — mỗi loại sự kiện × mỗi giai đoạn là 1 sheet riêng ----
   // Cấu trúc: VÀO (khởi tố/phục hồi/tách/chuyển đến/trả về) + RA (xét xử/chuyển đi/TĐC/ĐC/huỷ/nhập) + TỒN
-  // Không gộp chung nhiều loại vào 1 sheet — đếm rows trên từng sheet = số liệu của loại đó.
+  // QUAN TRỌNG: 1 vụ N bị can = N rows (buildFlatVuBc). Dùng SUM(cột "Đếm vụ") — KHÔNG dùng COUNTA
+  // toàn sheet — để đếm số vụ; cột này = 1 ở row đầu tiên của mỗi vụ, rỗng ở các row BC tiếp theo.
   function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn) {
     extraHeaders = extraHeaders || [];
     extraFn = extraFn || (() => []);
+    // Xây rows thủ công để thêm cột "Đếm vụ" (1 ở BC đầu tiên/vụ 0-BC, rỗng ở các BC sau)
+    const rows = [];
+    for (const vu of vuArr) {
+      const base = [...vuBaseRow(vu), ...extraFn(vu)];
+      const bcArr = biCanByVu[vu.id] || [];
+      if (bcArr.length === 0) {
+        rows.push([1, ...base, ...BC_EMPTY]);
+      } else {
+        bcArr.forEach((bc, i) => rows.push([i === 0 ? 1 : "", ...base, ...bcCellsRow(bc, i + 1)]));
+      }
+    }
     themSheetDanhSach(wb, tenSheet,
-      [...VU_H, ...extraHeaders, ...BC_H],
-      buildFlatVuBc(vuArr, extraFn),
-      [...VU_W, ...extraHeaders.map(() => 12), ...BC_W], 0);
+      ["Đếm vụ", ...VU_H, ...extraHeaders, ...BC_H],
+      rows,
+      [8, ...VU_W, ...extraHeaders.map(() => 12), ...BC_W], 0);
   }
   const GD_VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
   const _ngaySK  = v => [fmtDate(v._log?.ngaySuKien)];
