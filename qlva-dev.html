@@ -1612,6 +1612,76 @@ function BackfillDieuLuatBCTool() {
   );
 }
 
+function BackfillNgayQuyetDinhTool() {
+  const [state, setState] = useState("idle");
+  const [info, setInfo] = useState("");
+
+  const run = async () => {
+    setState("loading"); setInfo("Đang tải...");
+    try {
+      const TRANG_THAI_HOAN_THANH = ["da_xet_xu", "chuyen_di", "tam_dinh_chi", "dinh_chi", "an_huy", "da_nhap"];
+      // Lấy tất cả vụ đã giải quyết còn thiếu index
+      const snaps = await Promise.all(
+        TRANG_THAI_HOAN_THANH.map(tt => db.collection("vuan").where("trangThai", "==", tt).get())
+      );
+      const canBackfill = snaps.flatMap(s => s.docs)
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(v => !v.ngayQuyetDinh);
+
+      if (canBackfill.length === 0) {
+        setState("done"); setInfo("Tất cả vụ đã có index — không cần cập nhật."); return;
+      }
+      setInfo(`Cần cập nhật ${canBackfill.length} vụ. Đang lấy sự kiện...`);
+
+      // Lấy tất cả sự kiện hoan_thanh & nhap_vu trong 1 query
+      const logSnap = await db.collection("lichsuChuyenGiaiDoan")
+        .where("loaiSuKien", "in", ["hoan_thanh", "nhap_vu"]).get();
+      const eventMap = {};
+      logSnap.docs.forEach(d => {
+        const ev = d.data();
+        if (!eventMap[ev.maVuAn] || (ev.ngaySuKien || "") > (eventMap[ev.maVuAn].ngaySuKien || "")) {
+          eventMap[ev.maVuAn] = { ngaySuKien: ev.ngaySuKien, kyThongKe: ev.kyThongKe };
+        }
+      });
+
+      let updated = 0, skipped = 0;
+      let batch = db.batch(); let cnt = 0;
+      for (const v of canBackfill) {
+        const ev = eventMap[v.id];
+        if (!ev?.ngaySuKien) { skipped++; continue; }
+        batch.update(db.collection("vuan").doc(v.id), {
+          ngayQuyetDinh: ev.ngaySuKien, kyHoanThanh: ev.kyThongKe ?? null,
+        });
+        updated++; cnt++;
+        if (cnt >= 400) { await batch.commit(); batch = db.batch(); cnt = 0; }
+      }
+      if (cnt > 0) await batch.commit();
+      setState("done");
+      setInfo(`Đã cập nhật ${updated} vụ. Bỏ qua ${skipped} vụ (không tìm thấy sự kiện hoàn thành).`);
+    } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Cập nhật index Án đã giải quyết</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Điền sẵn <code>ngayQuyetDinh</code> và <code>kyHoanThanh</code> vào các vụ đã giải quyết tạo
+        trước khi có tính năng này — để module "Án đã giải quyết" mở ra ngay, không cần query log.
+        Chạy 1 lần là đủ. An toàn khi chạy lại — chỉ đụng vào vụ còn thiếu field.
+      </p>
+      {info && (
+        <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
+          {info}
+        </div>
+      )}
+      <button onClick={run} disabled={state === "loading"}
+              className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50">
+        {state === "loading" ? "Đang chạy..." : "Cập nhật index"}
+      </button>
+    </div>
+  );
+}
+
 function ImportExcelModule() {
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState(null); // { vuAnList, biCanList, warnings }
@@ -1857,6 +1927,7 @@ function ImportExcelModule() {
         </div>
       )}
 
+      <BackfillNgayQuyetDinhTool />
       <DungLaiLichSuTool />
       <SeedDanhMucTool />
       <BackfillDieuLuatBCTool />
@@ -2229,6 +2300,8 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
         batch.update(db.collection("vuan").doc(vuAn.id), {
           trangThai: hinhThuc, noiChuyenDen: hinhThuc === "chuyen_di" ? noiChuyenDen.trim() : "",
           ...(fieldVuAn ? { [fieldVuAn]: soQuyetDinh.trim() } : {}),
+          // Index nhanh cho module Án đã giải quyết — không cần query log mỗi lần mở
+          ngayQuyetDinh: ngaySuKien, kyHoanThanh: kyId,
           ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
         });
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
@@ -2242,7 +2315,10 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
           vuGoc: vuAn, biCanTachIds: idsChuyenHan, biCanSaoChepIds: idsSaoChep, biCanList,
           trangThaiVuMoi: hinhThuc, nguoiThucHien,
         });
-        if (fieldVuAn) batch.update(db.collection("vuan").doc(maVuMoi), { [fieldVuAn]: soQuyetDinh.trim() });
+        batch.update(db.collection("vuan").doc(maVuMoi), {
+          ...(fieldVuAn ? { [fieldVuAn]: soQuyetDinh.trim() } : {}),
+          ngayQuyetDinh: ngaySuKien, kyHoanThanh: kyId,
+        });
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
           maVuAn: vuAn.id, loaiSuKien: "tach_vu", vuTachRa: maVuMoi, denGiaiDoan: vuAn.coQuanThuLy,
           lyDoTach: hinhThuc === "tam_dinh_chi" ? "de_tam_dinh_chi" : "de_dinh_chi",
@@ -4573,11 +4649,13 @@ async function vuAnTuLogDocs(logDocs) {
 async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
   const baoCao = {};
   for (const gd of THU_TU_GIAI_DOAN) {
-    // Lấy số nguyên — guard phòng data cũ lưu tonCuoiKy/tonCuoiBiCan dạng object {soVu, soBiCan}
+    // Guard backward compat: data cũ lưu tonCuoiKy[gd] = {soVu: N, soBiCan: M},
+    // data mới lưu tonCuoiKy[gd] = N (số nguyên), tonCuoiBiCan[gd] = M.
     const rawTon = kyTruoc?.tonCuoiKy?.[gd];
-    const tonDauKy = typeof rawTon === "number" ? rawTon : 0;
+    const tonDauKy = typeof rawTon === "number" ? rawTon : (rawTon?.soVu ?? 0);
     const rawBiCan = kyTruoc?.tonCuoiBiCan?.[gd];
-    const tonDauBiCan = typeof rawBiCan === "number" ? rawBiCan : 0;
+    const tonDauBiCan = typeof rawBiCan === "number" ? rawBiCan
+      : (rawBiCan?.soBiCan ?? rawTon?.soBiCan ?? 0);
 
     // "Mới" ở 1 giai đoạn gồm 4 nguồn, áp dụng THỐNG NHẤT cho cả 3 giai đoạn (trước đây cột Điều
     // tra được code riêng, thiếu hẳn "trả về từ giai đoạn sau" — tức viện trả hồ sơ điều tra bổ
@@ -6128,6 +6206,8 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
   );
 }
 
+// Tìm kỳ trước = dòng ngay BÊN DƯỚI trong listBaoCaoDesc (luôn sorted desc từ Firestore).
+// Không dùng so sánh timestamp để tránh bug khi data có format không đồng nhất.
 function timKyTruoc(ky, listBaoCaoDesc) {
   if (!ky) return null;
   const idx = listBaoCaoDesc.findIndex(k => k.id === ky.id);
@@ -6383,46 +6463,25 @@ function AnDaGiaiQuyetModule() {
     );
   }, []);
 
+  // Đọc thẳng từ vuan — ngayQuyetDinh và kyHoanThanh được lưu sẵn khi tạo sự kiện hoan_thanh
+  // (dữ liệu cũ chưa có field này sẽ được backfill qua nút "Cập nhật index" ở module Cài đặt)
   useEffect(() => {
     setDangTai(true);
-    let huy = false;
-    // onSnapshot theo vuan (real-time khi có vụ mới chuyển trạng thái),
-    // nhưng event lookup dùng 1 query batch thay vì N+1 query riêng lẻ.
     const unsub = db.collection("vuan").where("trangThai", "==", hinhThuc).onSnapshot(
-      async snap => {
-        if (snap.empty) {
-          if (!huy) { setList([]); setDangTai(false); }
-          return;
-        }
-        try {
-          const vuanRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          // 1 query lấy toàn bộ sự kiện hoan_thanh — join trong memory
-          const logSnap = await db.collection("lichsuChuyenGiaiDoan")
-            .where("loaiSuKien", "==", "hoan_thanh").get();
-          if (huy) return;
-          // Map maVuAn → event gần nhất (ngaySuKien lớn nhất)
-          const eventMap = {};
-          logSnap.docs.forEach(d => {
-            const ev = d.data();
-            if (!eventMap[ev.maVuAn] || (ev.ngaySuKien || "") > (eventMap[ev.maVuAn].ngaySuKien || "")) {
-              eventMap[ev.maVuAn] = { ngaySuKien: ev.ngaySuKien, kyThongKe: ev.kyThongKe };
-            }
+      snap => {
+        const rows = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => {
+            const ta = a.ngayQuyetDinh?.toMillis?.() ?? (a.ngayQuyetDinh ? new Date(a.ngayQuyetDinh).getTime() : 0);
+            const tb = b.ngayQuyetDinh?.toMillis?.() ?? (b.ngayQuyetDinh ? new Date(b.ngayQuyetDinh).getTime() : 0);
+            return tb - ta;
           });
-          const rows = vuanRows.map(v => {
-            const ev = eventMap[v.id];
-            return { ...v, ngayQuyetDinh: ev?.ngaySuKien ?? null, kyHoanThanh: ev?.kyThongKe ?? null };
-          });
-          rows.sort((a, b) => (b.ngayQuyetDinh || "").localeCompare(a.ngayQuyetDinh || ""));
-          setList(rows);
-          setDangTai(false);
-        } catch (err) {
-          console.error(err);
-          if (!huy) setDangTai(false);
-        }
+        setList(rows);
+        setDangTai(false);
       },
       err => { console.error(err); setDangTai(false); }
     );
-    return () => { huy = true; unsub(); };
+    return () => unsub();
   }, [hinhThuc]);
 
   const listHienThi = (locKy && locKy !== "tat_ca")
