@@ -2,6 +2,58 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ĐANG LÀM DỞ (nhánh `bieu-10-audit`, tạm dừng 2026-07-13 — đọc mục này trước khi tiếp tục)
+
+**Đã xong và đã commit/push trên nhánh này** (kế thừa từ `import-excel-fix`):
+- Import Excel: bỏ bắt buộc Mã vụ/Tên vụ, tự ước tính ngày quyết định thiếu, Án đã giải quyết đổi
+  bố cục 2 cột — xem "Tiến độ đã code" bên dưới, mục Import Excel/Án đã giải quyết.
+- Fix bug `tinhLaiBaoCaoLuu` ghi đè `tonCuoiKyTheoTD`/`tonCuoiBiCan` bằng dữ liệu LIVE thay vì giữ
+  cố định — xem mục "Kỳ báo cáo" bên dưới, đoạn "Bug đã sửa (2026-07-13) — B10 hiện tồn kỳ trước
+  = tồn kỳ này".
+- Công cụ `TaiTaoTonTheoTDTool` ("Sửa lại tồn cuối kỳ theo tội danh (Biểu B10)" trong Cài đặt →
+  Import Excel) — tính lại đúng `tonCuoiKyTheoTD` cho TẤT CẢ kỳ đã chốt theo thứ tự thời gian từ
+  log, sửa dữ liệu đã bị bug trên ghi sai trước đó. Đã kiểm chứng phần toán tích luỹ bằng test độc
+  lập (4 kịch bản), CHƯA kiểm chứng bằng dữ liệu Firestore thật — **việc cần làm tiếp theo #1: mở
+  `qlva-dev.html`, bấm nút này, xem kỹ log/cảnh báo trả về, đối chiếu vài kỳ bằng tay trước khi
+  chạy trên `qlva.html` (production)**.
+- Thêm dropdown lọc riêng theo KSV vào Án đã giải quyết + Giao nhận hồ sơ (tìm thủ công).
+
+**Đã audit xong (agent nghiên cứu, KHÔNG phải code đã sửa) — 2 bug CONFIRMED cần sửa tiếp, việc
+cần làm tiếp theo #2 và #3:**
+
+1. **Bug nhập liệu (import) — mức độ ảnh hưởng CAO**: `ImportExcelModule`'s bị can write (hàm
+   `ghiVaoCoSoDuLieu`, đoạn tạo doc `bican`) đang hardcode `loaiKhoiTo: "khoi_to_moi"` — đây là 1
+   giá trị KHÔNG HỢP LỆ (chỉ có `"ban_dau"`/`"bo_sung"` là hợp lệ, xem hàm `tinhLoaiKhoiTo`/
+   `tinhLoaiKhoiToTheoNgay`, có vẻ bị nhầm với field `nguon` có giá trị `"an_khoi_to_moi"`). Hậu
+   quả: Biểu B10 lọc bị can theo đúng `=== "ban_dau"` mới tính vào khối nhân khẩu học (tuổi/trình
+   độ/dân tộc/đảng viên/quốc tịch/tái phạm, cột C7-C24 cho Điều tra và tương tự Truy tố/Xét xử) —
+   MỌI bị can nhập qua Import Excel bị loại khỏi khối này một cách ÂM THẦM (các chỗ khác trong app
+   hiển thị bị can import vẫn đúng là "Ban đầu" vì dùng check ngược `=== "bo_sung" ? ... : "Ban
+   đầu"`, chỉ B10 dùng check chặt `=== "ban_dau"` mới lộ ra sai khác). Đây gần như chắc chắn là
+   nguyên nhân chính khiến B10 "không khớp báo cáo khác" mà người dùng thấy — **sửa: đổi
+   `loaiKhoiTo: "khoi_to_moi"` thành gọi đúng `tinhLoaiKhoiTo`/`tinhLoaiKhoiToTheoNgay`, hoặc gán
+   cứng `"ban_dau"` nếu Excel gốc không phân biệt được ban đầu/bổ sung**.
+2. **Bug tính báo cáo — mức độ ảnh hưởng TRUNG BÌNH/CAO**: `tinhBieu10` hoàn toàn KHÔNG xử lý hình
+   thức hoàn thành `an_huy` (án huỷ) — không trừ khỏi "Tổng thụ lý" (C3/C33/C60 chỉ trừ `nhapVu` +
+   `hoanThanh.chuyen_di`, thiếu `an_huy`), và KHÔNG có cột riêng nào cho án huỷ ở cả 3 khối giai
+   đoạn (khác với đình chỉ/tạm đình chỉ/đã xét xử đều có cột riêng). Trong khi "Tổng hợp báo cáo"
+   và sheet "TK tội danh" đều tính đủ cả 5 hình thức hoàn thành gồm án huỷ. Vụ án huỷ vẫn hiện
+   trên các báo cáo khác nhưng "biến mất" trên B10 — **sửa: thêm cột/logic án huỷ vào `tinhBieu10`,
+   tương tự cách đình chỉ/tạm đình chỉ đã có**.
+3. (Ưu tiên thấp hơn, chưa xác nhận bằng dữ liệu thật) Sheet "TK tội danh" nhóm theo
+   `bc.toiDanh[0]` thô (không chuẩn hoá qua `getDL()`/`normDL()`/alias BLHS 2015→2025 như B10) —
+   2 sheet trong CÙNG 1 file Excel có thể nhóm tội danh khác nhau, khiến người xem thấy số liệu
+   "không khớp" giữa 2 sheet dù cả 2 đều đúng theo cách nhóm riêng của nó. Cân nhắc thống nhất.
+
+Chi tiết đầy đủ (số dòng code, trích code) nằm trong báo cáo của agent audit đã chạy trong phiên
+làm việc trước — nếu cần lại, hỏi lại y hệt câu hỏi audit cho agent `general-purpose` (đã audit
+xong `tinhBieu10`, `tinhBaoCaoKyTuLog`, `ImportExcelModule`, các sheet Excel liên quan).
+
+**Việc cần làm tiếp theo (theo thứ tự đề xuất):** (1) kiểm chứng `TaiTaoTonTheoTDTool` bằng dữ
+liệu thật trên `qlva-dev.html`; (2) sửa bug #1 (loaiKhoiTo import); (3) sửa bug #2 (án huỷ thiếu
+trong B10); (4) chạy lại `TaiTaoTonTheoTDTool` sau khi sửa xong (vì sửa bug #2 có thể đổi số đã
+giải quyết theo tội danh của các kỳ cũ); (5) cân nhắc bug #3.
+
 # QLVA — Quản lý vụ án Phòng 2, VKSND Hà Nội
 
 ## Bối cảnh
@@ -314,7 +366,18 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       nghiệp vụ, không cần code thêm gì). State `vuAnDangSua`/`SuaVuAnForm` gọi trực tiếp của bản
       trước đã bỏ, thay bằng `selectedId` + `<ChiTietPanel vuAnId={selectedId}
       onDoiSelected={setSelectedId} />` y hệt cách `DanhSachVuAnModule` ghép 2 panel.
-- [x] Các hành động nghiệp vụ trên 1 vụ án (nút ở panel chi tiết, đều qua `ModalXacNhanKy`
+      **Lọc riêng theo KSV ở mọi nơi có ô tìm kiếm (2026-07-13)** — trước đây chỉ `DanhSachPanel`
+      (Danh sách vụ án) có dropdown "Tất cả KSV" riêng, các chỗ khác chỉ tìm KSV được gián tiếp
+      qua ô tìm kiếm tự do (phải gõ đúng/gần đúng tên). Đã thêm dropdown KSV (cùng pattern
+      `dsKsv = [...new Set(list.map(v => v.ksvChinh).filter(Boolean))].sort()`) vào:
+      **Án đã giải quyết** (state `ksv`, kết hợp AND với lọc kỳ + tìm kiếm tự do trong
+      `listHienThi`) và **Giao nhận hồ sơ → "Tìm thủ công"** (state `ksvTim` — khác 1 chỗ: panel
+      này trước đây CHỈ hiện kết quả khi có gõ từ khoá, nay cho phép chỉ chọn KSV mà KHÔNG cần gõ
+      gì cũng ra danh sách, đúng nhu cầu "xem hết hồ sơ đang giải quyết của 1 KSV" — điều kiện ẩn/
+      hiện danh sách đổi từ `tuKhoaTim.trim()` sang `tuKhoaTim.trim() || ksvTim !== "tat_ca"`).
+      KHÔNG thêm dropdown KSV vào `NhapVuModal` (ô tìm 1 vụ đích để nhập vào — công cụ tìm-chọn 1
+      bản ghi, không phải màn danh sách/lọc) hay `DanhMucToiDanhModule` (danh mục tội danh, không
+      có field KSV — không có khái niệm để lọc).
       dùng chung + hook `useHanhDongVuAn`): Chuyển giai đoạn, Trả hồ sơ, Gia hạn điều tra,
       Hoàn thành vụ án (gộp cả 5 hình thức da_xet_xu/chuyen_di/tam_dinh_chi/dinh_chi/an_huy —
       tự động tách vụ khi TĐC/ĐC chỉ áp dụng 1 phần bị can, xem hàm `tachVuAn`), **Tách vụ án**
@@ -410,10 +473,46 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       `baoCaoLuu`) vẫn tự tính đầy đủ như cũ, không bắt buộc backfill. Nút **"Tính lại số liệu"**
       (chỉ hiện với kỳ đã chốt, gọi `tinhLaiBaoCaoLuu`) cho phép tính lại và ghi đè `baoCaoLuu`
       khi cần — dùng khi có **"Sửa kỳ"** (xem Nhật ký thao tác) tác động tới sự kiện thuộc kỳ đã
-      chốt đó, xem cảnh báo ở `SuaKyModal` bên dưới. **KHÔNG** đụng tới `tonCuoiKy` khi tính lại
-      (số "Còn" chốt là trạng thái `vuan` thật tại thời điểm chốt, độc lập với việc gán
-      `kyThongKe` của từng sự kiện log nên "Sửa kỳ" không làm sai số này — chỉ làm sai các dòng
-      "số mới"/"đã giải quyết" đếm theo `kyThongKe`).
+      chốt đó, xem cảnh báo ở `SuaKyModal` bên dưới. **KHÔNG** đụng tới `tonCuoiKy`/`tonCuoiBiCan`/
+      `tonCuoiKyTheoTD` khi tính lại (số "Còn" chốt là trạng thái `vuan` thật tại thời điểm chốt,
+      độc lập với việc gán `kyThongKe` của từng sự kiện log nên "Sửa kỳ" không làm sai số này —
+      chỉ làm sai các dòng "số mới"/"đã giải quyết" đếm theo `kyThongKe`).
+      **Bug đã sửa (2026-07-13) — B10 hiện "tồn kỳ trước" = "tồn kỳ này"**: `tinhLaiBaoCaoLuu`
+      từng VI PHẠM chính bất biến ở trên — nó có ghi đè `tonCuoiKyTheoTD`/`tonCuoiBiCan` (không
+      chỉ `tonCuoiKy` mới được bảo vệ) bằng kết quả `tinhSnapTonTheoTD()`, hàm này luôn query
+      **LIVE** trạng thái `vuan` **hiện tại lúc gọi**, không biết gì về thời điểm chốt lịch sử của
+      kỳ đang tính lại. `chotKyBaoCao()` gọi đúng hàm này lúc CHỐT LẦN ĐẦU thì không sao (thời
+      điểm gọi = thời điểm chốt); nhưng "Tính lại số liệu" có thể chạy rất lâu sau, khi live
+      `vuan` đã trôi xa khỏi trạng thái lúc kỳ đó thực chốt — ghi đè biến `tonCuoiKyTheoTD` của kỳ
+      CŨ thành ảnh chụp HIỆN TẠI. Biểu B10 (`tinhBieu10`, xem mục Xuất Excel Biểu B10 bên dưới)
+      đọc "tồn kỳ trước" từ `kyTruoc.tonCuoiKyTheoTD` — nếu `kyTruoc` vừa bị "Tính lại" gần đây,
+      cột "tồn kỳ trước" trùng y hệt "tồn kỳ này" dù 2 kỳ cách nhau cả tháng. Đã sửa: bỏ hẳn lệnh
+      gọi `tinhSnapTonTheoTD()` khỏi `tinhLaiBaoCaoLuu`, hàm giờ CHỈ ghi `baoCaoLuu` +
+      `thoiDiemTinhLai`. Kỳ nào đã bị "Tính lại" trước khi có bản sửa này thì `tonCuoiKyTheoTD`
+      của kỳ đó ĐÃ BỊ CORRUPT (mang giá trị live tại thời điểm bấm tính lại, không phải lịch sử
+      thật) — sửa code không tự phục hồi được dữ liệu đã ghi sai, chỉ chặn không cho sai thêm.
+      **Công cụ sửa dữ liệu đã corrupt (2026-07-13, `taiTaoTonCuoiKyTheoTDTatCa` +
+      `TaiTaoTonTheoTDTool`, nút "Sửa lại tồn cuối kỳ theo tội danh (Biểu B10)" trong Cài đặt →
+      Import Excel)** — KHÔNG replay điểm-theo-thời-gian từng vụ (quá phức tạp/rủi ro cho báo cáo
+      thống kê chính thức) mà dùng cách rẻ hơn nhiều, tái dùng khối xây dựng đã có sẵn và đã kiểm
+      chứng: duyệt TẤT CẢ kỳ đã chốt theo thứ tự thời gian (bỏ qua kỳ lưu trữ), với mỗi kỳ K tính
+      `tonCuoiKyTheoTD[K] = tonCuoiKyTheoTD[K-1] (đã tính đúng ở bước trước, kỳ đầu tiên = 0) + số
+      mới theo tội danh trong K − số đã giải quyết theo tội danh trong K`, cả 2 vế lấy trực tiếp
+      từ `tinhBaoCaoKyTuLog(K, ...).ds` (hàm đã lọc đúng theo `kyThongKe==K.id`, KHÔNG đụng gì tới
+      `tonCuoiKyTheoTD` cũ nên tái dùng an toàn, không lặp lại lỗi gốc). Vì đi tuần tự theo lịch
+      sử, kỳ nào cũng nhận giá trị đã được sửa đúng của kỳ liền trước, không còn phụ thuộc snapshot
+      live nào nữa. Đối chiếu tổng theo giai đoạn của kết quả với `tonCuoiKy` (field KHÔNG BAO GIỜ
+      bị ghi đè — neo tin cậy tuyệt đối) sau mỗi kỳ: lệch (VD do vụ có `kyThongKe: null` từ "Dựng
+      lại lịch sử" cho dữ liệu import cũ, không được đếm vào "số mới" của kỳ nào) thì gom phần
+      chênh vào tội danh `"(chưa xác định — chênh lệch dữ liệu cũ)"` để TỔNG luôn khớp con số tin
+      cậy, thay vì âm thầm sai không dấu vết. Số âm bất thường (dữ liệu cũ thiếu khiến "đã giải
+      quyết" tính ra nhiều hơn "đang có") bị chặn về 0 kèm cảnh báo, không cho lan sang kỳ sau.
+      An toàn chạy lại nhiều lần (luôn tính lại từ đầu, không cộng dồn lên kết quả cũ). Đã kiểm
+      chứng riêng phần toán tích luỹ + đối chiếu bằng test độc lập (4 kịch bản: kỳ đầu không lệch,
+      kỳ giữa vẫn khớp, có vụ ẩn gây lệch dương được gộp đúng, số âm giả bị chặn đúng) trước khi
+      viết vào code — phần phụ thuộc Firestore thật (`tinhBaoCaoKyTuLog`, fetch bị can...) chưa
+      kiểm chứng bằng dữ liệu thật, cần chạy thử trên `qlva-dev.html` trước khi tin tưởng số liệu
+      xuất ra từ nút này trên dữ liệu production.
       **Báo cáo tổng hợp nhiều kỳ (2026-07-11)** — tích chọn (checkbox) nhiều dòng kỳ rồi bấm
       "Xem báo cáo tổng hợp" (VD tích đủ 12 kỳ tháng ra báo cáo năm, đúng yêu cầu người dùng)
       → `TongHopNhieuKyModal`/`tinhBaoCaoTongHopNhieuKy`: gọi lại `tinhBaoCaoKy` cho TỪNG kỳ được
@@ -423,8 +522,17 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       không ép buộc bằng code (không chặn chọn kỳ rời rạc), chỉ ghi chú nhắc trên UI. Bảng hiển
       thị dùng chung component `BangBaoCaoChiTiet` (đã tách ra từ `KyChiTietModal` để dùng lại ở
       đây — 2 nơi cùng nhận đúng 1 dạng dữ liệu `baoCao[gd]`), nút xuất Excel cũng dùng lại
-      `xuatBaoCaoThangExcel` (chỉ cần field `tenKy` để đặt tên file, không phụ thuộc gì khác từ
-      `ky` nên tái dùng được thẳng cho báo cáo gộp).
+      `xuatBaoCaoThangExcel` (chỉ cần field `tenKy` để đặt tên file cho phần thân báo cáo, không
+      phụ thuộc gì khác từ `ky` nên tái dùng được thẳng cho báo cáo gộp — LƯU Ý claim này đã sai
+      sót với riêng sheet Biểu B10, xem bug fix ngay dưới đây).
+      **Bug đã sửa (2026-07-13) — B10 của báo cáo gộp luôn hiện "tồn kỳ trước" = 0**: lúc thêm
+      Biểu B10 vào `xuatBaoCaoThangExcel` (nhận thêm tham số thứ 3 `kyTruoc`, xem mục Xuất Excel
+      Biểu B10 bên dưới), nút xuất Excel của `TongHopNhieuKyModal` không được cập nhật theo — vẫn
+      gọi `xuatBaoCaoThangExcel({tenKy}, baoCao)` thiếu hẳn tham số `kyTruoc`, khiến `tinhBieu10`
+      nhận `kyTruoc = null` → mọi cột "tồn kỳ trước" trên B10 của báo cáo gộp luôn ra 0, sai với
+      claim cũ "không phụ thuộc gì khác từ ky". Đã sửa: truyền thêm `dsKyChon[0]?.kyTruoc` (kỳ
+      liền trước kỳ SỚM NHẤT trong nhóm chọn — đúng quy ước "Tồn đầu kỳ" mà bảng tổng hợp đã dùng
+      ở trên) làm tham số thứ 3.
       **Sửa kỳ vào kỳ đã chốt (2026-07-11)** — `SuaKyModal` (module Nhật ký thao tác) giờ kiểm
       tra nếu kỳ CŨ hoặc kỳ MỚI của sự kiện đang sửa đã `da_chot`, hiện cảnh báo đỏ giải thích
       báo cáo đã lưu (`baoCaoLuu`) của kỳ đó sẽ không tự cập nhật, và bắt tick ô "Tôi hiểu và vẫn

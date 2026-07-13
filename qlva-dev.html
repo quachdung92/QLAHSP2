@@ -1690,6 +1690,73 @@ function BackfillNgayQuyetDinhTool() {
   );
 }
 
+// Sửa dữ liệu tonCuoiKyTheoTD/tonCuoiBiCan đã bị ghi sai bởi bug cũ (tinhLaiBaoCaoLuu từng chụp
+// ảnh LIVE hiện tại thay vì lịch sử — đã sửa code 2026-07-13 để không sai THÊM, nhưng dữ liệu đã
+// ghi sai trước đó không tự phục hồi). Chạy 1 lần để tính lại ĐÚNG từ log cho toàn bộ kỳ đã chốt,
+// theo thứ tự thời gian — xem tinhLaiBaoCaoLuu bên trên để hiểu bug gốc, xem
+// taiTaoTonCuoiKyTheoTDTatCa để hiểu cách tính lại đúng.
+function TaiTaoTonTheoTDTool() {
+  const [dangChay, setDangChay] = useState(false);
+  const [tienDo, setTienDo] = useState(null);
+  const [ketQua, setKetQua] = useState(null);
+  const [loi, setLoi] = useState("");
+
+  const chay = async () => {
+    setDangChay(true); setLoi(""); setKetQua(null); setTienDo(null);
+    try {
+      const kq = await taiTaoTonCuoiKyTheoTDTatCa((da, tong, tenKy) => setTienDo({ da, tong, tenKy }));
+      setKetQua(kq);
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi: " + err.message);
+    } finally {
+      setDangChay(false);
+    }
+  };
+
+  const soKyCoCanhBao = ketQua?.ketQua.filter(k => k.canhBao.length > 0) || [];
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Sửa lại tồn cuối kỳ theo tội danh (Biểu B10)</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Tính lại ĐÚNG <code>tonCuoiKyTheoTD</code>/<code>tonCuoiBiCan</code> cho toàn bộ kỳ đã chốt
+        theo thứ tự thời gian, từ log (số mới − đã giải quyết theo tội danh mỗi kỳ), đối chiếu với
+        <code>tonCuoiKy</code> (chưa bao giờ bị ghi sai) để đảm bảo tổng luôn khớp. Dùng để sửa dữ
+        liệu đã bị bug cũ ghi sai (Biểu B10 hiện "tồn kỳ trước" trùng "tồn kỳ này") — chỉ cần chạy
+        lại khi anh thấy B10 vẫn còn sai sau khi đã cập nhật bản mới nhất của app. An toàn khi chạy
+        lại nhiều lần (tính lại từ đầu mỗi lần chạy, không cộng dồn chồng lên kết quả cũ).
+      </p>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-3 mb-3">{loi}</div>}
+      {dangChay && tienDo && (
+        <div className="text-xs text-slate-500 mb-3">
+          Đang tính {tienDo.da}/{tienDo.tong} — kỳ "{tienDo.tenKy}"...
+        </div>
+      )}
+      {ketQua && (
+        <div className="bg-green-50 border border-green-200 text-green-700 text-xs rounded-lg p-3 mb-3">
+          Xong: đã tính lại {ketQua.tongSoKy} kỳ đã chốt.
+          {soKyCoCanhBao.length > 0 && (
+            <div className="mt-2 text-amber-700">
+              ⚠ {soKyCoCanhBao.length} kỳ có chênh lệch với dữ liệu cũ (đã tự gộp vào tội danh
+              "(chưa xác định — chênh lệch dữ liệu cũ)" để tổng vẫn khớp):
+              <ul className="list-disc list-inside mt-1">
+                {soKyCoCanhBao.map((k, i) => (
+                  <li key={i}>{k.ky}: {k.canhBao.join(" ")}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+      <button onClick={chay} disabled={dangChay}
+              className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+        {dangChay ? "Đang tính lại..." : "Tính lại tồn theo tội danh cho mọi kỳ"}
+      </button>
+    </div>
+  );
+}
+
 const TEN_SHEET_DANH_SACH_AN = "Danh sách án";
 
 function timTuNhan(nhanMap, text) {
@@ -2185,6 +2252,7 @@ function ImportExcelModule() {
       <DungLaiLichSuTool />
       <SeedDanhMucTool />
       <BackfillDieuLuatBCTool />
+      <TaiTaoTonTheoTDTool />
     </div>
   );
 }
@@ -5180,19 +5248,26 @@ async function tinhBaoCaoKy(ky, kyTruoc) {
 }
 
 // Tính lại & lưu baoCaoLuu cho 1 kỳ ĐÃ CHỐT — dùng khi sự kiện thuộc kỳ này bị "Sửa kỳ" sau khi
-// đã chốt, số liệu đã lưu cần đồng bộ lại (xem cảnh báo ở SuaKyModal). KHÔNG đụng tới tonCuoiKy
-// (số "Còn" đã chốt là mốc cố định dùng làm tồn đầu kỳ cho kỳ sau — đây là trạng thái vuan hiện
-// tại lúc chốt, độc lập với việc gán kyThongKe của từng sự kiện nên "Sửa kỳ" không làm sai số
-// này, chỉ làm sai các dòng "số mới"/"đã giải quyết" đếm theo kyThongKe).
+// đã chốt, số liệu đã lưu cần đồng bộ lại (xem cảnh báo ở SuaKyModal). KHÔNG đụng tới tonCuoiKy/
+// tonCuoiBiCan/tonCuoiKyTheoTD (số "Còn" đã chốt là mốc cố định dùng làm tồn đầu kỳ cho kỳ sau —
+// đây là trạng thái vuan thật LÚC CHỐT, độc lập với việc gán kyThongKe của từng sự kiện nên
+// "Sửa kỳ" không làm sai số này, chỉ làm sai các dòng "số mới"/"đã giải quyết" đếm theo kyThongKe).
+// Bug đã sửa (2026-07-13): trước đây hàm này GHI ĐÈ tonCuoiKyTheoTD/tonCuoiBiCan bằng
+// tinhSnapTonTheoTD() — hàm đó luôn query LIVE trạng thái vuan HIỆN TẠI (đúng lúc gọi), không
+// biết gì về thời điểm chốt LỊCH SỬ của kỳ đang tính lại. Chốt lần đầu qua chotKyBaoCao() gọi hàm
+// này ĐÚNG (thời điểm chốt = thời điểm gọi, live = lịch sử). Nhưng "Tính lại số liệu" có thể chạy
+// rất lâu sau khi kỳ đã đóng (khi có Sửa kỳ tác động tới kỳ cũ) — lúc đó live vuan đã trôi xa so
+// với lúc kỳ đó thực sự chốt, nên ghi đè làm tonCuoiKyTheoTD của kỳ CŨ biến thành ảnh chụp HIỆN
+// TẠI. Hậu quả: Biểu B10 (tinhBieu10) đọc "tồn kỳ trước" từ kyTruoc.tonCuoiKyTheoTD — nếu kyTruoc
+// vừa bị "Tính lại" gần đây, cột "tồn kỳ trước" trên B10 trùng y hệt "tồn kỳ này" (đều phản ánh
+// live hiện tại) dù 2 kỳ cách nhau cả tháng. Không có cách nào tái tạo ĐÚNG ảnh chụp lịch sử tại
+// đây (muốn đúng phải replay log tới đúng thời điểm chốt của kỳ đó — chưa làm, xem ghi chú ở
+// CLAUDE.md nếu cần bổ sung) — nên đơn giản là ĐỪNG ĐỤNG vào các field ảnh chụp này nữa, để trống
+// (0 tồn trước ở B10) còn an toàn hơn hiện số sai mà trông như đúng.
 async function tinhLaiBaoCaoLuu(ky, kyTruoc) {
-  const [baoCaoTuLog, snap] = await Promise.all([
-    tinhBaoCaoKyTuLog(ky, kyTruoc),
-    tinhSnapTonTheoTD(),
-  ]);
+  const baoCaoTuLog = await tinhBaoCaoKyTuLog(ky, kyTruoc);
   await db.collection("kybaocao").doc(ky.id).update({
     baoCaoLuu: tachBaoCaoLuu(baoCaoTuLog),
-    tonCuoiKyTheoTD: snap.tonCuoiKyTheoTD,
-    tonCuoiBiCan: snap.tonCuoiBiCan,
     thoiDiemTinhLai: new Date(),
   });
 }
@@ -6112,6 +6187,134 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
   return { rows, canhBao, vuChuaDL };
 }
 
+// Tính lại ĐÚNG tonCuoiKyTheoTD/tonCuoiBiCan cho TẤT CẢ kỳ đã chốt, theo thứ tự thời gian, từ
+// log — dùng để SỬA DỮ LIỆU đã bị ghi sai bởi bug cũ của tinhLaiBaoCaoLuu (từng ghi đè
+// tonCuoiKyTheoTD bằng ảnh chụp LIVE hiện tại thay vì lịch sử — đã sửa code, nhưng dữ liệu ghi
+// sai từ trước không tự phục hồi, xem ghi chú ở tinhLaiBaoCaoLuu). KHÔNG dùng lại kiểu "chụp ảnh
+// live" nữa — nguyên lý đúng: tonCuoiKyTheoTD[K] = tonCuoiKyTheoTD[K-1] (đã tính đúng ở bước
+// trước, kỳ đầu tiên coi như 0) + số mới theo tội danh trong kỳ K − số đã giải quyết theo tội
+// danh trong kỳ K. Cả 2 vế lấy từ tinhBaoCaoKyTuLog(K, ...).ds — hàm đó lọc đúng theo
+// kyThongKe==K.id, không đụng gì tới tonCuoiKyTheoTD nên tái dùng an toàn, không lặp lại lỗi cũ.
+// Đối chiếu tổng theo giai đoạn với tonCuoiKy (field KHÔNG BAO GIỜ bị ghi đè, dùng làm neo tin
+// cậy tuyệt đối) sau mỗi kỳ — lệch (do vụ có kyThongKe=null từ "Dựng lại lịch sử", hoặc dữ liệu
+// cũ khác) thì gom phần chênh vào tội danh "(chưa xác định — chênh lệch dữ liệu cũ)" để TỔNG luôn
+// khớp con số tin cậy, thay vì âm thầm sai lệch không dấu vết.
+async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
+  const snap = await db.collection("kybaocao").orderBy("ngayBatDau", "asc").get();
+  const dsKyChot = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .filter(k => k.loai !== "luu_tru" && k.trangThai === "da_chot");
+
+  const danhMucSnap = await db.collection("danhMucToiDanh").get();
+  const danhMuc = danhMucSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const danhMucByTen = new Map(danhMuc.map(d => [d.tenToiDanh.toLowerCase(), d.dieuLuat]));
+  const normDL = (dl) => (dl || "").replace(/\bBLHS\s+2015\b/g, "BLHS 2025");
+  const getDL = (bc) => normDL(
+    bc.dieuLuatBC?.[0] || danhMucByTen.get((bc.toiDanh?.[0] || "").toLowerCase()) || bc.toiDanh?.[0] || ""
+  );
+  const normTen = (nm) => normDL(danhMucByTen.get(nm.toLowerCase()) || nm);
+  const KEY_CHUA_XD = "(chưa xác định — chênh lệch dữ liệu cũ)";
+
+  const themVao = (map, D, gd, vuId, soBiCan) => {
+    if (!map[D]) map[D] = {};
+    if (!map[D][gd]) map[D][gd] = { vuSet: new Set(), biCan: 0 };
+    map[D][gd].vuSet.add(vuId);
+    map[D][gd].biCan += soBiCan;
+  };
+  // Gom 1 danh sách vụ (mới hoặc giải quyết trong kỳ) vào map theo tội danh — vụ 0 BC dùng
+  // vuan.dieuLuat (tên tội danh), vụ có BC thì mỗi BC góp 1 vào đúng tội danh của nó, vụ chỉ đếm
+  // 1 lần cho mỗi tội danh xuất hiện (khớp cách tinhBieu10 đếm vuAn qua vuCoD).
+  const gomTheoTD = (map, dsVu, gd, biCanByVu) => {
+    for (const vu of dsVu) {
+      const bcs = biCanByVu[vu.id] || [];
+      if (bcs.length === 0) {
+        const ten = (vu.dieuLuat || "").split(";").map(s => s.trim()).filter(Boolean);
+        if (ten.length === 0) { themVao(map, KEY_CHUA_XD, gd, vu.id, 0); continue; }
+        ten.forEach(nm => themVao(map, normTen(nm) || KEY_CHUA_XD, gd, vu.id, 0));
+      } else {
+        const daDemVu = new Set();
+        for (const bc of bcs) {
+          const D = getDL(bc) || KEY_CHUA_XD;
+          themVao(map, D, gd, vu.id, 1);
+          daDemVu.add(D);
+        }
+      }
+    }
+  };
+  const layDem = (map, D, gd) => {
+    const o = map[D]?.[gd];
+    return o ? { vuAn: o.vuSet.size, biCan: o.biCan } : { vuAn: 0, biCan: 0 };
+  };
+
+  let tonTruoc = {}; // { [D]: { [gd]: { vuAn, biCan } } } — đã tính đúng của kỳ liền trước
+  const ketQua = [];
+
+  for (let i = 0; i < dsKyChot.length; i++) {
+    const ky = dsKyChot[i];
+    const baoCao = await tinhBaoCaoKyTuLog(ky, dsKyChot[i - 1] || null);
+    const vuIds = collectVuIdsFromBaoCao(baoCao);
+    const biCanByVu = await fetchBiCanTheoVuIds(vuIds);
+
+    const tonMoiMap = {}, tonRaMap = {};
+    for (const gd of THU_TU_GIAI_DOAN) {
+      const d = baoCao[gd].ds;
+      const moiList = [...(d.khoiToTrucTiep||[]), ...(d.tachVu||[]), ...(d.chuyenDen||[]), ...(d.traVe||[])];
+      const raList = [
+        ...(d.chuyenDi||[]), ...(d.traDi||[]), ...(d.nhapVu||[]),
+        ...HOAN_THANH_TRUONG_TONG.flatMap(ht => d.hoanThanh?.[ht] || []),
+      ];
+      gomTheoTD(tonMoiMap, moiList, gd, biCanByVu);
+      gomTheoTD(tonRaMap, raList, gd, biCanByVu);
+    }
+
+    const tonMoiNay = {};
+    const canhBaoKy = [];
+    const tatCaD = new Set([...Object.keys(tonTruoc), ...Object.keys(tonMoiMap), ...Object.keys(tonRaMap)]);
+    for (const D of tatCaD) {
+      const hang = {};
+      for (const gd of THU_TU_GIAI_DOAN) {
+        const truoc = tonTruoc[D]?.[gd] || { vuAn: 0, biCan: 0 };
+        const moi = layDem(tonMoiMap, D, gd);
+        const ra = layDem(tonRaMap, D, gd);
+        let vuAn = truoc.vuAn + moi.vuAn - ra.vuAn;
+        let biCan = truoc.biCan + moi.biCan - ra.biCan;
+        if (vuAn < 0 || biCan < 0) {
+          canhBaoKy.push(`"${D}" (${NHAN_GIAI_DOAN[gd]}) tính ra âm (vụ=${vuAn}, BC=${biCan}) — đã chặn về 0, kiểm tra lại dữ liệu cũ nếu cần.`);
+          vuAn = Math.max(0, vuAn); biCan = Math.max(0, biCan);
+        }
+        if (vuAn > 0 || biCan > 0) hang[gd] = { vuAn, biCan };
+      }
+      if (Object.keys(hang).length > 0) tonMoiNay[D] = hang;
+    }
+
+    // Đối chiếu với tonCuoiKy (neo tin cậy, chưa từng bị ghi sai) — lệch thì gom vào tội danh
+    // "(chưa xác định)" cho từng giai đoạn để tổng luôn khớp con số tin cậy này.
+    for (const gd of THU_TU_GIAI_DOAN) {
+      const tongTheoTD = Object.values(tonMoiNay).reduce((s, hang) => s + (hang[gd]?.vuAn || 0), 0);
+      const thatSu = ky.tonCuoiKy?.[gd] ?? 0;
+      const lech = thatSu - tongTheoTD;
+      if (lech !== 0) {
+        if (!tonMoiNay[KEY_CHUA_XD]) tonMoiNay[KEY_CHUA_XD] = {};
+        const hienCo = tonMoiNay[KEY_CHUA_XD][gd] || { vuAn: 0, biCan: 0 };
+        tonMoiNay[KEY_CHUA_XD][gd] = { vuAn: Math.max(0, hienCo.vuAn + lech), biCan: hienCo.biCan };
+        canhBaoKy.push(`${NHAN_GIAI_DOAN[gd]}: lệch ${lech} vụ so với tonCuoiKy đã chốt (đáng tin) — đã gộp vào "${KEY_CHUA_XD}".`);
+      }
+    }
+
+    const tonCuoiBiCanMoi = {};
+    THU_TU_GIAI_DOAN.forEach(gd => {
+      tonCuoiBiCanMoi[gd] = Object.values(tonMoiNay).reduce((s, hang) => s + (hang[gd]?.biCan || 0), 0);
+    });
+
+    await db.collection("kybaocao").doc(ky.id).update({
+      tonCuoiKyTheoTD: tonMoiNay, tonCuoiBiCan: tonCuoiBiCanMoi,
+    });
+    ketQua.push({ ky: ky.tenKy, canhBao: canhBaoKy });
+    tonTruoc = tonMoiNay;
+    onTienDo?.(i + 1, dsKyChot.length, ky.tenKy);
+  }
+  return { tongSoKy: dsKyChot.length, ketQua };
+}
+
 // Header 2 dòng cho sheet Biểu B10 — dòng 1: nhóm, dòng 2: chi tiết (82 cột + 2 đầu)
 const B10_HEADER_NHOM = [
   "Điều luật","Tội danh",
@@ -6499,7 +6702,10 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
           <div className="text-xs text-slate-400 mt-3">
             Kỳ đã chốt — số liệu (trừ dòng "Số tồn hiện tại") lấy từ báo cáo đã lưu lúc chốt
             {ky.thoiDiemTinhLai ? `, tính lại gần nhất lúc ${fmtNgayGio(ky.thoiDiemTinhLai)}` : ""}, không quét lại log mỗi
-            lần xem. Nếu có sửa kỳ cho sự kiện thuộc kỳ này sau khi chốt, vào Kỳ báo cáo bấm "Tính lại số liệu" để đồng bộ.
+            lần xem. <b>"Tồn cuối kỳ" đã cố định vĩnh viễn tại thời điểm chốt</b> (dùng làm tồn đầu
+            kỳ cho kỳ sau) — không bao giờ đổi nữa, kể cả khi bấm "Tính lại số liệu". Nếu có sửa kỳ
+            cho sự kiện thuộc kỳ này sau khi chốt, vào Kỳ báo cáo bấm "Tính lại số liệu" — nút đó
+            chỉ cập nhật lại các dòng "số mới"/"đã giải quyết" theo log, không đụng tới tồn cuối kỳ.
           </div>
         )}
       </div>
@@ -6532,7 +6738,10 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
     setDangXuat(true);
     setLoiXuat("");
     try {
-      await xuatBaoCaoThangExcel({ tenKy: `Tong hop ${tenGop}` }, baoCao);
+      // kyTruoc cho Biểu B10 (cột "tồn kỳ trước") lấy đúng kỳ liền trước kỳ SỚM NHẤT trong nhóm
+      // chọn — cùng quy ước "Tồn đầu kỳ" của bảng tổng hợp đã dùng (dsKyChon xưa -> mới). Thiếu
+      // dòng này thì tinhBieu10 nhận kyTruoc=null, B10 luôn hiện 0 ở mọi cột "tồn kỳ trước".
+      await xuatBaoCaoThangExcel({ tenKy: `Tong hop ${tenGop}` }, baoCao, dsKyChon[0]?.kyTruoc || null);
     } catch (err) {
       console.error(err);
       setLoiXuat("Lỗi khi xuất Excel: " + err.message);
@@ -6730,7 +6939,7 @@ function KyBaoCaoModule() {
                         {!isLuuTru && ky.trangThai === "da_chot" && (
                           <button onClick={e => { e.stopPropagation(); bamTinhLai(ky, timKyTruoc(ky, listBaoCao)); }}
                                   disabled={dangTinhLai === ky.id}
-                                  title="Tính lại số liệu đã lưu — dùng sau khi có sửa kỳ"
+                                  title="Tính lại các dòng số mới/đã giải quyết theo log — dùng sau khi có sửa kỳ. KHÔNG đổi Tồn cuối kỳ (đã cố định vĩnh viễn từ lúc chốt)."
                                   className="text-xs text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50">
                             {dangTinhLai === ky.id ? "Đang tính..." : "Tính lại số liệu"}
                           </button>
@@ -6816,6 +7025,7 @@ function AnDaGiaiQuyetModule() {
   const [dsKy, setDsKy] = useState([]);       // danh sách kybaocao để chọn — gồm cả kỳ lưu trữ án cũ
   const [locKy, setLocKy] = useState(null);   // null = chưa khởi tạo; "tat_ca" hoặc kyId
   const [tuKhoa, setTuKhoa] = useState("");
+  const [ksv, setKsv] = useState("tat_ca");
   const [selectedId, setSelectedId] = useState(null); // vụ đang chọn — hiện chi tiết ở panel phải
 
   // Lấy danh sách kỳ, đặt mặc định = kỳ đang mở (hoặc kỳ gần nhất nếu không có kỳ mở).
@@ -6857,8 +7067,11 @@ function AnDaGiaiQuyetModule() {
     return () => unsub();
   }, [hinhThuc]);
 
+  const dsKsv = useMemo(() => [...new Set(list.map(v => v.ksvChinh).filter(Boolean))].sort(), [list]);
+
   const listHienThi = useMemo(() => {
     let rows = (locKy && locKy !== "tat_ca") ? list.filter(v => v.kyHoanThanh === locKy) : list;
+    if (ksv !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksv);
     const k = tuKhoa.trim().toLowerCase();
     if (k) {
       rows = rows.filter(v =>
@@ -6871,7 +7084,7 @@ function AnDaGiaiQuyetModule() {
       );
     }
     return rows;
-  }, [list, locKy, tuKhoa]);
+  }, [list, locKy, ksv, tuKhoa]);
 
   const tenKyDangChon = dsKy.find(k => k.id === locKy)?.tenKy;
 
@@ -6887,6 +7100,11 @@ function AnDaGiaiQuyetModule() {
           <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)}
                  placeholder="Tìm theo mã vụ, tên vụ, tội danh/điều luật hoặc kiểm sát viên..."
                  className="w-full max-w-md text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+          <select value={ksv} onChange={e => setKsv(e.target.value)}
+                  className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            <option value="tat_ca">Tất cả KSV</option>
+            {dsKsv.map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
           <span className="text-sm text-slate-500 whitespace-nowrap">Lọc theo kỳ:</span>
           <select value={locKy || "tat_ca"} onChange={e => setLocKy(e.target.value)}
                   className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300">
@@ -7151,6 +7369,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [hienTimThuCong, setHienTimThuCong] = useState(false);
   const [dsVuDangGQ, setDsVuDangGQ] = useState(null); // null = chưa tải, tải 1 lần khi mở panel tìm
   const [tuKhoaTim, setTuKhoaTim] = useState("");
+  const [ksvTim, setKsvTim] = useState("tat_ca");
   const inputRef = React.useRef(null);
 
   // Không dùng orderBy kèm where ở đây để khỏi cần composite index mới — sắp xếp lại phía client.
@@ -7232,17 +7451,30 @@ function GiaoNhanHoSoModule({ currentUser }) {
     }
   };
 
+  const dsKsvTim = useMemo(
+    () => dsVuDangGQ ? [...new Set(dsVuDangGQ.map(v => v.ksvChinh).filter(Boolean))].sort() : [],
+    [dsVuDangGQ]
+  );
+
+  // Cho phép lọc riêng theo KSV (không bắt buộc gõ từ khoá kèm theo) — VD chọn 1 KSV để xem hết
+  // hồ sơ đang giải quyết của người đó, khỏi phải nhớ gõ đúng tên.
   const ketQuaTimThuCong = useMemo(() => {
-    if (!dsVuDangGQ || !tuKhoaTim.trim()) return [];
+    if (!dsVuDangGQ) return [];
     const k = tuKhoaTim.trim().toLowerCase();
-    return dsVuDangGQ.filter(v =>
-      (hienThiMa(v) || "").toLowerCase().includes(k)
-      || (v.tenVu || "").toLowerCase().includes(k)
-      || (v.dieuLuat || "").toLowerCase().includes(k)
-      || (v.ksvChinh || "").toLowerCase().includes(k)
-      || (v.soQdKtva || "").toLowerCase().includes(k)
-    ).slice(0, 15);
-  }, [dsVuDangGQ, tuKhoaTim]);
+    if (!k && ksvTim === "tat_ca") return [];
+    let rows = dsVuDangGQ;
+    if (ksvTim !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksvTim);
+    if (k) {
+      rows = rows.filter(v =>
+        (hienThiMa(v) || "").toLowerCase().includes(k)
+        || (v.tenVu || "").toLowerCase().includes(k)
+        || (v.dieuLuat || "").toLowerCase().includes(k)
+        || (v.ksvChinh || "").toLowerCase().includes(k)
+        || (v.soQdKtva || "").toLowerCase().includes(k)
+      );
+    }
+    return rows.slice(0, 15);
+  }, [dsVuDangGQ, tuKhoaTim, ksvTim]);
 
   const chonVuThuCong = async (v) => {
     if (dangXuLy) return;
@@ -7333,14 +7565,21 @@ function GiaoNhanHoSoModule({ currentUser }) {
             <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/60">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-xs font-medium text-slate-600">Tìm thủ công (chỉ trong vụ đang giải quyết)</div>
-                <button onClick={() => { setHienTimThuCong(false); setTuKhoaTim(""); }}
+                <button onClick={() => { setHienTimThuCong(false); setTuKhoaTim(""); setKsvTim("tat_ca"); }}
                         className="text-xs text-slate-400 hover:text-slate-600">Đóng</button>
               </div>
-              <input value={tuKhoaTim} onChange={e => setTuKhoaTim(e.target.value)} autoFocus
-                     placeholder="Gõ tên vụ, tên KSV, tội danh/điều luật, hoặc số QĐ KTVA..."
-                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2" />
+              <div className="flex gap-2 mb-2">
+                <input value={tuKhoaTim} onChange={e => setTuKhoaTim(e.target.value)} autoFocus
+                       placeholder="Gõ tên vụ, tên KSV, tội danh/điều luật, hoặc số QĐ KTVA..."
+                       className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+                <select value={ksvTim} onChange={e => setKsvTim(e.target.value)}
+                        className="border border-slate-300 rounded-lg px-2 py-2 text-sm bg-white">
+                  <option value="tat_ca">Tất cả KSV</option>
+                  {dsKsvTim.map(k => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
               {dsVuDangGQ === null && <div className="text-xs text-slate-400">Đang tải danh sách vụ đang giải quyết...</div>}
-              {dsVuDangGQ !== null && tuKhoaTim.trim() && ketQuaTimThuCong.length === 0 && (
+              {dsVuDangGQ !== null && (tuKhoaTim.trim() || ksvTim !== "tat_ca") && ketQuaTimThuCong.length === 0 && (
                 <div className="text-xs text-slate-400">Không tìm thấy vụ nào khớp.</div>
               )}
               {ketQuaTimThuCong.length > 0 && (
