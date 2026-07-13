@@ -4573,8 +4573,11 @@ async function vuAnTuLogDocs(logDocs) {
 async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
   const baoCao = {};
   for (const gd of THU_TU_GIAI_DOAN) {
-    const tonDauKy = (kyTruoc && kyTruoc.tonCuoiKy) ? (kyTruoc.tonCuoiKy[gd] ?? 0) : 0;
-    const tonDauBiCan = (kyTruoc && kyTruoc.tonCuoiBiCan) ? (kyTruoc.tonCuoiBiCan[gd] ?? 0) : 0;
+    // Lấy số nguyên — guard phòng data cũ lưu tonCuoiKy/tonCuoiBiCan dạng object {soVu, soBiCan}
+    const rawTon = kyTruoc?.tonCuoiKy?.[gd];
+    const tonDauKy = typeof rawTon === "number" ? rawTon : 0;
+    const rawBiCan = kyTruoc?.tonCuoiBiCan?.[gd];
+    const tonDauBiCan = typeof rawBiCan === "number" ? rawBiCan : 0;
 
     // "Mới" ở 1 giai đoạn gồm 4 nguồn, áp dụng THỐNG NHẤT cho cả 3 giai đoạn (trước đây cột Điều
     // tra được code riêng, thiếu hẳn "trả về từ giai đoạn sau" — tức viện trả hồ sơ điều tra bổ
@@ -4719,8 +4722,8 @@ async function tinhBaoCaoKy(ky, kyTruoc) {
       baoCao[gd] = {
         ...ky.baoCaoLuu[gd],
         soVuTon, soBiCanTon,
-        tonDauBiCan: kyTruoc?.tonCuoiBiCan?.[gd] ?? 0,
-        tonCuoiBiCanKy: ky.tonCuoiBiCan?.[gd] ?? soBiCanTon,
+        tonDauBiCan: (v => typeof v === "number" ? v : 0)(kyTruoc?.tonCuoiBiCan?.[gd]),
+        tonCuoiBiCanKy: (v => typeof v === "number" ? v : soBiCanTon)(ky.tonCuoiBiCan?.[gd]),
         ds: { ...ky.baoCaoLuu[gd].ds, tonHienTai: dsTon },
       };
     }
@@ -6125,16 +6128,10 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
   );
 }
 
-function timKyTruoc(ky, danhSachKy) {
-  if (!ky?.ngayBatDau) return null;
-  const ms = ky.ngayBatDau?.toMillis?.() ?? new Date(ky.ngayBatDau).getTime();
-  let best = null, bestMs = -Infinity;
-  for (const k of danhSachKy) {
-    if (k.id === ky.id || k.loai === "luu_tru") continue;
-    const kMs = k.ngayBatDau?.toMillis?.() ?? new Date(k.ngayBatDau).getTime();
-    if (kMs < ms && kMs > bestMs) { best = k; bestMs = kMs; }
-  }
-  return best;
+function timKyTruoc(ky, listBaoCaoDesc) {
+  if (!ky) return null;
+  const idx = listBaoCaoDesc.findIndex(k => k.id === ky.id);
+  return (idx >= 0 && idx + 1 < listBaoCaoDesc.length) ? listBaoCaoDesc[idx + 1] : null;
 }
 
 function KyBaoCaoModule() {
@@ -6151,8 +6148,18 @@ function KyBaoCaoModule() {
     () => localStorage.getItem("qlva_ky_sapxep") !== "asc"
   );
 
+  // Đổi chiều sắp xếp cần xác nhận — vì "dòng dưới = kỳ trước" chỉ đúng theo chiều mặc định.
+  // Khi đảo chiều, người dùng phải chủ động confirm để tránh đọc nhầm chuỗi tồn đầu/cuối kỳ.
   const doiSapXep = () => {
     const moi = !sapXepDesc;
+    const tenChieu = moi ? "Mới nhất trên (mặc định)" : "Cũ nhất trên";
+    const xacNhan = window.confirm(
+      `Đổi sang thứ tự: ${tenChieu}\n\n` +
+      `Lưu ý: hệ thống xác định "kỳ liền trước" = dòng ngay bên dưới trong bảng. ` +
+      `Khi đổi thứ tự, chuỗi tồn cuối kỳ → tồn đầu kỳ đọc theo chiều ngược lại.\n\n` +
+      `Bạn có chắc muốn đổi?`
+    );
+    if (!xacNhan) return;
     setSapXepDesc(moi);
     localStorage.setItem("qlva_ky_sapxep", moi ? "desc" : "asc");
   };
@@ -6379,19 +6386,39 @@ function AnDaGiaiQuyetModule() {
   useEffect(() => {
     setDangTai(true);
     let huy = false;
+    // onSnapshot theo vuan (real-time khi có vụ mới chuyển trạng thái),
+    // nhưng event lookup dùng 1 query batch thay vì N+1 query riêng lẻ.
     const unsub = db.collection("vuan").where("trangThai", "==", hinhThuc).onSnapshot(
       async snap => {
-        const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        const voiNgay = await Promise.all(rows.map(async v => {
+        if (snap.empty) {
+          if (!huy) { setList([]); setDangTai(false); }
+          return;
+        }
+        try {
+          const vuanRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          // 1 query lấy toàn bộ sự kiện hoan_thanh — join trong memory
           const logSnap = await db.collection("lichsuChuyenGiaiDoan")
-            .where("maVuAn", "==", v.id).where("loaiSuKien", "==", "hoan_thanh").limit(1).get();
-          const ev = logSnap.empty ? null : logSnap.docs[0].data();
-          return { ...v, ngayQuyetDinh: ev?.ngaySuKien ?? null, kyHoanThanh: ev?.kyThongKe ?? null };
-        }));
-        if (huy) return;
-        voiNgay.sort((a, b) => (b.ngayQuyetDinh || "").localeCompare(a.ngayQuyetDinh || ""));
-        setList(voiNgay);
-        setDangTai(false);
+            .where("loaiSuKien", "==", "hoan_thanh").get();
+          if (huy) return;
+          // Map maVuAn → event gần nhất (ngaySuKien lớn nhất)
+          const eventMap = {};
+          logSnap.docs.forEach(d => {
+            const ev = d.data();
+            if (!eventMap[ev.maVuAn] || (ev.ngaySuKien || "") > (eventMap[ev.maVuAn].ngaySuKien || "")) {
+              eventMap[ev.maVuAn] = { ngaySuKien: ev.ngaySuKien, kyThongKe: ev.kyThongKe };
+            }
+          });
+          const rows = vuanRows.map(v => {
+            const ev = eventMap[v.id];
+            return { ...v, ngayQuyetDinh: ev?.ngaySuKien ?? null, kyHoanThanh: ev?.kyThongKe ?? null };
+          });
+          rows.sort((a, b) => (b.ngayQuyetDinh || "").localeCompare(a.ngayQuyetDinh || ""));
+          setList(rows);
+          setDangTai(false);
+        } catch (err) {
+          console.error(err);
+          if (!huy) setDangTai(false);
+        }
       },
       err => { console.error(err); setDangTai(false); }
     );
