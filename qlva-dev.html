@@ -4919,20 +4919,25 @@ async function tinhSnapTonTheoTD() {
       const bcList = bicanByVuAn[vuDoc.id] || [];
       tonCuoiBiCan[gd] += bcList.length;
       if (bcList.length === 0) {
-        const dieuLuatKey = vu.dieuLuat || "(chưa xác định)";
+        // Vụ 0 BC: tội danh chính = dieuLuat[0]
+        const dieuLuatKey = (vu.dieuLuat || "").split(";")[0].trim() || "(chưa xác định)";
         if (!tonCuoiKyTheoTD[dieuLuatKey]) tonCuoiKyTheoTD[dieuLuatKey] = {};
         if (!tonCuoiKyTheoTD[dieuLuatKey][gd]) tonCuoiKyTheoTD[dieuLuatKey][gd] = { vuAn: 0, biCan: 0 };
         tonCuoiKyTheoTD[dieuLuatKey][gd].vuAn++;
       } else {
-        const dieuLuatKeys = new Set();
+        // Vụ: vuAn chỉ đếm vào tội danh CHÍNH (BC ban_dau hoặc BC đầu tiên)
+        const bcChinh = bcList.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList[0];
+        const dkChinh = normDK(bcChinh);
+        if (!tonCuoiKyTheoTD[dkChinh]) tonCuoiKyTheoTD[dkChinh] = {};
+        if (!tonCuoiKyTheoTD[dkChinh][gd]) tonCuoiKyTheoTD[dkChinh][gd] = { vuAn: 0, biCan: 0 };
+        tonCuoiKyTheoTD[dkChinh][gd].vuAn++;
+        // BC: mỗi BC đếm dưới tội danh của chính nó
         for (const bc of bcList) {
           const dk = normDK(bc);
           if (!tonCuoiKyTheoTD[dk]) tonCuoiKyTheoTD[dk] = {};
           if (!tonCuoiKyTheoTD[dk][gd]) tonCuoiKyTheoTD[dk][gd] = { vuAn: 0, biCan: 0 };
           tonCuoiKyTheoTD[dk][gd].biCan++;
-          dieuLuatKeys.add(dk);
         }
-        for (const dk of dieuLuatKeys) tonCuoiKyTheoTD[dk][gd].vuAn++;
       }
     }
   }
@@ -5946,13 +5951,15 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
   // Chuẩn hoá 1 tên/code từ vuan.dieuLuat sang key chuẩn (giống getDL nhưng cho chuỗi tên)
   const normTen = (nm) => normDL(danhMucByTen.get(nm.toLowerCase()) || nm);
 
-  // Lọc vụ có BC với getDL(bc)==D
-  // Vụ 0 BC: vuan.dieuLuat lưu tên tội danh (từ tinhDieuLuat hoặc nhập tay) — cần normTen để so code
-  const vuCoD = (vuArr, D) => vuArr.filter(vu => {
+  // Điều luật CHÍNH của vụ: BC ban_dau (hoặc BC đầu tiên nếu không có), vụ 0 BC lấy dieuLuat[0].
+  // Mỗi vụ chỉ đếm 1 lần duy nhất dưới đúng tội danh chính → tổng cột B10 = đúng tổng danh sách.
+  const vuPrimaryDL = (vu) => {
     const bcs = biCanByVu[vu.id] || [];
-    if (!bcs.length) return (vu.dieuLuat || "").split(";").map(s => normTen(s.trim())).some(x => x === D);
-    return bcs.some(bc => getDL(bc) === D);
-  });
+    if (!bcs.length) return normTen((vu.dieuLuat || "").split(";")[0].trim()) || "";
+    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
+    return getDL(bcChinh);
+  };
+  const vuCoD = (vuArr, D) => vuArr.filter(vu => vuPrimaryDL(vu) === D);
 
   // BC trong vụ với getDL(bc)==D, kèm _namKTVA của vụ đó
   const bcCoD = (vuArr, D) => {
@@ -6235,22 +6242,28 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
     map[D][gd].vuSet.add(vuId);
     map[D][gd].biCan += soBiCan;
   };
-  // Gom 1 danh sách vụ (mới hoặc giải quyết trong kỳ) vào map theo tội danh — vụ 0 BC dùng
-  // vuan.dieuLuat (tên tội danh), vụ có BC thì mỗi BC góp 1 vào đúng tội danh của nó, vụ chỉ đếm
-  // 1 lần cho mỗi tội danh xuất hiện (khớp cách tinhBieu10 đếm vuAn qua vuCoD).
+  // Gom 1 danh sách vụ (mới hoặc giải quyết trong kỳ) vào map theo tội danh CHÍNH:
+  // - Vụ 0 BC: dùng dieuLuat[0] (tội danh chính của vụ)
+  // - Vụ có BC: vụ đếm vào tội danh của BC ban_dau (hoặc BC đầu tiên), mỗi BC đếm biCan riêng
+  // Mỗi vụ chỉ xuất hiện 1 lần trong map → tổng khớp đúng với số vụ trong danh sách
   const gomTheoTD = (map, dsVu, gd, biCanByVu) => {
     for (const vu of dsVu) {
       const bcs = biCanByVu[vu.id] || [];
       if (bcs.length === 0) {
-        const ten = (vu.dieuLuat || "").split(";").map(s => s.trim()).filter(Boolean);
-        if (ten.length === 0) { themVao(map, KEY_CHUA_XD, gd, vu.id, 0); continue; }
-        ten.forEach(nm => themVao(map, normTen(nm) || KEY_CHUA_XD, gd, vu.id, 0));
+        // Vụ 0 BC: chỉ dùng dieuLuat[0] (tội danh chính)
+        const tenChinh = (vu.dieuLuat || "").split(";")[0].trim();
+        themVao(map, normTen(tenChinh) || KEY_CHUA_XD, gd, vu.id, 0);
       } else {
-        const daDemVu = new Set();
+        // Vụ: chỉ đếm vào tội danh CHÍNH (BC ban_dau hoặc BC đầu tiên)
+        const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
+        const dChinh = getDL(bcChinh) || KEY_CHUA_XD;
+        themVao(map, dChinh, gd, vu.id, 0); // vuSet.add vu.id, biCan += 0
+        // BC: mỗi BC đếm biCan dưới tội danh của chính nó
         for (const bc of bcs) {
           const D = getDL(bc) || KEY_CHUA_XD;
-          themVao(map, D, gd, vu.id, 1);
-          daDemVu.add(D);
+          if (!map[D]) map[D] = {};
+          if (!map[D][gd]) map[D][gd] = { vuSet: new Set(), biCan: 0 };
+          map[D][gd].biCan += 1;
         }
       }
     }
