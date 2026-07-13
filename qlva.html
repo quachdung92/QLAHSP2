@@ -6484,7 +6484,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
         if (!stats[td]) stats[td] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
         stats[td][`vu${cat}`]++; stats[td][`bc${cat}`]++;
       } else {
-        const tdVu = _tkGetDL(bcList_vu[0]);
+        // Tội danh chính của vụ: BC ban_dau (hoặc BC đầu tiên) — đồng nhất với vuPrimaryDL trong B10
+        const bcChinh_tk = bcList_vu.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList_vu[0];
+        const tdVu = _tkGetDL(bcChinh_tk);
         if (!stats[tdVu]) stats[tdVu] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
         stats[tdVu][`vu${cat}`]++;
         for (const bc of bcList_vu) {
