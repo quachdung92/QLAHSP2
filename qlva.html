@@ -6038,7 +6038,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
     const dt_cdNoiBc = bcCoD(dt.hoanThanh?.chuyen_di || [], D);
     const dt_ahBc = bcCoD(dt.hoanThanh?.an_huy || [], D);
     const C3  = dt_tp_vu + vuCoD(dt_moi, D).length - vuCoD(dt.nhapVu || [], D).length - vuCoD(dt.hoanThanh?.chuyen_di || [], D).length - vuCoD(dt.hoanThanh?.an_huy || [], D).length;
-    const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length;
+    const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length - dt_ahBc.length;
     const C5  = dt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     const dt_ktBcBanDau = bcCoD(dt.khoiToTrucTiep || [], D).filter(bc => bc.loaiKhoiTo === "ban_dau");
@@ -6080,7 +6080,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
     const tt_cdNoiBc = bcCoD(tt.hoanThanh?.chuyen_di || [], D);
     const tt_ahBc = bcCoD(tt.hoanThanh?.an_huy || [], D);
     const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.hoanThanh?.chuyen_di || [], D).length - vuCoD(tt.hoanThanh?.an_huy || [], D).length;
-    const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length - tt_cdNoiBc.length;
+    const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length - tt_cdNoiBc.length - tt_ahBc.length;
     const C35 = tt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     const tt_truToBc = bcCoD(tt.chuyenDi || [], D);
@@ -6121,7 +6121,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
     const xx_cdNoiBc = bcCoD(xx.hoanThanh?.chuyen_di || [], D);
     const xx_ahBc = bcCoD(xx.hoanThanh?.an_huy || [], D);
     const C60 = xx_tp_vu + vuCoD(xx_moi, D).length - vuCoD(xx.nhapVu || [], D).length - vuCoD(xx.hoanThanh?.chuyen_di || [], D).length - vuCoD(xx.hoanThanh?.an_huy || [], D).length;
-    const C61 = xx_tp_bc + xx_moiBc.length - xx_nhapBc.length - xx_cdNoiBc.length;
+    const C61 = xx_tp_bc + xx_moiBc.length - xx_nhapBc.length - xx_cdNoiBc.length - xx_ahBc.length;
     const C62 = xx_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     const xx_xxBc = bcCoD(xx.hoanThanh?.da_xet_xu || [], D);
@@ -6449,19 +6449,33 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
   }
 
   // ---- Thống kê tội danh trong kỳ (pivot: tội chính → vụ/BC mới/tồn/GQ) ----
+  // Chuẩn hoá điều luật y hệt tinhBieu10 để TK tội danh và B10 nhóm giống nhau
+  const _tkDMByTen = new Map(danhMuc.map(d => [d.tenToiDanh.toLowerCase(), d.dieuLuat]));
+  const _tkNormDL = (dl) => (dl || "").replace(/\bBLHS\s+2015\b/g, "BLHS 2025");
+  const _tkGetDL = (bc) => _tkNormDL(
+    bc.dieuLuatBC?.[0] ||
+    _tkDMByTen.get((bc.toiDanh?.[0] || "").toLowerCase()) ||
+    bc.toiDanh?.[0] ||
+    ""
+  ) || "(Chưa xác định)";
+  const _tkGetDLVu = (vu) => {
+    const parts = (vu.dieuLuat || "").split(";").map(s => s.trim()).filter(Boolean);
+    return parts.length > 0 ? (_tkNormDL(_tkDMByTen.get(parts[0].toLowerCase()) || parts[0])) : "(Chưa xác định)";
+  };
+
   function tkTD_add(stats, vuMap, cat, gdField) {
     for (const [, vu] of vuMap) {
       const bcList_vu = biCanByVu[vu.id] || [];
       if (bcList_vu.length === 0) {
-        const td = vu._toiDanhChinh || vu.dieuLuat || "(Chưa xác định)";
+        const td = _tkGetDLVu(vu);
         if (!stats[td]) stats[td] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
         stats[td][`vu${cat}`]++; stats[td][`bc${cat}`]++;
       } else {
-        const tdVu = (bcList_vu[0].toiDanh||[])[0] || vu.dieuLuat || "(Chưa xác định)";
+        const tdVu = _tkGetDL(bcList_vu[0]);
         if (!stats[tdVu]) stats[tdVu] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
         stats[tdVu][`vu${cat}`]++;
         for (const bc of bcList_vu) {
-          const tdBc = (bc.toiDanh||[])[0] || tdVu;
+          const tdBc = _tkGetDL(bc);
           if (!stats[tdBc]) stats[tdBc] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
           stats[tdBc][`bc${cat}`]++;
           if (cat==="M" && bc.bienPhapNganChan==="giam") stats[tdBc].tgM++;
