@@ -6514,32 +6514,83 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
   for (const row of b10Rows) { row.vals.forEach((v, i) => { b10Tong[i] = (b10Tong[i] || 0) + v; }); }
 
   const wsB10 = wb.addWorksheet("Biểu B10");
-  wsB10.views = [{ state: "frozen", xSplit: 2, ySplit: 2 }];
-  // Dòng 1: nhóm
-  wsB10.addRow(B10_HEADER_NHOM).font = { bold: true };
-  // Dòng 2: chi tiết
-  wsB10.addRow(B10_HEADER_CHI_TIET).font = { bold: true };
-  // Dòng dữ liệu — C1: chỉ số điều (e.g. "173"), C2: tên tội danh
+  wsB10.views = [{ state: "frozen", xSplit: 3, ySplit: 2 }];
+  // Cột A (mới): Mã ĐL — khóa tra cứu cho SUMIF ở các cột "Vụ", cùng chuẩn với cột "Mã ĐL vụ" của sheets danh sách
+  // Cột B: Số điều (hiển thị), Cột C: Tên tội danh, Cột D+: giá trị B10 (vals[0..87])
+  wsB10.addRow(["Mã ĐL", ...B10_HEADER_NHOM]).font = { bold: true };
+  wsB10.addRow(["",       ...B10_HEADER_CHI_TIET]).font = { bold: true };
+  // Helper: "Điều 173 BLHS 2025" → "173"
   const extractSoDieu = (d) => { const m = (d||"").match(/Điều\s+(\d+[a-zA-Z]*)/i); return m ? m[1] : (d||""); };
-  for (const row of b10Rows) {
-    wsB10.addRow([extractSoDieu(row.D), row.tenToiDanh, ...row.vals]);
+  // Helper: chỉ số cột 0-based → chữ cái Excel (A=0, Z=25, AA=26, ...)
+  const b10Col = (i) => {
+    let s = ""; let n = i + 1;
+    while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
+    return s;
+  };
+  // Công thức SUMIF cho các cột "Vụ" đơn nguồn: đếm "Đếm vụ" (cột A) của sheet khớp "Mã ĐL vụ" (cột B)
+  // Các cột BC, nhân khẩu học (C7-C24, C39-C52...) và tồn kỳ (vals[0-3/34-37/65-68]) giữ nguyên giá trị JS
+  // vì cần COUNTIFS theo thuộc tính BC riêng lẻ hoặc đến từ snapshot Firestore (không có sheet tương ứng)
+  const SUMIF_VU = {
+    7:  (sf) => `${sf('DS khởi tố ĐT')}+${sf('DS phục hồi ĐT')}`,  // C6  ĐT khởi tố vụ
+    26: (sf) => sf('DS chuyển đến TT'),    // C25 ĐT đề nghị TT vụ
+    29: (sf) => sf('DS đình chỉ ĐT'),      // C28 ĐT đình chỉ vụ
+    32: (sf) => sf('DS tạm đình chỉ ĐT'),  // C31 ĐT tạm ĐC vụ
+    41: (sf) => sf('DS chuyển đến XX'),    // C36 TT truy tố vụ
+    58: (sf) => sf('DS đình chỉ TT'),      // C53 TT đình chỉ vụ
+    61: (sf) => sf('DS tạm đình chỉ TT'),  // C56 TT tạm ĐC vụ
+    63: (sf) => sf('DS trả về ĐT'),        // C58 TT trả ĐT vụ
+    72: (sf) => sf('DS đã xét xử XX'),     // C63 XX xét xử vụ
+    75: (sf) => sf('DS đình chỉ XX'),      // C66 XX đình chỉ vụ
+    78: (sf) => sf('DS tạm đình chỉ XX'),  // C69 XX tạm ĐC vụ
+    80: (sf) => sf('DS trả về TT'),        // C71 XX trả TT vụ
+    82: (sf) => sf('DS án huỷ ĐT'),        // vals[82] ĐT án huỷ vụ
+    84: (sf) => sf('DS án huỷ TT'),        // vals[84] TT án huỷ vụ
+    86: (sf) => sf('DS án huỷ XX'),        // vals[86] XX án huỷ vụ
+  };
+  const B10_R0 = 3; // dòng Excel đầu tiên chứa data (1-2 là header)
+  b10Rows.forEach((row, idx) => {
+    const r = B10_R0 + idx;
+    // sf(tenSheet): SUMIF cột B (Mã ĐL vụ) = $A{r}, trả về tổng cột A (Đếm vụ)
+    const sf = (sn) => `SUMIF('${sn}'!$B:$B,$A${r},'${sn}'!$A:$A)`;
+    const cells = [row.D, extractSoDieu(row.D), row.tenToiDanh];
+    for (let k = 0; k < 88; k++) {
+      cells.push(SUMIF_VU[k]
+        ? { formula: SUMIF_VU[k](sf), result: row.vals[k] }  // công thức + cached value để mở file nhanh
+        : row.vals[k]);
+    }
+    wsB10.addRow(cells);
+  });
+  // Dòng Tổng: SUM formula trên toàn bộ cột data (tự cập nhật khi Excel recalc)
+  const b10LastR = B10_R0 + b10Rows.length - 1;
+  const tongCells = ["", "TỔNG", ""];
+  for (let k = 0; k < 88; k++) {
+    const col = b10Col(k + 3); // k+3: bù 3 cột A/B/C header
+    tongCells.push({ formula: `SUM(${col}${B10_R0}:${col}${b10LastR})`, result: b10Tong[k] });
   }
-  // Dòng Tổng
-  const tongRow = wsB10.addRow(["", "TỔNG", ...b10Tong]);
+  const tongRow = wsB10.addRow(tongCells);
   tongRow.font = { bold: true };
   tongRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } };
   // Style: wrap + độ rộng
-  wsB10.getColumn(1).width = 14;
-  wsB10.getColumn(2).width = 32;
-  for (let c = 3; c <= B10_HEADER_CHI_TIET.length; c++) wsB10.getColumn(c).width = 8;
+  wsB10.getColumn(1).width = 26;  // Mã ĐL (narrow nhưng đủ hiện code đầy đủ)
+  wsB10.getColumn(2).width = 12;  // Số điều
+  wsB10.getColumn(3).width = 32;  // Tên tội danh
+  for (let c = 4; c <= B10_HEADER_CHI_TIET.length + 1; c++) wsB10.getColumn(c).width = 8;
   wsB10.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
-  // Màu nền vàng nhạt cho các cột phụ (Tồn kỳ trước/kỳ này)
-  const phuCols = [3,4,5,6, 3+34, 4+34, 5+34, 6+34, 3+34+31, 4+34+31, 5+34+31, 6+34+31];
+  // Cột Mã ĐL: chữ nhạt + nhỏ — chỉ dùng làm criteria key cho SUMIF, không phải số liệu
+  wsB10.getColumn(1).eachCell((cell, ri) => {
+    if (ri > 2) cell.font = { color: { argb: "FF9CA3AF" }, size: 8 };
+  });
+  // Màu xanh nhạt: cột tồn kỳ trước/kỳ này (+1 cột so với trước vì thêm cột Mã ĐL)
+  const phuCols = [4,5,6,7, 4+34, 5+34, 6+34, 7+34, 4+34+31, 5+34+31, 6+34+31, 7+34+31];
+  // Màu vàng nhạt: cột SUMIF (công thức tham chiếu sheet khác — có thể click-trace trong Excel)
+  const sumifCols = Object.keys(SUMIF_VU).map(k => parseInt(k) + 4); // k+3 (offset) +1 (1-indexed ExcelJS)
   wsB10.eachRow((row, ri) => {
     if (ri <= 2) return;
     phuCols.forEach(ci => {
-      const cell = row.getCell(ci);
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+      row.getCell(ci).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+    });
+    sumifCols.forEach(ci => {
+      row.getCell(ci).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFBEB" } };
     });
   });
 
@@ -6617,30 +6668,97 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
 
   // ---- Sheets chi tiết — mỗi loại sự kiện × mỗi giai đoạn là 1 sheet riêng ----
   // Cấu trúc: VÀO (khởi tố/phục hồi/tách/chuyển đến/trả về) + RA (xét xử/chuyển đi/TĐC/ĐC/huỷ/nhập) + TỒN
-  // QUAN TRỌNG: 1 vụ N bị can = N rows (buildFlatVuBc). Dùng SUM(cột "Đếm vụ") — KHÔNG dùng COUNTA
-  // toàn sheet — để đếm số vụ; cột này = 1 ở row đầu tiên của mỗi vụ, rỗng ở các row BC tiếp theo.
+  // QUAN TRỌNG: 1 vụ N bị can = N rows. Dùng SUM(cột "Đếm vụ") — KHÔNG dùng COUNTA toàn sheet —
+  // để đếm số vụ; = 1 ở row BC đầu tiên của mỗi vụ, rỗng ở các row BC tiếp theo.
+  // Cột "Mã ĐL vụ": điều luật chính của vụ theo chuẩn B10 — dùng làm criteria cho SUMIF ở sheet Biểu B10.
+  // Cùng logic với tinhBieu10.vuPrimaryDL: BC có loaiKhoiTo="ban_dau" → lấy getDL(bc) đó làm tội chính.
+  const vuPrimaryDL_xuat = (vu) => {
+    const bcs = biCanByVu[vu.id] || [];
+    if (!bcs.length) return _tkGetDLVu(vu);
+    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
+    return _tkGetDL(bcChinh);
+  };
   function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn) {
     extraHeaders = extraHeaders || [];
     extraFn = extraFn || (() => []);
-    // Xây rows thủ công để thêm cột "Đếm vụ" (1 ở BC đầu tiên/vụ 0-BC, rỗng ở các BC sau)
     const rows = [];
     for (const vu of vuArr) {
       const base = [...vuBaseRow(vu), ...extraFn(vu)];
+      const maDLVu = vuPrimaryDL_xuat(vu);  // criteria key cho SUMIF trong Biểu B10
       const bcArr = biCanByVu[vu.id] || [];
       if (bcArr.length === 0) {
-        rows.push([1, ...base, ...BC_EMPTY]);
+        rows.push([1, maDLVu, ...base, ...BC_EMPTY]);
       } else {
-        bcArr.forEach((bc, i) => rows.push([i === 0 ? 1 : "", ...base, ...bcCellsRow(bc, i + 1)]));
+        bcArr.forEach((bc, i) => rows.push([i === 0 ? 1 : "", maDLVu, ...base, ...bcCellsRow(bc, i + 1)]));
       }
     }
     themSheetDanhSach(wb, tenSheet,
-      ["Đếm vụ", ...VU_H, ...extraHeaders, ...BC_H],
+      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...extraHeaders, ...BC_H],
       rows,
-      [8, ...VU_W, ...extraHeaders.map(() => 12), ...BC_W], 0);
+      [8, 24, ...VU_W, ...extraHeaders.map(() => 12), ...BC_W], 0);
   }
   const GD_VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
   const _ngaySK  = v => [fmtDate(v._log?.ngaySuKien)];
   const _ngaySoQD = v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""];
+
+  // ---- Sheet "Cân đối số liệu" — kiểm chứng cân bằng kế toán mỗi giai đoạn ----
+  // Công thức: Tồn đầu + Vào - Ra = Tồn cuối (chốt)
+  // Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ (kyThongKe=null) hoặc lỗi dữ liệu
+  {
+    const VAO_SHEETS_GD = {
+      dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS vụ tách ĐT","DS trả về ĐT"],
+      truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"],
+      xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS vụ tách XX","DS chuyển đến XX"],
+    };
+    const RA_SHEETS_GD = {
+      dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
+      truy_to:  ["DS TT chuyển XX","DS TT trả ĐT","DS đã xét xử TT","DS chuyển đi TT","DS tạm đình chỉ TT","DS đình chỉ TT","DS án huỷ TT","DS nhập vụ TT"],
+      xet_xu:   ["DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX"],
+    };
+    const GD_TEN_DU = { dieu_tra: "Điều tra", truy_to: "Truy tố", xet_xu: "Xét xử" };
+    const wsCd = wb.addWorksheet("Cân đối số liệu");
+    wsCd.views = [{ state: "frozen", xSplit: 1, ySplit: 2 }];
+    const cdH1 = wsCd.addRow(["Giai đoạn","Tồn đầu kỳ","Vào kỳ","Ra kỳ","Tồn cuối (tính)","Tồn cuối (chốt)","Chênh lệch"]);
+    cdH1.font = { bold: true };
+    cdH1.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    const cdH2 = wsCd.addRow(["","Snapshot kỳ trước","=Σ SUM(DS vào...)","=Σ SUM(DS ra...)","=Đầu+Vào−Ra","Snapshot lúc chốt","=Tính−Chốt (nên=0)"]);
+    cdH2.font = { size: 9, color: { argb: "FF6B7280" } };
+    THU_TU_GIAI_DOAN.forEach((gd, idx) => {
+      const rowNum = 3 + idx;
+      const vaoF = VAO_SHEETS_GD[gd].map(s => `SUM('${s}'!$A:$A)`).join("+");
+      const raF  = RA_SHEETS_GD[gd].map(s => `SUM('${s}'!$A:$A)`).join("+");
+      const vaoR = baoCao[gd].soMoi?.tong || 0;
+      const raHT = baoCao[gd].hoanThanhTheoGD || {};
+      const raR  = (baoCao[gd].chuyenDi||0) + (baoCao[gd].traDi||0)
+        + (raHT.da_xet_xu||0) + (raHT.chuyen_di||0) + (raHT.tam_dinh_chi||0)
+        + (raHT.dinh_chi||0) + (raHT.an_huy||0) + (baoCao[gd].soNhapVu||0);
+      const tonDau  = baoCao[gd].tonDauKy  || 0;
+      const tonChot = baoCao[gd].tonCuoiKy || 0;
+      const chenhLech = tonDau + vaoR - raR - tonChot;
+      const cdRow = wsCd.addRow([
+        GD_TEN_DU[gd],
+        tonDau,
+        { formula: vaoF, result: vaoR },
+        { formula: raF,  result: raR  },
+        { formula: `B${rowNum}+C${rowNum}-D${rowNum}`, result: tonDau + vaoR - raR },
+        tonChot,
+        { formula: `E${rowNum}-F${rowNum}`, result: chenhLech },
+      ]);
+      cdRow.getCell(7).fill = { type: "pattern", pattern: "solid",
+        fgColor: { argb: chenhLech !== 0 ? "FFFECACA" : "FFD1FAE5" } };
+      cdRow.getCell(7).font = { bold: chenhLech !== 0,
+        color: { argb: chenhLech !== 0 ? "FFB91C1C" : "FF065F46" } };
+      for (let c = 2; c <= 7; c++) cdRow.getCell(c).alignment = { horizontal: "center" };
+    });
+    [24,14,24,32,18,18,20].forEach((w, i) => wsCd.getColumn(i + 1).width = w);
+    wsCd.addRow([]);
+    [
+      ["Ghi chú:"],
+      ["• Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ (kyThongKe=null). Xem Nhật ký thao tác → lọc 'Chưa gán kỳ'."],
+      ["• 'DS ĐT chuyển TT' = cùng dữ liệu 'DS chuyển đến TT', từ góc nhìn giai đoạn nguồn (để tính đủ RA của ĐT)."],
+      ["• 'Tồn cuối (chốt)' = snapshot lúc chốt kỳ; 'Tồn cuối (tính)' = tính từ log kỳ này — hai cột nên bằng nhau."],
+    ].forEach(r => { const nr = wsCd.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; });
+  }
 
   for (const gd of THU_TU_GIAI_DOAN) {
     const gs = GD_VIET_TAT[gd];  // "ĐT" / "TT" / "XX"
@@ -6672,7 +6790,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
       addSheetVu(`DS trả về ${gs}`, d.traVe||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
     }
 
-    // ── RA khỏi giai đoạn ──
+    // ── RA: chuyển giai đoạn tiến (từ giai đoạn này lên giai đoạn tiếp theo) ──
+    // Lưu ý: cùng dữ liệu với "DS chuyển đến {gsNext}" nhưng từ góc nhìn giai đoạn nguồn —
+    // cần thiết để cân đối RA của giai đoạn này mà không phải tra cứu sheet giai đoạn khác.
+    if (gd !== "xet_xu") {
+      const gsNext = gd === "dieu_tra" ? "TT" : "XX";
+      addSheetVu(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
+    }
+    // ── RA: trả hồ sơ (từ giai đoạn này về giai đoạn trước) ──
+    // Lưu ý: cùng dữ liệu với "DS trả về {gsPrev}" nhưng từ góc nhìn giai đoạn nguồn.
+    if (gd !== "dieu_tra") {
+      const gsPrev = gd === "truy_to" ? "ĐT" : "TT";
+      addSheetVu(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
+    }
+
+    // ── RA: hoàn thành (kết thúc thụ lý) ──
     addSheetVu(`DS đã xét xử ${gs}`,
       d.hoanThanh?.da_xet_xu||[], ["Ngày XXT", "Số bản án"], _ngaySoQD);
 
