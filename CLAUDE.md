@@ -60,12 +60,16 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 ## Tiến độ đã code
 
 - [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (nay 7 module, xem `MODULES`) +
-      **Import Excel** (đọc DSAT/DSBCT, xem trước, ghi Firestore bằng batch) + công cụ dựng
-      lại lịch sử cho dữ liệu import cũ (xem mục riêng bên dưới).
+      **Import Excel** (đọc sheet "Danh sách án", xem trước, tự nhận diện trùng, ghi Firestore
+      bằng batch — xem mục riêng "Import Excel — mẫu 'Danh sách án'" bên dưới, đã thay thế hẳn
+      mẫu DSAT/DSBCT cũ) + công cụ dựng lại lịch sử cho dữ liệu import cũ (xem mục riêng bên dưới,
+      chỉ còn cần cho dữ liệu import bằng mẫu DSAT/DSBCT trước đây — import bằng mẫu mới tự ghi
+      log ngay, không cần công cụ này nữa).
 - [x] Module Danh sách & chi tiết vụ án: 2 cột — danh sách là panel CHÍNH (`flex-1`, chiếm phần
       lớn chiều rộng), chi tiết là panel PHỤ cố định `w-[420px]` bên phải (đảo ngược so với thiết
       kế ban đầu theo yêu cầu người dùng). Danh sách có: ô tìm kiếm khớp cả mã vụ/tên vụ/điều
-      luật/tên bị can, **toggle "Đang giải quyết" / "Tất cả"** (`chiDangGiaiQuyet`, mặc định
+      luật/số QĐ KTVA (`soQdKtva`, thêm 2026-07-13)/tên bị can, **toggle "Đang giải quyết" / "Tất
+      cả"** (`chiDangGiaiQuyet`, mặc định
       `true` — thay thế hẳn module "Án tồn theo giai đoạn" cũ đã bị xoá, kết hợp với tab lọc
       giai đoạn/KSV sẵn có là đủ vai trò của module đó), cột **Bị can** (mặc định chỉ hiện bị
       can đầu + link "+N bị can khác" để mở rộng, state `moRongBiCan`), cột **Kỳ mới**/**Kỳ giải
@@ -135,7 +139,11 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       **ĐTV** (field `nguoiNhan`, mặc định `vuAn.dtvCbdt`) chỉ để THỂ HIỆN hồ sơ của ai — không
       phải người thực giao/nhận; **Người nhận thực tế** (`nguoiNhanThucTe`, để trống mặc định) —
       vì người thực tế cầm/ký nhận hồ sơ có thể khác (đi nhận thay). Cả 3 sửa tự do được (input +
-      `<datalist>` gợi ý từ `canbo`, không ép buộc). Không có ràng buộc thứ tự giao/nhận (quét là
+      `<datalist>` gợi ý từ `canbo`, không ép buộc) — **bấm vào bất kỳ đâu trên cả dòng** (2026-
+      07-13, không chỉ đúng chữ "Sửa" nhỏ) là vào chế độ sửa ngay (`DongGiaoNhan`'s `batDauSua`),
+      vì thao tác giao nhận diễn ra nhanh/liên tục theo nhịp quét QR, không nên bắt rê chuột chính
+      xác vào 1 link nhỏ. Cell nào có nút bấm/input khi đang sửa đều `stopPropagation` để không tự
+      kích hoạt lại chế độ sửa hoặc lẫn với việc bấm Xoá. Không có ràng buộc thứ tự giao/nhận (quét là
       ghi, không kiểm tra hồ sơ đang "ở đâu" trước đó) — quyết định có chủ đích để giữ thao tác
       quét nhanh, đơn giản như sổ giao nhận giấy truyền thống. **"In phiên"** xuất "Biên bản giao
       nhận hồ sơ" khổ A4 qua cùng cơ chế portal `#qr-print-root` đã dùng cho In mã QR (xem
@@ -143,11 +151,88 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       QĐ KTVA) + KSV + ĐTV + cột "Người nhận thực tế / Ký tên" ngay tại dòng đó (không dùng 1
       khối ký tên chung cuối trang — vì 1 phiên có thể giao cho nhiều người khác nhau theo từng
       vụ, phải ký ngay cạnh đúng vụ đó).
+      **Tìm thủ công khi không có mã QR (2026-07-13)** — luồng gốc chỉ nhận vào đúng 1 mã vụ án
+      chính xác (đọc thẳng `db.collection("vuan").doc(ma)`), không có cách nào thêm 1 dòng vào
+      phiên nếu không cầm mã vụ trong tay. Thêm link nhỏ "Không có mã QR? Tìm thủ công..." dưới ô
+      quét, mở ra 1 ô tìm kèm danh sách kết quả bấm chọn để ghi nhận — cùng chỗ dùng chung logic
+      ghi sự kiện `giao_nhan_ho_so` với đường quét mã (tách hàm `ghiNhanVuVaoPhien`, cả 2 đường
+      vào đều gọi hàm này để không lệch nhau field nào). Tìm theo tên vụ/KSV chính/tội danh (proxy
+      qua field `dieuLuat` cấp `vuan`, giống lý do đã dùng ở Án đã giải quyết/Giao nhận không có
+      bị can join)/số QĐ KTVA — lọc phía client trên 1 lần tải toàn bộ vụ **đang giải quyết** (không
+      tìm cả vụ đã xong, vì hồ sơ giao nhận thực tế chỉ xoay quanh vụ đang thụ lý), tải 1 lần lúc
+      mở panel (không realtime — đây là công cụ tra cứu để CHỌN, không phải danh sách cần luôn mới
+      nhất).
+      **Sửa thông tin vụ án ngay từ dòng giao nhận (2026-07-13)** — lý do thực tế: rất nhiều vụ
+      lúc nhập ban đầu (import/tạo tay) chưa đủ thông tin, chỉ khi thực tế CẦM hồ sơ lúc giao/nhận
+      mới biết rõ để bổ sung (VD đơn vị thụ lý, điều luật, KSV hỗ trợ...). Nút "✎ Sửa thông tin
+      vụ án" nhỏ dưới tên vụ trong mỗi dòng (`DongGiaoNhan`) — bấm vào tải nguyên `vuan` doc hiện
+      tại (log giao nhận chỉ lưu snapshot vài field, không đủ để mở form sửa) rồi mở thẳng
+      `SuaVuAnForm` — DÙNG LẠI y nguyên component đã có ở panel chi tiết Danh sách vụ án, không
+      viết lại logic sửa. KHÁC HẲN với việc bấm cả dòng để sửa (mục ngay trên) — bấm cả dòng chỉ
+      sửa 3 field snapshot của DÒNG log (KSV/ĐTV/người nhận thực tế hiển thị lúc giao nhận), còn
+      nút này sửa thẳng vào chính `vuan`, ảnh hưởng dữ liệu gốc dùng ở mọi module khác. Luôn hiện
+      được kể cả khi phiên đã "Lưu phiên" (`khoaSua`) — khoá phiên chỉ chặn sửa dòng log, không
+      liên quan gì tới sửa thông tin vụ án.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
       lại không tạo trùng, vụ đã có log sẽ bị bỏ qua) nhưng KHÔNG dựng lại được các lần gia
-      hạn/trả hồ sơ trước khi import — dữ liệu đó không còn lưu vết trong Excel gốc.
+      hạn/trả hồ sơ trước khi import — dữ liệu đó không còn lưu vết trong Excel gốc. Vẫn giữ
+      nguyên cho dữ liệu đã import bằng mẫu DSAT/DSBCT cũ; import bằng mẫu "Danh sách án" mới
+      (mục dưới) không cần công cụ này vì đã tự ghi log ngay lúc import.
+- [x] **Import Excel — đổi hẳn sang mẫu "Danh sách án" (2026-07-13), bỏ mẫu DSAT/DSBCT cũ** theo
+      yêu cầu người dùng — mẫu cũ đọc 2 sheet DSAT/DSBCT y hệt cấu trúc file Excel thống kê thủ
+      công cũ (nhiều cột cờ không rõ nghĩa, không tạo log, không chống trùng), thay bằng 1 sheet
+      duy nhất tên đúng `"Danh sách án"` (hằng số `TEN_SHEET_DANH_SACH_AN`), cấu trúc **1 dòng/bị
+      can, thông tin vụ lặp lại từng dòng** — cùng kiểu với các sheet DS mới/DS tồn... mà "Xuất
+      Excel báo cáo tháng" (`VU_H`/`BC_H`, xem mục Xuất Excel báo cáo tháng) đã xuất ra, cộng thêm
+      các cột bắt buộc để dựng được 1 vụ án hoàn chỉnh mà báo cáo không cần mang theo: Giai đoạn,
+      Trạng thái, Ngày/Số quyết định (chỉ bắt buộc khi Trạng thái khác "Đang giải quyết" — dùng
+      cho vụ án cũ đã có kết quả), Nguồn, Số/Ngày QĐ KTVA tách 2 cột riêng (bỏ hẳn kiểu ghép chung
+      `"108/28.3.23"` của mẫu cũ — `splitSoNgayQuyetDinh` đã xoá vì không còn nơi dùng), và thêm
+      cột Giới tính bên bị can (mẫu cũ hardcode cứng `gioiTinh: "nam"` cho mọi bị can vì DSBCT gốc
+      không có cột này — nay đọc thật từ file).
+      **Hàm đọc mới `parseWorkbookDanhSachAn`** (thay hẳn `parseWorkbook`/`mapNguon` cũ, đã xoá):
+      header ở ĐÚNG dòng 1 (không phải dòng 2 như mẫu cũ — để có thể lấy thẳng 1 sheet report đã
+      xuất ra làm gốc), dữ liệu từ dòng 2; đọc theo vị trí cột cố định y hệt nguyên tắc cũ. Nhận
+      diện Giai đoạn/Trạng thái/Nguồn qua khớp NGƯỢC với chính `NHAN_GIAI_DOAN`/`NHAN_TRANG_THAI`/
+      `NHAN_NGUON` (hàm `timTuNhan`, case-insensitive) — không nhận diện được thì mặc định Điều
+      tra/Đang giải quyết/Án khởi tố mới kèm cảnh báo trên bảng xem trước, không chặn import.
+      **Tự động nhận diện vụ trùng (yêu cầu cốt lõi của bản redesign này) theo đúng thứ tự ưu
+      tiên mã vụ án → Số+Ngày QĐ KTVA**: sau khi đọc file, tải toàn bộ `vuan` hiện có 1 lần, dựng
+      2 map tra cứu (`byMa` khớp cả `maNganhCap` lẫn `maNoiSinh`; `byQdNgay` khớp cặp
+      `soQdKtva`+`ngayQdKtva` qua `fmtDate` làm khoá) — vụ trùng theo 1 trong 2 tiêu chí bị loại
+      thẳng, KHÔNG ghi vào hệ thống (tránh xung đột/ghi đè dữ liệu đang có, đúng yêu cầu người
+      dùng), hiện trong bảng xem trước riêng "vụ trùng — sẽ bỏ qua" kèm lý do/ID vụ đã có để đối
+      chiếu. Vụ thiếu dữ liệu bắt buộc (thiếu Tên vụ/Ngày QĐ KTVA/Ngày quyết định khi đã giải
+      quyết) rơi vào nhóm lỗi riêng "vụ thiếu dữ liệu — sẽ bỏ qua", cũng không import, phải sửa
+      file rồi tải lại — 3 nhóm moi/trung/loi tính toán ngay khi tải file (không cần bấm gì thêm),
+      chỉ nhóm "mới" mới có nút ghi vào hệ thống.
+      **Vụ mới được cấp mã hệ thống thật (`maNoiSinh`) thay vì dùng thẳng mã trong file làm ID**
+      (khác hẳn cách cũ `db.collection("vuan").doc(va.maNganhCap)` — rủi ro mã trống/trùng giữa
+      2 dòng làm mất dữ liệu) — mã trong file giữ lại làm `maNganhCap` (mã tham chiếu), đúng kiểu
+      dữ liệu `ThemVuAnForm` tạo ra. Sinh mã theo lô qua `sinhNhieuMaVuAn` (gom theo tháng QĐ
+      KTVA, 1 transaction/tháng thay vì 1 transaction/vụ như `sinhMaVuAnMoi` — vì import có thể
+      hàng chục/hàng trăm vụ cùng lúc, sinh từng vụ 1 transaction sẽ chậm).
+      **Ghi log ngay lúc import (khác hẳn mẫu cũ hoàn toàn không tạo log, phải chạy
+      `DungLaiLichSuTool` thủ công sau đó)**: mỗi vụ mới được ghi `khoi_to_vu` + `khoi_to_bican`
+      mỗi bị can qua `taoSuKien`, và nếu Trạng thái khác "Đang giải quyết" thì ghi thêm 1 sự kiện
+      `hoan_thanh` (kèm `soQuyetDinh`/`ngaySuKien` lấy từ 2 cột Ngày/Số quyết định, và field
+      tương ứng trên `vuan` qua `fieldSoQuyetDinhTrenVuAn` — y hệt luồng `HoanThanhVuAnModal`) +
+      set `ngayQuyetDinh`/`kyHoanThanh` trên `vuan` (đúng index mà module Án đã giải quyết cần,
+      xem mục Án đã giải quyết) — vụ án cũ đã giải quyết import bằng mẫu này lên thẳng "Án đã giải
+      quyết" ngay, không cần chạy thêm `BackfillNgayQuyetDinhTool`.
+      **Hỏi kỳ báo cáo 1 LẦN cho cả đợt import** (không hỏi riêng từng vụ — 1 file thường là 1 đợt
+      nhập cùng nguồn/cùng thời điểm) qua chính `ModalXacNhanKy` dùng chung (nguyên tắc thiết kế
+      #3), bật lên khi bấm nút "Ghi ... vụ mới vào hệ thống" — cho chọn 1 kỳ báo cáo bình thường
+      (án mới thật sự phát sinh trong kỳ đang làm việc) HOẶC **"Kỳ lưu trữ án cũ"** (`loai:
+      "luu_tru"`, khái niệm đã có sẵn từ `MoKyMoiForm`/module Kỳ báo cáo — dùng khi nhập lại án cũ
+      cho đủ hồ sơ, sự kiện gán vào kỳ này không tính vào báo cáo tháng nào) — `kyThongKe` của mọi
+      sự kiện log VÀ `kyThongKeKhoiTo` trên từng `bican` đều set theo đúng lựa chọn này.
+      File mẫu tham khảo: `Mau_Import_DanhSachAn.xlsx` (không phải code của app, tạo 1 lần bằng
+      script Python dùng `openpyxl` rồi xoá script — nếu cần sửa mẫu, tạo lại tương tự, đừng coi
+      file `.xlsx` này là nguồn sự thật của cấu trúc cột, nguồn thật luôn là
+      `parseWorkbookDanhSachAn` trong `qlva.html`).
 - [x] Các hành động nghiệp vụ trên 1 vụ án (nút ở panel chi tiết, đều qua `ModalXacNhanKy`
       dùng chung + hook `useHanhDongVuAn`): Chuyển giai đoạn, Trả hồ sơ, Gia hạn điều tra,
       Hoàn thành vụ án (gộp cả 5 hình thức da_xet_xu/chuyen_di/tam_dinh_chi/dinh_chi/an_huy —
@@ -167,6 +252,22 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       "da_nhap"`) nhưng trước đây lịch sử vụ đích không có dấu vết gì về việc đã nhận nhập; giờ
       lưu sẵn mã vụ/tên vụ/KSV của vụ nguồn dạng chuỗi trong `ghiChu` của sự kiện `duoc_nhap_vu`
       để tra soát nhanh ngay trên lịch sử vụ đích. Phục hồi (từ tạm đình chỉ).
+      **Xóa vụ án (2026-07-13, `XoaVuAnModal`)** — KHÁC HẲN mọi hành động khác ở trên: đây không
+      phải sự kiện nghiệp vụ (không đi qua `ModalXacNhanKy`/hỏi kỳ), mà là xóa vĩnh viễn dùng để
+      sửa sai sót tạo nhầm (VD double-click tạo trùng, nhập liệu hoàn toàn sai) — hiếm dùng, KHÔNG
+      phải luồng nghiệp vụ bình thường (đã có sẵn Hoàn thành/Trả hồ sơ/Tách vụ cho các trường hợp
+      hợp lệ khác, đừng dùng Xóa để "sửa" 1 vụ hợp lệ). Nút đặt tách biệt cuối panel chi tiết (chữ
+      đỏ nhỏ, ngoài cụm nút hành động chính phía trên) để tránh bấm nhầm. Bắt gõ lại đúng mã vụ
+      hiển thị (`hienThiMa`) để xác nhận mới cho bấm xóa (không có cách hoàn tác). **Chặn hẳn** nếu
+      còn vụ án nào có `vuGoc` trỏ về vụ đang xóa (tức đã TÁCH RA từ vụ này và còn tồn tại) — tránh
+      để lại dữ liệu mồ côi mất gốc. Xóa cascade đúng 3 collection: doc `vuan`, mọi `bican` có
+      `maVuAn` khớp, mọi `lichsuChuyenGiaiDoan` có `maVuAn` khớp (dùng `batch.delete`, chunk 400).
+      KHÔNG cập nhật `baoCaoLuu` của kỳ đã chốt (chỉ cảnh báo trong modal, giống mọi thao tác sửa
+      dữ liệu thuộc kỳ đã chốt khác) — người dùng tự chạy "Tính lại số liệu" ở Kỳ báo cáo nếu cần.
+      KHÔNG xử lý trường hợp bị can của vụ này có bản sao (`nhomBiCanId`) ở vụ khác từ thao tác
+      Tách — xóa vụ gốc sẽ làm ID nhóm đó không còn trỏ tới bị can thật nào, nhưng không phá dữ
+      liệu bản sao, chỉ mất khả năng "Nhập vụ" nhận diện gộp về sau; chưa cần xử lý vì chưa gặp
+      yêu cầu thực tế, nếu phát sinh vấn đề thì bổ sung cảnh báo tương tự cảnh báo vụ tách.
 - [x] Module Án đã giải quyết (`AnDaGiaiQuyetModule`) — 5 tab theo `trangThai` cụ thể (Đã xét
       xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ, danh sách `TAB_DA_GIAI_QUYET`), lấy `ngày quyết
       định` từ sự kiện `hoan_thanh` trong log (không phải `ngayCapNhat` của `vuan` — field đó có
@@ -176,6 +277,19 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       hạn điều tra) nay nằm hoàn toàn trong module Danh sách vụ án (toggle "Đang giải quyết" +
       tab giai đoạn có sẵn), không tạo module riêng nữa. Đừng làm lại module này trừ khi người
       dùng yêu cầu rõ ràng.
+      **Lọc theo kỳ gồm cả kỳ lưu trữ án cũ + tìm kiếm (2026-07-13)** — dropdown "Lọc theo kỳ"
+      trước đây lọc bỏ kỳ `loai: "luu_tru"` (`.filter(k => k.loai !== "luu_tru")`, sao chép máy
+      móc từ `ModalXacNhanKy` — ở đó lọc bỏ vì mục đích khác: chỉ để chọn kỳ MẶC ĐỊNH lúc ghi log
+      mới, không nên tự nhảy vào kỳ lưu trữ), khiến vụ án cũ nhập lại qua Import Excel (mẫu "Danh
+      sách án", gán vào kỳ lưu trữ) hoặc gán tay vào kỳ lưu trữ không lọc riêng ra xem được ở đây.
+      Đã bỏ điều kiện lọc đó — danh sách kỳ giờ gồm đầy đủ, kỳ lưu trữ hiện nhãn `" [Lưu trữ]"`
+      (đúng quy ước nhãn đã dùng ở `ModalXacNhanKy`/`SuaKyModal`). Thêm ô **tìm kiếm tự do**
+      (`tuKhoa`, đặt cạnh dropdown lọc kỳ) khớp đồng thời mã vụ/tên vụ/điều luật (dùng làm proxy
+      tội danh — field `dieuLuat` ở cấp `vuan` đã gộp từ bị can theo nguyên tắc thiết kế #7, module
+      này không query thêm `bican` nên không tra được tội danh gốc từng bị can) /KSV chính/KSV hỗ
+      trợ/ghi chú — cùng pattern với ô tìm kiếm đã có ở module Danh sách vụ án (`DanhSachVuAnModule`,
+      dòng ~3899-3913), lọc qua `useMemo` kết hợp với lọc kỳ hiện có, không thêm query Firestore
+      mới (lọc trên `list` đã tải sẵn theo `hinhThuc`).
 - [x] Module Kỳ báo cáo (mở kỳ mới có chặn trùng kỳ đang mở, chốt kỳ tự snapshot tồn cuối kỳ
       theo từng cơ quan vào `tonCuoiKy`). Bấm vào 1 dòng kỳ mở ra **báo cáo chi tiết theo giai
       đoạn** (`KyChiTietModal`/`tinhBaoCaoKy`): tồn đầu kỳ (lấy từ `tonCuoiKy` của kỳ liền
@@ -271,16 +385,24 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       dụng cho log hành chính.
 - [x] Xuất Excel (nút trong module Danh sách, SheetJS dựng lại DSAT/DSBCT/TỔNG HỢP từ dữ liệu
       hiện tại). **Đã rà soát lại (2026-07-11)** — không có file gốc để so khớp pixel-perfect
-      (người dùng xác nhận không có sẵn), nhưng đã đối chiếu logic `xuatExcel` với chỉ số cột
-      của `parseWorkbook` (mapping lúc Import Excel, xem mục Kiến trúc code) và không phát hiện
-      lỗi/lệch dữ liệu — số bị can tính live từ collection `bican` (không dùng field cache cũ),
-      mọi field label đều tra đúng qua `NHAN_GIAI_DOAN`/`NHAN_TRANG_THAI`/`NHAN_NGUON`. Lưu ý
-      **quan trọng, đừng hiểu nhầm**: đây LÀ bản xem/lưu trữ dễ đọc, KHÔNG phải bản mirror 1:1
-      của DSAT/DSBCT gốc — file gốc DSAT có nhiều cột cờ riêng (Điều tra/Truy tố/Xét xử đang thụ
-      lý, tạm đình chỉ, đình chỉ, đã xét xử, án huỷ... — xem `r[1]`/`r[2]`/`r[3]`/`r[28]`-`r[31]`/
-      `r[40]`/`r[41]` trong `parseWorkbook`) được `xuatExcel` GỘP LẠI thành 2 cột text đơn
-      ("Cơ quan đang thụ lý"/"Trạng thái") cho dễ đọc trên màn hình — nên file xuất ra KHÔNG dùng
-      để nhập ngược lại qua Import Excel được (số cột/thứ tự khác hẳn `parseWorkbook` mong đợi).
+      (người dùng xác nhận không có sẵn), nhưng đã đối chiếu logic `xuatExcel` với layout DSAT/
+      DSBCT gốc lúc đó và không phát hiện lỗi/lệch dữ liệu — số bị can tính live từ collection
+      `bican` (không dùng field cache cũ), mọi field label đều tra đúng qua `NHAN_GIAI_DOAN`/
+      `NHAN_TRANG_THAI`/`NHAN_NGUON`. Lưu ý **quan trọng, đừng hiểu nhầm**: đây LÀ bản xem/lưu trữ
+      dễ đọc, KHÔNG phải bản mirror 1:1 của DSAT/DSBCT gốc — file gốc DSAT có nhiều cột cờ riêng
+      (Điều tra/Truy tố/Xét xử đang thụ lý, tạm đình chỉ, đình chỉ, đã xét xử, án huỷ...) được
+      `xuatExcel` GỘP LẠI thành 2 cột text đơn ("Cơ quan đang thụ lý"/"Trạng thái") cho dễ đọc
+      trên màn hình — nên file xuất ra KHÔNG dùng để nhập ngược lại qua Import Excel được (cấu
+      trúc cột hoàn toàn khác `parseWorkbookDanhSachAn`). **Cập nhật (2026-07-13)**: mẫu Import
+      Excel đã đổi hẳn sang sheet "Danh sách án" (xem mục riêng), `parseWorkbook`/DSAT/DSBCT nói
+      ở trên đã bị xoá khỏi code — đoạn này giữ lại làm lịch sử rà soát, KHÔNG còn đúng với code
+      hiện tại; `xuatExcel` (module "Xuất Excel" trong Danh sách vụ án) vẫn KHÔNG tương thích để
+      nhập ngược lại qua mẫu "Danh sách án" mới (cấu trúc cột khác hẳn). "Xuất Excel báo cáo
+      tháng" ở Kỳ báo cáo (sheet DS mới/DS tồn..., cấu trúc `VU_H`/`BC_H`, xem mục riêng) GẦN với
+      mẫu import mới hơn (cùng nguyên tắc 1 dòng/bị can, vụ 0 bị can vẫn 1 dòng) nhưng KHÔNG
+      re-import thẳng được — vẫn thiếu các cột `parseWorkbookDanhSachAn` bắt buộc (Giai đoạn,
+      Trạng thái, Nguồn, Số/Ngày QĐ KTVA, Ngày/Số quyết định) và thiếu cột Giới tính bên bị can,
+      phải tự thêm các cột đó vào trước khi import lại.
       Nếu sau này có file gốc thật để so khớp pixel-perfect hoặc cần format xuất round-trip được,
       làm rõ với người dùng trước khi đổi cấu trúc cột.
 - [x] Sinh mã QR + in A4 (nút "In mã QR" ở panel chi tiết, thư viện `qrcodejs` qua CDN — xem ghi
@@ -341,6 +463,24 @@ dùng `min-h-*` thay vì `h-*`.
   `ReactDOM.createPortal` vào `#qr-print-root` nằm ngoài `#root` — xem mục Tiến độ đã code ở
   trên. Nếu thêm màn hình in mới sau này, dùng lại đúng pattern này (portal ra ngoài `#root`),
   đừng quay lại kiểu `visibility:hidden`.
+- **Offline persistence (2026-07-13, nhánh `offline-indexeddb`)** — bật `db.enablePersistence({
+  synchronizeTabs: true })` ngay sau khi khởi tạo `db` (thẻ `<script>` thường, trước cả thẻ
+  Babel). Firestore compat SDK tự dùng **IndexedDB** làm cache nội bộ — không phải code tự viết
+  tầng lưu trữ riêng. Phạm vi CÓ CHỦ Ý giới hạn: chỉ chống **mất mạng tạm thời trong lúc đang
+  dùng** (wifi chập chờn, di chuyển giữa các phòng...) — app tiếp tục đọc dữ liệu đã cache, xếp
+  hàng các ghi/sửa/xoá, tự đồng bộ khi có mạng lại. **KHÔNG** phải chế độ hoạt động hoàn toàn
+  không cần Internet — trang vẫn cần mạng ở lần tải đầu (và mỗi lần load lại) để lấy các thư viện
+  CDN (React/Babel/Tailwind/Firebase SDK...) và đăng nhập; một máy CHƯA TỪNG có mạng thì không mở
+  được app, và không đồng bộ được với người dùng khác (Firestore cần mạng để nói chuyện với
+  server — đã hỏi rõ người dùng, xác nhận chỉ cần chống rớt mạng tạm thời, KHÔNG cần máy hoàn
+  toàn air-gapped — nếu sau này có yêu cầu air-gapped thật, đó là 1 tính năng khác hẳn, cần bundle
+  thư viện CDN inline + tách hẳn 1 chế độ dữ liệu cục bộ, đừng nhầm với mục này).
+  `OfflineBanner`/`useOnline` (component trong `AppShell`) dùng `navigator.onLine` + sự kiện
+  `online`/`offline` của trình duyệt để hiện banner cảnh báo màu vàng cố định đầu trang khi mất
+  mạng — tín hiệu này không chính xác 100% (có thể báo "online" dù mạng không thật sự ra được
+  Internet) nhưng đủ dùng, không cần ping thật. Banner dùng `fixed` (không chiếm chỗ trong luồng
+  layout) để không phá khung `h-screen`/`overflow-auto` đã ghim cẩn thận — xem mục "Bố cục cuộn
+  trang" bên dưới, đừng đổi banner này sang layout tĩnh (static/relative).
 
 ## Chạy & phát triển
 
@@ -352,6 +492,23 @@ không tải được, phục vụ qua server tĩnh cục bộ đơn giản (VD 
 `http://localhost:8765/qlva.html`) — không cần build, chỉ là HTTP server thô. Babel standalone
 compile JSX ngay trong trình duyệt lúc tải trang, nên lỗi cú pháp JSX sẽ hiện ở console (F12),
 không có bước biên dịch riêng để bắt lỗi trước.
+
+## Môi trường dev/test & công cụ hỗ trợ
+
+- **`qlva-dev.html`** — bản sao gần như y hệt `qlva.html`, chỉ khác `firebaseConfig` trỏ sang
+  project Firebase riêng **`qlahs-test`** (thay vì `qlahsp2` production). Dùng để thử tính năng
+  mới/thao tác phá hoại (xoá, seed dữ liệu giả) mà không đụng dữ liệu thật. Khi sửa `qlva.html`,
+  nhớ áp lại thay đổi tương ứng vào `qlva-dev.html` nếu muốn test trên project `qlahs-test` (2
+  file không tự đồng bộ, không có build step nào gộp chúng lại).
+- **`seed-tool.html`** — công cụ độc lập (không phải module trong `qlva.html`) để seed dữ liệu
+  test hàng loạt hoặc xoá sạch collection, kết nối được tới **cả 2 project** (`qlahsp2` production
+  VÀ `qlahs-test`, chọn qua UI). Có hàm `xoaProd()` xoá dữ liệu trên project **production** — mở
+  file này cẩn thận, xác nhận đang thao tác đúng project trước khi bấm nút xoá/seed.
+- **`firebase.json`** / **`firestore.indexes.json`** / **`firestore.rules`** — config Firebase
+  CLI dùng chung cho cả 2 project khi deploy qua `firebase deploy --only firestore:rules` hoặc
+  `--only firestore:indexes` (cần `firebase use <project-id>` trước để chọn đích). Rules hiện tại
+  chỉ chặn theo `request.auth != null` (đã đăng nhập là đọc/ghi được toàn bộ), không phân quyền
+  theo vai trò — xem ghi chú ở mục hạ tầng bên dưới.
 
 ## Kiến trúc code trong `qlva.html`
 
@@ -368,9 +525,11 @@ pattern đã có:
 phía trên (ngoài khối Babel) — mọi module dùng thẳng, không cần truyền qua props hay context.
 Không có router: điều hướng module chỉ là state `tab` trong `AppShell`, không đổi URL.
 
-`ImportExcelModule` đọc dữ liệu bằng **chỉ số cột cố định** (`r[0]`, `r[1]`...) khớp đúng layout
-file Excel gốc (header ở dòng 2, dữ liệu từ dòng 3 — `range: 2` trong `sheet_to_json`). Nếu sau
-này đổi cấu trúc cột của file Excel gốc, phải sửa lại các chỉ số này ở `parseWorkbook`.
+`parseWorkbookDanhSachAn` (dùng bởi `ImportExcelModule`, xem mục "Import Excel — đổi hẳn sang mẫu
+'Danh sách án'" ở Tiến độ đã code) đọc dữ liệu bằng **chỉ số cột cố định** (`r[0]`, `r[1]`...)
+khớp đúng layout sheet `"Danh sách án"` (header ở dòng 1, dữ liệu từ dòng 2 — `range: 1` trong
+`sheet_to_json`). Nếu sau này đổi cấu trúc cột của mẫu import, phải sửa lại các chỉ số này ở
+`parseWorkbookDanhSachAn` VÀ cập nhật file mẫu `Mau_Import_DanhSachAn.xlsx` cho khớp.
 
 ## Mockup đã duyệt (mô tả bằng lời — không có file ảnh, tham khảo khi code UI)
 

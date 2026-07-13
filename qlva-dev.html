@@ -48,6 +48,23 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+
+// Bật cache offline (Firestore SDK tự dùng IndexedDB nội bộ) — cho phép app tiếp tục đọc dữ
+// liệu đã tải trước đó và xếp hàng các thay đổi (set/update/delete) khi mất mạng giữa chừng,
+// tự đồng bộ lại khi có mạng trở lại. `synchronizeTabs: true` để nhiều tab cùng trình duyệt
+// dùng chung 1 cache thay vì chỉ tab mở đầu tiên có persistence. Đây KHÔNG phải chế độ hoạt động
+// hoàn toàn không cần Internet — lần mở đầu tiên (và mỗi lần tải lại trang) vẫn cần mạng để tải
+// các thư viện CDN (React/Babel/Firebase SDK...) và đăng nhập; chỉ giúp app không "đứng hình"/mất
+// dữ liệu khi mạng chập chờn TRONG lúc đang dùng.
+db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+  if (err.code === "failed-precondition") {
+    console.warn("Offline persistence: không bật được (hiếm gặp với synchronizeTabs:true).", err);
+  } else if (err.code === "unimplemented") {
+    console.warn("Trình duyệt này không hỗ trợ lưu cache offline (IndexedDB) — app vẫn chạy bình thường khi có mạng.");
+  } else {
+    console.error("Lỗi bật offline persistence:", err);
+  }
+});
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -77,15 +94,6 @@ function parseExcelDate(v) {
     }
   }
   return null;
-}
-
-// Cột KTVA/KTBC dạng text "108/28.3.23" — số quyết định + ngày ghép chung,
-// tách lấy phần ngày ở sau dấu "/".
-function splitSoNgayQuyetDinh(v) {
-  if (typeof v !== "string") return { so: "", ngay: null };
-  const idx = v.indexOf("/");
-  if (idx === -1) return { so: v, ngay: null };
-  return { so: v.slice(0, idx), ngay: parseExcelDate(v.slice(idx + 1)) };
 }
 
 // Ô nhập ngày — luôn hiển thị dd/MM/yyyy, không phụ thuộc locale hệ điều hành/trình duyệt.
@@ -1682,12 +1690,136 @@ function BackfillNgayQuyetDinhTool() {
   );
 }
 
+const TEN_SHEET_DANH_SACH_AN = "Danh sách án";
+
+function timTuNhan(nhanMap, text) {
+  if (text == null || String(text).trim() === "") return null;
+  const t = String(text).trim().toLowerCase();
+  const hit = Object.entries(nhanMap).find(([, nhan]) => nhan.trim().toLowerCase() === t);
+  return hit ? hit[0] : null;
+}
+
+// Đọc sheet "Danh sách án" — đúng mẫu 1 dòng/bị can (thông tin vụ lặp lại từng dòng, vụ 0 bị
+// can vẫn 1 dòng với ô Họ tên BC ghi "(Chưa có BC)") như các sheet DS mới/DS tồn... trong Xuất
+// Excel báo cáo tháng, cộng thêm các cột bắt buộc để tạo được vụ án hoàn chỉnh (Giai đoạn/Trạng
+// thái/QĐ KTVA...) mà bản báo cáo không cần mang theo. Header ở đúng dòng 1 (giống hệt file xuất
+// ra), dữ liệu từ dòng 2 — khác quy ước "header dòng 2" của mẫu DSAT/DSBCT cũ đã bỏ.
+function parseWorkbookDanhSachAn(wb) {
+  const warnings = [];
+  if (!wb.SheetNames.includes(TEN_SHEET_DANH_SACH_AN)) {
+    warnings.push(`Không tìm thấy sheet "${TEN_SHEET_DANH_SACH_AN}".`);
+    return { vuAnList: [], warnings };
+  }
+  const ws = wb.Sheets[TEN_SHEET_DANH_SACH_AN];
+  // range: 1 nghĩa là bỏ qua đúng 1 dòng đầu (dòng 1 = header), đọc từ dòng 2 trở xuống — đã
+  // kiểm chứng lại bằng SheetJS thật, không phải chỗ hay sai. Tách rawRows/rows để lúc rows rỗng
+  // có thể phân biệt 2 tình huống hay gặp: (a) sheet trống hẳn từ dòng 2 (rawRows cũng rỗng — có
+  // thể do người dùng hiểu nhầm quy ước dòng 2 của mẫu DSAT/DSBCT cũ, để dữ liệu ở dòng 1 rồi bị
+  // hệ thống coi là header và bỏ qua), (b) có dòng nhưng cột A (Mã vụ) trống hết (rawRows có dữ
+  // liệu, rows rỗng — có thể do lệch cột). Cảnh báo chung chung "không có dòng dữ liệu" trước đây
+  // không đủ để tự chẩn đoán, đã từng khiến người dùng làm đúng hướng dẫn vẫn không hiểu vì sao.
+  const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, range: 1, defval: null });
+  const rows = rawRows.filter(r => r && r[0] != null && String(r[0]).trim() !== "");
+  if (rows.length === 0) {
+    if (rawRows.length === 0) {
+      warnings.push(
+        `Sheet "${TEN_SHEET_DANH_SACH_AN}" không có dòng nào từ DÒNG 2 trở xuống (hệ thống luôn ` +
+        `bỏ qua dòng 1, coi là hàng tiêu đề). Kiểm tra lại: dữ liệu có đang nằm nhầm ở DÒNG 1 ` +
+        `không (bị hiểu nhầm là tiêu đề nên bị bỏ qua), hay dòng 2 đang thật sự còn trống?`
+      );
+    } else {
+      warnings.push(
+        `Đọc được ${rawRows.length} dòng từ dòng 2 trở xuống, nhưng không dòng nào có "Mã vụ" ` +
+        `(cột A, cột đầu tiên) — kiểm tra lại cột A của các dòng dữ liệu có bị để trống, hoặc dữ ` +
+        `liệu có bị lệch sang cột khác (VD do lỡ chèn/xoá nhầm 1 cột) không.`
+      );
+    }
+    return { vuAnList: [], warnings };
+  }
+
+  const vuMap = new Map();
+  rows.forEach((r, idx) => {
+    const soDong = idx + 2;
+    const maVu = String(r[0]).trim();
+    if (!vuMap.has(maVu)) {
+      const giaiDoan = timTuNhan(NHAN_GIAI_DOAN, r[2]);
+      if (!giaiDoan) warnings.push(`Dòng ${soDong}: không nhận diện được Giai đoạn "${r[2] ?? ""}" của vụ ${maVu} — mặc định Điều tra.`);
+      const trangThai = timTuNhan(NHAN_TRANG_THAI, r[3]) || "dang_giai_quyet";
+      const nguon = timTuNhan(NHAN_NGUON, r[6]) || "an_khoi_to_moi";
+      const ngayQdKtva = parseExcelDate(r[8]);
+      const ngayQuyetDinh = parseExcelDate(r[4]);
+      const tenVu = (r[1] || "").toString().trim();
+
+      const thieu = [];
+      if (!tenVu) thieu.push("thiếu Tên vụ");
+      if (!ngayQdKtva) thieu.push("thiếu/sai Ngày QĐ KTVA");
+      if (trangThai !== "dang_giai_quyet" && !ngayQuyetDinh) thieu.push(`Trạng thái "${r[3]}" nhưng thiếu Ngày quyết định`);
+
+      vuMap.set(maVu, {
+        maVu, tenVu, coQuanThuLy: giaiDoan || "dieu_tra", trangThai,
+        ngayQuyetDinh, soQuyetDinh: (r[5] || "").toString().trim(), nguon,
+        soQdKtva: (r[7] || "").toString().trim(), ngayQdKtva,
+        ksvChinh: (r[9] || "").toString().trim(), dtvCbdt: (r[10] || "").toString().trim(),
+        dieuLuat: (r[11] || "").toString().trim(), hanDieuTra: parseExcelDate(r[12]),
+        biCanList: [], _loi: thieu.length ? thieu.join("; ") : null,
+      });
+    }
+
+    const hoTenBC = (r[14] || "").toString().trim();
+    if (hoTenBC && hoTenBC !== "(Chưa có BC)") {
+      const gioiTinhRaw = (r[16] || "").toString().trim().toLowerCase();
+      const bienPhapRaw = (r[20] || "").toString().trim().toLowerCase();
+      const hanTG = parseExcelDate(r[21]);
+      let bienPhap = "tai_ngoai";
+      if (bienPhapRaw.includes("tạm giam")) bienPhap = "giam";
+      else if (!bienPhapRaw && hanTG) bienPhap = "giam";
+      vuMap.get(maVu).biCanList.push({
+        hoTen: hoTenBC,
+        namSinh: typeof r[15] === "number" ? r[15] : (r[15] ? Number(r[15]) || null : null),
+        gioiTinh: gioiTinhRaw === "nữ" || gioiTinhRaw === "nu" ? "nu" : "nam",
+        danToc: (r[17] || "").toString().trim() || "Kinh",
+        diaChi: (r[18] || "").toString().trim(),
+        toiDanh: (r[19] || "").toString().trim(),
+        bienPhapNganChan: bienPhap, hanTamGiam: bienPhap === "giam" ? hanTG : null,
+        dangVien: (r[22] != null && String(r[22]).trim() !== "") ? "co" : "khong",
+      });
+    }
+  });
+
+  return { vuAnList: Array.from(vuMap.values()), warnings };
+}
+
+// Sinh hàng loạt mã vụ án hệ thống (maNoiSinh) cho các vụ mới, gom theo tháng QĐ KTVA để chỉ
+// cần 1 transaction/tháng thay vì 1 transaction/vụ như sinhMaVuAnMoi — tránh chậm khi import
+// nhiều vụ cùng lúc. Mutate thẳng từng vụ trong dsVu, gắn field _maNoiSinh.
+async function sinhNhieuMaVuAn(dsVu) {
+  const nhom = new Map();
+  dsVu.forEach(v => {
+    const d = v.ngayQdKtva instanceof Date && !isNaN(v.ngayQdKtva) ? v.ngayQdKtva : new Date();
+    const yymm = String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, "0");
+    if (!nhom.has(yymm)) nhom.set(yymm, []);
+    nhom.get(yymm).push(v);
+  });
+  for (const [yymm, list] of nhom) {
+    const counterRef = db.collection("boDemMaVu").doc(yymm);
+    const soBatDau = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(counterRef);
+      const hienTai = snap.exists ? (snap.data().soHienTai || 0) : 0;
+      tx.set(counterRef, { soHienTai: hienTai + list.length }, { merge: true });
+      return hienTai;
+    });
+    list.forEach((v, i) => { v._maNoiSinh = `QLVA_E01.53_${yymm}_${pad4(soBatDau + i + 1)}`; });
+  }
+}
+
 function ImportExcelModule() {
   const [fileName, setFileName] = useState("");
-  const [preview, setPreview] = useState(null); // { vuAnList, biCanList, warnings }
-  const [status, setStatus] = useState("idle"); // idle | parsing | ready | writing | done | error
+  const [ketQuaDoc, setKetQuaDoc] = useState(null); // { moi[], trung[], loi[], warnings[] }
+  const [status, setStatus] = useState("idle"); // idle | parsing | checking | ready | writing | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
+  const [hienModalKy, setHienModalKy] = useState(false);
+  const [ketQuaGhi, setKetQuaGhi] = useState(null);
 
   const onFile = (e) => {
     const file = e.target.files[0];
@@ -1695,136 +1827,138 @@ function ImportExcelModule() {
     setFileName(file.name);
     setStatus("parsing");
     setErrorMsg("");
+    setKetQuaDoc(null);
+    setKetQuaGhi(null);
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const wb = XLSX.read(ev.target.result, { type: "array", cellDates: true });
-        const result = parseWorkbook(wb);
-        setPreview(result);
+        const { vuAnList, warnings } = parseWorkbookDanhSachAn(wb);
+        if (vuAnList.length === 0 && warnings.length === 0) warnings.push("Sheet không có dòng dữ liệu nào.");
+        setStatus("checking");
+
+        // Đối chiếu Firestore để nhận diện vụ trùng theo mã vụ án -> Số/Ngày QĐ KTVA.
+        const vuSnap = await db.collection("vuan").get();
+        const byMa = new Map();
+        const byQdNgay = new Map();
+        vuSnap.docs.forEach(d => {
+          const v = d.data();
+          if (v.maNganhCap) byMa.set(String(v.maNganhCap).trim().toLowerCase(), d.id);
+          if (v.maNoiSinh) byMa.set(String(v.maNoiSinh).trim().toLowerCase(), d.id);
+          if (v.soQdKtva && v.ngayQdKtva) {
+            byQdNgay.set(`${String(v.soQdKtva).trim().toLowerCase()}__${fmtDate(v.ngayQdKtva)}`, d.id);
+          }
+        });
+
+        const moi = [], trung = [], loi = [];
+        vuAnList.forEach(v => {
+          if (v._loi) { loi.push(v); return; }
+          const idTrungMa = byMa.get(v.maVu.toLowerCase());
+          if (idTrungMa) { trung.push({ ...v, _lyDoTrung: `Trùng mã vụ với vụ đã có (${idTrungMa})` }); return; }
+          if (v.soQdKtva && v.ngayQdKtva) {
+            const idTrungQd = byQdNgay.get(`${v.soQdKtva.trim().toLowerCase()}__${fmtDate(v.ngayQdKtva)}`);
+            if (idTrungQd) { trung.push({ ...v, _lyDoTrung: `Trùng Số/Ngày QĐ KTVA với vụ đã có (${idTrungQd})` }); return; }
+          }
+          moi.push(v);
+        });
+
+        setKetQuaDoc({ moi, trung, loi, warnings });
         setStatus("ready");
       } catch (err) {
         console.error(err);
-        setErrorMsg("Không đọc được file. Kiểm tra lại đây có đúng là file Excel gốc (có sheet DSAT và DSBCT) không.");
+        setErrorMsg(`Không đọc được file. Kiểm tra lại đây có đúng sheet "${TEN_SHEET_DANH_SACH_AN}" và đúng cấu trúc cột mẫu không.`);
         setStatus("error");
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
-  function parseWorkbook(wb) {
-    const warnings = [];
-    if (!wb.SheetNames.includes("DSAT")) warnings.push('Không tìm thấy sheet "DSAT".');
-    if (!wb.SheetNames.includes("DSBCT")) warnings.push('Không tìm thấy sheet "DSBCT".');
-
-    // Header nằm ở dòng 2 (index 1), dữ liệu bắt đầu dòng 3 (index 2) —
-    // đúng cấu trúc thật của file gốc.
-    const readSheet = (name) => {
-      const ws = wb.Sheets[name];
-      if (!ws) return [];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, range: 2, defval: null });
-      return rows.filter(r => r && r[0]); // bỏ dòng trống / không có mã vụ án
-    };
-
-    const dsatRows = readSheet("DSAT");
-    const dsbctRows = readSheet("DSBCT");
-
-    // ---- DSBCT trước, để tổng hợp điều luật + đếm bị can cho từng vụ ----
-    const biCanByVu = {};
-    const biCanList = dsbctRows.map(r => {
-      const maVuAn = String(r[0]).trim();
-      const hoTen = r[8] || "";
-      const namSinh = typeof r[9] === "number" ? r[9] : null;
-      const diaChi = r[10] || "";
-      const dieuChinh = r[11] != null ? String(r[11]) : "";
-      const dangVien = r[12] ? "co" : "khong";
-      const { ngay: ngayKhoiTo } = splitSoNgayQuyetDinh(r[13]);
-      const hanGiam = parseExcelDate(r[17]);
-      const bienPhap = hanGiam ? "giam" : "tai_ngoai";
-      const bc = {
-        maVuAn, hoTen, namSinh, diaChi,
-        toiDanh: dieuChinh ? [dieuChinh] : [""],
-        dangVien, gioiTinh: "nam", danToc: "Kinh",
-        bienPhapNganChan: bienPhap, hanTamGiam: bienPhap === "giam" ? hanGiam : null,
-        ngayKhoiTo,
-      };
-      biCanByVu[maVuAn] = (biCanByVu[maVuAn] || 0) + 1;
-      return bc;
-    });
-
-    // ---- DSAT ----
-    const vuAnList = dsatRows.map(r => {
-      const maNganhCap = String(r[0]).trim();
-      const coQuanThuLy = r[1] ? "dieu_tra" : (r[2] ? "truy_to" : (r[3] ? "xet_xu" : "dieu_tra"));
-      const hoTenDaiDien = r[10] || "";
-      const soBiCan = biCanByVu[maNganhCap] || (typeof r[9] === "number" ? r[9] : 0);
-      const tenVu = hoTenDaiDien + (soBiCan > 1 ? " và đồng phạm" : "");
-      const { so: soQdKtva, ngay: ngayQdKtva } = splitSoNgayQuyetDinh(r[12]);
-      let trangThai = "dang_giai_quyet";
-      if (r[41]) trangThai = "an_huy";
-      else if (r[30] || r[31]) trangThai = "dinh_chi";
-      else if (r[28] || r[29]) trangThai = "tam_dinh_chi";
-      else if (r[40]) trangThai = "da_xet_xu";
-
-      return {
-        maNganhCap, maNoiSinh: null, tenVu, coQuanThuLy, trangThai,
-        soQdKtva, ngayQdKtva,
-        hanDieuTra: parseExcelDate(r[16]),
-        ksvChinh: r[13] || "", ksvHoTro: r[14] ? [r[14]] : [],
-        dtvCbdt: r[19] || "", donViThuLy: r[20] || "",
-        anDiem: !!r[21], ghiChu: r[42] || "",
-        nguon: mapNguon(r[18]),
-        soBiCanExcel: soBiCan,
-      };
-    });
-
-    return { vuAnList, biCanList, warnings };
-  }
-
-  function mapNguon(v) {
-    const s = (v || "").toString().toUpperCase();
-    if (s.includes("TB")) return "tin_bao_khoi_to_len";
-    if (s.includes("PH")) return "phuc_hoi_dieu_tra";
-    if (s.includes("CHUYỂN") || s.includes("CD")) return "an_noi_khac_chuyen_den";
-    return "an_khoi_to_moi";
-  }
-
-  const ghiVaoCoSoDuLieu = async () => {
-    if (!preview) return;
+  const ghiVaoCoSoDuLieu = async (kyId) => {
+    if (!ketQuaDoc || ketQuaDoc.moi.length === 0) return;
     setStatus("writing");
     setProgress(0);
     try {
-      const { vuAnList, biCanList } = preview;
-      const total = vuAnList.length + biCanList.length;
+      const dsMoi = ketQuaDoc.moi;
+      await sinhNhieuMaVuAn(dsMoi);
+
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const ghiChuNhap = "Nhập qua Import Excel (Danh sách án).";
+      const total = dsMoi.reduce((s, v) => s + 1 + v.biCanList.length, 0);
       let done = 0;
-
-      // Ghi vụ án — document ID = maNganhCap (đã unique sẵn từ hệ thống cũ)
       let batch = db.batch();
-      let opsInBatch = 0;
-      for (const va of vuAnList) {
-        const ref = db.collection("vuan").doc(va.maNganhCap);
-        batch.set(ref, { ...va, ngayTao: new Date(), nguonNhapLieu: "import_excel" }, { merge: true });
-        opsInBatch++; done++;
-        if (opsInBatch >= 400) {
-          await batch.commit(); batch = db.batch(); opsInBatch = 0;
-        }
-        if (done % 25 === 0) setProgress(Math.round(done / total * 100));
-      }
-      if (opsInBatch > 0) await batch.commit();
+      let ops = 0;
+      const commitNeu = async () => { if (ops >= 400) { await batch.commit(); batch = db.batch(); ops = 0; } };
 
-      // Ghi bị can — mỗi bị can 1 document tự sinh ID, kèm ref maVuAn
-      batch = db.batch(); opsInBatch = 0;
-      for (const bc of biCanList) {
-        const ref = db.collection("bican").doc();
-        batch.set(ref, { ...bc, ngayTao: new Date(), nguonNhapLieu: "import_excel" });
-        opsInBatch++; done++;
-        if (opsInBatch >= 400) {
-          await batch.commit(); batch = db.batch(); opsInBatch = 0;
+      for (const v of dsMoi) {
+        const maNoiSinh = v._maNoiSinh;
+        const vuData = {
+          maNoiSinh, maNganhCap: v.maVu || null, tenVu: v.tenVu,
+          coQuanThuLy: v.coQuanThuLy, trangThai: v.trangThai,
+          nguon: v.nguon, nguonChiTiet: "",
+          soQdKtva: v.soQdKtva, ngayQdKtva: v.ngayQdKtva, hanDieuTra: v.hanDieuTra,
+          ksvChinh: v.ksvChinh, ksvHoTro: [], dtvCbdt: v.dtvCbdt, donViThuLy: "",
+          dieuLuat: v.dieuLuat, vuanToiDanh: [], vuanDieuLuat: [],
+          mucDoNghiemTrong: "nghiem_trong",
+          noiChuyenDen: "", nhapVaoVu: null, vuGoc: null, soDemTach: 0,
+          anDiem: false, uyQuyenXetXu: "", phienToaRutKN: false, ghiChu: "",
+          soKetLuanDieuTra: "", soCaoTrang: "", soBanAn: "",
+          ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+          nguonNhapLieu: "import_excel",
+        };
+        if (v.trangThai !== "dang_giai_quyet") {
+          vuData.ngayQuyetDinh = v.ngayQuyetDinh;
+          vuData.kyHoanThanh = kyId;
+          const field = fieldSoQuyetDinhTrenVuAn(v.trangThai);
+          if (field) vuData[field] = v.soQuyetDinh || "";
         }
-        if (done % 25 === 0) setProgress(Math.round(done / total * 100));
+        batch.set(db.collection("vuan").doc(maNoiSinh), vuData);
+        ops++; done++;
+
+        batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+          maVuAn: maNoiSinh, loaiSuKien: "khoi_to_vu", denGiaiDoan: v.coQuanThuLy,
+          ngaySuKien: v.ngayQdKtva, kyThongKe: kyId, ghiChu: ghiChuNhap,
+          nguoiThucHien, thoiDiemGhi: now,
+        }));
+        ops++;
+
+        if (v.trangThai !== "dang_giai_quyet") {
+          batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+            maVuAn: maNoiSinh, loaiSuKien: "hoan_thanh", hinhThucHoanThanh: v.trangThai,
+            soQuyetDinh: v.soQuyetDinh || "", ngaySuKien: v.ngayQuyetDinh || v.ngayQdKtva,
+            kyThongKe: kyId, ghiChu: ghiChuNhap, nguoiThucHien, thoiDiemGhi: now,
+          }));
+          ops++;
+        }
+        await commitNeu();
+
+        for (const bc of v.biCanList) {
+          const bcRef = db.collection("bican").doc();
+          batch.set(bcRef, {
+            maVuAn: maNoiSinh, hoTen: bc.hoTen, namSinh: bc.namSinh,
+            gioiTinh: bc.gioiTinh, toiDanh: bc.toiDanh ? [bc.toiDanh] : [""], dieuLuatBC: [""],
+            dangVien: bc.dangVien, dangVienGiuChucVu: false,
+            danToc: bc.danToc, quocTich: "Việt Nam", trinhDo: "", taiPham: "khong",
+            loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
+            diaChi: bc.diaChi, bienPhapNganChan: bc.bienPhapNganChan, hanTamGiam: bc.hanTamGiam,
+            ngayKhoiTo: v.ngayQdKtva, loaiKhoiTo: "khoi_to_moi", kyThongKeKhoiTo: kyId,
+            ngayTao: now, nguoiTao: nguoiThucHien, nguonNhapLieu: "import_excel",
+          });
+          ops++; done++;
+          batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+            maVuAn: maNoiSinh, loaiSuKien: "khoi_to_bican", maBiCan: bcRef.id,
+            ngaySuKien: v.ngayQdKtva, kyThongKe: kyId, ghiChu: ghiChuNhap,
+            nguoiThucHien, thoiDiemGhi: now,
+          }));
+          ops++;
+          await commitNeu();
+          if (done % 20 === 0) setProgress(Math.round(done / total * 100));
+        }
       }
-      if (opsInBatch > 0) await batch.commit();
+      if (ops > 0) await batch.commit();
 
       setProgress(100);
+      setKetQuaGhi({ soVu: dsMoi.length, soBiCan: dsMoi.reduce((s, v) => s + v.biCanList.length, 0) });
       setStatus("done");
     } catch (err) {
       console.error(err);
@@ -1837,8 +1971,11 @@ function ImportExcelModule() {
     <div className="max-w-3xl">
       <h2 className="text-lg font-semibold mb-1">Import dữ liệu từ Excel</h2>
       <p className="text-sm text-slate-500 mb-6">
-        Tải lên file Excel gốc (có sheet <code className="bg-slate-100 px-1 rounded">DSAT</code> và{" "}
-        <code className="bg-slate-100 px-1 rounded">DSBCT</code>). Dữ liệu sẽ được xem trước, chưa ghi vào hệ thống cho đến khi anh xác nhận.
+        Tải lên file Excel có sheet <code className="bg-slate-100 px-1 rounded">{TEN_SHEET_DANH_SACH_AN}</code> —
+        đúng mẫu "Danh sách án" mà hệ thống xuất ra ở Kỳ báo cáo (1 dòng/bị can, vụ nhiều bị can
+        lặp lại nhiều dòng). Hệ thống tự nhận diện vụ đã có trong hệ thống (theo mã vụ, hoặc theo
+        Số + Ngày QĐ KTVA nếu mã khác) để bỏ qua, tránh ghi trùng/lỗi xung đột — chỉ những vụ thật
+        sự mới mới được đưa vào xem trước và cho phép ghi vào hệ thống.
       </p>
 
       {status !== "writing" && status !== "done" && (
@@ -1849,65 +1986,122 @@ function ImportExcelModule() {
         </label>
       )}
 
-      {status === "parsing" && <div className="text-sm text-slate-500">Đang đọc file...</div>}
+      {(status === "parsing" || status === "checking") && (
+        <div className="text-sm text-slate-500">
+          {status === "parsing" ? "Đang đọc file..." : "Đang đối chiếu với dữ liệu đã có trong hệ thống..."}
+        </div>
+      )}
 
       {status === "error" && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{errorMsg}</div>
       )}
 
-      {status === "ready" && preview && (
+      {status === "ready" && ketQuaDoc && (
         <div>
-          {preview.warnings.length > 0 && (
+          {ketQuaDoc.warnings.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg p-3 mb-4">
-              {preview.warnings.map((w,i) => <div key={i}>⚠ {w}</div>)}
+              {ketQuaDoc.warnings.map((w,i) => <div key={i}>⚠ {w}</div>)}
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-3 gap-4 mb-4">
             <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-2xl font-semibold">{preview.vuAnList.length}</div>
-              <div className="text-xs text-slate-500">vụ án đọc được</div>
+              <div className="text-2xl font-semibold text-emerald-600">{ketQuaDoc.moi.length}</div>
+              <div className="text-xs text-slate-500">vụ mới — sẽ được import</div>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-2xl font-semibold">{preview.biCanList.length}</div>
-              <div className="text-xs text-slate-500">bị can đọc được</div>
+              <div className="text-2xl font-semibold text-slate-400">{ketQuaDoc.trung.length}</div>
+              <div className="text-xs text-slate-500">vụ trùng — sẽ bỏ qua</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-2xl font-semibold text-red-500">{ketQuaDoc.loi.length}</div>
+              <div className="text-xs text-slate-500">vụ thiếu dữ liệu — sẽ bỏ qua</div>
             </div>
           </div>
 
-          <div className="text-sm font-medium text-slate-600 mb-2">Xem trước 5 vụ án đầu tiên</div>
-          <div className="border border-slate-200 rounded-xl overflow-hidden mb-6">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="text-left p-2">Mã vụ (ngành cấp)</th>
-                  <th className="text-left p-2">Tên vụ</th>
-                  <th className="text-left p-2">Cơ quan</th>
-                  <th className="text-left p-2">Trạng thái</th>
-                  <th className="text-left p-2">Hạn ĐT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.vuAnList.slice(0,5).map((v,i) => (
-                  <tr key={i} className="border-t border-slate-100">
-                    <td className="p-2">{v.maNganhCap}</td>
-                    <td className="p-2">{v.tenVu}</td>
-                    <td className="p-2">{v.coQuanThuLy}</td>
-                    <td className="p-2">{v.trangThai}</td>
-                    <td className="p-2">{fmtDate(v.hanDieuTra)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {ketQuaDoc.moi.length > 0 && (
+            <>
+              <div className="text-sm font-medium text-slate-600 mb-2">Xem trước vụ mới (tối đa 8 dòng)</div>
+              <div className="border border-slate-200 rounded-xl overflow-hidden mb-6">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="text-left p-2">Mã vụ</th>
+                      <th className="text-left p-2">Tên vụ</th>
+                      <th className="text-left p-2">Giai đoạn</th>
+                      <th className="text-left p-2">Trạng thái</th>
+                      <th className="text-left p-2">Ngày QĐ KTVA</th>
+                      <th className="text-left p-2">Số BC</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ketQuaDoc.moi.slice(0,8).map((v,i) => (
+                      <tr key={i} className="border-t border-slate-100">
+                        <td className="p-2">{v.maVu}</td>
+                        <td className="p-2">{v.tenVu}</td>
+                        <td className="p-2">{NHAN_GIAI_DOAN[v.coQuanThuLy]}</td>
+                        <td className="p-2">{NHAN_TRANG_THAI[v.trangThai]}</td>
+                        <td className="p-2">{fmtDate(v.ngayQdKtva)}</td>
+                        <td className="p-2">{v.biCanList.length}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {ketQuaDoc.trung.length > 0 && (
+            <details className="mb-4">
+              <summary className="text-sm font-medium text-slate-600 cursor-pointer">
+                {ketQuaDoc.trung.length} vụ trùng sẽ bị bỏ qua — bấm để xem
+              </summary>
+              <div className="border border-slate-200 rounded-xl overflow-hidden mt-2">
+                <table className="w-full text-xs">
+                  <tbody>
+                    {ketQuaDoc.trung.map((v,i) => (
+                      <tr key={i} className="border-t border-slate-100">
+                        <td className="p-2 text-slate-500 whitespace-nowrap">{v.maVu}</td>
+                        <td className="p-2">{v.tenVu}</td>
+                        <td className="p-2 text-slate-400">{v._lyDoTrung}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+
+          {ketQuaDoc.loi.length > 0 && (
+            <details className="mb-4">
+              <summary className="text-sm font-medium text-red-600 cursor-pointer">
+                {ketQuaDoc.loi.length} vụ thiếu dữ liệu bắt buộc — bấm để xem, sửa lại file rồi tải lên lại
+              </summary>
+              <div className="border border-red-200 rounded-xl overflow-hidden mt-2">
+                <table className="w-full text-xs">
+                  <tbody>
+                    {ketQuaDoc.loi.map((v,i) => (
+                      <tr key={i} className="border-t border-red-100">
+                        <td className="p-2 text-slate-500 whitespace-nowrap">{v.maVu}</td>
+                        <td className="p-2">{v.tenVu || "(chưa có tên)"}</td>
+                        <td className="p-2 text-red-500">{v._loi}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-500 mb-4">
-            Lưu ý: bước import này nạp đúng <b>trạng thái hiện tại</b> của từng vụ/bị can. Lịch sử chuyển giai đoạn
-            trước đây (gia hạn, trả hồ sơ các lần cũ...) chưa được dựng lại thành nhật ký — dữ liệu mới phát sinh
-            từ nay trở đi sẽ được ghi log đầy đủ theo đúng schema.
+            Vụ mới sẽ được cấp mã hệ thống riêng (giống tạo tay qua "Thêm vụ án"), mã trong file được
+            giữ lại làm mã tham chiếu (Mã ngành cấp). Hệ thống tự ghi đầy đủ nhật ký "Khởi tố vụ/bị can"
+            {ketQuaDoc.moi.some(v => v.trangThai !== "dang_giai_quyet") ? ` và "Hoàn thành" (vụ đã có trạng thái giải quyết trong file)` : ""} —
+            không cần chạy công cụ "Dựng lại lịch sử" bên dưới cho dữ liệu import bằng mẫu này.
           </div>
 
-          <button onClick={ghiVaoCoSoDuLieu}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
-            Ghi {preview.vuAnList.length + preview.biCanList.length} bản ghi vào hệ thống
+          <button onClick={() => setHienModalKy(true)} disabled={ketQuaDoc.moi.length === 0}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+            Ghi {ketQuaDoc.moi.length} vụ mới vào hệ thống
           </button>
         </div>
       )}
@@ -1921,11 +2115,16 @@ function ImportExcelModule() {
         </div>
       )}
 
-      {status === "done" && (
+      {status === "done" && ketQuaGhi && (
         <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg p-4">
-          ✓ Đã nhập xong dữ liệu vào hệ thống. Anh có thể chuyển sang module "Danh sách vụ án" để xem lại.
+          ✓ Đã nhập {ketQuaGhi.soVu} vụ án mới ({ketQuaGhi.soBiCan} bị can) vào hệ thống, kèm đầy đủ nhật ký.
+          Anh có thể chuyển sang module "Danh sách vụ án" để xem lại.
         </div>
       )}
+
+      <ModalXacNhanKy open={hienModalKy}
+        onXacNhan={(kyId) => { setHienModalKy(false); ghiVaoCoSoDuLieu(kyId); }}
+        onHuy={() => setHienModalKy(false)} />
 
       <BackfillNgayQuyetDinhTool />
       <DungLaiLichSuTool />
@@ -3746,6 +3945,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
       const hit = (hienThiMa(v) || "").toLowerCase().includes(k)
         || (v.tenVu || "").toLowerCase().includes(k)
         || (v.dieuLuat || "").toLowerCase().includes(k)
+        || (v.soQdKtva || "").toLowerCase().includes(k)
         || dsBiCan.some(bc => (bc.hoTen || "").toLowerCase().includes(k));
       if (!hit) return false;
     }
@@ -3780,7 +3980,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
   return (
     <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
       <div className="p-3 border-b border-slate-100 space-y-2 bg-slate-50/60">
-        <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)} placeholder="Tìm theo mã vụ, tên vụ, điều luật hoặc tên bị can..."
+        <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)} placeholder="Tìm theo mã vụ, tên vụ, điều luật, số QĐ KTVA hoặc tên bị can..."
                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white" />
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-1 w-fit bg-slate-200 rounded-lg p-1">
@@ -4178,6 +4378,12 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
         )}
       </div>
 
+      <div className="p-5 border-t border-slate-100">
+        <button onClick={() => setModalMo("xoa")} className="text-xs text-red-500 hover:text-red-700 hover:underline">
+          Xóa vụ án này
+        </button>
+      </div>
+
       {modalMo === "chuyen_giai_doan" && (
         <ChuyenGiaiDoanModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
       )}
@@ -4211,7 +4417,115 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
       {hienThemBiCan && (
         <ThemBiCanForm vuAn={vuAn} onDong={() => setHienThemBiCan(false)} onXong={() => setHienThemBiCan(false)} />
       )}
+      {modalMo === "xoa" && (
+        <XoaVuAnModal vuAn={vuAn} biCanList={biCanList} lichSu={lichSu}
+                      onDong={() => setModalMo(null)}
+                      onXong={() => { setModalMo(null); onDoiSelected && onDoiSelected(null); }} />
+      )}
     </div>
+  );
+}
+
+// Xóa vĩnh viễn 1 vụ án + toàn bộ bị can + lịch sử liên quan — hành động HIẾM DÙNG, chỉ để sửa
+// sai sót tạo nhầm (VD double-click tạo trùng, nhập liệu hoàn toàn sai), KHÔNG phải luồng nghiệp
+// vụ bình thường (Hoàn thành/Trả hồ sơ/Tách vụ đã có sẵn cho các trường hợp hợp lệ khác). Bắt gõ
+// lại đúng mã vụ để xác nhận (giống xoá branch/repo trên GitHub) vì không có cách hoàn tác. Chặn
+// hẳn nếu đã có vụ TÁCH RA từ vụ này còn tồn tại — xóa vụ gốc trong khi vụ con vẫn còn sẽ để lại
+// dữ liệu mồ côi khó truy vết nguồn gốc. Không tự động cập nhật `baoCaoLuu` của kỳ đã chốt (giống
+// mọi thao tác sửa dữ liệu thuộc kỳ đã chốt khác) — chỉ cảnh báo, người dùng tự chạy lại "Tính lại
+// số liệu" ở Kỳ báo cáo nếu cần.
+function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
+  const [dangKiemTra, setDangKiemTra] = useState(true);
+  const [coVuCon, setCoVuCon] = useState(null); // null = chưa biết; mảng vụ đã tách ra còn tồn tại
+  const [xacNhan, setXacNhan] = useState("");
+  const [dangXoa, setDangXoa] = useState(false);
+  const [loi, setLoi] = useState("");
+
+  const maHienThi = hienThiMa(vuAn) || vuAn.id;
+
+  useEffect(() => {
+    let huy = false;
+    setDangKiemTra(true);
+    db.collection("vuan").where("vuGoc", "==", vuAn.id).get()
+      .then(snap => { if (!huy) setCoVuCon(snap.docs.map(d => ({ id: d.id, ...d.data() }))); })
+      .catch(err => { if (!huy) setLoi("Lỗi khi kiểm tra liên kết: " + err.message); })
+      .finally(() => { if (!huy) setDangKiemTra(false); });
+    return () => { huy = true; };
+  }, [vuAn.id]);
+
+  const coTheXoa = !dangKiemTra && coVuCon && coVuCon.length === 0;
+  const xacNhanDung = xacNhan.trim().toLowerCase() === maHienThi.trim().toLowerCase();
+
+  const xoa = async () => {
+    if (!xacNhanDung) return;
+    setDangXoa(true);
+    setLoi("");
+    try {
+      const [bcSnap, logSnap] = await Promise.all([
+        db.collection("bican").where("maVuAn", "==", vuAn.id).get(),
+        db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", vuAn.id).get(),
+      ]);
+      const refs = [
+        ...bcSnap.docs.map(d => d.ref),
+        ...logSnap.docs.map(d => d.ref),
+        db.collection("vuan").doc(vuAn.id),
+      ];
+      for (let i = 0; i < refs.length; i += 400) {
+        const batch = db.batch();
+        refs.slice(i, i + 400).forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
+      addToast("Đã xóa vụ án");
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi xóa: " + err.message);
+      setDangXoa(false);
+    }
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Xóa vụ án">
+      <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">
+        Thao tác này xóa VĨNH VIỄN, không thể hoàn tác: vụ án <b>{maHienThi}</b>, toàn bộ{" "}
+        <b>{biCanList.length} bị can</b> và <b>{lichSu.length} sự kiện lịch sử</b> liên quan. Nếu vụ
+        đã được tính vào 1 kỳ báo cáo đã chốt, số liệu đã lưu của kỳ đó sẽ KHÔNG tự cập nhật — vào
+        "Kỳ báo cáo" bấm "Tính lại số liệu" cho kỳ liên quan sau khi xóa.
+      </div>
+
+      {dangKiemTra && <div className="text-sm text-slate-400 mb-4">Đang kiểm tra liên kết với vụ án khác...</div>}
+
+      {!dangKiemTra && coVuCon && coVuCon.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg p-3 mb-4">
+          Không thể xóa — có {coVuCon.length} vụ án đã được TÁCH RA từ vụ này, vẫn còn tồn tại:{" "}
+          {coVuCon.map(v => hienThiMa(v) || v.id).join(", ")}. Cần xử lý các vụ đó trước (nhập lại
+          hoặc chấp nhận giữ nguyên) rồi mới xóa được vụ gốc.
+        </div>
+      )}
+
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+
+      {coTheXoa && (
+        <>
+          <label className="text-xs text-slate-500 block mb-1">
+            Gõ lại chính xác mã vụ <b>{maHienThi}</b> để xác nhận:
+          </label>
+          <input value={xacNhan} onChange={e => setXacNhan(e.target.value)} className={oInput + " mb-4"} autoFocus />
+        </>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} disabled={dangXoa} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+          {coTheXoa ? "Huỷ" : "Đóng"}
+        </button>
+        {coTheXoa && (
+          <button onClick={xoa} disabled={!xacNhanDung || dangXoa}
+                  className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50">
+            {dangXoa ? "Đang xóa..." : "Xóa vĩnh viễn"}
+          </button>
+        )}
+      </div>
+    </KhungModalHanhDong>
   );
 }
 
@@ -6444,14 +6758,17 @@ function AnDaGiaiQuyetModule() {
   const [hinhThuc, setHinhThuc] = useState("da_xet_xu");
   const [list, setList] = useState([]);       // đầy đủ, chưa lọc kỳ
   const [dangTai, setDangTai] = useState(true);
-  const [dsKy, setDsKy] = useState([]);       // danh sách kybaocao để chọn
+  const [dsKy, setDsKy] = useState([]);       // danh sách kybaocao để chọn — gồm cả kỳ lưu trữ án cũ
   const [locKy, setLocKy] = useState(null);   // null = chưa khởi tạo; "tat_ca" hoặc kyId
+  const [tuKhoa, setTuKhoa] = useState("");
 
-  // Lấy danh sách kỳ, đặt mặc định = kỳ đang mở (hoặc kỳ gần nhất nếu không có kỳ mở)
+  // Lấy danh sách kỳ, đặt mặc định = kỳ đang mở (hoặc kỳ gần nhất nếu không có kỳ mở).
+  // Gồm cả kỳ lưu trữ án cũ (loai: "luu_tru") để chọn lọc — vụ án cũ nhập lại qua Import Excel
+  // hoặc gán tay vào kỳ lưu trữ vẫn cần xem/lọc được ở đây như mọi kỳ khác.
   useEffect(() => {
     return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
       snap => {
-        const ks = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(k => k.loai !== "luu_tru");
+        const ks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setDsKy(ks);
         setLocKy(prev => {
           if (prev !== null) return prev; // giữ lựa chọn đã có
@@ -6484,23 +6801,41 @@ function AnDaGiaiQuyetModule() {
     return () => unsub();
   }, [hinhThuc]);
 
-  const listHienThi = (locKy && locKy !== "tat_ca")
-    ? list.filter(v => v.kyHoanThanh === locKy)
-    : list;
+  const listHienThi = useMemo(() => {
+    let rows = (locKy && locKy !== "tat_ca") ? list.filter(v => v.kyHoanThanh === locKy) : list;
+    const k = tuKhoa.trim().toLowerCase();
+    if (k) {
+      rows = rows.filter(v =>
+        (hienThiMa(v) || "").toLowerCase().includes(k)
+        || (v.tenVu || "").toLowerCase().includes(k)
+        || (v.dieuLuat || "").toLowerCase().includes(k)
+        || (v.ksvChinh || "").toLowerCase().includes(k)
+        || (v.ksvHoTro || []).some(t => (t || "").toLowerCase().includes(k))
+        || (v.ghiChu || "").toLowerCase().includes(k)
+      );
+    }
+    return rows;
+  }, [list, locKy, tuKhoa]);
 
   const tenKyDangChon = dsKy.find(k => k.id === locKy)?.tenKy;
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Án đã giải quyết</h2>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-500">Lọc theo kỳ:</span>
+      <div className="flex items-center justify-between mb-4 gap-4">
+        <h2 className="text-lg font-semibold whitespace-nowrap">Án đã giải quyết</h2>
+        <div className="flex items-center gap-2 flex-1 justify-end">
+          <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)}
+                 placeholder="Tìm theo mã vụ, tên vụ, tội danh/điều luật hoặc kiểm sát viên..."
+                 className="w-full max-w-md text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+          <span className="text-sm text-slate-500 whitespace-nowrap">Lọc theo kỳ:</span>
           <select value={locKy || "tat_ca"} onChange={e => setLocKy(e.target.value)}
                   className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300">
             <option value="tat_ca">Tất cả</option>
             {dsKy.map(k => (
-              <option key={k.id} value={k.id}>{k.tenKy}{k.trangThai === "dang_mo" ? " (đang mở)" : ""}</option>
+              <option key={k.id} value={k.id}>
+                {k.tenKy}
+                {k.loai === "luu_tru" ? " [Lưu trữ]" : k.trangThai === "dang_mo" ? " (đang mở)" : ""}
+              </option>
             ))}
           </select>
         </div>
@@ -6517,9 +6852,11 @@ function AnDaGiaiQuyetModule() {
       {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
       {!dangTai && listHienThi.length === 0 && (
         <div className="text-sm text-slate-400">
-          {locKy && locKy !== "tat_ca"
-            ? `Không có vụ nào ở hình thức này trong ${tenKyDangChon || "kỳ đã chọn"}.`
-            : "Chưa có vụ nào ở hình thức này."}
+          {tuKhoa.trim()
+            ? "Không có vụ nào khớp từ khoá tìm kiếm."
+            : locKy && locKy !== "tat_ca"
+              ? `Không có vụ nào ở hình thức này trong ${tenKyDangChon || "kỳ đã chọn"}.`
+              : "Chưa có vụ nào ở hình thức này."}
         </div>
       )}
       {listHienThi.length > 0 && (
@@ -6579,52 +6916,104 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
   const [ksv, setKsv] = useState(dong.nguoiGiao || "");
   const [dtv, setDtv] = useState(dong.nguoiNhan || "");
   const [nguoiNhanThucTe, setNguoiNhanThucTe] = useState(dong.nguoiNhanThucTe || "");
+  const [vuAnDeSua, setVuAnDeSua] = useState(null); // null=đóng, "loading"=đang tải, object=sẵn sàng mở form
 
   const luu = async () => {
     await onSua(dong.id, { nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim() });
     setDangSua(false);
   };
 
+  // Bấm vào bất kỳ đâu trên dòng (không chỉ đúng chữ "Sửa" nhỏ) là vào chế độ sửa ngay — thao
+  // tác giao nhận diễn ra nhanh, đầu đọc QR quét liên tục, không nên bắt rê chuột chính xác vào
+  // 1 link nhỏ mới sửa được. Nạp lại giá trị hiện tại của dòng phòng khi dữ liệu đã đổi từ lần
+  // sửa trước (`onSnapshot` ở module cha có thể cập nhật `dong` trong lúc dòng đang đóng).
+  const batDauSua = () => {
+    if (khoaSua || dangSua) return;
+    setKsv(dong.nguoiGiao || ""); setDtv(dong.nguoiNhan || ""); setNguoiNhanThucTe(dong.nguoiNhanThucTe || "");
+    setDangSua(true);
+  };
+
+  // Sửa thông tin vụ án đầy đủ (KSV/ĐTV/đơn vị/điều luật/ghi chú...) ngay từ màn giao nhận — rất
+  // nhiều hồ sơ lúc nhập ban đầu (import/tạo tay) chưa đủ thông tin, chỉ khi thực tế cầm hồ sơ lúc
+  // giao/nhận mới biết rõ để bổ sung. KHÁC với sửa các trường của DÒNG giao nhận ở trên (KSV/ĐTV/
+  // người nhận thực tế chỉ là snapshot lưu trên sự kiện log) — đây sửa thẳng vào chính `vuan`,
+  // dùng lại nguyên `SuaVuAnForm` đã có ở panel chi tiết Danh sách vụ án để khỏi trùng logic. Luôn
+  // cho phép kể cả khi phiên đã khoá (`khoaSua`) — khoá phiên chỉ chặn sửa dòng log, không liên
+  // quan gì tới việc sửa thông tin vụ án.
+  const moSuaThongTinVuAn = async (e) => {
+    e.stopPropagation();
+    setVuAnDeSua("loading");
+    try {
+      const doc = await db.collection("vuan").doc(dong.maVuAn).get();
+      if (!doc.exists) {
+        addToast(`Không tìm thấy vụ án ${dong.maVuAn} (có thể đã bị xoá).`, "error");
+        setVuAnDeSua(null);
+        return;
+      }
+      setVuAnDeSua({ id: doc.id, ...doc.data() });
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi tải thông tin vụ án: " + err.message, "error");
+      setVuAnDeSua(null);
+    }
+  };
+
   return (
-    <tr className="border-t border-slate-100">
-      <td className="p-3 text-slate-400">{stt}</td>
-      <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{dong.maVuAn}</td>
-      <td className="p-3">
-        <div className="font-medium text-slate-800">{dong.tenVu || "—"}</div>
-        <div className="text-xs text-slate-400 mt-0.5">
-          QĐ KTVA: {dong.soQdKtva || "—"} — {fmtDate(dong.ngayQdKtva)}
-        </div>
-      </td>
-      {dangSua ? (
-        <>
-          <td className="p-2"><input value={ksv} onChange={e => setKsv(e.target.value)} list="ds-canbo-gnhs" className={oInput} /></td>
-          <td className="p-2"><input value={dtv} onChange={e => setDtv(e.target.value)} list="ds-canbo-gnhs" className={oInput} /></td>
-          <td className="p-2"><input value={nguoiNhanThucTe} onChange={e => setNguoiNhanThucTe(e.target.value)} list="ds-canbo-gnhs" className={oInput} placeholder="Ghi rõ nếu khác ĐTV" /></td>
-        </>
-      ) : (
-        <>
-          <td className="p-3">{dong.nguoiGiao || "—"}</td>
-          <td className="p-3">{dong.nguoiNhan || "—"}</td>
-          <td className="p-3">{dong.nguoiNhanThucTe || <span className="text-slate-300">—</span>}</td>
-        </>
-      )}
-      <td className="p-3 text-xs text-slate-400 whitespace-nowrap">{fmtNgayGio(dong.thoiDiemGhi)}</td>
-      {!khoaSua && (
-        <td className="p-3 whitespace-nowrap">
-          {dangSua ? (
-            <>
-              <button onClick={luu} className="text-indigo-600 hover:text-indigo-700 font-medium mr-2">Lưu</button>
-              <button onClick={() => setDangSua(false)} className="text-red-400 hover:text-red-600">Huỷ</button>
-            </>
-          ) : (
-            <>
-              <button onClick={() => setDangSua(true)} className="text-indigo-600 hover:text-indigo-700 font-medium mr-2">Sửa</button>
-              <button onClick={() => onXoa(dong.id)} className="text-red-500 hover:text-red-700">Xoá</button>
-            </>
-          )}
+    <>
+      <tr className={`border-t border-slate-100 ${!khoaSua && !dangSua ? "cursor-pointer hover:bg-indigo-50/40" : ""}`}
+          onClick={!khoaSua && !dangSua ? batDauSua : undefined}>
+        <td className="p-3 text-slate-400">{stt}</td>
+        <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{dong.maVuAn}</td>
+        <td className="p-3">
+          <div className="font-medium text-slate-800">{dong.tenVu || "—"}</div>
+          <div className="text-xs text-slate-400 mt-0.5">
+            QĐ KTVA: {dong.soQdKtva || "—"} — {fmtDate(dong.ngayQdKtva)}
+          </div>
+          <button onClick={moSuaThongTinVuAn} disabled={vuAnDeSua === "loading"}
+                  className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline mt-1 disabled:opacity-50">
+            {vuAnDeSua === "loading" ? "Đang tải..." : "✎ Sửa thông tin vụ án"}
+          </button>
         </td>
+        {dangSua ? (
+          <>
+            <td className="p-2" onClick={e => e.stopPropagation()}>
+              <input value={ksv} onChange={e => setKsv(e.target.value)} list="ds-canbo-gnhs" className={oInput} autoFocus />
+            </td>
+            <td className="p-2" onClick={e => e.stopPropagation()}>
+              <input value={dtv} onChange={e => setDtv(e.target.value)} list="ds-canbo-gnhs" className={oInput} />
+            </td>
+            <td className="p-2" onClick={e => e.stopPropagation()}>
+              <input value={nguoiNhanThucTe} onChange={e => setNguoiNhanThucTe(e.target.value)} list="ds-canbo-gnhs" className={oInput} placeholder="Ghi rõ nếu khác ĐTV" />
+            </td>
+          </>
+        ) : (
+          <>
+            <td className="p-3">{dong.nguoiGiao || "—"}</td>
+            <td className="p-3">{dong.nguoiNhan || "—"}</td>
+            <td className="p-3">{dong.nguoiNhanThucTe || <span className="text-slate-300">—</span>}</td>
+          </>
+        )}
+        <td className="p-3 text-xs text-slate-400 whitespace-nowrap">{fmtNgayGio(dong.thoiDiemGhi)}</td>
+        {!khoaSua && (
+          <td className="p-3 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+            {dangSua ? (
+              <>
+                <button onClick={luu} className="text-indigo-600 hover:text-indigo-700 font-medium mr-2">Lưu</button>
+                <button onClick={() => setDangSua(false)} className="text-red-400 hover:text-red-600">Huỷ</button>
+              </>
+            ) : (
+              <>
+                <button onClick={batDauSua} className="text-indigo-600 hover:text-indigo-700 font-medium mr-2">Sửa</button>
+                <button onClick={() => onXoa(dong.id)} className="text-red-500 hover:text-red-700">Xoá</button>
+              </>
+            )}
+          </td>
+        )}
+      </tr>
+      {vuAnDeSua && vuAnDeSua !== "loading" && (
+        <SuaVuAnForm vuAn={vuAnDeSua} onDong={() => setVuAnDeSua(null)} onXong={() => setVuAnDeSua(null)} />
       )}
-    </tr>
+    </>
   );
 }
 
@@ -6688,6 +7077,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [loiQuet, setLoiQuet] = useState("");
   const [dangXuLy, setDangXuLy] = useState(false);
   const [hienBienBan, setHienBienBan] = useState(false);
+  const [hienTimThuCong, setHienTimThuCong] = useState(false);
+  const [dsVuDangGQ, setDsVuDangGQ] = useState(null); // null = chưa tải, tải 1 lần khi mở panel tìm
+  const [tuKhoaTim, setTuKhoaTim] = useState("");
   const inputRef = React.useRef(null);
 
   // Không dùng orderBy kèm where ở đây để khỏi cần composite index mới — sắp xếp lại phía client.
@@ -6716,6 +7108,23 @@ function GiaoNhanHoSoModule({ currentUser }) {
     setPhien({ id: ref.id, loaiGiaoDich, trangThai: "dang_mo", thoiDiemBatDau: now });
   };
 
+  // Dùng chung cho cả 2 đường vào: quét mã QR (biết trước id) và tìm thủ công (đã có sẵn cả
+  // object vụ án từ kết quả tìm, khỏi phải đọc lại). "KSV" (lưu ở field nguoiGiao) / "ĐTV" (lưu
+  // ở field nguoiNhan) chỉ để THỂ HIỆN hồ sơ của ai (lấy sẵn từ chính vụ án), không phải người
+  // thực giao/nhận. Người thực tế cầm/ký nhận hồ sơ có thể khác (VD người khác đi nhận thay) —
+  // ghi riêng ở nguoiNhanThucTe, để trống mặc định, điền tay khi cần.
+  const ghiNhanVuVaoPhien = async (maVuAn, vuAn) => {
+    const now = new Date();
+    await db.collection("lichsuChuyenGiaiDoan").add(taoSuKien({
+      maVuAn, loaiSuKien: "giao_nhan_ho_so", ngaySuKien: now, kyThongKe: null,
+      nguoiThucHien: currentUser?.email || "", thoiDiemGhi: now,
+      phienGiaoNhanId: phien.id, loaiGiaoDich: phien.loaiGiaoDich, tenVu: vuAn.tenVu || "",
+      soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
+      nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "",
+      ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
+    }));
+  };
+
   const xuLyQuet = async (e) => {
     e.preventDefault();
     const ma = maQuet.trim();
@@ -6728,20 +7137,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
         setLoiQuet(`Không tìm thấy vụ án có mã "${ma}".`);
         return;
       }
-      const vuAn = vuDoc.data();
-      // "KSV" (lưu ở field nguoiGiao) / "ĐTV" (lưu ở field nguoiNhan) chỉ để THỂ HIỆN hồ sơ của
-      // ai (lấy sẵn từ chính vụ án), không phải người thực giao/nhận. Người thực tế cầm/ký nhận
-      // hồ sơ có thể khác (VD người khác đi nhận thay) — ghi riêng ở nguoiNhanThucTe, để trống
-      // mặc định, điền tay khi cần.
-      const now = new Date();
-      await db.collection("lichsuChuyenGiaiDoan").add(taoSuKien({
-        maVuAn: ma, loaiSuKien: "giao_nhan_ho_so", ngaySuKien: now, kyThongKe: null,
-        nguoiThucHien: currentUser?.email || "", thoiDiemGhi: now,
-        phienGiaoNhanId: phien.id, loaiGiaoDich: phien.loaiGiaoDich, tenVu: vuAn.tenVu || "",
-        soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
-        nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "",
-        ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
-      }));
+      await ghiNhanVuVaoPhien(ma, vuDoc.data());
     } catch (err) {
       console.error(err);
       setLoiQuet("Lỗi khi ghi nhận: " + err.message);
@@ -6749,6 +7145,46 @@ function GiaoNhanHoSoModule({ currentUser }) {
       setMaQuet("");
       setDangXuLy(false);
       inputRef.current?.focus();
+    }
+  };
+
+  // Tìm thủ công — cho trường hợp không có mã QR trong tay: tải 1 lần (không realtime, chỉ để
+  // tra cứu) toàn bộ vụ ĐANG GIẢI QUYẾT (hồ sơ giao nhận thực tế chỉ xoay quanh vụ đang thụ lý,
+  // không cần tìm cả vụ đã xong) rồi lọc phía client theo tên vụ/KSV/tội danh (điều luật)/số QĐ
+  // KTVA — cùng kiểu tìm kiếm tự do đã dùng ở Danh sách vụ án/Án đã giải quyết.
+  const moTimThuCong = () => {
+    setHienTimThuCong(true);
+    if (dsVuDangGQ === null) {
+      db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").get()
+        .then(snap => setDsVuDangGQ(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .catch(err => { console.error(err); setDsVuDangGQ([]); });
+    }
+  };
+
+  const ketQuaTimThuCong = useMemo(() => {
+    if (!dsVuDangGQ || !tuKhoaTim.trim()) return [];
+    const k = tuKhoaTim.trim().toLowerCase();
+    return dsVuDangGQ.filter(v =>
+      (hienThiMa(v) || "").toLowerCase().includes(k)
+      || (v.tenVu || "").toLowerCase().includes(k)
+      || (v.dieuLuat || "").toLowerCase().includes(k)
+      || (v.ksvChinh || "").toLowerCase().includes(k)
+      || (v.soQdKtva || "").toLowerCase().includes(k)
+    ).slice(0, 15);
+  }, [dsVuDangGQ, tuKhoaTim]);
+
+  const chonVuThuCong = async (v) => {
+    if (dangXuLy) return;
+    setDangXuLy(true);
+    setLoiQuet("");
+    try {
+      await ghiNhanVuVaoPhien(v.id, v);
+      setTuKhoaTim("");
+    } catch (err) {
+      console.error(err);
+      setLoiQuet("Lỗi khi ghi nhận: " + err.message);
+    } finally {
+      setDangXuLy(false);
     }
   };
 
@@ -6808,12 +7244,50 @@ function GiaoNhanHoSoModule({ currentUser }) {
       </div>
 
       {phien.trangThai === "dang_mo" && (
-        <form onSubmit={xuLyQuet} className="mb-4">
+        <form onSubmit={xuLyQuet} className="mb-2">
           {loiQuet && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-2">{loiQuet}</div>}
           <input ref={inputRef} value={maQuet} onChange={e => setMaQuet(e.target.value)}
                  autoFocus placeholder="Quét mã QR vụ án vào đây..."
                  className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 text-base focus:border-indigo-500 focus:outline-none" />
         </form>
+      )}
+
+      {phien.trangThai === "dang_mo" && (
+        <div className="mb-4">
+          {!hienTimThuCong ? (
+            <button onClick={moTimThuCong} className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline">
+              Không có mã QR? Tìm thủ công theo tên vụ / KSV / tội danh / số QĐ KTVA...
+            </button>
+          ) : (
+            <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/60">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-slate-600">Tìm thủ công (chỉ trong vụ đang giải quyết)</div>
+                <button onClick={() => { setHienTimThuCong(false); setTuKhoaTim(""); }}
+                        className="text-xs text-slate-400 hover:text-slate-600">Đóng</button>
+              </div>
+              <input value={tuKhoaTim} onChange={e => setTuKhoaTim(e.target.value)} autoFocus
+                     placeholder="Gõ tên vụ, tên KSV, tội danh/điều luật, hoặc số QĐ KTVA..."
+                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2" />
+              {dsVuDangGQ === null && <div className="text-xs text-slate-400">Đang tải danh sách vụ đang giải quyết...</div>}
+              {dsVuDangGQ !== null && tuKhoaTim.trim() && ketQuaTimThuCong.length === 0 && (
+                <div className="text-xs text-slate-400">Không tìm thấy vụ nào khớp.</div>
+              )}
+              {ketQuaTimThuCong.length > 0 && (
+                <div className="border border-slate-200 rounded-lg overflow-hidden bg-white max-h-64 overflow-y-auto">
+                  {ketQuaTimThuCong.map(v => (
+                    <button key={v.id} onClick={() => chonVuThuCong(v)} disabled={dangXuLy}
+                            className="w-full text-left px-3 py-2 text-sm border-t border-slate-100 first:border-t-0 hover:bg-indigo-50 disabled:opacity-50">
+                      <div className="font-medium text-slate-800">{v.tenVu || "(chưa đặt tên)"}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        {hienThiMa(v)} — KSV: {v.ksvChinh || "—"} — {v.dieuLuat || "—"} — QĐ KTVA: {v.soQdKtva || "—"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       <datalist id="ds-canbo-gnhs">{dsCanBo.map(c => <option key={c.id} value={c.hoTen} />)}</datalist>
@@ -7531,11 +8005,44 @@ function CaiDatModule() {
   );
 }
 
+// Trạng thái mạng của trình duyệt (navigator.onLine + sự kiện online/offline) — tín hiệu đơn
+// giản, không 100% chính xác (có thể báo "online" dù mạng LAN/WiFi không thật sự ra được
+// Internet) nhưng đủ dùng để báo người dùng biết app đang chạy off cache, kết hợp với cơ chế
+// hàng đợi/đồng bộ lại có sẵn của Firestore persistence (bật ở thẻ <script> phía trên).
+function useOnline() {
+  const [online, setOnline] = useState(navigator.onLine);
+  useEffect(() => {
+    const baoOnline = () => { setOnline(true); addToast("Đã có mạng trở lại — đang đồng bộ dữ liệu..."); };
+    const baoOffline = () => setOnline(false);
+    window.addEventListener("online", baoOnline);
+    window.addEventListener("offline", baoOffline);
+    return () => {
+      window.removeEventListener("online", baoOnline);
+      window.removeEventListener("offline", baoOffline);
+    };
+  }, []);
+  return online;
+}
+
+// `fixed` (không chiếm chỗ trong layout) để không phá vỡ khung h-screen/overflow-auto đã ghim
+// cẩn thận ở AppShell — xem mục "Bố cục cuộn trang" trong CLAUDE.md.
+function OfflineBanner() {
+  const online = useOnline();
+  if (online) return null;
+  return (
+    <div className="fixed top-0 inset-x-0 z-50 bg-amber-500 text-white text-sm text-center py-1.5 shadow px-4">
+      ⚠ Mất kết nối mạng — vẫn xem/sửa được dữ liệu đã tải trước đó, thay đổi sẽ tự đồng bộ khi có
+      mạng trở lại. Đừng đóng trình duyệt khi còn thay đổi chưa đồng bộ.
+    </div>
+  );
+}
+
 function AppShell({ user }) {
   const [tab, setTab] = useState("list");
 
   return (
     <div className="h-screen flex overflow-hidden">
+      <OfflineBanner />
       <ToastContainer />
       <aside className="w-60 bg-slate-900 text-slate-300 flex flex-col shrink-0 overflow-y-auto">
         <div className="px-4 py-5 border-b border-slate-800">
