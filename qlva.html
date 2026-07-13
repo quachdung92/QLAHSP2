@@ -2046,7 +2046,14 @@ function ImportExcelModule() {
         }
         await commitNeu();
 
-        for (const bc of v.biCanList) {
+        // Tính loaiKhoiTo đúng cho từng bị can: "ban_dau" = ngày khởi tố sớm nhất, còn lại "bo_sung"
+        const ngayKhoiToList = v.biCanList.map(bc =>
+          bc.ngayKhoiTo ? (bc.ngayKhoiTo instanceof Date ? bc.ngayKhoiTo : new Date(bc.ngayKhoiTo)) : null
+        );
+        const loaiKhoiToList = tinhLoaiKhoiToTheoNgay(ngayKhoiToList);
+
+        for (let i = 0; i < v.biCanList.length; i++) {
+          const bc = v.biCanList[i];
           const bcRef = db.collection("bican").doc();
           batch.set(bcRef, {
             maVuAn: maNoiSinh, hoTen: bc.hoTen, namSinh: bc.namSinh,
@@ -2055,7 +2062,7 @@ function ImportExcelModule() {
             danToc: bc.danToc, quocTich: "Việt Nam", trinhDo: "", taiPham: "khong",
             loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
             diaChi: bc.diaChi, bienPhapNganChan: bc.bienPhapNganChan, hanTamGiam: bc.hanTamGiam,
-            ngayKhoiTo: v.ngayQdKtva, loaiKhoiTo: "khoi_to_moi", kyThongKeKhoiTo: kyId,
+            ngayKhoiTo: v.ngayQdKtva, loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
             ngayTao: now, nguoiTao: nguoiThucHien, nguonNhapLieu: "import_excel",
           });
           ops++; done++;
@@ -5891,7 +5898,7 @@ function hangDsVuAn(v) {
 
 // Tính Biểu B10 từ baoCao + biCanByVu + danh mục tội danh.
 // Trả về { rows, canhBao, vuChuaDL } — rows đã sắp xếp theo thuTuHienThi, đã bỏ dòng toàn 0.
-// Mỗi row: { D, tenToiDanh, thuTu, vals[] } (82 giá trị số, xem B10_HEADER).
+// Mỗi row: { D, tenToiDanh, thuTu, vals[] } (88 giá trị số, xem B10_HEADER).
 // vuChuaDL: { dieu_tra, truy_to, xet_xu } — mảng vụ trong tồn hiện tại chưa xác định được điều luật
 // (nguyên nhân gây lệch âm giữa B10 và báo cáo). Lệch dương = đúng thiết kế (1 vụ nhiều tội).
 // canhBao: chỉ cảnh báo khi có vụ chưa có điều luật (lệch âm thực sự), không cảnh báo lệch dương.
@@ -6029,7 +6036,8 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
     const dt_moiBc = bcCoD(dt_moi, D);
     const dt_nhapBc = bcCoD(dt.nhapVu || [], D);
     const dt_cdNoiBc = bcCoD(dt.hoanThanh?.chuyen_di || [], D);
-    const C3  = dt_tp_vu + vuCoD(dt_moi, D).length - vuCoD(dt.nhapVu || [], D).length - vuCoD(dt.hoanThanh?.chuyen_di || [], D).length;
+    const dt_ahBc = bcCoD(dt.hoanThanh?.an_huy || [], D);
+    const C3  = dt_tp_vu + vuCoD(dt_moi, D).length - vuCoD(dt.nhapVu || [], D).length - vuCoD(dt.hoanThanh?.chuyen_di || [], D).length - vuCoD(dt.hoanThanh?.an_huy || [], D).length;
     const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length;
     const C5  = dt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
@@ -6070,7 +6078,8 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
     const tt_moiBc = bcCoD(tt_moi, D);
     const tt_nhapBc = bcCoD(tt.nhapVu || [], D);
     const tt_cdNoiBc = bcCoD(tt.hoanThanh?.chuyen_di || [], D);
-    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.hoanThanh?.chuyen_di || [], D).length;
+    const tt_ahBc = bcCoD(tt.hoanThanh?.an_huy || [], D);
+    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.hoanThanh?.chuyen_di || [], D).length - vuCoD(tt.hoanThanh?.an_huy || [], D).length;
     const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length - tt_cdNoiBc.length;
     const C35 = tt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
@@ -6110,7 +6119,8 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
     const xx_moiBc = bcCoD(xx_moi, D);
     const xx_nhapBc = bcCoD(xx.nhapVu || [], D);
     const xx_cdNoiBc = bcCoD(xx.hoanThanh?.chuyen_di || [], D);
-    const C60 = xx_tp_vu + vuCoD(xx_moi, D).length - vuCoD(xx.nhapVu || [], D).length - vuCoD(xx.hoanThanh?.chuyen_di || [], D).length;
+    const xx_ahBc = bcCoD(xx.hoanThanh?.an_huy || [], D);
+    const C60 = xx_tp_vu + vuCoD(xx_moi, D).length - vuCoD(xx.nhapVu || [], D).length - vuCoD(xx.hoanThanh?.chuyen_di || [], D).length - vuCoD(xx.hoanThanh?.an_huy || [], D).length;
     const C61 = xx_tp_bc + xx_moiBc.length - xx_nhapBc.length - xx_cdNoiBc.length;
     const C62 = xx_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
@@ -6130,8 +6140,11 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
     const C71 = vuCoD(xx.traDi || [], D).length;
     const C72 = xx_traDiBc.length;
 
-    // vals[]: [ĐT 4 phụ + 30 B10], [TT 4 phụ + 27 B10], [XX 4 phụ + 13 B10] = 82 giá trị
-    // Vị trí tonNay_vu: ĐT=2, TT=36, XX=70
+    // vals[]: [ĐT 4 phụ + 30 B10], [TT 4 phụ + 27 B10], [XX 4 phụ + 13 B10] + [án huỷ 6] = 88 giá trị
+    // Vị trí tonNay_vu: ĐT=2, TT=36, XX=70 (tham chiếu nội bộ, không dịch chuyển khi thêm cuối)
+    const dt_ah_vu = vuCoD(dt.hoanThanh?.an_huy || [], D).length;
+    const tt_ah_vu = vuCoD(tt.hoanThanh?.an_huy || [], D).length;
+    const xx_ah_vu = vuCoD(xx.hoanThanh?.an_huy || [], D).length;
     const vals = [
       dt_tp_vu, dt_tp_bc, dt_tn_vu, dt_tn_bc,
       C3, C4, C5, C6, C7, C8,
@@ -6142,6 +6155,8 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc) {
       C43,C44,C45,C46,C47, C48,C49,C50,C51,C52, C53,C54,C55, C56,C57, C58,C59,
       xx_tp_vu, xx_tp_bc, xx_tn_vu, xx_tn_bc,
       C60,C61,C62, C63,C64,C65, C66,C67,C68, C69,C70, C71,C72,
+      // Án huỷ (vals 82-87) — thêm cuối để không dịch index cũ
+      dt_ah_vu, dt_ahBc.length, tt_ah_vu, tt_ahBc.length, xx_ah_vu, xx_ahBc.length,
     ];
 
     if (vals.every(v => !v)) continue;
@@ -6316,7 +6331,7 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
   return { tongSoKy: dsKyChot.length, ketQua };
 }
 
-// Header 2 dòng cho sheet Biểu B10 — dòng 1: nhóm, dòng 2: chi tiết (82 cột + 2 đầu)
+// Header 2 dòng cho sheet Biểu B10 — dòng 1: nhóm, dòng 2: chi tiết (88 cột + 2 đầu)
 const B10_HEADER_NHOM = [
   "Điều luật","Tội danh",
   "ĐT Tồn kỳ trước","","ĐT Tồn kỳ này","",
@@ -6343,6 +6358,9 @@ const B10_HEADER_NHOM = [
   "Giai đoạn XX / Đình chỉ","","",
   "Giai đoạn XX / Tạm đình chỉ","",
   "Giai đoạn XX / Toà trả ĐTBS","",
+  "Giai đoạn ĐT / Án huỷ","",
+  "Giai đoạn TT / Án huỷ","",
+  "Giai đoạn XX / Án huỷ","",
 ];
 const B10_HEADER_CHI_TIET = [
   "Điều luật","Tội danh",
@@ -6370,6 +6388,9 @@ const B10_HEADER_CHI_TIET = [
   "Vụ (C66)","BC (C67)","PN (C68)",
   "Vụ (C69)","BC (C70)",
   "Vụ (C71)","BC (C72)",
+  "Vụ (ĐT-AH)","BC (ĐT-AH)",
+  "Vụ (TT-AH)","BC (TT-AH)",
+  "Vụ (XX-AH)","BC (XX-AH)",
 ];
 
 // Xuất Excel báo cáo tháng nhiều sheet, dựng thẳng từ đúng object `baoCao` đã hiển thị trên màn
