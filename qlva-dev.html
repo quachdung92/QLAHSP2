@@ -6412,12 +6412,15 @@ const B10_HEADER_CHI_TIET = [
 async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
   const wb = new ExcelJS.Workbook();
 
-  // ---- Fetch bị can + danh mục tội danh song song ----
-  const [biCanByVu, danhMucSnap] = await Promise.all([
+  // ---- Fetch bị can + danh mục tội danh + kỳ báo cáo song song ----
+  const [biCanByVu, danhMucSnap, kySnap] = await Promise.all([
     fetchBiCanTheoVuIds(collectVuIdsFromBaoCao(baoCao)),
     db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc").get(),
+    db.collection("kybaocao").get(),
   ]);
   const danhMuc = danhMucSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const kyById = new Map(kySnap.docs.map(d => [d.id, d.data().tenKy || d.id]));
+  const tenKyBaoCao = v => kyById.get(v._log?.kyThongKe) || v._log?.kyThongKe || "(chưa gán)";
 
   // ---- Gom danh sách vụ theo loại để dùng cho nhiều sheet sau ----
   const vuMoiMap = new Map();   // vụ "vào" trong kỳ (khởi tố mới / chuyển đến / trả về)
@@ -6699,6 +6702,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
   const GD_VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
   const _ngaySK  = v => [fmtDate(v._log?.ngaySuKien)];
   const _ngaySoQD = v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""];
+  // addSheetVuKy: giống addSheetVu nhưng tự prepend cột "Kỳ TK" — dùng cho mọi sheet VÀO/RA
+  // (trừ DS tồn vì tồn là live, không gắn với 1 kỳ cụ thể)
+  function addSheetVuKy(tenSheet, vuArr, extraHeaders, extraFn) {
+    const h = ["Kỳ TK", ...(extraHeaders || [])];
+    const f = v => [tenKyBaoCao(v), ...((extraFn || (() => []))(v))];
+    addSheetVu(tenSheet, vuArr, h, f);
+  }
 
   // ---- Sheet "Cân đối số liệu" — kiểm chứng cân bằng kế toán mỗi giai đoạn ----
   // Công thức: Tồn đầu + Vào - Ra = Tồn cuối (chốt)
@@ -6765,28 +6775,28 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
 
     // ── VÀO giai đoạn ──
     // Khởi tố trực tiếp (bao gồm tin báo, không bao gồm phục hồi)
-    addSheetVu(`DS khởi tố ${gs}`,
+    addSheetVuKy(`DS khởi tố ${gs}`,
       (d.khoiToTrucTiep||[]).filter(v => v.nguon !== "phuc_hoi_dieu_tra"),
       ["Nguồn", "Ngày SK"],
       v => [NHAN_NGUON[v.nguon] || v.nguon || "Khởi tố mới", fmtDate(v._log?.ngaySuKien)]);
 
     // Phục hồi điều tra/truy tố/xét xử
-    addSheetVu(`DS phục hồi ${gs}`,
+    addSheetVuKy(`DS phục hồi ${gs}`,
       (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
       ["Ngày phục hồi"], _ngaySK);
 
     // Vụ tách ra trong kỳ, đếm vụ tách = số dòng (mỗi dòng là 1 vụ mới xuất hiện)
-    addSheetVu(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);
+    addSheetVuKy(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);
 
     // Chuyển đến từ giai đoạn trước (ĐT là giai đoạn đầu, không có chuyển đến)
     if (gd !== "dieu_tra") {
-      addSheetVu(`DS chuyển đến ${gs}`, d.chuyenDen||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
+      addSheetVuKy(`DS chuyển đến ${gs}`, d.chuyenDen||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
     }
 
     // Trả hồ sơ trở về (XX là giai đoạn cuối, không bị trả về)
     // ĐT = viện trả DTBS; TT = toà trả TTBS
     if (gd !== "xet_xu") {
-      addSheetVu(`DS trả về ${gs}`, d.traVe||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
+      addSheetVuKy(`DS trả về ${gs}`, d.traVe||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
     }
 
     // ── RA: chuyển giai đoạn tiến (từ giai đoạn này lên giai đoạn tiếp theo) ──
@@ -6794,37 +6804,37 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
     // cần thiết để cân đối RA của giai đoạn này mà không phải tra cứu sheet giai đoạn khác.
     if (gd !== "xet_xu") {
       const gsNext = gd === "dieu_tra" ? "TT" : "XX";
-      addSheetVu(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
+      addSheetVuKy(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
     }
     // ── RA: trả hồ sơ (từ giai đoạn này về giai đoạn trước) ──
     // Lưu ý: cùng dữ liệu với "DS trả về {gsPrev}" nhưng từ góc nhìn giai đoạn nguồn.
     if (gd !== "dieu_tra") {
       const gsPrev = gd === "truy_to" ? "ĐT" : "TT";
-      addSheetVu(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
+      addSheetVuKy(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
     }
 
     // ── RA: hoàn thành (kết thúc thụ lý) ──
-    addSheetVu(`DS đã xét xử ${gs}`,
+    addSheetVuKy(`DS đã xét xử ${gs}`,
       d.hoanThanh?.da_xet_xu||[], ["Ngày XXT", "Số bản án"], _ngaySoQD);
 
-    addSheetVu(`DS chuyển đi ${gs}`,
+    addSheetVuKy(`DS chuyển đi ${gs}`,
       d.hoanThanh?.chuyen_di||[], ["Ngày CĐ", "Số QĐ"], _ngaySoQD);
 
-    addSheetVu(`DS tạm đình chỉ ${gs}`,
+    addSheetVuKy(`DS tạm đình chỉ ${gs}`,
       d.hoanThanh?.tam_dinh_chi||[], ["Ngày TĐC", "Số QĐ TĐC"], _ngaySoQD);
 
-    addSheetVu(`DS đình chỉ ${gs}`,
+    addSheetVuKy(`DS đình chỉ ${gs}`,
       d.hoanThanh?.dinh_chi||[], ["Ngày ĐC", "Số QĐ ĐC"], _ngaySoQD);
 
-    addSheetVu(`DS án huỷ ${gs}`,
+    addSheetVuKy(`DS án huỷ ${gs}`,
       d.hoanThanh?.an_huy||[], ["Ngày huỷ", "Số QĐ"], _ngaySoQD);
 
     // Nhập vụ — đếm vụ nhập = số dòng (mỗi dòng là 1 vụ bị nhập vào vụ khác)
-    addSheetVu(`DS nhập vụ ${gs}`, d.nhapVu||[],
+    addSheetVuKy(`DS nhập vụ ${gs}`, d.nhapVu||[],
       ["Ngày nhập", "Mã vụ đích"],
       v => [fmtDate(v._log?.ngaySuKien), v._log?.vuNhapVao || ""]);
 
-    // ── TỒN cuối kỳ (live tại thời điểm xuất) ──
+    // ── TỒN cuối kỳ (live tại thời điểm xuất) — không có kỳ TK vì là trạng thái hiện tại ──
     addSheetVu(`DS tồn ${gs}`, d.tonHienTai||[]);
   }
 
