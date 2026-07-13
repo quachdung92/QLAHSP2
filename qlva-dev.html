@@ -6125,6 +6125,18 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
   );
 }
 
+function timKyTruoc(ky, danhSachKy) {
+  if (!ky?.ngayBatDau) return null;
+  const ms = ky.ngayBatDau?.toMillis?.() ?? new Date(ky.ngayBatDau).getTime();
+  let best = null, bestMs = -Infinity;
+  for (const k of danhSachKy) {
+    if (k.id === ky.id || k.loai === "luu_tru") continue;
+    const kMs = k.ngayBatDau?.toMillis?.() ?? new Date(k.ngayBatDau).getTime();
+    if (kMs < ms && kMs > bestMs) { best = k; bestMs = kMs; }
+  }
+  return best;
+}
+
 function KyBaoCaoModule() {
   const [list, setList] = useState([]);
   const [dangTai, setDangTai] = useState(true);
@@ -6135,6 +6147,15 @@ function KyBaoCaoModule() {
   const [thongBaoTinhLai, setThongBaoTinhLai] = useState(null);
   const [kyChonTongHop, setKyChonTongHop] = useState(new Set());
   const [hienTongHop, setHienTongHop] = useState(false);
+  const [sapXepDesc, setSapXepDesc] = useState(
+    () => localStorage.getItem("qlva_ky_sapxep") !== "asc"
+  );
+
+  const doiSapXep = () => {
+    const moi = !sapXepDesc;
+    setSapXepDesc(moi);
+    localStorage.setItem("qlva_ky_sapxep", moi ? "desc" : "asc");
+  };
 
   const toggleChonTongHop = (id) => setKyChonTongHop(s => {
     const moi = new Set(s);
@@ -6156,6 +6177,7 @@ function KyBaoCaoModule() {
     }
   };
 
+  // Luôn fetch desc để listBaoCao[0] là mới nhất — việc đảo chiều hiển thị chỉ là UI
   useEffect(() => {
     return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
       snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
@@ -6168,6 +6190,11 @@ function KyBaoCaoModule() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold">Kỳ báo cáo</h2>
         <div className="flex items-center gap-2">
+          <button onClick={doiSapXep}
+                  title={sapXepDesc ? "Đang hiển thị mới nhất trên — bấm để đổi sang cũ nhất trên" : "Đang hiển thị cũ nhất trên — bấm để đổi sang mới nhất trên"}
+                  className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 rounded-lg px-3 py-2 text-xs font-medium">
+            {sapXepDesc ? "↓ Mới nhất trên" : "↑ Cũ nhất trên"}
+          </button>
           <button onClick={() => setHienTongHop(true)} disabled={kyChonTongHop.size === 0}
                   className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
             Xem báo cáo tổng hợp{kyChonTongHop.size > 0 ? ` (${kyChonTongHop.size} kỳ)` : ""}
@@ -6180,9 +6207,11 @@ function KyBaoCaoModule() {
       </div>
 
       {(() => {
-        // Tách kỳ lưu trữ ra khỏi chuỗi kỳ báo cáo thông thường
+        // listBaoCao (desc, bất biến) dùng để tra kyTruoc theo thời gian thật.
+        // listHienThi là bản đảo chiều tuỳ theo toggle sapXepDesc để render bảng.
         const listBaoCao = list.filter(k => k.loai !== "luu_tru");
         const listLuuTru = list.filter(k => k.loai === "luu_tru");
+        const listHienThi = sapXepDesc ? listBaoCao : [...listBaoCao].reverse();
 
         const BangKy = ({ kyList, isLuuTru }) => (
           <div className={`bg-white border rounded-xl overflow-hidden mb-3 ${isLuuTru ? "border-amber-200" : "border-slate-200"}`}>
@@ -6199,7 +6228,13 @@ function KyBaoCaoModule() {
                   <th className="text-left p-3">Ngày bắt đầu</th>
                   {!isLuuTru && <th className="text-left p-3">Ngày chốt</th>}
                   {!isLuuTru && <th className="text-left p-3">Trạng thái</th>}
-                  {!isLuuTru && <th className="text-left p-3">Tồn cuối kỳ (ĐT / TT / XX)</th>}
+                  {!isLuuTru && (
+                    <th className="text-left p-3">
+                      Tồn cuối kỳ (ĐT / TT / XX)
+                      {!sapXepDesc && <span className="ml-1 text-amber-500" title="Thứ tự cũ nhất trên: tồn cuối kỳ mỗi dòng = tồn đầu kỳ của dòng PHÍA TRÊN">↑</span>}
+                      {sapXepDesc  && <span className="ml-1 text-slate-400" title="Thứ tự mới nhất trên: tồn cuối kỳ mỗi dòng = tồn đầu kỳ của dòng PHÍA TRÊN">↓</span>}
+                    </th>
+                  )}
                   <th className="text-left p-3"></th>
                 </tr>
               </thead>
@@ -6237,7 +6272,7 @@ function KyBaoCaoModule() {
                                   className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Chốt kỳ</button>
                         )}
                         {!isLuuTru && ky.trangThai === "da_chot" && (
-                          <button onClick={e => { e.stopPropagation(); bamTinhLai(ky, listBaoCao[listBaoCao.findIndex(k => k.id === ky.id) + 1] || null); }}
+                          <button onClick={e => { e.stopPropagation(); bamTinhLai(ky, timKyTruoc(ky, listBaoCao)); }}
                                   disabled={dangTinhLai === ky.id}
                                   title="Tính lại số liệu đã lưu — dùng sau khi có sửa kỳ"
                                   className="text-xs text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50">
@@ -6257,20 +6292,27 @@ function KyBaoCaoModule() {
           <>
             {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
             {!dangTai && list.length === 0 && <div className="text-sm text-slate-400">Chưa có kỳ báo cáo nào.</div>}
-            {listBaoCao.length > 0 && <BangKy kyList={listBaoCao} isLuuTru={false} />}
+            {!sapXepDesc && listBaoCao.length > 0 && (
+              <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
+                <span className="font-bold">Lưu ý thứ tự:</span>
+                Đang hiển thị cũ nhất trên — chuỗi liên tục "tồn cuối kỳ = tồn đầu kỳ kỳ sau"
+                đọc theo chiều <strong>từ dưới lên</strong>. Bấm "Mới nhất trên" để đọc từ trên xuống tự nhiên hơn.
+              </div>
+            )}
+            {listBaoCao.length > 0 && <BangKy kyList={listHienThi} isLuuTru={false} />}
             {listBaoCao.length > 0 && <div className="text-xs text-slate-400 mb-4">Bấm vào 1 dòng để xem báo cáo chi tiết theo giai đoạn.</div>}
             {listLuuTru.length > 0 && <BangKy kyList={listLuuTru} isLuuTru={true} />}
 
             {hienMoKy && <MoKyMoiForm onDong={() => setHienMoKy(false)} onXong={() => setHienMoKy(false)} />}
             {kyDangChot && (
               <ChotKyForm ky={kyDangChot}
-                          kyTruoc={listBaoCao[listBaoCao.findIndex(k => k.id === kyDangChot.id) + 1] || null}
+                          kyTruoc={timKyTruoc(kyDangChot, listBaoCao)}
                           onDong={() => setKyDangChot(null)} onXong={() => setKyDangChot(null)} />
             )}
             {kyDangXem && (
               <KyChiTietModal
                 ky={kyDangXem}
-                kyTruoc={kyDangXem.loai === "luu_tru" ? null : (listBaoCao[listBaoCao.findIndex(k => k.id === kyDangXem.id) + 1] || null)}
+                kyTruoc={kyDangXem.loai === "luu_tru" ? null : timKyTruoc(kyDangXem, listBaoCao)}
                 onDong={() => setKyDangXem(null)}
               />
             )}
@@ -6278,7 +6320,7 @@ function KyBaoCaoModule() {
               <TongHopNhieuKyModal
                 dsKyChon={listBaoCao
                   .filter(k => kyChonTongHop.has(k.id))
-                  .map(ky => ({ ky, kyTruoc: listBaoCao[listBaoCao.findIndex(k2 => k2.id === ky.id) + 1] || null }))
+                  .map(ky => ({ ky, kyTruoc: timKyTruoc(ky, listBaoCao) }))
                   .sort((a, b) => (a.ky.ngayBatDau?.toMillis?.() ?? 0) - (b.ky.ngayBatDau?.toMillis?.() ?? 0))}
                 onDong={() => setHienTongHop(false)}
               />
@@ -6313,8 +6355,26 @@ const TAB_DA_GIAI_QUYET = [
 
 function AnDaGiaiQuyetModule() {
   const [hinhThuc, setHinhThuc] = useState("da_xet_xu");
-  const [list, setList] = useState([]);
+  const [list, setList] = useState([]);       // đầy đủ, chưa lọc kỳ
   const [dangTai, setDangTai] = useState(true);
+  const [dsKy, setDsKy] = useState([]);       // danh sách kybaocao để chọn
+  const [locKy, setLocKy] = useState(null);   // null = chưa khởi tạo; "tat_ca" hoặc kyId
+
+  // Lấy danh sách kỳ, đặt mặc định = kỳ đang mở (hoặc kỳ gần nhất nếu không có kỳ mở)
+  useEffect(() => {
+    return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
+      snap => {
+        const ks = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(k => k.loai !== "luu_tru");
+        setDsKy(ks);
+        setLocKy(prev => {
+          if (prev !== null) return prev; // giữ lựa chọn đã có
+          const mo = ks.find(k => k.trangThai === "dang_mo");
+          return mo ? mo.id : (ks[0]?.id || "tat_ca");
+        });
+      },
+      () => setDsKy([])
+    );
+  }, []);
 
   useEffect(() => {
     setDangTai(true);
@@ -6325,11 +6385,11 @@ function AnDaGiaiQuyetModule() {
         const voiNgay = await Promise.all(rows.map(async v => {
           const logSnap = await db.collection("lichsuChuyenGiaiDoan")
             .where("maVuAn", "==", v.id).where("loaiSuKien", "==", "hoan_thanh").limit(1).get();
-          const ngayQuyetDinh = logSnap.empty ? null : logSnap.docs[0].data().ngaySuKien;
-          return { ...v, ngayQuyetDinh };
+          const ev = logSnap.empty ? null : logSnap.docs[0].data();
+          return { ...v, ngayQuyetDinh: ev?.ngaySuKien ?? null, kyHoanThanh: ev?.kyThongKe ?? null };
         }));
         if (huy) return;
-        voiNgay.sort((a, b) => (b.ngayQuyetDinh?.toMillis?.() || 0) - (a.ngayQuyetDinh?.toMillis?.() || 0));
+        voiNgay.sort((a, b) => (b.ngayQuyetDinh || "").localeCompare(a.ngayQuyetDinh || ""));
         setList(voiNgay);
         setDangTai(false);
       },
@@ -6338,9 +6398,27 @@ function AnDaGiaiQuyetModule() {
     return () => { huy = true; unsub(); };
   }, [hinhThuc]);
 
+  const listHienThi = (locKy && locKy !== "tat_ca")
+    ? list.filter(v => v.kyHoanThanh === locKy)
+    : list;
+
+  const tenKyDangChon = dsKy.find(k => k.id === locKy)?.tenKy;
+
   return (
     <div>
-      <h2 className="text-lg font-semibold mb-4">Án đã giải quyết</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">Án đã giải quyết</h2>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-500">Lọc theo kỳ:</span>
+          <select value={locKy || "tat_ca"} onChange={e => setLocKy(e.target.value)}
+                  className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            <option value="tat_ca">Tất cả</option>
+            {dsKy.map(k => (
+              <option key={k.id} value={k.id}>{k.tenKy}{k.trangThai === "dang_mo" ? " (đang mở)" : ""}</option>
+            ))}
+          </select>
+        </div>
+      </div>
       <div className="flex gap-1 mb-4 w-fit bg-slate-100 rounded-lg p-1">
         {TAB_DA_GIAI_QUYET.map(([v, l]) => (
           <button key={v} onClick={() => setHinhThuc(v)}
@@ -6351,8 +6429,14 @@ function AnDaGiaiQuyetModule() {
       </div>
 
       {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
-      {!dangTai && list.length === 0 && <div className="text-sm text-slate-400">Chưa có vụ nào ở hình thức này.</div>}
-      {list.length > 0 && (
+      {!dangTai && listHienThi.length === 0 && (
+        <div className="text-sm text-slate-400">
+          {locKy && locKy !== "tat_ca"
+            ? `Không có vụ nào ở hình thức này trong ${tenKyDangChon || "kỳ đã chọn"}.`
+            : "Chưa có vụ nào ở hình thức này."}
+        </div>
+      )}
+      {listHienThi.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-500 text-xs">
@@ -6366,7 +6450,7 @@ function AnDaGiaiQuyetModule() {
               </tr>
             </thead>
             <tbody>
-              {list.map((v, i) => (
+              {listHienThi.map((v, i) => (
                 <tr key={v.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"} hover:bg-indigo-50/50`}>
                   <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{hienThiMa(v)}</td>
                   <td className="p-3 font-medium text-slate-800">{v.tenVu}</td>
@@ -6380,7 +6464,11 @@ function AnDaGiaiQuyetModule() {
           </table>
         </div>
       )}
-      <div className="text-xs text-slate-400 mt-3">{list.length} vụ ở hình thức "{NHAN_TRANG_THAI[hinhThuc]}". Vào "Danh sách vụ án" và tìm theo mã vụ để xem chi tiết/lịch sử đầy đủ.</div>
+      <div className="text-xs text-slate-400 mt-3">
+        {listHienThi.length} vụ ở hình thức "{NHAN_TRANG_THAI[hinhThuc]}"
+        {locKy && locKy !== "tat_ca" ? ` trong ${tenKyDangChon}` : " (tất cả kỳ)"}.
+        Vào "Danh sách vụ án" và tìm theo mã vụ để xem chi tiết/lịch sử đầy đủ.
+      </div>
     </div>
   );
 }
