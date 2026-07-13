@@ -1713,14 +1713,12 @@ function parseWorkbookDanhSachAn(wb) {
   }
   const ws = wb.Sheets[TEN_SHEET_DANH_SACH_AN];
   // range: 1 nghĩa là bỏ qua đúng 1 dòng đầu (dòng 1 = header), đọc từ dòng 2 trở xuống — đã
-  // kiểm chứng lại bằng SheetJS thật, không phải chỗ hay sai. Tách rawRows/rows để lúc rows rỗng
-  // có thể phân biệt 2 tình huống hay gặp: (a) sheet trống hẳn từ dòng 2 (rawRows cũng rỗng — có
-  // thể do người dùng hiểu nhầm quy ước dòng 2 của mẫu DSAT/DSBCT cũ, để dữ liệu ở dòng 1 rồi bị
-  // hệ thống coi là header và bỏ qua), (b) có dòng nhưng cột A (Mã vụ) trống hết (rawRows có dữ
-  // liệu, rows rỗng — có thể do lệch cột). Cảnh báo chung chung "không có dòng dữ liệu" trước đây
-  // không đủ để tự chẩn đoán, đã từng khiến người dùng làm đúng hướng dẫn vẫn không hiểu vì sao.
+  // kiểm chứng lại bằng SheetJS thật, không phải chỗ hay sai.
   const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, range: 1, defval: null });
-  const rows = rawRows.filter(r => r && r[0] != null && String(r[0]).trim() !== "");
+  // Một dòng được coi là "có dữ liệu" nếu có Tên vụ HOẶC Ngày QĐ KTVA — KHÔNG bắt buộc "Mã vụ"
+  // (cột A) nữa (2026-07-13). Trước đây bắt buộc cột A khiến việc import án nguồn từ NGOÀI hệ
+  // thống (chưa hề có mã vụ, đúng nhu cầu tính năng này) đọc ra 0 dòng dù dữ liệu hợp lệ đầy đủ.
+  const rows = rawRows.filter(r => r && ((r[1] != null && String(r[1]).trim() !== "") || r[8] != null));
   if (rows.length === 0) {
     if (rawRows.length === 0) {
       warnings.push(
@@ -1730,37 +1728,71 @@ function parseWorkbookDanhSachAn(wb) {
       );
     } else {
       warnings.push(
-        `Đọc được ${rawRows.length} dòng từ dòng 2 trở xuống, nhưng không dòng nào có "Mã vụ" ` +
-        `(cột A, cột đầu tiên) — kiểm tra lại cột A của các dòng dữ liệu có bị để trống, hoặc dữ ` +
-        `liệu có bị lệch sang cột khác (VD do lỡ chèn/xoá nhầm 1 cột) không.`
+        `Đọc được ${rawRows.length} dòng từ dòng 2 trở xuống, nhưng không dòng nào có "Tên vụ" ` +
+        `hay "Ngày QĐ KTVA" — kiểm tra lại 2 cột đó có bị để trống, hoặc dữ liệu có bị lệch sang ` +
+        `cột khác (VD do lỡ chèn/xoá nhầm 1 cột) không.`
       );
     }
     return { vuAnList: [], warnings };
   }
 
+  // Nhóm các dòng thuộc cùng 1 vụ (nhiều bị can = nhiều dòng): ưu tiên "Mã vụ" (cột A) nếu có —
+  // đúng hành vi cũ, cho vụ đã có mã sẵn (từ hệ thống khác/đã cấp trước). Nếu "Mã vụ" bỏ trống
+  // (án nguồn ngoài hệ thống, CHƯA có mã) thì nhóm theo cặp "Số QĐ KTVA" + "Ngày QĐ KTVA" — đúng
+  // nghiệp vụ: các dòng cùng Số/Ngày QĐ KTVA là nhiều bị can của CÙNG 1 vụ. Vụ nhóm theo QĐ KTVA
+  // sẽ được tự sinh mã hệ thống mới (`maNoiSinh`, qua `sinhNhieuMaVuAn`) lúc ghi vào CSDL — y hệt
+  // cách `ThemVuAnForm` cấp mã cho vụ tạo tay, không cần "Mã vụ" ở cột A mới tạo được vụ.
   const vuMap = new Map();
   rows.forEach((r, idx) => {
     const soDong = idx + 2;
-    const maVu = String(r[0]).trim();
-    if (!vuMap.has(maVu)) {
+    const maVu = (r[0] != null ? String(r[0]).trim() : "");
+    const soQdKtva = (r[7] || "").toString().trim();
+    const ngayQdKtva = parseExcelDate(r[8]);
+    let groupKey;
+    if (maVu) groupKey = `MA::${maVu.toLowerCase()}`;
+    else if (ngayQdKtva) groupKey = `QD::${soQdKtva.toLowerCase()}::${fmtDate(ngayQdKtva)}`;
+    else groupKey = `LOI::${idx}`; // không có cả Mã vụ lẫn Ngày QĐ KTVA — không gộp nhầm với dòng khác
+
+    if (!vuMap.has(groupKey)) {
       const giaiDoan = timTuNhan(NHAN_GIAI_DOAN, r[2]);
-      if (!giaiDoan) warnings.push(`Dòng ${soDong}: không nhận diện được Giai đoạn "${r[2] ?? ""}" của vụ ${maVu} — mặc định Điều tra.`);
+      if (!giaiDoan) warnings.push(`Dòng ${soDong}: không nhận diện được Giai đoạn "${r[2] ?? ""}" — mặc định Điều tra.`);
       const trangThai = timTuNhan(NHAN_TRANG_THAI, r[3]) || "dang_giai_quyet";
       const nguon = timTuNhan(NHAN_NGUON, r[6]) || "an_khoi_to_moi";
-      const ngayQdKtva = parseExcelDate(r[8]);
-      const ngayQuyetDinh = parseExcelDate(r[4]);
+      let ngayQuyetDinh = parseExcelDate(r[4]);
       const tenVu = (r[1] || "").toString().trim();
+      const ksvChinh = (r[9] || "").toString().trim();
 
+      // Bắt buộc tối thiểu: Số QĐ KTVA + Ngày QĐ KTVA + KSV chính — đủ để nhập nhanh 1 vụ mới
+      // phát sinh, các thông tin còn thiếu khác (Tên vụ, Điều luật, đơn vị thụ lý...) bổ sung
+      // sau qua nút "Sửa thông tin vụ án" (ở cả panel chi tiết Danh sách vụ án lẫn màn Giao nhận
+      // hồ sơ). Tên vụ KHÔNG còn bắt buộc — nếu bỏ trống, tự đặt tên tạm từ bị can đầu tiên (xem
+      // đoạn điền tên tạm cuối hàm), giống quy ước "Họ tên BC đại diện + và đồng phạm" của mẫu
+      // DSAT cũ, thay vì để trống "(chưa đặt tên)" khó nhận biết trên danh sách.
       const thieu = [];
-      if (!tenVu) thieu.push("thiếu Tên vụ");
-      if (!ngayQdKtva) thieu.push("thiếu/sai Ngày QĐ KTVA");
-      if (trangThai !== "dang_giai_quyet" && !ngayQuyetDinh) thieu.push(`Trạng thái "${r[3]}" nhưng thiếu Ngày quyết định`);
+      if (!soQdKtva) thieu.push("thiếu Số QĐ KTVA");
+      if (!ngayQdKtva) thieu.push("thiếu/sai Ngày QĐ KTVA (bắt buộc để nhóm bị can + tự sinh mã vụ)");
+      if (!ksvChinh) thieu.push("thiếu KSV chính");
 
-      vuMap.set(maVu, {
+      // Vụ đã có kết quả (Trạng thái khác "Đang giải quyết") nhưng thiếu Ngày quyết định — dữ
+      // liệu cũ hay thiếu khoản này (theo yêu cầu người dùng 2026-07-13) — KHÔNG chặn import nữa,
+      // tạm dùng ngày ước tính = Ngày QĐ KTVA + 4 tháng, kèm ghi rõ trong ghi chú của vụ để cán bộ
+      // biết mà cập nhật lại ngày thật sau. Chỉ áp dụng được khi đã có Ngày QĐ KTVA (nếu thiếu cả
+      // 2 thì vụ vẫn bị chặn ở nhánh "thiếu/sai Ngày QĐ KTVA" phía trên, không có gì để cộng thêm).
+      let ghiChuTuDong = "";
+      let ngayQuyetDinhUocTinh = false;
+      if (trangThai !== "dang_giai_quyet" && !ngayQuyetDinh && ngayQdKtva) {
+        ngayQuyetDinh = new Date(ngayQdKtva);
+        ngayQuyetDinh.setMonth(ngayQuyetDinh.getMonth() + 4);
+        ngayQuyetDinhUocTinh = true;
+        ghiChuTuDong = `⚠ Ngày quyết định là NGÀY ƯỚC TÍNH (= Ngày QĐ KTVA + 4 tháng, do dữ liệu nguồn thiếu) — cần cập nhật lại ngày thật khi có.`;
+        warnings.push(`Dòng ${soDong}: thiếu Ngày quyết định (Trạng thái "${r[3]}") — tạm dùng ngày ước tính ${fmtDate(ngayQuyetDinh)} (= Ngày QĐ KTVA + 4 tháng), cần cập nhật lại sau.`);
+      }
+
+      vuMap.set(groupKey, {
         maVu, tenVu, coQuanThuLy: giaiDoan || "dieu_tra", trangThai,
-        ngayQuyetDinh, soQuyetDinh: (r[5] || "").toString().trim(), nguon,
-        soQdKtva: (r[7] || "").toString().trim(), ngayQdKtva,
-        ksvChinh: (r[9] || "").toString().trim(), dtvCbdt: (r[10] || "").toString().trim(),
+        ngayQuyetDinh, ngayQuyetDinhUocTinh, soQuyetDinh: (r[5] || "").toString().trim(), nguon,
+        soQdKtva, ngayQdKtva, ghiChu: ghiChuTuDong,
+        ksvChinh, dtvCbdt: (r[10] || "").toString().trim(),
         dieuLuat: (r[11] || "").toString().trim(), hanDieuTra: parseExcelDate(r[12]),
         biCanList: [], _loi: thieu.length ? thieu.join("; ") : null,
       });
@@ -1774,7 +1806,7 @@ function parseWorkbookDanhSachAn(wb) {
       let bienPhap = "tai_ngoai";
       if (bienPhapRaw.includes("tạm giam")) bienPhap = "giam";
       else if (!bienPhapRaw && hanTG) bienPhap = "giam";
-      vuMap.get(maVu).biCanList.push({
+      vuMap.get(groupKey).biCanList.push({
         hoTen: hoTenBC,
         namSinh: typeof r[15] === "number" ? r[15] : (r[15] ? Number(r[15]) || null : null),
         gioiTinh: gioiTinhRaw === "nữ" || gioiTinhRaw === "nu" ? "nu" : "nam",
@@ -1784,6 +1816,14 @@ function parseWorkbookDanhSachAn(wb) {
         bienPhapNganChan: bienPhap, hanTamGiam: bienPhap === "giam" ? hanTG : null,
         dangVien: (r[22] != null && String(r[22]).trim() !== "") ? "co" : "khong",
       });
+    }
+  });
+
+  // Tên vụ bỏ trống nhưng đã có bị can → tự đặt tên tạm từ bị can đầu tiên (không tính vào lỗi,
+  // chỉ là tên hiển thị tạm — người dùng bổ sung tên chính thức sau nếu cần).
+  vuMap.forEach(v => {
+    if (!v.tenVu && v.biCanList.length > 0) {
+      v.tenVu = v.biCanList[0].hoTen + (v.biCanList.length > 1 ? " và đồng phạm" : "");
     }
   });
 
@@ -1854,8 +1894,10 @@ function ImportExcelModule() {
         const moi = [], trung = [], loi = [];
         vuAnList.forEach(v => {
           if (v._loi) { loi.push(v); return; }
-          const idTrungMa = byMa.get(v.maVu.toLowerCase());
-          if (idTrungMa) { trung.push({ ...v, _lyDoTrung: `Trùng mã vụ với vụ đã có (${idTrungMa})` }); return; }
+          if (v.maVu) {
+            const idTrungMa = byMa.get(v.maVu.toLowerCase());
+            if (idTrungMa) { trung.push({ ...v, _lyDoTrung: `Trùng mã vụ với vụ đã có (${idTrungMa})` }); return; }
+          }
           if (v.soQdKtva && v.ngayQdKtva) {
             const idTrungQd = byQdNgay.get(`${v.soQdKtva.trim().toLowerCase()}__${fmtDate(v.ngayQdKtva)}`);
             if (idTrungQd) { trung.push({ ...v, _lyDoTrung: `Trùng Số/Ngày QĐ KTVA với vụ đã có (${idTrungQd})` }); return; }
@@ -1902,7 +1944,7 @@ function ImportExcelModule() {
           dieuLuat: v.dieuLuat, vuanToiDanh: [], vuanDieuLuat: [],
           mucDoNghiemTrong: "nghiem_trong",
           noiChuyenDen: "", nhapVaoVu: null, vuGoc: null, soDemTach: 0,
-          anDiem: false, uyQuyenXetXu: "", phienToaRutKN: false, ghiChu: "",
+          anDiem: false, uyQuyenXetXu: "", phienToaRutKN: false, ghiChu: v.ghiChu || "",
           soKetLuanDieuTra: "", soCaoTrang: "", soBanAn: "",
           ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
           nguonNhapLieu: "import_excel",
@@ -1910,6 +1952,9 @@ function ImportExcelModule() {
         if (v.trangThai !== "dang_giai_quyet") {
           vuData.ngayQuyetDinh = v.ngayQuyetDinh;
           vuData.kyHoanThanh = kyId;
+          // Đánh dấu để "Án đã giải quyết" hiện đỏ + "Sửa thông tin vụ án" biết mà xoá cờ này khi
+          // người dùng đã sửa lại ngày thật — xem AnDaGiaiQuyetModule/SuaVuAnForm.
+          if (v.ngayQuyetDinhUocTinh) vuData.ngayQuyetDinhUocTinh = true;
           const field = fieldSoQuyetDinhTrenVuAn(v.trangThai);
           if (field) vuData[field] = v.soQuyetDinh || "";
         }
@@ -1927,7 +1972,8 @@ function ImportExcelModule() {
           batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
             maVuAn: maNoiSinh, loaiSuKien: "hoan_thanh", hinhThucHoanThanh: v.trangThai,
             soQuyetDinh: v.soQuyetDinh || "", ngaySuKien: v.ngayQuyetDinh || v.ngayQdKtva,
-            kyThongKe: kyId, ghiChu: ghiChuNhap, nguoiThucHien, thoiDiemGhi: now,
+            kyThongKe: kyId, ghiChu: v.ghiChu ? `${ghiChuNhap} ${v.ghiChu}` : ghiChuNhap,
+            nguoiThucHien, thoiDiemGhi: now,
           }));
           ops++;
         }
@@ -1974,9 +2020,18 @@ function ImportExcelModule() {
       <p className="text-sm text-slate-500 mb-6">
         Tải lên file Excel có sheet <code className="bg-slate-100 px-1 rounded">{TEN_SHEET_DANH_SACH_AN}</code> —
         đúng mẫu "Danh sách án" mà hệ thống xuất ra ở Kỳ báo cáo (1 dòng/bị can, vụ nhiều bị can
-        lặp lại nhiều dòng). Hệ thống tự nhận diện vụ đã có trong hệ thống (theo mã vụ, hoặc theo
-        Số + Ngày QĐ KTVA nếu mã khác) để bỏ qua, tránh ghi trùng/lỗi xung đột — chỉ những vụ thật
-        sự mới mới được đưa vào xem trước và cho phép ghi vào hệ thống.
+        lặp lại nhiều dòng). Cột "Mã vụ" (cột A) có thể để TRỐNG nếu là án nguồn từ ngoài hệ
+        thống chưa có mã — hệ thống tự cấp mã hệ thống mới cho vụ đó, và nhóm các dòng cùng 1 vụ
+        theo Số + Ngày QĐ KTVA giống nhau thay vì theo mã (nên với vụ chưa có mã, Số/Ngày QĐ KTVA
+        phải giống hệt nhau trên mọi dòng bị can của vụ đó). <b>Chỉ bắt buộc 3 cột: Số QĐ KTVA,
+        Ngày QĐ KTVA, KSV chính</b> — các thông tin khác (Tên vụ, Điều luật, đơn vị thụ lý...) để
+        trống được, bổ sung sau qua nút "Sửa thông tin vụ án" (Tên vụ để trống sẽ tự đặt tạm theo
+        tên bị can đầu tiên). Vụ đã có Trạng thái kết quả (VD Tạm đình chỉ) mà thiếu "Ngày quyết
+        định" cũng KHÔNG bị chặn — hệ thống tự tạm dùng ngày ước tính (= Ngày QĐ KTVA + 4 tháng)
+        và ghi rõ trong ghi chú của vụ để cập nhật lại ngày thật sau. Hệ thống tự nhận diện vụ đã
+        có trong hệ thống (theo mã vụ nếu có điền, hoặc theo Số + Ngày QĐ KTVA) để bỏ qua, tránh
+        ghi trùng/lỗi xung đột — chỉ những vụ thật sự mới mới được đưa vào xem trước và cho phép
+        ghi vào hệ thống.
       </p>
 
       {status !== "writing" && status !== "done" && (
@@ -2037,7 +2092,7 @@ function ImportExcelModule() {
                   <tbody>
                     {ketQuaDoc.moi.slice(0,8).map((v,i) => (
                       <tr key={i} className="border-t border-slate-100">
-                        <td className="p-2">{v.maVu}</td>
+                        <td className="p-2">{v.maVu || <span className="text-slate-400 italic">(tự sinh mã)</span>}</td>
                         <td className="p-2">{v.tenVu}</td>
                         <td className="p-2">{NHAN_GIAI_DOAN[v.coQuanThuLy]}</td>
                         <td className="p-2">{NHAN_TRANG_THAI[v.trangThai]}</td>
@@ -6762,6 +6817,7 @@ function AnDaGiaiQuyetModule() {
   const [dsKy, setDsKy] = useState([]);       // danh sách kybaocao để chọn — gồm cả kỳ lưu trữ án cũ
   const [locKy, setLocKy] = useState(null);   // null = chưa khởi tạo; "tat_ca" hoặc kyId
   const [tuKhoa, setTuKhoa] = useState("");
+  const [selectedId, setSelectedId] = useState(null); // vụ đang chọn — hiện chi tiết ở panel phải
 
   // Lấy danh sách kỳ, đặt mặc định = kỳ đang mở (hoặc kỳ gần nhất nếu không có kỳ mở).
   // Gồm cả kỳ lưu trữ án cũ (loai: "luu_tru") để chọn lọc — vụ án cũ nhập lại qua Import Excel
@@ -6820,8 +6876,12 @@ function AnDaGiaiQuyetModule() {
 
   const tenKyDangChon = dsKy.find(k => k.id === locKy)?.tenKy;
 
+  // Bố cục 2 cột giống hệt module Danh sách vụ án (DanhSachPanel + ChiTietPanel dùng chung) —
+  // panel trái flex-1 là danh sách chính, panel phải cố định 420px hiện chi tiết + mọi hành động
+  // (kể cả Sửa thông tin/Xóa vụ án) khi bấm vào 1 dòng, thay vì chỉ có 1 nút "Sửa thông tin" đơn
+  // lẻ như bản trước — dùng lại nguyên `ChiTietPanel`, không viết lại logic hiển thị chi tiết.
   return (
-    <div>
+    <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-4 gap-4">
         <h2 className="text-lg font-semibold whitespace-nowrap">Án đã giải quyết</h2>
         <div className="flex items-center gap-2 flex-1 justify-end">
@@ -6850,48 +6910,59 @@ function AnDaGiaiQuyetModule() {
         ))}
       </div>
 
-      {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
-      {!dangTai && listHienThi.length === 0 && (
-        <div className="text-sm text-slate-400">
-          {tuKhoa.trim()
-            ? "Không có vụ nào khớp từ khoá tìm kiếm."
-            : locKy && locKy !== "tat_ca"
-              ? `Không có vụ nào ở hình thức này trong ${tenKyDangChon || "kỳ đã chọn"}.`
-              : "Chưa có vụ nào ở hình thức này."}
+      <div className="flex-1 flex gap-4 min-h-0">
+        <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
+          {dangTai && <div className="p-4 text-sm text-slate-400">Đang tải...</div>}
+          {!dangTai && listHienThi.length === 0 && (
+            <div className="p-4 text-sm text-slate-400">
+              {tuKhoa.trim()
+                ? "Không có vụ nào khớp từ khoá tìm kiếm."
+                : locKy && locKy !== "tat_ca"
+                  ? `Không có vụ nào ở hình thức này trong ${tenKyDangChon || "kỳ đã chọn"}.`
+                  : "Chưa có vụ nào ở hình thức này."}
+            </div>
+          )}
+          {listHienThi.length > 0 && (
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead className="bg-slate-100 text-slate-500 text-xs sticky top-0 z-10">
+                  <tr>
+                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Mã vụ</th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Tên vụ</th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">KSV chính</th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Giai đoạn khi giải quyết</th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Ngày quyết định</th>
+                    {hinhThuc === "chuyen_di" && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Nơi chuyển đến</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {listHienThi.map((v, i) => (
+                    <tr key={v.id} onClick={() => setSelectedId(v.id)}
+                        className={`cursor-pointer border-b border-l-4 border-slate-100 ${
+                          selectedId === v.id ? "bg-indigo-50 border-l-indigo-500"
+                            : i % 2 === 0 ? "bg-white border-l-transparent hover:bg-slate-50" : "bg-slate-50/70 border-l-transparent hover:bg-slate-100"
+                        }`}>
+                      <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{hienThiMa(v)}</td>
+                      <td className="p-3 font-medium text-slate-800">{v.tenVu}</td>
+                      <td className="p-3">{v.ksvChinh || "—"}</td>
+                      <td className="p-3"><Badge mau={MAU_GIAI_DOAN[v.coQuanThuLy]}>{NHAN_GIAI_DOAN[v.coQuanThuLy] || v.coQuanThuLy}</Badge></td>
+                      <td className={`p-3 text-xs ${v.ngayQuyetDinhUocTinh ? "text-red-600 font-medium" : ""}`}
+                          title={v.ngayQuyetDinhUocTinh ? "Ngày ước tính (= Ngày QĐ KTVA + 4 tháng) do import thiếu dữ liệu — cần cập nhật lại ngày thật." : ""}>
+                        {fmtDate(v.ngayQuyetDinh)}{v.ngayQuyetDinhUocTinh ? " ⚠" : ""}
+                      </td>
+                      {hinhThuc === "chuyen_di" && <td className="p-3 text-xs">{v.noiChuyenDen || "—"}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="text-xs text-slate-400 px-3 py-2 border-t border-slate-100">
+            {listHienThi.length} vụ ở hình thức "{NHAN_TRANG_THAI[hinhThuc]}"
+            {locKy && locKy !== "tat_ca" ? ` trong ${tenKyDangChon}` : " (tất cả kỳ)"}.
+          </div>
         </div>
-      )}
-      {listHienThi.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-500 text-xs">
-              <tr>
-                <th className="text-left p-3">Mã vụ</th>
-                <th className="text-left p-3">Tên vụ</th>
-                <th className="text-left p-3">KSV chính</th>
-                <th className="text-left p-3">Giai đoạn khi giải quyết</th>
-                <th className="text-left p-3">Ngày quyết định</th>
-                {hinhThuc === "chuyen_di" && <th className="text-left p-3">Nơi chuyển đến</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {listHienThi.map((v, i) => (
-                <tr key={v.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"} hover:bg-indigo-50/50`}>
-                  <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{hienThiMa(v)}</td>
-                  <td className="p-3 font-medium text-slate-800">{v.tenVu}</td>
-                  <td className="p-3">{v.ksvChinh || "—"}</td>
-                  <td className="p-3"><Badge mau={MAU_GIAI_DOAN[v.coQuanThuLy]}>{NHAN_GIAI_DOAN[v.coQuanThuLy] || v.coQuanThuLy}</Badge></td>
-                  <td className="p-3 text-xs">{fmtDate(v.ngayQuyetDinh)}</td>
-                  {hinhThuc === "chuyen_di" && <td className="p-3 text-xs">{v.noiChuyenDen || "—"}</td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div className="text-xs text-slate-400 mt-3">
-        {listHienThi.length} vụ ở hình thức "{NHAN_TRANG_THAI[hinhThuc]}"
-        {locKy && locKy !== "tat_ca" ? ` trong ${tenKyDangChon}` : " (tất cả kỳ)"}.
-        Vào "Danh sách vụ án" và tìm theo mã vụ để xem chi tiết/lịch sử đầy đủ.
+        <ChiTietPanel vuAnId={selectedId} onDoiSelected={setSelectedId} />
       </div>
     </div>
   );

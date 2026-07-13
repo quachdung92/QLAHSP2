@@ -233,6 +233,87 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       script Python dùng `openpyxl` rồi xoá script — nếu cần sửa mẫu, tạo lại tương tự, đừng coi
       file `.xlsx` này là nguồn sự thật của cấu trúc cột, nguồn thật luôn là
       `parseWorkbookDanhSachAn` trong `qlva.html`).
+      **Fix: "Mã vụ" (cột A) không còn bắt buộc (2026-07-13, nhánh `import-excel-fix`)** — bug
+      thật gặp phải: người dùng import 1 file 760 dòng đúng mẫu, hệ thống báo "không dòng nào có
+      Mã vụ" dù dữ liệu hợp lệ. Nguyên nhân: bản đầu tiên bắt buộc cột A khác rỗng mới coi là 1
+      dòng dữ liệu (`rows = rawRows.filter(r => r[0] != null...)`) — sai với đúng nhu cầu thực tế
+      là NHẬP ÁN NGUỒN TỪ NGOÀI HỆ THỐNG, tức các vụ CHƯA TỪNG có mã vụ. Đã sửa 2 chỗ:
+      (1) tiêu chí "dòng có dữ liệu" đổi thành có Tên vụ HOẶC Ngày QĐ KTVA (không cần cột A);
+      (2) khoá NHÓM nhiều dòng bị can về cùng 1 vụ đổi từ luôn dùng `maVu` sang: có Mã vụ thì
+      dùng Mã vụ (hành vi cũ, cho vụ đã có mã sẵn), KHÔNG có Mã vụ thì dùng cặp Số+Ngày QĐ KTVA
+      giống hệt nhau (đúng yêu cầu nghiệp vụ người dùng nêu rõ: "số QĐ và ngày QĐ KTVA giống nhau
+      là 1 vụ nhiều dòng do nhiều bị can"). Dòng vừa thiếu Mã vụ vừa thiếu Ngày QĐ KTVA thì KHÔNG
+      gộp chung với dòng khác cũng thiếu (khoá riêng theo index dòng, tránh gộp nhầm 2 vụ không
+      liên quan chỉ vì cùng thiếu thông tin). `vuData.maNganhCap = v.maVu || null` ở bước ghi đã
+      tự đúng từ trước (không cần sửa) — vụ nhóm theo QĐ KTVA vẫn được `sinhNhieuMaVuAn` cấp
+      `maNoiSinh` bình thường, tính năng "tự sinh mã vụ án mới cho vụ chưa có mã" thực chất đã có
+      sẵn từ bản đầu, chỉ là dữ liệu chưa bao giờ lọt qua được bước đọc sheet. Bước đối chiếu
+      trùng cũng thêm guard `if (v.maVu) {...}` trước khi tra `byMa` để tránh lookup vô nghĩa khi
+      `maVu` rỗng. Đã kiểm chứng lại bằng file giả lập thật (Node + thư viện `xlsx` thật, không
+      chỉ đọc code) trước khi mirror sang `qlva-dev.html` — xem lịch sử trò chuyện lúc sửa để biết
+      cách dựng lại test tương tự nếu cần kiểm tra lại sau này.
+      **Nới lỏng tiếp: chỉ bắt buộc Số QĐ KTVA + Ngày QĐ KTVA + KSV chính (2026-07-13, cùng
+      nhánh)** — theo yêu cầu người dùng: nhập nhanh án mới với tối thiểu 3 trường này là đủ, các
+      trường còn thiếu (Tên vụ, Điều luật, đơn vị thụ lý, Giai đoạn/Trạng thái/Nguồn...) bổ sung
+      dần sau qua nút "Sửa thông tin vụ án" (đã có sẵn ở cả panel chi tiết Danh sách vụ án lẫn màn
+      Giao nhận hồ sơ — xem 2 mục đó). Bỏ hẳn ràng buộc "thiếu Tên vụ" khỏi `_loi`, thêm ràng buộc
+      mới "thiếu Số QĐ KTVA" và "thiếu KSV chính". Tên vụ bỏ trống: sau khi gom xong toàn bộ dòng
+      của 1 vụ (vòng `vuMap.forEach` cuối `parseWorkbookDanhSachAn`, chạy SAU vòng nhóm dòng chính
+      vì cần biết đủ `biCanList` mới đặt tên được), tự đặt tên tạm `"<tên bị can đầu tiên> và đồng
+      phạm"` nếu có >1 bị can, chỉ tên bị can đó nếu đúng 1 bị can — giống hệt quy ước
+      "Họ tên bị can đại diện" mà mẫu DSAT cũ dùng để tự đặt tên, chỉ khác là tính lúc đọc file
+      thay vì lúc ghi. Vụ hoàn toàn không có bị can VÀ không có Tên vụ thì giữ nguyên rỗng (không
+      tính lỗi) — hiển thị "(chưa đặt tên)" như panel chi tiết đã tự xử lý sẵn cho `tenVu` rỗng.
+      Đã kiểm chứng lại bằng file giả lập thật (2 vụ: 1 vụ tối giản chỉ có 3 trường bắt buộc + 2 bị
+      can → tự đặt tên đúng, không lỗi; 1 vụ thiếu KSV → đúng bị gắn `_loi`) trước khi mirror sang
+      `qlva-dev.html`.
+      **Vụ đã có kết quả nhưng thiếu Ngày quyết định: hết chặn, tự dùng ngày ước tính (2026-07-13,
+      cùng nhánh)** — theo yêu cầu người dùng, cụ thể là dữ liệu Tạm đình chỉ cũ hay thiếu khoản
+      này. Bỏ nhánh `thieu.push("Trạng thái ... thiếu Ngày quyết định")` (từng chặn hẳn, đưa vào
+      nhóm lỗi) — thay bằng: khi Trạng thái ≠ "Đang giải quyết" VÀ thiếu Ngày quyết định VÀ đã có
+      Ngày QĐ KTVA (bắt buộc nên luôn có, trừ khi vụ đã bị `_loi` vì lý do khác) → tự gán
+      `ngayQuyetDinh = ngayQdKtva + 4 tháng` (`Date.setMonth`, tự cuốn năm đúng khi tràn tháng),
+      gắn field mới `v.ghiChu` (con dấu ⚠ + giải thích rõ đây là ngày ước tính, cần cập nhật lại)
+      VÀ đẩy 1 dòng cảnh báo riêng vào `warnings` để hiện ngay trên bảng xem trước trước khi ghi.
+      `v.ghiChu` được set vào field `ghiChu` của chính `vuan` doc lúc ghi (`ghiVaoCoSoDuLieu`,
+      trước đó hardcode `""`), VÀ nối thêm vào `ghiChu` của sự kiện `hoan_thanh` (nối sau
+      `ghiChuNhap` cố định "Nhập qua Import Excel...") — để cả 2 nơi tra cứu (thông tin vụ + lịch
+      sử) đều thấy cảnh báo, không chỉ 1 chỗ. CHỈ áp dụng field `ghiChu` mới này cho các vụ THẬT
+      SỰ dùng ngày ước tính (rỗng nếu ngày quyết định có sẵn từ file) — không đụng tới field
+      `ghiChu` cho các trường hợp khác. Đã kiểm chứng lại bằng file giả lập thật (vụ Tạm đình chỉ,
+      QĐ KTVA 01/01/2026, không có Ngày quyết định → tự tính đúng 01/05/2026, không còn `_loi`,
+      có cảnh báo trong `warnings`) trước khi mirror sang `qlva-dev.html`.
+      **Cờ `ngayQuyetDinhUocTinh` + hiện đỏ trong Án đã giải quyết (2026-07-13, cùng nhánh)** —
+      thêm field boolean riêng `v.ngayQuyetDinhUocTinh` lúc parse (tách khỏi việc suy luận từ
+      `ghiChu` — rõ ràng hơn, không lệ thuộc string), set `vuData.ngayQuyetDinhUocTinh = true` lúc
+      ghi (chỉ set field này khi `true`, không set `false` — field không tồn tại trên các vụ khác,
+      tránh rác field cho toàn bộ dữ liệu tạo qua đường khác). `AnDaGiaiQuyetModule` đọc cờ này để
+      tô đỏ + thêm icon ⚠ + tooltip ở đúng ô "Ngày quyết định" khi `true`. **Cờ này KHÔNG tự động
+      xoá** khi sửa các trường khác qua `SuaVuAnForm` (xem mục dưới) — vì `SuaVuAnForm` không có ô
+      sửa `ngayQuyetDinh` (theo đúng mục đích thiết kế ban đầu của form: "chỉ sửa thông tin
+      thường... không đổi giai đoạn/trạng thái"). Nghĩa là hiện tại CHƯA có đường sửa
+      `ngayQuyetDinh` trực tiếp trong UI — vụ dùng ngày ước tính sẽ mãi hiện đỏ cho tới khi có ai
+      sửa trực tiếp trên Firestore, hoặc tới khi bổ sung 1 UI riêng cho việc này (chưa làm, chưa
+      có yêu cầu rõ ràng — nếu cần, cân nhắc thêm ô "Ngày quyết định" có điều kiện vào
+      `SuaVuAnForm` khi `vuAn.trangThai !== "dang_giai_quyet"`, và khi lưu thì xoá cờ
+      `ngayQuyetDinhUocTinh`).
+      **Đổi sang bố cục 2 cột giống hệt Danh sách vụ án (2026-07-13, cùng nhánh)** — thay vì 1
+      bảng full-width kèm nút "✎ Sửa thông tin" đơn lẻ (bản chỉ mở được `SuaVuAnForm`), module này
+      giờ dùng đúng layout `DanhSachPanel`/`ChiTietPanel` đã có: panel trái `flex-1` là bảng danh
+      sách (đổi từ `<table>` full-width `overflow-hidden` sang khung `flex flex-col min-h-0` +
+      `<thead className="... sticky top-0 z-10">` bên trong `<div className="flex-1 overflow-auto">`
+      — đúng pattern cuộn nội bộ đã dùng ở `DanhSachPanel`, xem mục "Bố cục cuộn trang"), bấm 1
+      dòng (`onClick={() => setSelectedId(v.id)}`, style `border-l-4` + `bg-indigo-50` khi đang
+      chọn — COPY nguyên pattern từ `DanhSachPanel`) hiện panel phải cố định 420px là **chính
+      `ChiTietPanel`** (dùng lại y nguyên component đã có ở Danh sách vụ án, KHÔNG viết lại) — tự
+      động có đầy đủ: bảng thông tin, danh sách bị can, lịch sử, nút "In mã QR"/"Sửa thông tin"/
+      "Xóa vụ án", VÀ các nút hành động nghiệp vụ phù hợp trạng thái hiện tại của vụ (do
+      `ChiTietPanel` tự ẩn/hiện theo `vuAn.trangThai`/`coQuanThuLy` — vụ đã xong hẳn như Đã xét xử
+      chỉ còn "In mã QR"/"Sửa thông tin"/"Xóa vụ án", riêng tab Tạm đình chỉ còn thêm cả nút "Phục
+      hồi" vì `ChiTietPanel` có điều kiện `vuAn.trangThai === "tam_dinh_chi"` sẵn — đúng ý nghĩa
+      nghiệp vụ, không cần code thêm gì). State `vuAnDangSua`/`SuaVuAnForm` gọi trực tiếp của bản
+      trước đã bỏ, thay bằng `selectedId` + `<ChiTietPanel vuAnId={selectedId}
+      onDoiSelected={setSelectedId} />` y hệt cách `DanhSachVuAnModule` ghép 2 panel.
 - [x] Các hành động nghiệp vụ trên 1 vụ án (nút ở panel chi tiết, đều qua `ModalXacNhanKy`
       dùng chung + hook `useHanhDongVuAn`): Chuyển giai đoạn, Trả hồ sơ, Gia hạn điều tra,
       Hoàn thành vụ án (gộp cả 5 hình thức da_xet_xu/chuyen_di/tam_dinh_chi/dinh_chi/an_huy —
