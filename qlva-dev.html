@@ -6614,74 +6614,74 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
   ];
   themSheetDanhSach(wb, "Tổng hợp báo cáo", ["", "Điều tra", "Truy tố", "Xét xử"], tongHopHang, [42, 12, 12, 12]);
 
-  // ---- Sheet 3: DS mới (flat — gộp tất cả cách "vào" giai đoạn trong kỳ) ----
-  // Cột "Loại vào" giải thích cách vào; Filter để tách khởi tố mới / chuyển đến / trả về / tách vụ
-  const dsMoiRows = [];
-  for (const gd of THU_TU_GIAI_DOAN) {
-    const d = baoCao[gd].ds;
-    const entries = [
-      ...(d.khoiToTrucTiep||[]).map(v => ({...v, _loai: NHAN_NGUON[v.nguon]||v.nguon||"Khởi tố mới"})),
-      ...(d.tachVu||[]).map(v => ({...v, _loai: "Vụ tách ra"})),
-      ...(d.chuyenDen||[]).map(v => ({...v, _loai: "Chuyển đến từ ĐT/TT"})),
-      ...(d.traVe||[]).map(v => ({...v, _loai: "Trả về từ TT/XX"})),
-    ];
-    for (const vu of entries) {
-      const base = [...vuBaseRow(vu), NHAN_GIAI_DOAN[gd], vu._loai, fmtDate(vu._log?.ngaySuKien)];
-      const bcArr = biCanByVu[vu.id] || [];
-      if (bcArr.length === 0) { dsMoiRows.push([...base, ...BC_EMPTY]); }
-      else { bcArr.forEach((bc, i) => dsMoiRows.push([...base, ...bcCellsRow(bc, i+1)])); }
-    }
+  // ---- Sheets chi tiết — mỗi loại sự kiện × mỗi giai đoạn là 1 sheet riêng ----
+  // Cấu trúc: VÀO (khởi tố/phục hồi/tách/chuyển đến/trả về) + RA (xét xử/chuyển đi/TĐC/ĐC/huỷ/nhập) + TỒN
+  // Không gộp chung nhiều loại vào 1 sheet — đếm rows trên từng sheet = số liệu của loại đó.
+  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn) {
+    extraHeaders = extraHeaders || [];
+    extraFn = extraFn || (() => []);
+    themSheetDanhSach(wb, tenSheet,
+      [...VU_H, ...extraHeaders, ...BC_H],
+      buildFlatVuBc(vuArr, extraFn),
+      [...VU_W, ...extraHeaders.map(() => 12), ...BC_W], 0);
   }
-  themSheetDanhSach(wb, "DS mới",
-    [...VU_H, "Giai đoạn vào","Loại vào","Ngày SK", ...BC_H],
-    dsMoiRows, [...VU_W, 10, 22, 12, ...BC_W], 0);
+  const GD_VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
+  const _ngaySK  = v => [fmtDate(v._log?.ngaySuKien)];
+  const _ngaySoQD = v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""];
 
-  // ---- Sheet 4-5: Trả hồ sơ điều tra bổ sung (flat) ----
-  themSheetDanhSach(wb, "DS toà trả DTBS",
-    [...VU_H, "Ngày trả", ...BC_H],
-    buildFlatVuBc(baoCao.truy_to.ds.traVe, v => [fmtDate(v._log?.ngaySuKien)]),
-    [...VU_W, 12, ...BC_W], 0);
-  themSheetDanhSach(wb, "DS viện trả DTBS",
-    [...VU_H, "Ngày trả", ...BC_H],
-    buildFlatVuBc(baoCao.dieu_tra.ds.traVe, v => [fmtDate(v._log?.ngaySuKien)]),
-    [...VU_W, 12, ...BC_W], 0);
-
-  // ---- Sheet 6: DS giải quyết (flat — gộp tất cả hình thức, lọc bằng cột Hình thức) ----
-  const dsGQRows_bt = [];
   for (const gd of THU_TU_GIAI_DOAN) {
-    const d = baoCao[gd].ds;
-    const nhom = [
-      ...HOAN_THANH_TRUONG_TONG.flatMap(ht => (d.hoanThanh[ht]||[]).map(v => ({...v, _ht: NHAN_TRANG_THAI[ht]||ht}))),
-      ...(d.chuyenDi||[]).map(v => ({...v, _ht: "Chuyển sang GĐ tiếp"})),
-      ...(d.traDi||[]).map(v => ({...v, _ht: "Trả hồ sơ GĐ trước"})),
-      ...(d.nhapVu||[]).map(v => ({...v, _ht: "Nhập vào vụ khác"})),
-    ];
-    for (const vu of nhom) {
-      const base = [...vuBaseRow(vu), NHAN_GIAI_DOAN[gd], vu._ht, fmtDate(vu._log?.ngaySuKien)];
-      const bcArr = biCanByVu[vu.id] || [];
-      if (bcArr.length === 0) { dsGQRows_bt.push([...base, ...BC_EMPTY]); }
-      else { bcArr.forEach((bc, i) => dsGQRows_bt.push([...base, ...bcCellsRow(bc, i+1)])); }
+    const gs = GD_VIET_TAT[gd];  // "ĐT" / "TT" / "XX"
+    const d  = baoCao[gd].ds;
+
+    // ── VÀO giai đoạn ──
+    // Khởi tố trực tiếp (bao gồm tin báo, không bao gồm phục hồi)
+    addSheetVu(`DS khởi tố ${gs}`,
+      (d.khoiToTrucTiep||[]).filter(v => v.nguon !== "phuc_hoi_dieu_tra"),
+      ["Nguồn", "Ngày SK"],
+      v => [NHAN_NGUON[v.nguon] || v.nguon || "Khởi tố mới", fmtDate(v._log?.ngaySuKien)]);
+
+    // Phục hồi điều tra/truy tố/xét xử
+    addSheetVu(`DS phục hồi ${gs}`,
+      (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
+      ["Ngày phục hồi"], _ngaySK);
+
+    // Vụ tách ra trong kỳ, đếm vụ tách = số dòng (mỗi dòng là 1 vụ mới xuất hiện)
+    addSheetVu(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);
+
+    // Chuyển đến từ giai đoạn trước (ĐT là giai đoạn đầu, không có chuyển đến)
+    if (gd !== "dieu_tra") {
+      addSheetVu(`DS chuyển đến ${gs}`, d.chuyenDen||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
     }
-  }
-  themSheetDanhSach(wb, "DS giải quyết",
-    [...VU_H, "Giai đoạn GQ","Hình thức","Ngày GQ", ...BC_H],
-    dsGQRows_bt, [...VU_W, 10, 22, 12, ...BC_W], 0);
 
-  // ---- Sheet 7: DS nhập vào vụ khác (flat) ----
-  themSheetDanhSach(wb, "DS nhập vào vụ khác",
-    [...VU_H, "Giai đoạn","Ngày nhập","Mã vụ đích", ...BC_H],
-    buildFlatVuBc(
-      THU_TU_GIAI_DOAN.flatMap(gd => baoCao[gd].ds.nhapVu),
-      v => [NHAN_GIAI_DOAN[v.coQuanThuLy]||"", fmtDate(v._log?.ngaySuKien), v._log?.vuNhapVao||""],
-    ),
-    [...VU_W, 10, 12, 20, ...BC_W], 0);
+    // Trả hồ sơ trở về (XX là giai đoạn cuối, không bị trả về)
+    // ĐT = viện trả DTBS; TT = toà trả TTBS
+    if (gd !== "xet_xu") {
+      addSheetVu(`DS trả về ${gs}`, d.traVe||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
+    }
 
-  // ---- Sheet 8-10: DS tồn theo giai đoạn (flat, tách riêng mỗi giai đoạn 1 sheet) ----
-  for (const gd of THU_TU_GIAI_DOAN) {
-    themSheetDanhSach(wb, `DS tồn ${NHAN_GIAI_DOAN[gd]}`,
-      [...VU_H, ...BC_H],
-      buildFlatVuBc(baoCao[gd].ds.tonHienTai),
-      [...VU_W, ...BC_W], 0);
+    // ── RA khỏi giai đoạn ──
+    addSheetVu(`DS đã xét xử ${gs}`,
+      d.hoanThanh?.da_xet_xu||[], ["Ngày XXT", "Số bản án"], _ngaySoQD);
+
+    addSheetVu(`DS chuyển đi ${gs}`,
+      d.hoanThanh?.chuyen_di||[], ["Ngày CĐ", "Số QĐ"], _ngaySoQD);
+
+    addSheetVu(`DS tạm đình chỉ ${gs}`,
+      d.hoanThanh?.tam_dinh_chi||[], ["Ngày TĐC", "Số QĐ TĐC"], _ngaySoQD);
+
+    addSheetVu(`DS đình chỉ ${gs}`,
+      d.hoanThanh?.dinh_chi||[], ["Ngày ĐC", "Số QĐ ĐC"], _ngaySoQD);
+
+    addSheetVu(`DS án huỷ ${gs}`,
+      d.hoanThanh?.an_huy||[], ["Ngày huỷ", "Số QĐ"], _ngaySoQD);
+
+    // Nhập vụ — đếm vụ nhập = số dòng (mỗi dòng là 1 vụ bị nhập vào vụ khác)
+    addSheetVu(`DS nhập vụ ${gs}`, d.nhapVu||[],
+      ["Ngày nhập", "Mã vụ đích"],
+      v => [fmtDate(v._log?.ngaySuKien), v._log?.vuNhapVao || ""]);
+
+    // ── TỒN cuối kỳ (live tại thời điểm xuất) ──
+    addSheetVu(`DS tồn ${gs}`, d.tonHienTai||[]);
   }
 
   const buffer = await wb.xlsx.writeBuffer();

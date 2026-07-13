@@ -543,12 +543,15 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       xuất Excel khác trong app, vì bản SheetJS CDN đang dùng ở đây là bản miễn phí KHÔNG ghi
       được style dù có set `cell.s`/`cellStyles:true` — đã kiểm chứng bằng cách giải nén file
       `.xlsx` xuất ra xem `cellXfs` luôn rỗng. ExcelJS ghi style thật, dùng cho **wrap text mặc
-      định trên mọi ô** của báo cáo tháng cho dễ đọc, xem hàm `themSheetDanhSach`) — 12 sheet:
-      Tổng hợp báo cáo (dump đúng bảng trên màn hình) + DS án mới + DS toà trả DTBS + DS viện trả
-      DTBS + DS đã xét xử/chuyển đi/tạm đình chỉ/đình chỉ/án huỷ mới (mỗi hình thức 1 sheet, gộp
-      cả 3 giai đoạn) + DS nhập vào vụ khác + **DS án tồn TÁCH RIÊNG 1 sheet/giai đoạn** (không
-      gộp chung 1 sheet như bản đầu tiên — theo yêu cầu người dùng, dễ lọc/in riêng từng giai
-      đoạn hơn). Toàn bộ danh sách dựng từ CHÍNH object `baoCao` mà `tinhBaoCaoKy` đã trả về
+      định trên mọi ô** của báo cáo tháng cho dễ đọc, xem hàm `themSheetDanhSach`) — **~40 sheet
+      (2026-07-13: tái cấu trúc thành 1 sheet/loại sự kiện/giai đoạn)**: Biểu B10 + TK tội danh +
+      Tổng hợp báo cáo, sau đó cho mỗi giai đoạn ĐT/TT/XX: DS khởi tố, DS phục hồi, DS vụ tách,
+      DS chuyển đến (TT/XX), DS trả về (ĐT/TT), DS đã xét xử, DS chuyển đi, DS tạm đình chỉ, DS
+      đình chỉ, DS án huỷ, DS nhập vụ, DS tồn. Không còn "DS mới" gộp chung hay "DS giải quyết"
+      gộp chung — mỗi loại là 1 sheet riêng, đếm rows của sheet = số liệu của loại đó, giúp
+      kiểm chứng từng con số trên sheet Tổng hợp bằng cách đếm trực tiếp trên sheet con.
+      Helper nội bộ `addSheetVu(tenSheet, vuArr, extraHeaders, extraFn)`. Toàn bộ danh sách dựng
+      từ CHÍNH object `baoCao` mà `tinhBaoCaoKy` đã trả về
       (field `ds` trong mỗi `baoCao[gd]`, thu thập song song lúc tính số liệu qua
       `vuAnTuLogDocs`) — không tính lại riêng — nên số dòng mỗi sheet danh sách LUÔN khớp đúng số
       trên sheet Tổng hợp và trên báo cáo đang xem trên màn hình. Nếu sửa công thức
