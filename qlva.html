@@ -3384,6 +3384,13 @@ function MenuHanhDongNhanh({ vuAn, onMoHanhDong }) {
 function SuaVuAnForm({ vuAn, onDong, onXong }) {
   const dsCanBo = useDanhSachCanBo();
   const danhMucTD = useDanhMucToiDanh();
+  // Vụ đã hoàn thành (mọi trạng thái trừ đang giải quyết) mới cho sửa ngày/số QĐ giải quyết —
+  // đây là dữ liệu Án đã giải quyết cần, thường thiếu/sai do import cũ (xem cờ
+  // ngayQuyetDinhUocTinh) hoặc do hoàn thành trước khi có field riêng cho từng hình thức.
+  const laDaHoanThanh = vuAn.trangThai !== "dang_giai_quyet";
+  const fieldSoQD = laDaHoanThanh ? fieldSoQuyetDinhTrenVuAn(vuAn.trangThai) : null;
+  const [ngayQuyetDinh, setNgayQuyetDinh] = useState(toInputDate(vuAn.ngayQuyetDinh));
+  const [soQuyetDinhGQ, setSoQuyetDinhGQ] = useState(fieldSoQD ? (vuAn[fieldSoQD] || "") : "");
   const [maNganhCap, setMaNganhCap] = useState(vuAn.maNganhCap || "");
   const [tenVu, setTenVu] = useState(vuAn.tenVu || "");
   const [nguon, setNguon] = useState(vuAn.nguon || "an_khoi_to_moi");
@@ -3438,6 +3445,15 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
         dieuLuat: vuanToiDanh.filter(t => t.trim()).join("; ") || null,
         vuanToiDanh: vuanToiDanh.filter(t => t.trim()),
         vuanDieuLuat: vuanToiDanh.map((_, i) => vuanDieuLuat[i] || ""),
+        // Chỉ ghi ngày/số QĐ giải quyết khi vụ đã hoàn thành (mục "Án đã giải quyết") — vụ đang
+        // giải quyết không có khối này trên form nên không đụng tới field ngayQuyetDinh của nó.
+        ...(laDaHoanThanh ? {
+          ngayQuyetDinh: ngayQuyetDinh ? fromInputDate(ngayQuyetDinh) : null,
+          ...(fieldSoQD ? { [fieldSoQD]: soQuyetDinhGQ.trim() } : {}),
+          // Người dùng vừa tự xác nhận/sửa ngày giải quyết thật — xoá cờ "ngày ước tính" (nếu có)
+          // để Án đã giải quyết thôi tô đỏ cảnh báo dòng này.
+          ngayQuyetDinhUocTinh: false,
+        } : {}),
         ngayCapNhat: new Date(), nguoiCapNhatCuoi: nguoiThucHien,
       });
       addToast("Đã lưu thông tin vụ án");
@@ -3460,6 +3476,27 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
           Chỉ sửa thông tin thường (KSV, đơn vị, ghi chú...). Muốn đổi giai đoạn/trạng thái, dùng các nút hành động ở panel chi tiết.
         </div>
         {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+
+        {laDaHoanThanh && (
+          <div className="border border-slate-200 rounded-lg p-3 mb-3 bg-slate-50">
+            <div className="text-xs text-slate-500 mb-2 font-medium">
+              Thông tin giải quyết ({NHAN_TRANG_THAI[vuAn.trangThai] || vuAn.trangThai})
+              {vuAn.ngayQuyetDinhUocTinh && (
+                <span className="text-red-600 font-normal ml-1">
+                  — ngày hiện đang là NGÀY ƯỚC TÍNH (do import thiếu dữ liệu), sửa lại ngày thật rồi Lưu để xoá cảnh báo.
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Truong nhan="Ngày giải quyết">
+                <NhapNgay value={ngayQuyetDinh} onChange={e => setNgayQuyetDinh(e.target.value)} className={oInput} />
+              </Truong>
+              <Truong nhan={NHAN_SO_QUYET_DINH_HOAN_THANH[vuAn.trangThai] || "Số QĐ giải quyết"}>
+                <input value={soQuyetDinhGQ} onChange={e => setSoQuyetDinhGQ(e.target.value)} className={oInput} />
+              </Truong>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-4 gap-3 mb-3">
           <Truong nhan="Mã ngành cấp (nếu có)">

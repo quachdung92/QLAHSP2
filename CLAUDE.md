@@ -307,15 +307,15 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       `ghiChu` — rõ ràng hơn, không lệ thuộc string), set `vuData.ngayQuyetDinhUocTinh = true` lúc
       ghi (chỉ set field này khi `true`, không set `false` — field không tồn tại trên các vụ khác,
       tránh rác field cho toàn bộ dữ liệu tạo qua đường khác). `AnDaGiaiQuyetModule` đọc cờ này để
-      tô đỏ + thêm icon ⚠ + tooltip ở đúng ô "Ngày quyết định" khi `true`. **Cờ này KHÔNG tự động
-      xoá** khi sửa các trường khác qua `SuaVuAnForm` (xem mục dưới) — vì `SuaVuAnForm` không có ô
-      sửa `ngayQuyetDinh` (theo đúng mục đích thiết kế ban đầu của form: "chỉ sửa thông tin
-      thường... không đổi giai đoạn/trạng thái"). Nghĩa là hiện tại CHƯA có đường sửa
-      `ngayQuyetDinh` trực tiếp trong UI — vụ dùng ngày ước tính sẽ mãi hiện đỏ cho tới khi có ai
-      sửa trực tiếp trên Firestore, hoặc tới khi bổ sung 1 UI riêng cho việc này (chưa làm, chưa
-      có yêu cầu rõ ràng — nếu cần, cân nhắc thêm ô "Ngày quyết định" có điều kiện vào
-      `SuaVuAnForm` khi `vuAn.trangThai !== "dang_giai_quyet"`, và khi lưu thì xoá cờ
-      `ngayQuyetDinhUocTinh`).
+      tô đỏ + thêm icon ⚠ + tooltip ở đúng ô "Ngày quyết định" khi `true`.
+      **Sửa được ngay trong `SuaVuAnForm` (2026-07-14)** — thêm khối "Thông tin giải quyết" (chỉ
+      hiện khi `vuAn.trangThai !== "dang_giai_quyet"`, đặt ngay dưới ô cảnh báo "chỉ sửa thông tin
+      thường" đầu form) gồm **Ngày giải quyết** (`ngayQuyetDinh`) + ô Số QĐ giải quyết có nhãn động
+      theo hình thức (dùng lại `NHAN_SO_QUYET_DINH_HOAN_THANH[vuAn.trangThai]`, field ghi qua
+      `fieldSoQuyetDinhTrenVuAn(vuAn.trangThai)` — xem mục Án đã giải quyết ở trên). Lưu form này
+      **luôn xoá cờ `ngayQuyetDinhUocTinh`** (set `false`) bất kể có đổi ngày hay không — coi việc
+      mở form sửa thông tin giải quyết là hành động "đã xác nhận lại" của người dùng, đúng gợi ý
+      đã ghi ở đây trước đó.
       **Đổi sang bố cục 2 cột giống hệt Danh sách vụ án (2026-07-13, cùng nhánh)** — thay vì 1
       bảng full-width kèm nút "✎ Sửa thông tin" đơn lẻ (bản chỉ mở được `SuaVuAnForm`), module này
       giờ dùng đúng layout `DanhSachPanel`/`ChiTietPanel` đã có: panel trái `flex-1` là bảng danh
