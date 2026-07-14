@@ -1,0 +1,23 @@
+{
+  "projects": {
+    "default": "qlahsp2",
+    "prod": "qlahsp2",
+    "test": "qlahs-test"
+  },
+  "targets": {
+    "qlahsp2": {
+      "hosting": {
+        "prod": [
+          "qlahsp2"
+        ]
+      }
+    },
+    "qlahs-test": {
+      "hosting": {
+        "test": [
+          "qlahs-test"
+        ]
+      }
+    }
+  }
+}

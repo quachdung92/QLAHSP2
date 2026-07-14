@@ -353,6 +353,37 @@ không tải được, phục vụ qua server tĩnh cục bộ đơn giản (VD 
 compile JSX ngay trong trình duyệt lúc tải trang, nên lỗi cú pháp JSX sẽ hiện ở console (F12),
 không có bước biên dịch riêng để bắt lỗi trước.
 
+## Deploy lên Firebase Hosting (2026-07-14)
+
+App được host công khai qua Firebase Hosting, tách biệt 2 project như đã có sẵn cho Firestore
+(xem "Môi trường dev/test" nếu có ở nhánh khác): **production** (`qlahsp2`) tại
+**https://qlahsp2.web.app**, và **test** (`qlahs-test`) tại **https://qlahs-test.web.app**.
+
+**KHÔNG host thẳng thư mục gốc repo** — `seed-tool.html` (có hàm xoá sạch dữ liệu production) và
+tài liệu nội bộ (`CLAUDE.md`, `schema_csdl_...md`) sẽ bị lộ công khai qua URL nếu làm vậy. Thay
+vào đó dùng 2 thư mục riêng, mỗi thư mục CHỈ chứa đúng 1 file `index.html` — bản sao của app:
+- `public-prod/index.html` = bản sao `qlva.html` (trỏ Firebase config production `qlahsp2`)
+- `public-test/index.html` = bản sao `qlva-dev.html` (trỏ Firebase config test `qlahs-test`)
+
+Cấu hình 2 hosting target trong `firebase.json` (mảng `hosting`, mỗi phần tử 1 `target`) +
+`.firebaserc` (mục `targets` ánh xạ target → project + site, mục `projects` đặt alias `prod`/
+`test` để deploy bằng `--project prod`/`--project test` thay vì gõ project ID đầy đủ).
+
+**2 thư mục `public-prod`/`public-test` là bản sao TĨNH sinh ra lúc deploy, KHÔNG commit vào git**
+(nằm trong `.gitignore` — tự tạo lại từ `qlva.html`/`qlva-dev.html` mỗi lần chạy script, tránh
+commit 2 bản sao ~500KB trùng lặp rồi bị lệch ngay khi sửa file gốc). Dùng script có sẵn thay vì
+làm tay từng bước, script tự `mkdir` thư mục nếu chưa có (VD sau khi clone lại repo):
+- **`deploy.sh`** (chạy qua Git Bash/terminal, ví dụ Claude Code dùng lệnh này) — `./deploy.sh
+  test` / `./deploy.sh prod` / `./deploy.sh all` (all = test trước, production sau). Tự copy đúng
+  file nguồn vào đúng thư mục `public-*` rồi gọi `firebase deploy --only hosting:<target>
+  --project <alias>` tương ứng — không cần nhớ tên project/target/thư mục mỗi lần.
+- **`deploy.bat`** (Dũng dùng — double-click chạy trực tiếp trên Windows, không cần gõ lệnh) —
+  hiện menu chọn 1/2/3 (test / production / cả hai), riêng nhánh production bắt gõ `YES` xác nhận
+  trước khi deploy vì đây là dữ liệu thật, mọi người đang dùng.
+
+Nếu sau này đổi cấu trúc file (VD app tách thành nhiều file, không còn 1 file HTML duy nhất),
+nhớ cập nhật lại logic copy trong cả 2 script, đừng để lệch nhau.
+
 ## Kiến trúc code trong `qlva.html`
 
 Toàn bộ code nằm trong 1 thẻ `<script type="text/babel">`, chia theo khối comment

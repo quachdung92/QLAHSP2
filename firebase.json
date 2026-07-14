@@ -2,5 +2,17 @@
   "firestore": {
     "indexes": "firestore.indexes.json",
     "rules": "firestore.rules"
-  }
+  },
+  "hosting": [
+    {
+      "target": "prod",
+      "public": "public-prod",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+    },
+    {
+      "target": "test",
+      "public": "public-test",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+    }
+  ]
 }
