@@ -400,9 +400,29 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       này không query thêm `bican` nên không tra được tội danh gốc từng bị can) /KSV chính/KSV hỗ
       trợ/ghi chú — cùng pattern với ô tìm kiếm đã có ở module Danh sách vụ án (`DanhSachVuAnModule`,
       dòng ~3899-3913), lọc qua `useMemo` kết hợp với lọc kỳ hiện có, không thêm query Firestore
-      mới (lọc trên `list` đã tải sẵn theo `hinhThuc`).
+      mới (lọc trên `list` đã tải sẵn theo `hinhThuc`). **Thêm 4 cột + tìm theo Số QĐ KTVA
+      (2026-07-14)** — bảng giờ có thêm **Số QĐ KTVA**/**Ngày KTVA** (đọc thẳng `v.soQdKtva`/
+      `v.ngayQdKtva` có sẵn trên `vuan`) và **Số QĐ giải quyết**/**Ngày giải quyết** (cột "Ngày
+      quyết định" cũ đổi tên hiển thị thành "Ngày giải quyết", cùng 1 dữ liệu `v.ngayQuyetDinh`).
+      "Số QĐ giải quyết" cần field mới trên `vuan` vì trước đây **chỉ "Đã xét xử" có field riêng
+      trên `vuan`** (`soBanAn`, set qua `fieldSoQuyetDinhTrenVuAn`) — 4 hình thức còn lại
+      (Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ) chỉ lưu "Số QĐ" trên sự kiện log, không có trên
+      `vuan`, nên không đọc thẳng được như cột trong bảng này cần (đọc thẳng `vuan`, không query
+      log — xem lý do ở đầu module). Đã tổng quát hoá `fieldSoQuyetDinhTrenVuAn`/thêm hằng
+      `FIELD_SO_QD_HOAN_THANH` để **cả 5 hình thức đều có field riêng trên `vuan`**
+      (`soBanAn`/`soQuyetDinhChuyenDi`/`soQuyetDinhTamDinhChi`/`soQuyetDinhDinhChi`/
+      `soQuyetDinhAnHuy`) — `HoanThanhVuAnModal` và `ImportExcelModule` đều dùng chung hàm này nên
+      tự động ghi đúng field cho mọi hình thức từ nay về sau, không cần sửa gì thêm ở 2 nơi đó.
+      **Vụ đã hoàn thành TRƯỚC ngày sửa này** (mọi hình thức trừ Đã xét xử) sẽ không có field mới
+      → cột "Số QĐ giải quyết" hiện "—", vẫn tra được qua cột "Số QĐ" ở bảng Lịch sử (Nhật ký thao
+      tác) của vụ đó như trước — chưa có công cụ backfill hàng loạt cho việc này, nếu cần thì làm
+      tương tự cách backfill `ngayQuyetDinh`/`kyHoanThanh` đã có ("Cập nhật index" ở module Cài
+      đặt). Ô tìm kiếm tự do thêm khớp `v.soQdKtva`.
 - [x] Module Kỳ báo cáo (mở kỳ mới có chặn trùng kỳ đang mở, chốt kỳ tự snapshot tồn cuối kỳ
-      theo từng cơ quan vào `tonCuoiKy`). Bấm vào 1 dòng kỳ mở ra **báo cáo chi tiết theo giai
+      theo từng cơ quan vào `tonCuoiKy`). **Có nhãn "🚧 Đang xây dựng" cạnh tiêu đề (2026-07-14)**
+      — do B10 vẫn đang trong quá trình sửa/kiểm chứng số liệu (xem mục "Trạng thái Biểu B10" ở
+      đầu file), nhắc người dùng số liệu module này có thể còn thay đổi; gỡ nhãn này khi thấy đã
+      ổn định. Bấm vào 1 dòng kỳ mở ra **báo cáo chi tiết theo giai
       đoạn** (`KyChiTietModal`/`tinhBaoCaoKy`): tồn đầu kỳ (lấy từ `tonCuoiKy` của kỳ liền
       trước) + số mới + đã giải quyết + tồn cuối kỳ + số vụ/số bị can đang tồn hiện tại — luôn
       tính trực tiếp từ `lichsuChuyenGiaiDoan` theo đúng nguyên tắc "log là nguồn sự thật duy
