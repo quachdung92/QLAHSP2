@@ -2,57 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## ĐANG LÀM DỞ (nhánh `bieu-10-audit`, tạm dừng 2026-07-13 — đọc mục này trước khi tiếp tục)
+## Trạng thái Biểu B10 (audit 2026-07-13 → đã sửa xong, để tham khảo lịch sử)
 
-**Đã xong và đã commit/push trên nhánh này** (kế thừa từ `import-excel-fix`):
-- Import Excel: bỏ bắt buộc Mã vụ/Tên vụ, tự ước tính ngày quyết định thiếu, Án đã giải quyết đổi
-  bố cục 2 cột — xem "Tiến độ đã code" bên dưới, mục Import Excel/Án đã giải quyết.
-- Fix bug `tinhLaiBaoCaoLuu` ghi đè `tonCuoiKyTheoTD`/`tonCuoiBiCan` bằng dữ liệu LIVE thay vì giữ
-  cố định — xem mục "Kỳ báo cáo" bên dưới, đoạn "Bug đã sửa (2026-07-13) — B10 hiện tồn kỳ trước
-  = tồn kỳ này".
-- Công cụ `TaiTaoTonTheoTDTool` ("Sửa lại tồn cuối kỳ theo tội danh (Biểu B10)" trong Cài đặt →
-  Import Excel) — tính lại đúng `tonCuoiKyTheoTD` cho TẤT CẢ kỳ đã chốt theo thứ tự thời gian từ
-  log, sửa dữ liệu đã bị bug trên ghi sai trước đó. Đã kiểm chứng phần toán tích luỹ bằng test độc
-  lập (4 kịch bản), CHƯA kiểm chứng bằng dữ liệu Firestore thật — **việc cần làm tiếp theo #1: mở
-  `qlva-dev.html`, bấm nút này, xem kỹ log/cảnh báo trả về, đối chiếu vài kỳ bằng tay trước khi
-  chạy trên `qlva.html` (production)**.
-- Thêm dropdown lọc riêng theo KSV vào Án đã giải quyết + Giao nhận hồ sơ (tìm thủ công).
+Nhánh `bieu-10-audit` từng audit ra 3 bug ở Biểu B10 (loaiKhoiTo import hardcode sai, thiếu xử lý
+`an_huy`, sheet "TK tội danh" nhóm tội danh không đồng bộ với B10). Cả 3 đã được sửa và commit:
+`1e87144` (loaiKhoiTo import + an_huy thiếu trong C3/C33/C60), `57ef5bb` (C4/C34/C61 thiếu an_huy
++ chuẩn hoá nhóm tội danh sheet TK tội danh qua `getDL()`/`normDL()`), `b8f3fdd` (B10 đếm vụ theo
+tội danh CHÍNH — 1 vụ = 1 dòng), `d73c384` (tội danh chính của vụ dùng BC `loaiKhoiTo ===
+"ban_dau"` thay vì `BC[0]`, đồng bộ giữa B10 và TK tội danh). Sau đó còn tái cấu trúc thêm: mỗi
+loại sự kiện × giai đoạn thành 1 sheet riêng trong Xuất Excel báo cáo tháng (`531e4f0`), thêm cột
+Đếm vụ (`465e0e6`), thêm 4 sheet RA chuyển giai đoạn + sheet Cân đối số liệu (`4a8e9eb`), thêm cột
+Kỳ TK vào các sheet DS vào/ra (`6370775`) — xem "Xuất Excel báo cáo tháng" bên dưới cho mô tả hiện
+tại của các sheet này.
 
-**Đã audit xong (agent nghiên cứu, KHÔNG phải code đã sửa) — 2 bug CONFIRMED cần sửa tiếp, việc
-cần làm tiếp theo #2 và #3:**
-
-1. **Bug nhập liệu (import) — mức độ ảnh hưởng CAO**: `ImportExcelModule`'s bị can write (hàm
-   `ghiVaoCoSoDuLieu`, đoạn tạo doc `bican`) đang hardcode `loaiKhoiTo: "khoi_to_moi"` — đây là 1
-   giá trị KHÔNG HỢP LỆ (chỉ có `"ban_dau"`/`"bo_sung"` là hợp lệ, xem hàm `tinhLoaiKhoiTo`/
-   `tinhLoaiKhoiToTheoNgay`, có vẻ bị nhầm với field `nguon` có giá trị `"an_khoi_to_moi"`). Hậu
-   quả: Biểu B10 lọc bị can theo đúng `=== "ban_dau"` mới tính vào khối nhân khẩu học (tuổi/trình
-   độ/dân tộc/đảng viên/quốc tịch/tái phạm, cột C7-C24 cho Điều tra và tương tự Truy tố/Xét xử) —
-   MỌI bị can nhập qua Import Excel bị loại khỏi khối này một cách ÂM THẦM (các chỗ khác trong app
-   hiển thị bị can import vẫn đúng là "Ban đầu" vì dùng check ngược `=== "bo_sung" ? ... : "Ban
-   đầu"`, chỉ B10 dùng check chặt `=== "ban_dau"` mới lộ ra sai khác). Đây gần như chắc chắn là
-   nguyên nhân chính khiến B10 "không khớp báo cáo khác" mà người dùng thấy — **sửa: đổi
-   `loaiKhoiTo: "khoi_to_moi"` thành gọi đúng `tinhLoaiKhoiTo`/`tinhLoaiKhoiToTheoNgay`, hoặc gán
-   cứng `"ban_dau"` nếu Excel gốc không phân biệt được ban đầu/bổ sung**.
-2. **Bug tính báo cáo — mức độ ảnh hưởng TRUNG BÌNH/CAO**: `tinhBieu10` hoàn toàn KHÔNG xử lý hình
-   thức hoàn thành `an_huy` (án huỷ) — không trừ khỏi "Tổng thụ lý" (C3/C33/C60 chỉ trừ `nhapVu` +
-   `hoanThanh.chuyen_di`, thiếu `an_huy`), và KHÔNG có cột riêng nào cho án huỷ ở cả 3 khối giai
-   đoạn (khác với đình chỉ/tạm đình chỉ/đã xét xử đều có cột riêng). Trong khi "Tổng hợp báo cáo"
-   và sheet "TK tội danh" đều tính đủ cả 5 hình thức hoàn thành gồm án huỷ. Vụ án huỷ vẫn hiện
-   trên các báo cáo khác nhưng "biến mất" trên B10 — **sửa: thêm cột/logic án huỷ vào `tinhBieu10`,
-   tương tự cách đình chỉ/tạm đình chỉ đã có**.
-3. (Ưu tiên thấp hơn, chưa xác nhận bằng dữ liệu thật) Sheet "TK tội danh" nhóm theo
-   `bc.toiDanh[0]` thô (không chuẩn hoá qua `getDL()`/`normDL()`/alias BLHS 2015→2025 như B10) —
-   2 sheet trong CÙNG 1 file Excel có thể nhóm tội danh khác nhau, khiến người xem thấy số liệu
-   "không khớp" giữa 2 sheet dù cả 2 đều đúng theo cách nhóm riêng của nó. Cân nhắc thống nhất.
-
-Chi tiết đầy đủ (số dòng code, trích code) nằm trong báo cáo của agent audit đã chạy trong phiên
-làm việc trước — nếu cần lại, hỏi lại y hệt câu hỏi audit cho agent `general-purpose` (đã audit
-xong `tinhBieu10`, `tinhBaoCaoKyTuLog`, `ImportExcelModule`, các sheet Excel liên quan).
-
-**Việc cần làm tiếp theo (theo thứ tự đề xuất):** (1) kiểm chứng `TaiTaoTonTheoTDTool` bằng dữ
-liệu thật trên `qlva-dev.html`; (2) sửa bug #1 (loaiKhoiTo import); (3) sửa bug #2 (án huỷ thiếu
-trong B10); (4) chạy lại `TaiTaoTonTheoTDTool` sau khi sửa xong (vì sửa bug #2 có thể đổi số đã
-giải quyết theo tội danh của các kỳ cũ); (5) cân nhắc bug #3.
+Công cụ `TaiTaoTonTheoTDTool` ("Sửa lại tồn cuối kỳ theo tội danh (Biểu B10)" trong Cài đặt →
+Import Excel, xem mục "Kỳ báo cáo") — **chưa xác nhận đã kiểm chứng bằng dữ liệu Firestore thật
+trên `qlva-dev.html`** (không có commit nào ghi lại việc này vì bấm nút không tạo ra thay đổi
+code). Nếu số liệu tồn cuối kỳ theo tội danh trên B10 còn nghi ngờ sai, kiểm chứng công cụ này
+trước khi tin tưởng số liệu xuất ra từ nút đó trên `qlva.html` (production).
 
 # QLVA — Quản lý vụ án Phòng 2, VKSND Hà Nội
 
@@ -543,20 +510,34 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       xuất Excel khác trong app, vì bản SheetJS CDN đang dùng ở đây là bản miễn phí KHÔNG ghi
       được style dù có set `cell.s`/`cellStyles:true` — đã kiểm chứng bằng cách giải nén file
       `.xlsx` xuất ra xem `cellXfs` luôn rỗng. ExcelJS ghi style thật, dùng cho **wrap text mặc
-      định trên mọi ô** của báo cáo tháng cho dễ đọc, xem hàm `themSheetDanhSach`) — **~40 sheet
-      (2026-07-13: tái cấu trúc thành 1 sheet/loại sự kiện/giai đoạn)**: Biểu B10 + TK tội danh +
-      Tổng hợp báo cáo, sau đó cho mỗi giai đoạn ĐT/TT/XX: DS khởi tố, DS phục hồi, DS vụ tách,
-      DS chuyển đến (TT/XX), DS trả về (ĐT/TT), DS đã xét xử, DS chuyển đi, DS tạm đình chỉ, DS
-      đình chỉ, DS án huỷ, DS nhập vụ, DS tồn. Không còn "DS mới" gộp chung hay "DS giải quyết"
-      gộp chung — mỗi loại là 1 sheet riêng, đếm rows của sheet = số liệu của loại đó, giúp
-      kiểm chứng từng con số trên sheet Tổng hợp bằng cách đếm trực tiếp trên sheet con.
-      Helper nội bộ `addSheetVu(tenSheet, vuArr, extraHeaders, extraFn)`. Toàn bộ danh sách dựng
-      từ CHÍNH object `baoCao` mà `tinhBaoCaoKy` đã trả về
-      (field `ds` trong mỗi `baoCao[gd]`, thu thập song song lúc tính số liệu qua
+      định trên mọi ô** của báo cáo tháng cho dễ đọc, xem hàm `themSheetDanhSach`) — **~45 sheet
+      (2026-07-13/14: tái cấu trúc thành 1 sheet/loại sự kiện/giai đoạn, sau đó bổ sung thêm để
+      kiểm chứng chéo được)**: Biểu B10 + TK tội danh + Tổng hợp báo cáo + **Cân đối số liệu**,
+      sau đó cho mỗi giai đoạn ĐT/TT/XX: DS khởi tố, DS phục hồi, DS vụ tách, DS chuyển đến
+      (TT/XX), DS trả về (ĐT/TT), DS đã xét xử, DS chuyển đi, DS tạm đình chỉ, DS đình chỉ, DS án
+      huỷ, DS nhập vụ, DS tồn — cộng thêm **4 sheet RA** nhìn từ giai đoạn nguồn (DS ĐT chuyển TT/
+      DS TT chuyển XX/DS TT trả ĐT/DS XX trả TT — cùng dữ liệu với DS chuyển đến/DS trả về của
+      giai đoạn NHẬN, chỉ đổi nhãn sang góc nhìn giai đoạn nguồn, để mỗi giai đoạn tự cân đối được
+      Vào/Ra của riêng nó). Không còn "DS mới" gộp chung hay "DS giải quyết" gộp chung — mỗi loại
+      là 1 sheet riêng, đếm rows của sheet = số liệu của loại đó, giúp kiểm chứng từng con số trên
+      sheet Tổng hợp bằng cách đếm trực tiếp trên sheet con.
+      Helper nội bộ `addSheetVu(tenSheet, vuArr, extraHeaders, extraFn)` (mọi sheet danh sách có
+      cột **"Đếm vụ"** đầu tiên — 1 vụ N bị can = N rows, cột này = 1 ở row BC đầu tiên của mỗi vụ
+      và rỗng ở các row sau, nên phải `SUM(cột Đếm vụ)` để đếm số vụ, KHÔNG dùng `COUNTA` toàn
+      sheet) và `addSheetVuKy` (bọc thêm cột **"Kỳ TK"** đầu tiên — tên kỳ báo cáo của sự kiện qua
+      `tenKyBaoCao()`, áp dụng cho mọi sheet DS vào/ra, KHÔNG áp dụng cho DS tồn vì đó là số live
+      không gắn với 1 kỳ). Toàn bộ danh sách dựng từ CHÍNH object `baoCao` mà `tinhBaoCaoKy` đã
+      trả về (field `ds` trong mỗi `baoCao[gd]`, thu thập song song lúc tính số liệu qua
       `vuAnTuLogDocs`) — không tính lại riêng — nên số dòng mỗi sheet danh sách LUÔN khớp đúng số
       trên sheet Tổng hợp và trên báo cáo đang xem trên màn hình. Nếu sửa công thức
       `tinhBaoCaoKy` sau này, nhớ cập nhật đồng bộ cả phần `ds` tương ứng, đừng để 2 bên lệch
-      nhau.
+      nhau. Sheet **"Biểu B10"** có thêm cột ẩn/nhạt **"Mã ĐL"** (điều luật chính chuẩn hoá, dùng
+      làm khoá tra cứu) — nhiều cột "Vụ" của B10 dùng công thức Excel `SUMIF` tham chiếu ngược lại
+      các sheet danh sách theo cột "Mã ĐL vụ" (thay vì chỉ ghi giá trị JS tĩnh), để người xem có
+      thể click-trace trong Excel từ B10 ra đúng danh sách vụ đã cộng vào ô đó. Sheet **"Cân đối
+      số liệu"** dùng công thức Excel `SUM` tự kiểm: `Tồn đầu + Σ(DS vào) − Σ(DS ra) = Tồn cuối
+      (chốt)` cho mỗi giai đoạn, tô xanh nếu chênh lệch = 0, đỏ nếu ≠ 0 (dấu hiệu có sự kiện log
+      với `kyThongKe = null`, thường do dữ liệu cũ dựng lại lịch sử — xem `DungLaiLichSuTool`).
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
