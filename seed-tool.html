@@ -216,7 +216,16 @@ function buildData() {
   _bcIdCounter = 1;
 
   function addVu(id, tenVu, gd, tt, ksv, dtv, ngayKTVA, soQd, hanDT, nguon, opts, bcDefs, evDefs) {
-    vuDocs.push({ id, data: mkVu(id, tenVu, gd, tt, ksv, dtv, ngayKTVA, soQd, hanDT, nguon, opts) });
+    const vuData = mkVu(id, tenVu, gd, tt, ksv, dtv, ngayKTVA, soQd, hanDT, nguon, opts);
+    // Index nhanh cho module Án đã giải quyết (ngayQuyetDinh/kyHoanThanh) — app thật ghi 2 field
+    // này lúc bấm "Hoàn thành" (xem qlva.html), seed trực tiếp bỏ qua bước đó nên phải tự set ở
+    // đây theo đúng sự kiện hoan_thanh cuối cùng, nếu không "Án đã giải quyết" sẽ lọc theo kỳ ra 0.
+    const hoanThanhEv = evDefs.find(e => e.l === "hoan_thanh");
+    if (hoanThanhEv) {
+      vuData.ngayQuyetDinh = ts(hoanThanhEv.d);
+      vuData.kyHoanThanh = hoanThanhEv.k || null;
+    }
+    vuDocs.push({ id, data: vuData });
     const bcList = bcDefs.map(([ht,ns,gt,tdk]) => mkBC(id, ht, ns, gt, tdk));
     bcList.forEach(bc => bcDocs.push({ id: bc.id, data: bc.data }));
 
