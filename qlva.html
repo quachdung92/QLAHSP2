@@ -6482,19 +6482,54 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
 
   // ---- Helpers flat: 1 dòng/bị can — thông tin vụ lặp lại cùng dòng với bị can ----
   // Vụ 0 BC → 1 dòng trống cột BC; vụ N BC → N dòng
-  const VU_H = ["Mã vụ","Tên vụ","KSV chính","ĐTV/CBĐT","Điều luật","Hạn ĐT vụ"];
-  const VU_W = [16,30,18,18,26,13];
-  const BC_H = ["STT BC","Họ tên BC","Năm sinh","Dân tộc","Địa chỉ","Tội danh","Biện pháp","Hạn TG","Đảng viên"];
-  const BC_W = [7,20,9,10,22,28,10,13,9];
-  const BC_EMPTY = ["","(Chưa có BC)","","","","","","",""];
+  // Layout cột cố định (để B10 COUNTIFS dùng chữ cột nhất quán qua mọi DS sheet):
+  //   A(1): Đếm vụ | B(2): Mã ĐL vụ | C-K(3-11): VU_H (9 cột) | L-AE(12-31): BC_H (20 cột)
+  //   AF(32+): Extra headers (Kỳ TK, Nguồn, Ngày SK...) — vị trí thay đổi theo từng sheet
+  // Các cột BC dùng cho COUNTIFS: V=Mã ĐL BC, W=Loại KTBC, X=Pháp nhân, Y=Nhóm tuổi, Z=Trình độ,
+  //   AA=Giới tính nữ, AB=Dân tộc KK, T=Đảng viên(x), AC=Giữ chức vụ, AD=Quốc tịch NN, AE=Tái phạm
+  const VU_H = ["Mã vụ","Tên vụ","KSV chính","ĐTV/CBĐT","Điều luật","Hạn ĐT vụ",
+                "Số QĐ KTVA","Ngày QĐ KTVA","Mức độ NT"];
+  const VU_W = [16,30,18,18,26,13, 14,13,14];
+  const BC_H = ["STT BC","Họ tên BC","Năm sinh","Dân tộc","Địa chỉ","Tội danh","Biện pháp","Hạn TG","Đảng viên",
+                "Ngày KTBC","Mã ĐL BC","Loại KTBC","Pháp nhân","Nhóm tuổi","Trình độ",
+                "Giới tính nữ","Dân tộc KK","Giữ chức vụ","Quốc tịch NN","Tái phạm"];
+  const BC_W = [7,20,9,10,22,28,10,13,9,  13,24,10,10,10,14,  12,12,12,14,10];
+  const BC_EMPTY = ["","(Chưa có BC)","","","","","","","",  "","","","","","",  "","","","",""];
+  const NHAN_MUC_DO_NT = {
+    it_nghiem_trong:"Ít nghiêm trọng", nghiem_trong:"Nghiêm trọng",
+    rat_nghiem_trong:"Rất nghiêm trọng", dac_biet_nghiem_trong:"Đặc biệt nghiêm trọng",
+  };
   function vuBaseRow(vu) {
-    return [hienThiMa(vu), vu.tenVu, vu.ksvChinh||"", vu.dtvCbdt||"", vu.dieuLuat||"", fmtDate(vu.hanDieuTra)];
+    return [
+      hienThiMa(vu), vu.tenVu, vu.ksvChinh||"", vu.dtvCbdt||"", vu.dieuLuat||"",
+      fmtDate(vu.hanDieuTra),
+      vu.soQdKtva||"", fmtDate(vu.ngayQdKtva),
+      NHAN_MUC_DO_NT[vu.mucDoNghiemTrong] || "",
+    ];
   }
-  function bcCellsRow(bc, stt) {
-    return [stt, bc.hoTen, bc.namSinh||"", bc.danToc||"", bc.diaChi||"",
+  function bcCellsRow(bc, stt, vu) {
+    const namKTVA = vu?.ngayQdKtva
+      ? new Date(vu.ngayQdKtva.seconds ? vu.ngayQdKtva.seconds*1000 : vu.ngayQdKtva).getFullYear()
+      : new Date().getFullYear();
+    const laPH = bc.loaiBiCan === "phap_nhan";
+    const nhomTuoi = laPH ? "" : (tinhNhomTuoi(bc.namSinh, namKTVA) || "");
+    return [
+      stt, bc.hoTen, bc.namSinh||"", bc.danToc||"", bc.diaChi||"",
       (bc.toiDanh||[]).filter(Boolean).join("; ")||"",
       bc.bienPhapNganChan==="giam"?"Tạm giam":"Tại ngoại",
-      fmtDate(bc.hanTamGiam), bc.dangVien==="co"?"x":""];
+      fmtDate(bc.hanTamGiam), bc.dangVien==="co"?"x":"",
+      fmtDate(bc.ngayKhoiTo),                                             // U: Ngày KTBC
+      _tkGetDL(bc),                                                        // V: Mã ĐL BC (criteria cho COUNTIFS B10)
+      bc.loaiKhoiTo || "",                                                 // W: Loại KTBC (ban_dau/bo_sung)
+      laPH ? "phap_nhan" : "",                                             // X: Pháp nhân
+      nhomTuoi,                                                            // Y: Nhóm tuổi
+      laPH ? "" : (bc.trinhDo || ""),                                     // Z: Trình độ
+      laPH ? "" : (bc.gioiTinh === "nu" ? "nữ" : ""),                    // AA: Giới tính nữ
+      laPH ? "" : (bc.danToc && bc.danToc !== "Kinh" ? "có" : ""),       // AB: Dân tộc KK
+      laPH ? "" : (bc.dangVienGiuChucVu ? "có" : ""),                    // AC: Giữ chức vụ
+      laPH ? "" : (bc.quocTich && bc.quocTich !== "Việt Nam" ? "có" : ""), // AD: Quốc tịch NN
+      laPH ? "" : (bc.taiPham && bc.taiPham !== "khong" ? "có" : ""),    // AE: Tái phạm
+    ];
   }
   function buildFlatVuBc(vuArr, extraFn = () => []) {
     const rows = [];
@@ -6502,7 +6537,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
       const base = [...vuBaseRow(vu), ...extraFn(vu)];
       const bcArr = biCanByVu[vu.id] || [];
       if (bcArr.length === 0) { rows.push([...base, ...BC_EMPTY]); }
-      else { bcArr.forEach((bc, i) => rows.push([...base, ...bcCellsRow(bc, i+1)])); }
+      else { bcArr.forEach((bc, i) => rows.push([...base, ...bcCellsRow(bc, i+1, vu)])); }
     }
     return rows;
   }
@@ -6573,36 +6608,114 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
     while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
     return s;
   };
-  // Công thức SUMIF cho các cột "Vụ" đơn nguồn: đếm "Đếm vụ" (cột A) của sheet khớp "Mã ĐL vụ" (cột B)
-  // Các cột BC, nhân khẩu học (C7-C24, C39-C52...) và tồn kỳ (vals[0-3/34-37/65-68]) giữ nguyên giá trị JS
-  // vì cần COUNTIFS theo thuộc tính BC riêng lẻ hoặc đến từ snapshot Firestore (không có sheet tương ứng)
-  const SUMIF_VU = {
-    7:  (sf) => `${sf('DS khởi tố ĐT')}+${sf('DS phục hồi ĐT')}`,  // C6  ĐT khởi tố vụ
-    26: (sf) => sf('DS chuyển đến TT'),    // C25 ĐT đề nghị TT vụ
-    29: (sf) => sf('DS đình chỉ ĐT'),      // C28 ĐT đình chỉ vụ
-    32: (sf) => sf('DS tạm đình chỉ ĐT'),  // C31 ĐT tạm ĐC vụ
-    41: (sf) => sf('DS chuyển đến XX'),    // C36 TT truy tố vụ
-    58: (sf) => sf('DS đình chỉ TT'),      // C53 TT đình chỉ vụ
-    61: (sf) => sf('DS tạm đình chỉ TT'),  // C56 TT tạm ĐC vụ
-    63: (sf) => sf('DS trả về ĐT'),        // C58 TT trả ĐT vụ
-    72: (sf) => sf('DS đã xét xử XX'),     // C63 XX xét xử vụ
-    75: (sf) => sf('DS đình chỉ XX'),      // C66 XX đình chỉ vụ
-    78: (sf) => sf('DS tạm đình chỉ XX'),  // C69 XX tạm ĐC vụ
-    80: (sf) => sf('DS trả về TT'),        // C71 XX trả TT vụ
-    82: (sf) => sf('DS án huỷ ĐT'),        // vals[82] ĐT án huỷ vụ
-    84: (sf) => sf('DS án huỷ TT'),        // vals[84] TT án huỷ vụ
-    86: (sf) => sf('DS án huỷ XX'),        // vals[86] XX án huỷ vụ
+  // B10_FORMULA: mọi cột có công thức, nhận r (số dòng Excel) → trả về chuỗi công thức
+  // Helpers: mkSfVu = SUMIF VỤ (cột A×B); mkCfBc = COUNTIFS BC (cột V + extra); mkCfBcM = multi-sheet
+  function mkSfVu(sn, r) { return `SUMIF('${sn}'!$B:$B,$A${r},'${sn}'!$A:$A)`; }
+  function mkCfBc(sn, r, ...extra) {
+    let f = `COUNTIFS('${sn}'!$V:$V,$A${r}`;
+    for (let i = 0; i < extra.length; i += 2) f += `,'${sn}'!$${extra[i]}:$${extra[i]},"${extra[i+1]}"`;
+    return f + `)`;
+  }
+  function mkCfBcM(sheets, r, ...extra) { return sheets.map(sn => mkCfBc(sn, r, ...extra)).join("+") || "0"; }
+  // Nhóm DS sheets theo vai trò — dùng cho B10 và TK tội danh
+  const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS vụ tách ĐT","DS trả về ĐT"];
+  const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"];
+  const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS vụ tách XX","DS chuyển đến XX"];
+  const DT_KTO = ["DS khởi tố ĐT","DS phục hồi ĐT"];   // khoiToTrucTiep ĐT (cho C7-C24)
+  const ALL_VAO = [...DT_VAO, ...TT_VAO, ...XX_VAO];
+  const ALL_TON = ["DS tồn ĐT","DS tồn TT","DS tồn XX"];
+  const ALL_RA = [
+    "DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT",
+    "DS TT chuyển XX","DS TT trả ĐT","DS đã xét xử TT","DS chuyển đi TT","DS tạm đình chỉ TT","DS đình chỉ TT","DS án huỷ TT","DS nhập vụ TT",
+    "DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX",
+  ];
+  const B10_FORMULA = {
+    // ── VỤ-level SUMIF (SUMIF cột A × cột B Mã ĐL vụ) ──
+    7:  r => `${mkSfVu("DS khởi tố ĐT",r)}+${mkSfVu("DS phục hồi ĐT",r)}`,  // C6 ĐT khởi tố vụ
+    26: r => mkSfVu("DS chuyển đến TT",r),   // C25 ĐT → TT vụ
+    29: r => mkSfVu("DS đình chỉ ĐT",r),     // C28 ĐT đình chỉ vụ
+    32: r => mkSfVu("DS tạm đình chỉ ĐT",r), // C31 ĐT TĐC vụ
+    41: r => mkSfVu("DS chuyển đến XX",r),   // C36 TT truy tố vụ
+    58: r => mkSfVu("DS đình chỉ TT",r),     // C53 TT đình chỉ vụ
+    61: r => mkSfVu("DS tạm đình chỉ TT",r), // C56 TT TĐC vụ
+    63: r => mkSfVu("DS trả về ĐT",r),       // C58 TT trả ĐT vụ
+    72: r => mkSfVu("DS đã xét xử XX",r),    // C63 XX xét xử vụ
+    75: r => mkSfVu("DS đình chỉ XX",r),     // C66 XX đình chỉ vụ
+    78: r => mkSfVu("DS tạm đình chỉ XX",r), // C69 XX TĐC vụ
+    80: r => mkSfVu("DS trả về TT",r),       // C71 XX trả TT vụ
+    82: r => mkSfVu("DS án huỷ ĐT",r),
+    84: r => mkSfVu("DS án huỷ TT",r),
+    86: r => mkSfVu("DS án huỷ XX",r),
+    // ── Mức độ NT VỤ SUMIFS (cột K) × cột B Mã ĐL vụ — chỉ DS TT chuyển XX ──
+    44: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$K:$K,"Ít nghiêm trọng")`,
+    45: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$K:$K,"Nghiêm trọng")`,
+    46: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$K:$K,"Rất nghiêm trọng")`,
+    47: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$K:$K,"Đặc biệt nghiêm trọng")`,
+    // ── BC-level COUNTIFS (cột V=Mã ĐL BC + criteria phụ) ──
+    // Cột criteria BC: W=Loại KTBC, X=Pháp nhân, Y=Nhóm tuổi, Z=Trình độ,
+    //   AA=Giới tính nữ, AB=Dân tộc KK, T=Đảng viên(x), AC=Giữ chức vụ, AD=Quốc tịch NN, AE=Tái phạm
+    // ĐT
+    6:  r => mkCfBcM(DT_VAO, r, "X","phap_nhan"),              // C5 pháp nhân ĐT mới
+    8:  r => mkCfBcM(DT_KTO, r, "W","ban_dau"),                // C7 ĐT khởi tố BC ban đầu
+    9:  r => mkCfBcM(DT_KTO, r, "W","ban_dau","X","phap_nhan"),// C8 pháp nhân trong C7
+    10: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Y","14_16"),    // C9-C13 tuổi
+    11: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Y","16_18"),
+    12: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Y","18_30"),
+    13: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Y","30_70"),
+    14: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Y",">70"),
+    15: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Z","khong_biet_chu"),  // C14-C18 trình độ
+    16: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Z","tieu_hoc"),
+    17: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Z","thcs"),
+    18: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Z","thpt"),
+    19: r => mkCfBcM(DT_KTO, r, "W","ban_dau","Z","dh_tro_len"),
+    20: r => mkCfBcM(DT_KTO, r, "W","ban_dau","AA","nữ"),      // C19 giới tính nữ
+    21: r => mkCfBcM(DT_KTO, r, "W","ban_dau","AB","có"),      // C20 dân tộc KK
+    22: r => mkCfBcM(DT_KTO, r, "W","ban_dau","T","x"),        // C21 đảng viên
+    23: r => mkCfBcM(DT_KTO, r, "W","ban_dau","AC","có"),      // C22 giữ chức vụ
+    24: r => mkCfBcM(DT_KTO, r, "W","ban_dau","AD","có"),      // C23 quốc tịch NN
+    25: r => mkCfBcM(DT_KTO, r, "W","ban_dau","AE","có"),      // C24 tái phạm
+    27: r => mkCfBcM(["DS ĐT chuyển TT"], r),                  // C26 ĐT→TT BC
+    28: r => mkCfBcM(["DS ĐT chuyển TT"], r, "X","phap_nhan"), // C27
+    30: r => mkCfBcM(["DS đình chỉ ĐT"], r),                   // C29 đình chỉ BC
+    31: r => mkCfBcM(["DS đình chỉ ĐT"], r, "X","phap_nhan"),  // C30
+    33: r => mkCfBcM(["DS tạm đình chỉ ĐT"], r),               // C32 TĐC BC
+    // TT
+    40: r => mkCfBcM(TT_VAO, r, "X","phap_nhan"),              // C35 pháp nhân TT mới
+    42: r => mkCfBcM(["DS TT chuyển XX"], r),                  // C37 TT→XX BC
+    43: r => mkCfBcM(["DS TT chuyển XX"], r, "X","phap_nhan"), // C38
+    48: r => mkCfBcM(["DS TT chuyển XX"], r, "Y","14_16"),     // C43-C47 tuổi TT truy tố BC
+    49: r => mkCfBcM(["DS TT chuyển XX"], r, "Y","16_18"),
+    50: r => mkCfBcM(["DS TT chuyển XX"], r, "Y","18_30"),
+    51: r => mkCfBcM(["DS TT chuyển XX"], r, "Y","30_70"),
+    52: r => mkCfBcM(["DS TT chuyển XX"], r, "Y",">70"),
+    53: r => mkCfBcM(["DS TT chuyển XX"], r, "AA","nữ"),       // C48
+    54: r => mkCfBcM(["DS TT chuyển XX"], r, "AB","có"),       // C49 dân tộc KK
+    55: r => mkCfBcM(["DS TT chuyển XX"], r, "T","x"),         // C50 đảng viên
+    56: r => mkCfBcM(["DS TT chuyển XX"], r, "AC","có"),       // C51 giữ chức vụ
+    57: r => mkCfBcM(["DS TT chuyển XX"], r, "AD","có"),       // C52 quốc tịch NN
+    59: r => mkCfBcM(["DS đình chỉ TT"], r),                   // C54 đình chỉ TT BC
+    60: r => mkCfBcM(["DS đình chỉ TT"], r, "X","phap_nhan"),
+    62: r => mkCfBcM(["DS tạm đình chỉ TT"], r),              // C57 TĐC TT BC
+    64: r => mkCfBcM(["DS TT trả ĐT"], r),                    // C59 TT trả ĐT BC
+    // XX
+    71: r => mkCfBcM(XX_VAO, r, "X","phap_nhan"),             // C62 pháp nhân XX mới
+    73: r => mkCfBcM(["DS đã xét xử XX"], r),                 // C64 XX xét xử BC
+    74: r => mkCfBcM(["DS đã xét xử XX"], r, "X","phap_nhan"),
+    76: r => mkCfBcM(["DS đình chỉ XX"], r),                  // C67 đình chỉ XX BC
+    77: r => mkCfBcM(["DS đình chỉ XX"], r, "X","phap_nhan"),
+    79: r => mkCfBcM(["DS tạm đình chỉ XX"], r),              // C70 TĐC XX BC
+    81: r => mkCfBcM(["DS XX trả TT"], r),                    // C72 XX trả TT BC
+    83: r => mkCfBcM(["DS án huỷ ĐT"], r),
+    85: r => mkCfBcM(["DS án huỷ TT"], r),
+    87: r => mkCfBcM(["DS án huỷ XX"], r),
   };
   const B10_R0 = 3; // dòng Excel đầu tiên chứa data (1-2 là header)
   b10Rows.forEach((row, idx) => {
     const r = B10_R0 + idx;
-    // sf(tenSheet): SUMIF cột B (Mã ĐL vụ) = $A{r}, trả về tổng cột A (Đếm vụ)
-    const sf = (sn) => `SUMIF('${sn}'!$B:$B,$A${r},'${sn}'!$A:$A)`;
     const cells = [row.D, extractSoDieu(row.D), row.tenToiDanh];
     for (let k = 0; k < 88; k++) {
-      cells.push(SUMIF_VU[k]
-        ? { formula: SUMIF_VU[k](sf), result: row.vals[k] }  // công thức + cached value để mở file nhanh
-        : row.vals[k]);
+      const fml = B10_FORMULA[k] ? B10_FORMULA[k](r) : null;
+      cells.push(fml ? { formula: fml, result: row.vals[k] } : row.vals[k]);
     }
     wsB10.addRow(cells);
   });
@@ -6629,7 +6742,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
   // Màu xanh nhạt: cột tồn kỳ trước/kỳ này (+1 cột so với trước vì thêm cột Mã ĐL)
   const phuCols = [4,5,6,7, 4+34, 5+34, 6+34, 7+34, 4+34+31, 5+34+31, 6+34+31, 7+34+31];
   // Màu vàng nhạt: cột SUMIF (công thức tham chiếu sheet khác — có thể click-trace trong Excel)
-  const sumifCols = Object.keys(SUMIF_VU).map(k => parseInt(k) + 4); // k+3 (offset) +1 (1-indexed ExcelJS)
+  const sumifCols = Object.keys(B10_FORMULA).map(k => parseInt(k) + 4); // k+3 (offset) +1 (1-indexed ExcelJS)
   wsB10.eachRow((row, ri) => {
     if (ri <= 2) return;
     phuCols.forEach(ci => {
@@ -6673,41 +6786,121 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
     }
   }
 
-  // ---- Sheet 2: Thống kê tội danh (pivot tổng hợp nhất) ----
-  themSheetDanhSach(wb, "TK tội danh", [
-    "Tội danh",
-    "Vụ mới","BC mới","TG mới","TN mới",
-    "Vụ tồn","BC tồn","TG tồn","TN tồn",
-    "Vụ GQ","BC GQ",
-  ], tkTDRows, [32, 9,9,9,9, 9,9,9,9, 9,9]);
+  // ---- Sheet 2: Thống kê tội danh (pivot tổng hợp, công thức từ DS sheets) ----
+  // Cột A = Mã ĐL (criteria key, cùng chuẩn với Mã ĐL vụ/BC trong DS sheets)
+  // SUMIF: cột A (TK) → cột B (DS sheets, Mã ĐL vụ) → đếm cột A (Đếm vụ)
+  // COUNTIFS: cột A (TK) → cột V (DS sheets, Mã ĐL BC)
+  {
+    const wsTK = wb.addWorksheet("TK tội danh");
+    wsTK.views = [{ state: "frozen", ySplit: 1 }];
+    wsTK.columns = [
+      { width: 32 },                                    // A: Mã ĐL
+      { width: 9 }, { width: 9 }, { width: 9 }, { width: 9 }, // B-E: Vụ/BC/TG/TN mới
+      { width: 9 }, { width: 9 }, { width: 9 }, { width: 9 }, // F-I: Vụ/BC/TG/TN tồn
+      { width: 9 }, { width: 9 },                       // J-K: Vụ/BC GQ
+    ];
+    const tkHdr = wsTK.addRow(["Mã ĐL / Tội danh","Vụ mới","BC mới","TG mới","TN mới","Vụ tồn","BC tồn","TG tồn","TN tồn","Vụ GQ","BC GQ"]);
+    tkHdr.eachCell(cell => {
+      cell.font = { bold: true };
+      cell.alignment = { wrapText: true, vertical: "top" };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    });
+    const TK_R0 = 2;
+    tkTDRows.forEach(([td, vuM, bcM, tgM, tnM, vuT, bcT, tgT, tnT, vuG, bcG], idx) => {
+      const r = TK_R0 + idx;
+      wsTK.addRow([
+        td,
+        { formula: ALL_VAO.map(sn => mkSfVu(sn, r)).join("+"), result: vuM },          // B: Vụ mới
+        { formula: mkCfBcM(ALL_VAO, r), result: bcM },                                  // C: BC mới
+        { formula: mkCfBcM(ALL_VAO, r, "R","Tạm giam"), result: tgM },                 // D: TG mới
+        { formula: `C${r}-D${r}`, result: tnM },                                        // E: TN mới
+        { formula: ALL_TON.map(sn => mkSfVu(sn, r)).join("+"), result: vuT },           // F: Vụ tồn
+        { formula: mkCfBcM(ALL_TON, r), result: bcT },                                  // G: BC tồn
+        { formula: mkCfBcM(ALL_TON, r, "R","Tạm giam"), result: tgT },                 // H: TG tồn
+        { formula: `G${r}-H${r}`, result: tnT },                                        // I: TN tồn
+        { formula: ALL_RA.map(sn => mkSfVu(sn, r)).join("+"), result: vuG },            // J: Vụ GQ
+        { formula: mkCfBcM(ALL_RA, r), result: bcG },                                   // K: BC GQ
+      ]);
+    });
+  }
 
   // ---- Sheet 2: Tổng hợp báo cáo (khớp đúng bảng hiển thị trên màn hình) ----
+  // Các ô có DS sheet tương ứng → công thức SUM('DS ...'!$A:$A); snapshot/live → giá trị JS
+  const _thGs = (gd) => gd === "dieu_tra" ? "ĐT" : gd === "truy_to" ? "TT" : "XX";
+  const _thSumA = (sn) => `SUM('${sn}'!$A:$A)`;
+  const THVao = {
+    dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO,
+  };
   const tongHopHang = [
-    ["Tồn đầu kỳ — Vụ", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonDauKy)],
+    // ── Tồn đầu kỳ: snapshot từ kỳ trước, không có DS sheet → giữ nguyên JS
+    ["Tồn đầu kỳ — Vụ",     ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonDauKy)],
     ["Tồn đầu kỳ — Bị can", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonDauBiCan ?? 0)],
     ["Số mới", "", "", ""],
-    ["— Án khởi tố mới", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.an_khoi_to_moi ?? 0)],
-    ["— Tin báo khởi tố lên", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.tin_bao_khoi_to_len ?? 0)],
+    // Án khởi tố mới / Tin báo / Án nơi khác: cần lọc theo cột Nguồn (AF+) — giữ JS
+    ["— Án khởi tố mới",         ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.an_khoi_to_moi ?? 0)],
+    ["— Tin báo khởi tố lên",    ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.tin_bao_khoi_to_len ?? 0)],
     ["— Án nơi khác chuyển đến", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.an_noi_khac_chuyen_den ?? 0)],
-    ["— Phục hồi điều tra", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.phuc_hoi_dieu_tra ?? 0)],
-    ["— Chuyển đến từ giai đoạn trước", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.chuyenDenTu)],
-    ["— Trả về từ giai đoạn sau", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.traVeTu)],
-    ["— Khởi tạo trực tiếp tại giai đoạn này", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.khoiTaoTrucTiep ?? 0)],
-    ["— Vụ tách ra (tách trong kỳ này)", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.tachVu)],
-    ["Tổng số mới", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.tong)],
+    // Phục hồi: mỗi GD có DS sheet riêng
+    ["— Phục hồi điều tra", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: _thSumA(`DS phục hồi ${_thGs(gd)}`),
+      result:  baoCao[gd].soMoi.phuc_hoi_dieu_tra ?? 0,
+    }))],
+    // Chuyển đến từ GĐ trước (ĐT = 0, không có sheet)
+    ["— Chuyển đến từ giai đoạn trước", ...THU_TU_GIAI_DOAN.map(gd =>
+      gd === "dieu_tra" ? (baoCao[gd].soMoi.chuyenDenTu || 0)
+        : { formula: _thSumA(`DS chuyển đến ${_thGs(gd)}`), result: baoCao[gd].soMoi.chuyenDenTu },
+    )],
+    // Trả về từ GĐ sau (XX = 0, không có sheet)
+    ["— Trả về từ giai đoạn sau", ...THU_TU_GIAI_DOAN.map(gd =>
+      gd === "xet_xu" ? (baoCao[gd].soMoi.traVeTu || 0)
+        : { formula: _thSumA(`DS trả về ${_thGs(gd)}`), result: baoCao[gd].soMoi.traVeTu },
+    )],
+    // Khởi tạo trực tiếp = DS khởi tố + DS phục hồi
+    ["— Khởi tạo trực tiếp tại giai đoạn này", ...THU_TU_GIAI_DOAN.map(gd => {
+      const gs = _thGs(gd);
+      return { formula: `${_thSumA(`DS khởi tố ${gs}`)}+${_thSumA(`DS phục hồi ${gs}`)}`, result: baoCao[gd].soMoi.khoiTaoTrucTiep ?? 0 };
+    })],
+    // Vụ tách ra
+    ["— Vụ tách ra (tách trong kỳ này)", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: _thSumA(`DS vụ tách ${_thGs(gd)}`),
+      result:  baoCao[gd].soMoi.tachVu,
+    }))],
+    // Tổng số mới = SUM tất cả VÀO sheets của GĐ đó
+    ["Tổng số mới", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: THVao[gd].map(_thSumA).join("+"),
+      result:  baoCao[gd].soMoi.tong,
+    }))],
     ["Đã giải quyết / ra khỏi giai đoạn", "", "", ""],
-    ["— Chuyển giai đoạn (kết thúc giai đoạn này)", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].chuyenDi)],
-    ["— Trả hồ sơ (ra khỏi giai đoạn này)", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].traDi)],
-    ["— Đã xét xử", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].hoanThanhTheoGD.da_xet_xu)],
-    ["— Chuyển đi", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].hoanThanhTheoGD.chuyen_di)],
-    ["— Tạm đình chỉ", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].hoanThanhTheoGD.tam_dinh_chi)],
-    ["— Đình chỉ", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].hoanThanhTheoGD.dinh_chi)],
-    ["— Án huỷ", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].hoanThanhTheoGD.an_huy)],
-    ["— Nhập vào vụ khác", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soNhapVu)],
-    ["Tồn cuối kỳ — Vụ", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonCuoiKy)],
+    // Chuyển GĐ tiến (XX không chuyển tiếp)
+    ["— Chuyển giai đoạn (kết thúc giai đoạn này)", ...THU_TU_GIAI_DOAN.map(gd => {
+      if (gd === "xet_xu") return baoCao[gd].chuyenDi || 0;
+      const gs = _thGs(gd); const gsNext = gd === "dieu_tra" ? "TT" : "XX";
+      return { formula: _thSumA(`DS ${gs} chuyển ${gsNext}`), result: baoCao[gd].chuyenDi };
+    })],
+    // Trả hồ sơ (ĐT không trả lại)
+    ["— Trả hồ sơ (ra khỏi giai đoạn này)", ...THU_TU_GIAI_DOAN.map(gd => {
+      if (gd === "dieu_tra") return baoCao[gd].traDi || 0;
+      const gs = _thGs(gd); const gsPrev = gd === "truy_to" ? "ĐT" : "TT";
+      return { formula: _thSumA(`DS ${gs} trả ${gsPrev}`), result: baoCao[gd].traDi };
+    })],
+    // Hoàn thành theo từng hình thức — mỗi loại có DS sheet riêng
+    ["— Đã xét xử", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: _thSumA(`DS đã xét xử ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.da_xet_xu })],
+    ["— Chuyển đi", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: _thSumA(`DS chuyển đi ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.chuyen_di })],
+    ["— Tạm đình chỉ", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: _thSumA(`DS tạm đình chỉ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.tam_dinh_chi })],
+    ["— Đình chỉ", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: _thSumA(`DS đình chỉ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.dinh_chi })],
+    ["— Án huỷ", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: _thSumA(`DS án huỷ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.an_huy })],
+    ["— Nhập vào vụ khác", ...THU_TU_GIAI_DOAN.map(gd => ({
+      formula: _thSumA(`DS nhập vụ ${_thGs(gd)}`), result: baoCao[gd].soNhapVu })],
+    // ── Tồn cuối kỳ: snapshot chốt kỳ; Số tồn hiện tại: live → giữ JS
+    ["Tồn cuối kỳ — Vụ",     ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonCuoiKy)],
     ["Tồn cuối kỳ — Bị can", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonCuoiBiCanKy ?? 0)],
     ["Số tồn hiện tại (tại thời điểm xuất)", "", "", ""],
-    ["— Số vụ", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soVuTon)],
+    ["— Số vụ",    ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soVuTon)],
     ["— Số bị can", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soBiCanTon)],
   ];
   themSheetDanhSach(wb, "Tổng hợp báo cáo", ["", "Điều tra", "Truy tố", "Xét xử"], tongHopHang, [42, 12, 12, 12]);
@@ -6729,19 +6922,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
     extraFn = extraFn || (() => []);
     const rows = [];
     for (const vu of vuArr) {
-      const base = [...vuBaseRow(vu), ...extraFn(vu)];
+      const vuPart = vuBaseRow(vu);
+      const extraPart = extraFn(vu);
       const maDLVu = vuPrimaryDL_xuat(vu);  // criteria key cho SUMIF trong Biểu B10
       const bcArr = biCanByVu[vu.id] || [];
       if (bcArr.length === 0) {
-        rows.push([1, maDLVu, ...base, ...BC_EMPTY]);
+        // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, AF+=extraHeaders (cố định BC để B10 COUNTIFS dùng đúng cột)
+        rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart]);
       } else {
-        bcArr.forEach((bc, i) => rows.push([i === 0 ? 1 : "", maDLVu, ...base, ...bcCellsRow(bc, i + 1)]));
+        bcArr.forEach((bc, i) => rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]));
       }
     }
     themSheetDanhSach(wb, tenSheet,
-      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...extraHeaders, ...BC_H],
+      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
       rows,
-      [8, 24, ...VU_W, ...extraHeaders.map(() => 12), ...BC_W], 0);
+      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12)], 0);
   }
   const GD_VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
   const _ngaySK  = v => [fmtDate(v._log?.ngaySuKien)];
