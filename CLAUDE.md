@@ -192,6 +192,32 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       nút này sửa thẳng vào chính `vuan`, ảnh hưởng dữ liệu gốc dùng ở mọi module khác. Luôn hiện
       được kể cả khi phiên đã "Lưu phiên" (`khoaSua`) — khoá phiên chỉ chặn sửa dòng log, không
       liên quan gì tới sửa thông tin vụ án.
+      **Chặn quét trùng trong cùng 1 phiên (2026-07-15, nhánh `giao-nhan-ho-so`)** — trước đây
+      quét/chọn lại 1 vụ ĐÃ có sẵn trong phiên sẽ ghi thêm 1 dòng `giao_nhan_ho_so` mới (trùng),
+      thường do quét nhầm/quét đi quét lại. `xuLyQuet` và `chonVuThuCong` giờ kiểm tra
+      `dsQuet.some(d => d.maVuAn === ma)` (dữ liệu đã có sẵn qua `onSnapshot` theo `phien.id`,
+      không cần query thêm) trước khi ghi — nếu đã có thì chỉ hiện toast cảnh báo (loại `"warn"`,
+      màu hổ phách), không ghi gì thêm. Không chặn ở tầng Firestore (không phải constraint cứng)
+      — chỉ chặn phía client trong session hiện tại, đúng phạm vi vấn đề thực tế nêu ra (quét
+      nhầm trong lúc thao tác, không phải yêu cầu 1 vụ chỉ được giao/nhận đúng 1 lần trong lịch
+      sử toàn hệ thống).
+      **Tải toàn bộ lịch sử giao nhận ra Excel, cột Mã vụ = ẢNH QR (2026-07-15, cùng nhánh)** —
+      nút "⬇ Tải toàn bộ lịch sử" (hiện cả ở màn chưa có phiên lẫn trong phiên đang mở, vì đây là
+      lịch sử TOÀN HỆ THỐNG mọi phiên, không phải riêng phiên hiện tại) — `taiLichSuGiaoNhan`
+      query thẳng `lichsuChuyenGiaiDoan` where `loaiSuKien == "giao_nhan_ho_so"` (không lọc theo
+      `phienGiaoNhanId`, không giới hạn 300 dòng như Nhật ký thao tác vì đây là export file chứ
+      không phải bảng hiển thị), `loaiGiaoDich` đọc thẳng từ field đã lưu sẵn trên chính sự kiện
+      (không cần join `phienGiaoNhan`). Dùng **ExcelJS** (không phải XLSX/SheetJS — lý do giống
+      Xuất Excel báo cáo tháng: cần nhúng ảnh, XLSX bản CDN đang dùng không hỗ trợ). Cột "Mã vụ"
+      để trống CHỮ, nhúng đè ảnh QR lên đúng ô đó qua `wb.addImage`/`ws.addImage` (anchor
+      `tl:{col,row}` 0-based) — mục đích: sau này chỉ cần quét thẳng từ file/bản in ra là tra
+      được vụ ngay, không cần gõ tay. Ảnh QR sinh bằng hàm mới `taoQrDataUrl(text, size)` (cạnh
+      `KhoiQR`) — tái dùng `qrcodejs` (`new QRCode(...)`) nhưng vẽ vào 1 `<div>` KHÔNG gắn vào DOM
+      thật (canvas 2D vẫn vẽ/đọc `toDataURL()` được dù không attach), khác `KhoiQR` vốn render lên
+      màn hình qua `ref`. Đã kiểm chứng riêng phần dựng workbook + nhúng ảnh bằng test Node dùng
+      thẳng package `exceljs` thật (ghi buffer xong load lại, xác nhận đúng số ảnh + đúng vị trí
+      cột/dòng) — phần sinh ảnh QR qua `qrcodejs` (cần canvas trình duyệt thật) chưa test được
+      bằng cách này, chỉ tái dùng nguyên pattern đã chạy ổn định ở `KhoiQR`.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy

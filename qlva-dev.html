@@ -4334,6 +4334,17 @@ function NutHanhDong({ nhan, onClick }) {
   );
 }
 
+// Tạo QR code thành data URL PNG mà KHÔNG render lên màn hình — dùng để nhúng ảnh QR vào file
+// Excel (ExcelJS addImage cần base64, không nhận component React). qrcodejs vẽ đồng bộ vào
+// <canvas> bên trong 1 div tạm KHÔNG gắn vào DOM thật — canvas 2D vẫn vẽ/đọc được dù không attach.
+function taoQrDataUrl(text, size = 100) {
+  if (!text) return null;
+  const div = document.createElement("div");
+  new QRCode(div, { text, width: size, height: size, correctLevel: QRCode.CorrectLevel.M });
+  const canvas = div.querySelector("canvas");
+  return canvas ? canvas.toDataURL("image/png") : null;
+}
+
 function KhoiQR({ noiDung, nhan }) {
   const containerRef = React.useRef(null);
   useEffect(() => {
@@ -7630,6 +7641,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [dsVuDangGQ, setDsVuDangGQ] = useState(null); // null = chưa tải, tải 1 lần khi mở panel tìm
   const [tuKhoaTim, setTuKhoaTim] = useState("");
   const [ksvTim, setKsvTim] = useState("tat_ca");
+  const [dangTaiLichSu, setDangTaiLichSu] = useState(false);
   const inputRef = React.useRef(null);
 
   // Không dùng orderBy kèm where ở đây để khỏi cần composite index mới — sắp xếp lại phía client.
@@ -7679,6 +7691,15 @@ function GiaoNhanHoSoModule({ currentUser }) {
     e.preventDefault();
     const ma = maQuet.trim();
     if (!ma || dangXuLy) return;
+    // Quét trùng trong CÙNG phiên (quét nhầm/quét đi quét lại 1 mã) → chặn, không ghi thành 1
+    // dòng mới nữa. dsQuet đã có sẵn (onSnapshot theo phien.id) nên kiểm tra ngay phía client,
+    // không cần query thêm.
+    if (dsQuet.some(d => d.maVuAn === ma)) {
+      addToast(`Vụ ${ma} đã được quét trong phiên này rồi — không ghi trùng.`, "warn");
+      setMaQuet("");
+      inputRef.current?.focus();
+      return;
+    }
     setDangXuLy(true);
     setLoiQuet("");
     try {
@@ -7738,6 +7759,11 @@ function GiaoNhanHoSoModule({ currentUser }) {
 
   const chonVuThuCong = async (v) => {
     if (dangXuLy) return;
+    // Cùng lý do chặn trùng như xuLyQuet — chọn thủ công 1 vụ đã có sẵn trong dsQuet của phiên.
+    if (dsQuet.some(d => d.maVuAn === v.id)) {
+      addToast(`Vụ ${hienThiMa(v)} đã được quét trong phiên này rồi — không ghi trùng.`, "warn");
+      return;
+    }
     setDangXuLy(true);
     setLoiQuet("");
     try {
@@ -7748,6 +7774,78 @@ function GiaoNhanHoSoModule({ currentUser }) {
       setLoiQuet("Lỗi khi ghi nhận: " + err.message);
     } finally {
       setDangXuLy(false);
+    }
+  };
+
+  // Tải TOÀN BỘ lịch sử giao nhận (mọi phiên, mọi thời điểm — không giới hạn 300 dòng như Nhật ký
+  // thao tác) ra file Excel, cột "Mã vụ" hiện ẢNH QR (thay vì chữ) để sau này chỉ cần quét thẳng
+  // từ file/bản in ra là tra được vụ ngay, không cần gõ tay. Dùng ExcelJS (đã tải sẵn cho Xuất
+  // Excel báo cáo tháng) vì cần nhúng ảnh — XLSX/SheetJS bản CDN đang dùng không ghi được ảnh.
+  const taiLichSuGiaoNhan = async () => {
+    setDangTaiLichSu(true);
+    try {
+      const snap = await db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "==", "giao_nhan_ho_so").get();
+      const rows = snap.docs.map(d => d.data());
+      rows.sort((a, b) => (b.thoiDiemGhi?.toMillis?.() || 0) - (a.thoiDiemGhi?.toMillis?.() || 0));
+
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Lịch sử giao nhận");
+      ws.views = [{ state: "frozen", ySplit: 1 }];
+      const hRow = ws.addRow([
+        "STT", "Loại giao dịch", "Thời điểm quét", "Mã vụ (QR)", "Tên vụ",
+        "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV", "Người nhận thực tế",
+        "Người thực hiện (quét)", "Ghi chú",
+      ]);
+      hRow.font = { bold: true };
+      hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+      ws.columns = [
+        { width: 6 }, { width: 14 }, { width: 16 }, { width: 13 }, { width: 30 },
+        { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 }, { width: 16 },
+        { width: 20 }, { width: 24 },
+      ];
+      const QR_PX = 60; // ~60px vuông — đủ scan lại được (correctLevel M), giữ file không quá nặng
+      rows.forEach((r, i) => {
+        const row = ws.addRow([
+          i + 1,
+          r.loaiGiaoDich === "giao" ? "Giao hồ sơ" : "Nhận hồ sơ",
+          fmtNgayGio(r.thoiDiemGhi),
+          "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
+          r.tenVu || "",
+          r.soQdKtva || "",
+          fmtDate(r.ngayQdKtva),
+          r.nguoiGiao || "",
+          r.nguoiNhan || "",
+          r.nguoiNhanThucTe || "",
+          r.nguoiThucHien || "",
+          r.ghiChu || "",
+        ]);
+        row.height = 46; // pt — đủ cao cho ảnh QR 60px không bị cắt
+        const dataUrl = taoQrDataUrl(r.maVuAn, 120);
+        if (dataUrl) {
+          const imgId = wb.addImage({ base64: dataUrl, extension: "png" });
+          ws.addImage(imgId, {
+            tl: { col: 3, row: row.number - 1 }, // cột D (Mã vụ) = index 3, 0-based
+            ext: { width: QR_PX, height: QR_PX },
+          });
+        }
+      });
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `QLVA_LichSuGiaoNhan_${toInputDateNhanh(new Date())}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      addToast(`Đã tải ${rows.length} dòng lịch sử giao nhận.`);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi tải lịch sử giao nhận: " + err.message, "error");
+    } finally {
+      setDangTaiLichSu(false);
     }
   };
 
@@ -7765,7 +7863,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
       <div>
         <h2 className="text-lg font-semibold mb-4">Giao nhận hồ sơ</h2>
         <div className="text-sm text-slate-500 mb-4">Chọn loại giao dịch để bắt đầu 1 phiên quét mới.</div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 items-center">
           <button onClick={() => batDauPhien("giao")}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-5 py-3 text-sm font-medium">
             Bắt đầu phiên — Giao hồ sơ
@@ -7773,6 +7871,10 @@ function GiaoNhanHoSoModule({ currentUser }) {
           <button onClick={() => batDauPhien("nhan")}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-5 py-3 text-sm font-medium">
             Bắt đầu phiên — Nhận hồ sơ
+          </button>
+          <button onClick={taiLichSuGiaoNhan} disabled={dangTaiLichSu}
+                  className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-3 text-sm font-medium disabled:opacity-50">
+            {dangTaiLichSu ? "Đang tải..." : "⬇ Tải toàn bộ lịch sử giao nhận"}
           </button>
         </div>
       </div>
@@ -7801,6 +7903,10 @@ function GiaoNhanHoSoModule({ currentUser }) {
           <button onClick={() => setHienBienBan(true)} disabled={dsQuet.length === 0}
                   className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
             In phiên
+          </button>
+          <button onClick={taiLichSuGiaoNhan} disabled={dangTaiLichSu}
+                  className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+            {dangTaiLichSu ? "Đang tải..." : "⬇ Tải toàn bộ lịch sử"}
           </button>
           <button onClick={() => setPhien(null)} className="text-sm text-slate-500 hover:text-slate-700 px-2">Phiên mới</button>
         </div>
