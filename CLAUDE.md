@@ -21,6 +21,50 @@ trên `qlva-dev.html`** (không có commit nào ghi lại việc này vì bấm 
 code). Nếu số liệu tồn cuối kỳ theo tội danh trên B10 còn nghi ngờ sai, kiểm chứng công cụ này
 trước khi tin tưởng số liệu xuất ra từ nút đó trên `qlva.html` (production).
 
+**Nhánh `fix-bao-cao` (2026-07-15, tiếp tục sau khi merge `bieu-10-audit` vào `main`)** — audit
+tiếp bằng cách xem trực tiếp file Excel xuất ra: số vụ mới (C6 "ĐT khởi tố vụ") khớp đúng số dòng
+sheet "DS khởi tố ĐT", nhưng khối nhân khẩu học C7-C24 (tuổi/trình độ/dân tộc...) ra 0/rỗng dù
+vụ có bị can. Nguyên nhân: `seed-tool.html` (dùng để seed dữ liệu `qlva-dev.html`) có CÙNG bug
+`loaiKhoiTo` hardcode sai đã audit ở `bieu-10-audit` (đã sửa `qlva.html`/`ImportExcelModule` từ
+`1e87144`, nhưng chưa bao giờ sửa file seed riêng này) — bị can seed ra không bao giờ có
+`loaiKhoiTo === "ban_dau"` nên bị lọc mất hết khỏi C7-C24. Đã sửa `seed-tool.html`, VÀ vì bug gốc
+(`ImportExcelModule` trước `1e87144`) chỉ được chặn cho import MỚI chứ không backfill dữ liệu ĐÃ
+import trước đó (kể cả production), nên đã thêm `BackfillLoaiKhoiToTool` (Cài đặt → Import Excel)
+tính lại đúng `loaiKhoiTo` cho toàn bộ bị can hiện có, gom theo vụ, dùng đúng hàm
+`tinhLoaiKhoiToTheoNgay` app đã dùng khi thêm/sửa bị can.
+
+**Thiết kế lại khối C7-C24: bỏ hẳn tiêu chí `loaiKhoiTo` (2026-07-15)** — trong lúc thảo luận về
+bug trên, người dùng đặt câu hỏi đúng trọng tâm: tại sao khối C7-C24 cần phân biệt "ban đầu"/
+"bổ sung" theo `loaiKhoiTo`, trong khi hệ thống đã hỏi "tính vào kỳ thống kê nào" ngay lúc thêm
+bị can (`ThemBiCanForm`/`ThemVuAnForm`/Import Excel) rồi? Đã xác nhận: (1) số vụ mới (C3/C6...)
+hoàn toàn độc lập với sự kiện `khoi_to_bican` — chỉ phụ thuộc `khoi_to_vu`/`tach_vu`/
+`chuyen_giai_doan`/`tra_ho_so`, nên thêm bị can bổ sung vào 1 vụ cũ KHÔNG làm đổi kỳ "vụ mới" của
+vụ đó; (2) `loaiKhoiTo` chỉ được dùng để lọc BC ở ĐÚNG 1 khối duy nhất (C7-C24 "ĐT khởi tố mới")
+— khối TT/XX tương ứng (C43-C52, C64...) đã đếm mọi BC của vụ, không lọc `loaiKhoiTo` từ trước.
+Kết luận: thay `bc.loaiKhoiTo === "ban_dau"` bằng tiêu chí đúng bản chất hơn — **BC nào có sự
+kiện `khoi_to_bican` với `kyThongKe` khớp đúng kỳ đang tính báo cáo thì mới đếm vào C7-C24 của kỳ
+đó**, bất kể `loaiKhoiTo`. Nhờ vậy BC bổ sung thêm vào 1 vụ cũ ở kỳ SAU không còn bị đếm nhầm vào
+kỳ vụ khởi tố (đằng nào cũng không nên tính, vì đó là BC "mới" của kỳ sau chứ không phải kỳ vụ
+được mở). Chỉ áp dụng cho khối C7-C24 — usage KHÁC của `loaiKhoiTo` (`vuPrimaryDL`: chọn BC nào
+đại diện tội danh chính của 1 vụ nhiều bị can/nhiều tội, dùng để nhóm B10/TK tội danh theo điều
+luật) giữ nguyên, không liên quan gì tới câu hỏi này.
+Triển khai: `tinhBieu10` nhận thêm `bcKyKhoiToMap` (Map BC id → kỳ id, từ hàm mới
+`fetchKyKhoiToBiCan` — quét log `khoi_to_bican`, KHÔNG dùng field cache trên `bican` vì log là
+nguồn sự thật duy nhất và có thể bị "Sửa kỳ" cập nhật sau) + `kyIdSetTrongBaoCao` (mặc định
+`{ky.id}`, nhưng báo cáo TỔNG HỢP NHIỀU KỲ — `TongHopNhieuKyModal` — truyền cả set kỳ đã gộp, nếu
+không sẽ luôn ra 0 vì `ky` của báo cáo gộp là object giả `{tenKy}` không có `id` thật). Biến
+`dt_ktBcBanDau` đổi tên thành `dt_ktBcMoiKy` cho đúng ý nghĩa mới.
+Phía Excel: thêm cột **"Kỳ TK BC"** (cột AF, cuối `BC_H`, 21 cột thay vì 20 — KHÁC cột "Kỳ TK"
+cấp vụ đã có ở `extraHeaders`, vì cột đó lấy kỳ của chính VỤ, giống nhau cho mọi dòng BC của cùng
+1 vụ, không phản ánh đúng BC bổ sung thêm ở kỳ khác) ghi qua `tenKyBcRieng(bc)`. Công thức COUNTIFS
+của C7-C24 đổi từ tiêu chí cột W (`"ban_dau"`) sang cột AF khớp tên kỳ hiện tại — helper mới
+`mkCfBcKy(sheets, r, dsKyTen, ...extra)` tự OR-sum COUNTIFS qua từng kỳ trong `dsKyTen` (đáp ứng cả
+báo cáo gộp nhiều kỳ, không chỉ 1 kỳ). Đã viết test độc lập kiểm chứng cả sinh công thức lẫn logic
+lọc theo tập kỳ (đơn kỳ / gộp nhiều kỳ / BC không có kỳ do dữ liệu cũ dựng lại lịch sử) trước khi
+mirror sang `qlva-dev.html` — CHƯA kiểm chứng bằng dữ liệu Firestore thật, cần seed lại hoặc chạy
+`BackfillLoaiKhoiToTool` trên `qlva-dev.html` rồi xem thử trước khi tin tưởng số liệu trên
+`qlva.html` (production).
+
 # QLVA — Quản lý vụ án Phòng 2, VKSND Hà Nội
 
 ## Bối cảnh
