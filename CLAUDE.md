@@ -602,6 +602,42 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       số liệu"** dùng công thức Excel `SUM` tự kiểm: `Tồn đầu + Σ(DS vào) − Σ(DS ra) = Tồn cuối
       (chốt)` cho mỗi giai đoạn, tô xanh nếu chênh lệch = 0, đỏ nếu ≠ 0 (dấu hiệu có sự kiện log
       với `kyThongKe = null`, thường do dữ liệu cũ dựng lại lịch sử — xem `DungLaiLichSuTool`).
+      **Sheet "Tổng hợp báo cáo" — thêm cột BC + hết phụ thuộc số JS xuất thẳng từ hệ thống
+      (2026-07-15)** — trước đây mỗi giai đoạn chỉ 1 cột (chỉ có số Vụ, không dòng nào có tổng Bị
+      can trừ riêng khối "Tồn" tách thành 2 HÀNG "— Vụ"/"— Bị can"), và nhiều dòng ("Án khởi tố
+      mới", "Tin báo khởi tố lên", "Án nơi khác chuyển đến", "Số tồn hiện tại"...) đọc thẳng số JS
+      từ `baoCao` dù ĐÃ có DS sheet tương ứng chứa đủ dữ liệu để tính ra cùng con số bằng công
+      thức Excel — nghĩa là những dòng đó không tự kiểm chứng được, khác triết lý "công thức Excel"
+      áp dụng cho B10/TK tội danh. Đã đổi cấu trúc cột thành **7 cột**: nhãn + `ĐT-Vụ/ĐT-BC/TT-Vụ/
+      TT-BC/XX-Vụ/XX-BC` (mỗi giai đoạn 2 cột thay vì 1), và chuyển MỌI ô có DS sheet tương ứng
+      sang công thức `SUM`/`COUNTIF`/`COUNTIFS`/`SUMIF` — cột BC đếm bị can THẬT trong sheet qua
+      `COUNTIF(sheet!$M:$M,"<>(Chưa có BC)")` (cột M = Họ tên BC, loại trừ dòng giả của vụ 0 BC).
+      Khối "Án khởi tố mới/Tin báo/Án nơi khác" lọc thêm theo cột **"Nguồn"** (cột AH của sheet
+      "DS khởi tố {gs}", xem `addSheetVuKy`) qua `SUMIF`/`COUNTIF(S)`. **Chỉ còn 2 cặp dòng KHÔNG
+      sheet-hoá được** vì bản chất là snapshot tại 1 thời điểm chốt kỳ (không phải danh sách sự
+      kiện của kỳ này để đếm lại): "Tồn đầu kỳ" (snapshot `tonCuoiKy`/`tonCuoiBiCan` của KỲ TRƯỚC)
+      và "Tồn cuối kỳ" (snapshot của CHÍNH kỳ này) — nhãn dòng đã ghi rõ "(snapshot chốt kỳ
+      trước/này)" để không ai tưởng nhầm là thiếu sót. Riêng "Số tồn hiện tại" KHÔNG phải snapshot
+      (luôn tính live) nên ĐÃ chuyển sang công thức qua sheet "DS tồn {gs}" có sẵn — trước đây bị
+      bỏ sót dù sheet đã tồn tại.
+      **Cột BC của khối ĐT "mới" áp dụng đúng nguyên tắc lọc theo kỳ vừa sửa ở B10 (xem "Trạng
+      thái Biểu B10" đầu file)** — Điều tra là giai đoạn DUY NHẤT bị can có thể được "Thêm bị can"
+      bổ sung vào 1 vụ đã có sẵn ở kỳ SAU kỳ vụ được mở, nên các dòng Án khởi tố mới/Tin báo/Án
+      nơi khác/Phục hồi điều tra/Khởi tạo trực tiếp/Tổng số mới ở CỘT ĐT dùng `demBcSheetKy`
+      (COUNTIFS theo cột "Kỳ TK BC" khớp đúng kỳ đang tính, dùng chung `bcKyKhoiToMap`/
+      `kyIdSetTrongBaoCao`/`dsKyTenTrongBaoCao` đã thêm cho B10) — cột TT/XX của CÙNG các dòng đó
+      dùng `demBcSheetM` thường (đếm mọi BC trong sheet, không lọc kỳ), đúng như B10 chưa từng lọc
+      loaiKhoiTo cho khối TT/XX. Đã viết test độc lập cho toàn bộ formula helper mới trước khi
+      mirror sang `qlva-dev.html` — CHƯA kiểm chứng bằng dữ liệu Firestore thật.
+      **Biểu B10 vẫn còn 1 nhóm ô chưa sheet-hoá được audit nhưng CHƯA sửa** (out of scope đợt
+      này, cần quyết định riêng nếu muốn làm tiếp) — 2 loại: (1) "Tồn kỳ trước"/"Tồn kỳ này" (vals
+      index 0-3, 34-37, 65-68) — snapshot, giống lý do "Tồn đầu/cuối kỳ" ở Tổng hợp báo cáo, không
+      sheet-hoá được; (2) "Tổng thụ lý" C3/C4/C33/C34/C60/C61 (vals index 4,5,34,35,65,66... — số
+      thực ra là phép cộng/trừ CÁC CỘT B10 KHÁC trong CÙNG dòng, VD C3 = tồn trước + C6 − nhập vụ
+      − chuyển đi − án huỷ) — về lý thuyết có thể viết thành công thức Excel tham chiếu chéo cột
+      trong cùng 1 dòng (không cần DS sheet mới), nhưng chưa làm vì cần rà soát cẩn thận việc ánh
+      xạ từng thành phần C3 sang đúng cột vals[] khác trong cùng hàng, quy mô tương đương lần sửa
+      B10 gốc — nếu cần, hỏi lại rõ trước khi làm để tránh sai sót trên báo cáo chính thức.
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng

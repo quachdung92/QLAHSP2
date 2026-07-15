@@ -6952,85 +6952,207 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   }
 
   // ---- Sheet 2: Tổng hợp báo cáo (khớp đúng bảng hiển thị trên màn hình) ----
-  // Các ô có DS sheet tương ứng → công thức SUM('DS ...'!$A:$A); snapshot/live → giá trị JS
+  // 2026-07-15: mỗi giai đoạn tách 2 cột Vụ/BC (trước chỉ có 1 cột/giai đoạn, không có tổng BC ở
+  // bất kỳ dòng "số mới"/"giải quyết" nào — chỉ 3 dòng tồn có tách riêng "— Vụ"/"— Bị can" theo
+  // HÀNG, không phải cột). Và audit lại toàn bộ: MỌI ô có DS sheet tương ứng đều chuyển sang công
+  // thức SUM/COUNTIF trên chính sheet đó (không còn đọc số JS xuất thẳng từ baoCao nữa, đúng yêu
+  // cầu "toàn bộ biểu báo cáo lấy dữ liệu = công thức Excel") — CHỈ còn 2 cặp dòng thật sự không
+  // thể sheet-hoá vì bản chất là snapshot tại 1 thời điểm, không phải 1 danh sách sự kiện trong kỳ:
+  // "Tồn đầu kỳ" (snapshot tonCuoiKy/tonCuoiBiCan của KỲ TRƯỚC lúc chốt) và "Tồn cuối kỳ" (snapshot
+  // của CHÍNH kỳ này lúc chốt) — 2 dòng này giữ nguyên JS, có ghi chú rõ lý do trong nhãn dòng.
+  // "Số tồn hiện tại" KHÔNG phải snapshot (luôn tính live tại thời điểm xuất) nên CÓ sheet tương
+  // ứng ("DS tồn ĐT/TT/XX") — trước đây bị bỏ sót, giờ đã chuyển sang công thức.
   const _thGs = (gd) => gd === "dieu_tra" ? "ĐT" : gd === "truy_to" ? "TT" : "XX";
   const _thSumA = (sn) => `SUM('${sn}'!$A:$A)`;
   const THVao = {
     dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO,
   };
+  // demBcSheet: đếm dòng BỊ CAN THẬT trong 1 sheet (cột M = Họ tên BC — loại bỏ dòng giả
+  // "(Chưa có BC)" của vụ 0 bị can, xem BC_EMPTY).
+  const demBcSheet = (sn) => `COUNTIF('${sn}'!$M:$M,"<>(Chưa có BC)")`;
+  const demBcSheetM = (sheets) => sheets.map(demBcSheet).join("+") || "0";
+  // demBcSheetKy: giống trên nhưng CHỈ đếm BC có cột "Kỳ TK BC" (AF) khớp kỳ đang tính báo cáo —
+  // dùng riêng cho khối ĐT "mới" (Điều tra là giai đoạn duy nhất bị can bổ sung được vào vụ đã có
+  // sẵn — "Thêm bị can" — nên phải lọc đúng kỳ của chính sự kiện khoi_to_bican, không tính cả BC
+  // bổ sung sau vào kỳ vụ mới. Xem lý do đầy đủ ở tinhBieu10 khối C7-C24, cùng 1 nguyên tắc).
+  const demBcSheetKy = (sheets, dsKyTen) => {
+    const parts = [];
+    for (const sn of sheets) for (const kt of dsKyTen) parts.push(`COUNTIFS('${sn}'!$AF:$AF,"${kt}")`);
+    return parts.join("+") || "0";
+  };
+  // Bản JS song song — cache "result" cho ô có formula (Excel chưa recalc vẫn hiện đúng số).
+  const bcCountVuArr = (vuArr) => vuArr.reduce((s, vu) => s + (biCanByVu[vu.id] || []).length, 0);
+  const bcCountVuArrKy = (vuArr) => {
+    let n = 0;
+    for (const vu of vuArr) for (const bc of (biCanByVu[vu.id] || []))
+      if (kyIdSetTrongBaoCao.has(bcKyKhoiToMap.get(bc.id))) n++;
+    return n;
+  };
+  // Nguồn (cột AH của "DS khởi tố {gs}", xem addSheetVuKy) — SUMIF/COUNTIF theo nhãn Nguồn.
+  const sfVuNguon = (sn, nl) => `SUMIF('${sn}'!$AH:$AH,"${nl}",'${sn}'!$A:$A)`;
+  const cfBcNguon = (sn, nl) => `COUNTIF('${sn}'!$AH:$AH,"${nl}")`;
+  const cfBcNguonKy = (sn, nl, dsKyTen) => dsKyTen.map(kt => `COUNTIFS('${sn}'!$AH:$AH,"${nl}",'${sn}'!$AF:$AF,"${kt}")`).join("+") || "0";
+  // _thRow: 1 dòng — dataFn(gd) trả {vu, bc} (mỗi cái số thường hoặc {formula,result}) — bung
+  // thành 6 cột lần lượt ĐT-Vụ/ĐT-BC/TT-Vụ/TT-BC/XX-Vụ/XX-BC.
+  const _thRow = (nhan, dataFn) => {
+    const cells = [nhan];
+    for (const gd of THU_TU_GIAI_DOAN) { const { vu, bc } = dataFn(gd); cells.push(vu, bc); }
+    return cells;
+  };
+  const _thBlank = (nhan) => [nhan, "", "", "", "", "", ""];
+  // rowNguon: 3 dòng Án khởi tố mới/Tin báo/Án nơi khác — cùng 1 khuôn, chỉ khác nguonKey.
+  const rowNguon = (nhan, nguonKey) => {
+    const nl = NHAN_NGUON[nguonKey];
+    return _thRow(nhan, gd => {
+      const sn = `DS khởi tố ${_thGs(gd)}`;
+      const vuArr = (baoCao[gd].ds.khoiToTrucTiep || []).filter(v => v.nguon === nguonKey);
+      return {
+        vu: { formula: sfVuNguon(sn, nl), result: baoCao[gd].soMoi[nguonKey] ?? 0 },
+        bc: gd === "dieu_tra"
+          ? { formula: cfBcNguonKy(sn, nl, dsKyTenTrongBaoCao), result: bcCountVuArrKy(vuArr) }
+          : { formula: cfBcNguon(sn, nl), result: bcCountVuArr(vuArr) },
+      };
+    });
+  };
+  // rowHoanThanh: 5 dòng Đã xét xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ — cùng 1 khuôn.
+  const rowHoanThanh = (nhan, sheetLabel, htKey) => _thRow(nhan, gd => {
+    const sn = `DS ${sheetLabel} ${_thGs(gd)}`;
+    const vuArr = baoCao[gd].ds.hoanThanh?.[htKey] || [];
+    return {
+      vu: { formula: _thSumA(sn), result: baoCao[gd].hoanThanhTheoGD[htKey] },
+      bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+    };
+  });
+
   const tongHopHang = [
-    // ── Tồn đầu kỳ: snapshot từ kỳ trước, không có DS sheet → giữ nguyên JS
-    ["Tồn đầu kỳ — Vụ",     ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonDauKy)],
-    ["Tồn đầu kỳ — Bị can", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonDauBiCan ?? 0)],
-    ["Số mới", "", "", ""],
-    // Án khởi tố mới / Tin báo / Án nơi khác: cần lọc theo cột Nguồn (AF+) — giữ JS
-    ["— Án khởi tố mới",         ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.an_khoi_to_moi ?? 0)],
-    ["— Tin báo khởi tố lên",    ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.tin_bao_khoi_to_len ?? 0)],
-    ["— Án nơi khác chuyển đến", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soMoi.an_noi_khac_chuyen_den ?? 0)],
-    // Phục hồi: mỗi GD có DS sheet riêng
-    ["— Phục hồi điều tra", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS phục hồi ${_thGs(gd)}`),
-      result:  baoCao[gd].soMoi.phuc_hoi_dieu_tra ?? 0,
-    }))],
-    // Chuyển đến từ GĐ trước (ĐT = 0, không có sheet)
-    ["— Chuyển đến từ giai đoạn trước", ...THU_TU_GIAI_DOAN.map(gd =>
-      gd === "dieu_tra" ? (baoCao[gd].soMoi.chuyenDenTu || 0)
-        : { formula: _thSumA(`DS chuyển đến ${_thGs(gd)}`), result: baoCao[gd].soMoi.chuyenDenTu },
-    )],
-    // Trả về từ GĐ sau (XX = 0, không có sheet)
-    ["— Trả về từ giai đoạn sau", ...THU_TU_GIAI_DOAN.map(gd =>
-      gd === "xet_xu" ? (baoCao[gd].soMoi.traVeTu || 0)
-        : { formula: _thSumA(`DS trả về ${_thGs(gd)}`), result: baoCao[gd].soMoi.traVeTu },
-    )],
-    // Khởi tạo trực tiếp = DS khởi tố + DS phục hồi
-    ["— Khởi tạo trực tiếp tại giai đoạn này", ...THU_TU_GIAI_DOAN.map(gd => {
+    // ── Tồn đầu kỳ: KHÔNG có DS sheet — là snapshot tonCuoiKy/tonCuoiBiCan của KỲ TRƯỚC tại
+    // thời điểm chốt kỳ đó, không phải 1 danh sách sự kiện của KỲ NÀY để đếm lại. Giữ JS.
+    _thRow("Tồn đầu kỳ (snapshot chốt kỳ trước)", gd => ({ vu: baoCao[gd].tonDauKy, bc: baoCao[gd].tonDauBiCan ?? 0 })),
+    _thBlank("Số mới"),
+    rowNguon("— Án khởi tố mới", "an_khoi_to_moi"),
+    rowNguon("— Tin báo khởi tố lên", "tin_bao_khoi_to_len"),
+    rowNguon("— Án nơi khác chuyển đến", "an_noi_khac_chuyen_den"),
+    // Phục hồi: mỗi GĐ có DS sheet riêng, không cần lọc Nguồn (sheet đã 100% phục hồi).
+    _thRow("— Phục hồi điều tra", gd => {
+      const sn = `DS phục hồi ${_thGs(gd)}`;
+      const vuArr = (baoCao[gd].ds.khoiToTrucTiep || []).filter(v => v.nguon === "phuc_hoi_dieu_tra");
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.phuc_hoi_dieu_tra ?? 0 },
+        bc: gd === "dieu_tra"
+          ? { formula: demBcSheetKy([sn], dsKyTenTrongBaoCao), result: bcCountVuArrKy(vuArr) }
+          : { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    // Chuyển đến từ GĐ trước (ĐT không có, luôn 0 — không phải thiếu sheet mà là định nghĩa).
+    _thRow("— Chuyển đến từ giai đoạn trước", gd => {
+      if (gd === "dieu_tra") return { vu: 0, bc: 0 };
+      const sn = `DS chuyển đến ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.chuyenDen || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.chuyenDenTu ?? 0 },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    // Trả về từ GĐ sau (XX không có, luôn 0 — định nghĩa, không phải thiếu sheet).
+    _thRow("— Trả về từ giai đoạn sau", gd => {
+      if (gd === "xet_xu") return { vu: 0, bc: 0 };
+      const sn = `DS trả về ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.traVe || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.traVeTu ?? 0 },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    // Khởi tạo trực tiếp = DS khởi tố + DS phục hồi — BC lọc kỳ riêng cho ĐT (xem rowNguon).
+    _thRow("— Khởi tạo trực tiếp tại giai đoạn này", gd => {
       const gs = _thGs(gd);
-      return { formula: `${_thSumA(`DS khởi tố ${gs}`)}+${_thSumA(`DS phục hồi ${gs}`)}`, result: baoCao[gd].soMoi.khoiTaoTrucTiep ?? 0 };
-    })],
-    // Vụ tách ra
-    ["— Vụ tách ra (tách trong kỳ này)", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS vụ tách ${_thGs(gd)}`),
-      result:  baoCao[gd].soMoi.tachVu,
-    }))],
-    // Tổng số mới = SUM tất cả VÀO sheets của GĐ đó
-    ["Tổng số mới", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: THVao[gd].map(_thSumA).join("+"),
-      result:  baoCao[gd].soMoi.tong,
-    }))],
-    ["Đã giải quyết / ra khỏi giai đoạn", "", "", ""],
-    // Chuyển GĐ tiến (XX không chuyển tiếp)
-    ["— Chuyển giai đoạn (kết thúc giai đoạn này)", ...THU_TU_GIAI_DOAN.map(gd => {
-      if (gd === "xet_xu") return baoCao[gd].chuyenDi || 0;
+      const sheets = [`DS khởi tố ${gs}`, `DS phục hồi ${gs}`];
+      const vuArr = baoCao[gd].ds.khoiToTrucTiep || [];
+      return {
+        vu: { formula: sheets.map(_thSumA).join("+"), result: baoCao[gd].soMoi.khoiTaoTrucTiep ?? 0 },
+        bc: gd === "dieu_tra"
+          ? { formula: demBcSheetKy(sheets, dsKyTenTrongBaoCao), result: bcCountVuArrKy(vuArr) }
+          : { formula: demBcSheetM(sheets), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    _thRow("— Vụ tách ra (tách trong kỳ này)", gd => {
+      const sn = `DS vụ tách ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.tachVu || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.tachVu ?? 0 },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    // Tổng số mới = SUM tất cả VÀO sheets — BC = (khởi tố+phục hồi, lọc kỳ nếu ĐT) + phần còn lại.
+    _thRow("Tổng số mới", gd => {
+      const gs = _thGs(gd);
+      const khoiToSheets = [`DS khởi tố ${gs}`, `DS phục hồi ${gs}`];
+      const khacSheets = [
+        `DS vụ tách ${gs}`,
+        ...(gd !== "dieu_tra" ? [`DS chuyển đến ${gs}`] : []),
+        ...(gd !== "xet_xu" ? [`DS trả về ${gs}`] : []),
+      ];
+      const khoiToArr = baoCao[gd].ds.khoiToTrucTiep || [];
+      const khacArr = [...(baoCao[gd].ds.tachVu||[]), ...(baoCao[gd].ds.chuyenDen||[]), ...(baoCao[gd].ds.traVe||[])];
+      const khoiToBcF = gd === "dieu_tra" ? demBcSheetKy(khoiToSheets, dsKyTenTrongBaoCao) : demBcSheetM(khoiToSheets);
+      const khoiToBcR = gd === "dieu_tra" ? bcCountVuArrKy(khoiToArr) : bcCountVuArr(khoiToArr);
+      return {
+        vu: { formula: THVao[gd].map(_thSumA).join("+"), result: baoCao[gd].soMoi.tong },
+        bc: { formula: `${khoiToBcF}+${demBcSheetM(khacSheets)}`, result: khoiToBcR + bcCountVuArr(khacArr) },
+      };
+    }),
+    _thBlank("Đã giải quyết / ra khỏi giai đoạn"),
+    // Chuyển GĐ tiến (XX không chuyển tiếp — định nghĩa, không phải thiếu sheet).
+    _thRow("— Chuyển giai đoạn (kết thúc giai đoạn này)", gd => {
+      const vuArr = baoCao[gd].ds.chuyenDi || [];
+      if (gd === "xet_xu") return { vu: baoCao[gd].chuyenDi || 0, bc: bcCountVuArr(vuArr) };
       const gs = _thGs(gd); const gsNext = gd === "dieu_tra" ? "TT" : "XX";
-      return { formula: _thSumA(`DS ${gs} chuyển ${gsNext}`), result: baoCao[gd].chuyenDi };
-    })],
-    // Trả hồ sơ (ĐT không trả lại)
-    ["— Trả hồ sơ (ra khỏi giai đoạn này)", ...THU_TU_GIAI_DOAN.map(gd => {
-      if (gd === "dieu_tra") return baoCao[gd].traDi || 0;
+      const sn = `DS ${gs} chuyển ${gsNext}`;
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].chuyenDi },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    // Trả hồ sơ (ĐT không trả lại — định nghĩa, không phải thiếu sheet).
+    _thRow("— Trả hồ sơ (ra khỏi giai đoạn này)", gd => {
+      const vuArr = baoCao[gd].ds.traDi || [];
+      if (gd === "dieu_tra") return { vu: baoCao[gd].traDi || 0, bc: bcCountVuArr(vuArr) };
       const gs = _thGs(gd); const gsPrev = gd === "truy_to" ? "ĐT" : "TT";
-      return { formula: _thSumA(`DS ${gs} trả ${gsPrev}`), result: baoCao[gd].traDi };
-    })],
-    // Hoàn thành theo từng hình thức — mỗi loại có DS sheet riêng
-    ["— Đã xét xử", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS đã xét xử ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.da_xet_xu }))],
-    ["— Chuyển đi", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS chuyển đi ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.chuyen_di }))],
-    ["— Tạm đình chỉ", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS tạm đình chỉ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.tam_dinh_chi }))],
-    ["— Đình chỉ", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS đình chỉ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.dinh_chi }))],
-    ["— Án huỷ", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS án huỷ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.an_huy }))],
-    ["— Nhập vào vụ khác", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS nhập vụ ${_thGs(gd)}`), result: baoCao[gd].soNhapVu }))],
-    // ── Tồn cuối kỳ: snapshot chốt kỳ; Số tồn hiện tại: live → giữ JS
-    ["Tồn cuối kỳ — Vụ",     ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonCuoiKy)],
-    ["Tồn cuối kỳ — Bị can", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonCuoiBiCanKy ?? 0)],
-    ["Số tồn hiện tại (tại thời điểm xuất)", "", "", ""],
-    ["— Số vụ",    ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soVuTon)],
-    ["— Số bị can", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].soBiCanTon)],
+      const sn = `DS ${gs} trả ${gsPrev}`;
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].traDi },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    rowHoanThanh("— Đã xét xử", "đã xét xử", "da_xet_xu"),
+    rowHoanThanh("— Chuyển đi", "chuyển đi", "chuyen_di"),
+    rowHoanThanh("— Tạm đình chỉ", "tạm đình chỉ", "tam_dinh_chi"),
+    rowHoanThanh("— Đình chỉ", "đình chỉ", "dinh_chi"),
+    rowHoanThanh("— Án huỷ", "án huỷ", "an_huy"),
+    _thRow("— Nhập vào vụ khác", gd => {
+      const sn = `DS nhập vụ ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.nhapVu || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soNhapVu },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    // ── Tồn cuối kỳ: snapshot chốt CHÍNH KỲ NÀY (không phải danh sách sự kiện) — giữ JS.
+    _thRow("Tồn cuối kỳ (snapshot chốt kỳ này)", gd => ({ vu: baoCao[gd].tonCuoiKy, bc: baoCao[gd].tonCuoiBiCanKy ?? 0 })),
+    _thBlank("Số tồn hiện tại (tại thời điểm xuất — không phải snapshot, luôn live)"),
+    // Có DS sheet ("DS tồn ĐT/TT/XX") — trước đây bị bỏ sót, đọc JS trực tiếp dù có sheet sẵn.
+    _thRow("— Số tồn hiện tại", gd => {
+      const sn = `DS tồn ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.tonHienTai || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soVuTon },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
   ];
-  themSheetDanhSach(wb, "Tổng hợp báo cáo", ["", "Điều tra", "Truy tố", "Xét xử"], tongHopHang, [42, 12, 12, 12]);
+  themSheetDanhSach(wb, "Tổng hợp báo cáo",
+    ["", "ĐT - Vụ", "ĐT - BC", "TT - Vụ", "TT - BC", "XX - Vụ", "XX - BC"],
+    tongHopHang, [46, 10, 10, 10, 10, 10, 10]);
 
   // ---- Sheets chi tiết — mỗi loại sự kiện × mỗi giai đoạn là 1 sheet riêng ----
   // Cấu trúc: VÀO (khởi tố/phục hồi/tách/chuyển đến/trả về) + RA (xét xử/chuyển đi/TĐC/ĐC/huỷ/nhập) + TỒN
