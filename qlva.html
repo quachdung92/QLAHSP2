@@ -1691,6 +1691,85 @@ function BackfillNgayQuyetDinhTool() {
   );
 }
 
+// Sửa loaiKhoiTo bị ghi sai bởi bug cũ ở ImportExcelModule (hardcode "khoi_to_moi" — giá trị
+// KHÔNG HỢP LỆ, đã sửa code 2026-07-13 để bắt import mới tính đúng, nhưng bị can đã import TRƯỚC
+// lúc sửa vẫn còn giá trị sai trong Firestore). Biểu B10 lọc bị can === "ban_dau" mới tính vào
+// khối nhân khẩu học (C7-C24...), nên vụ nào dính bug này sẽ bị B10 đếm thiếu ÂM THẦM ở khối đó
+// dù số vụ/BC tổng vẫn đúng — cùng loại lỗi vừa phát hiện lại ở seed-tool.html (xem đó để hiểu
+// triệu chứng). Chạy 1 lần: gom bị can theo vụ, tính lại ĐÚNG bằng chính hàm
+// tinhLoaiKhoiToTheoNgay app dùng mỗi khi thêm/sửa bị can (MIN ngayKhoiTo trong vụ = "ban_dau",
+// còn lại "bo_sung"), chỉ ghi đè khi giá trị tính ra khác giá trị đang lưu — an toàn chạy lại
+// nhiều lần (idempotent). Vì vuPrimaryDL (dùng ở TK tội danh + TaiTaoTonTheoTDTool) chọn bị can
+// "ban_dau" làm tội danh chính của vụ, sửa xong nên chạy lại TaiTaoTonTheoTDTool nếu số liệu tồn
+// theo tội danh của kỳ cũ có vụ bị ảnh hưởng.
+function BackfillLoaiKhoiToTool() {
+  const [state, setState] = useState("idle");
+  const [info, setInfo] = useState("");
+
+  const run = async () => {
+    setState("loading"); setInfo("Đang tải dữ liệu...");
+    try {
+      const bcSnap = await db.collection("bican").get();
+      const theoVu = new Map();
+      bcSnap.docs.forEach(doc => {
+        const bc = doc.data();
+        if (!theoVu.has(bc.maVuAn)) theoVu.set(bc.maVuAn, []);
+        theoVu.get(bc.maVuAn).push({ id: doc.id, ref: doc.ref, data: bc });
+      });
+
+      let soCapNhat = 0, soVuAnhHuong = 0;
+      const BATCH_SIZE = 400;
+      let batch = db.batch(); let batchCount = 0;
+      const commitNeu = async () => { if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; } };
+
+      for (const [, bcList] of theoVu) {
+        const ngayList = bcList.map(bc => {
+          const nk = bc.data.ngayKhoiTo;
+          return nk ? (nk.toDate ? nk.toDate() : new Date(nk)) : null;
+        });
+        const dungList = tinhLoaiKhoiToTheoNgay(ngayList);
+        let vuBiSua = false;
+        bcList.forEach((bc, i) => {
+          if (bc.data.loaiKhoiTo !== dungList[i]) {
+            batch.update(bc.ref, { loaiKhoiTo: dungList[i] });
+            soCapNhat++; batchCount++; vuBiSua = true;
+          }
+        });
+        if (vuBiSua) soVuAnhHuong++;
+        await commitNeu();
+      }
+      if (batchCount > 0) await batch.commit();
+
+      setState("done");
+      setInfo(soCapNhat === 0
+        ? "Không có bị can nào sai — dữ liệu đã đúng."
+        : `Đã sửa loaiKhoiTo cho ${soCapNhat} bị can thuộc ${soVuAnhHuong} vụ. Nếu các vụ này thuộc kỳ đã chốt, ` +
+          `chạy lại "Sửa lại tồn cuối kỳ theo tội danh (Biểu B10)" bên dưới để số tồn theo tội danh khớp lại.`);
+    } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Sửa lại "Ban đầu/Bổ sung" của bị can (loaiKhoiTo)</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Sửa bị can bị bug cũ ghi sai "loaiKhoiTo" (bug ở Import Excel trước 2026-07-13, hoặc ở seed-tool.html) —
+        khiến Biểu B10 đếm thiếu ở khối nhân khẩu học (tuổi, trình độ, dân tộc...) dù số vụ/bị can tổng vẫn đúng.
+        Tính lại theo đúng quy tắc app dùng (bị can có ngày khởi tố sớm nhất trong vụ = "Ban đầu").
+        An toàn khi chạy lại nhiều lần.
+      </p>
+      {info && (
+        <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
+          {info}
+        </div>
+      )}
+      <button onClick={run} disabled={state === "loading"}
+              className="px-3 py-1.5 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
+        {state === "loading" ? "Đang chạy..." : "Chạy sửa lại"}
+      </button>
+    </div>
+  );
+}
+
 // Sửa dữ liệu tonCuoiKyTheoTD/tonCuoiBiCan đã bị ghi sai bởi bug cũ (tinhLaiBaoCaoLuu từng chụp
 // ảnh LIVE hiện tại thay vì lịch sử — đã sửa code 2026-07-13 để không sai THÊM, nhưng dữ liệu đã
 // ghi sai trước đó không tự phục hồi). Chạy 1 lần để tính lại ĐÚNG từ log cho toàn bộ kỳ đã chốt,
@@ -2261,6 +2340,7 @@ function ImportExcelModule() {
       <DungLaiLichSuTool />
       <SeedDanhMucTool />
       <BackfillDieuLuatBCTool />
+      <BackfillLoaiKhoiToTool />
       <TaiTaoTonTheoTDTool />
     </div>
   );
