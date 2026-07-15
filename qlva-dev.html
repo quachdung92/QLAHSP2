@@ -6884,17 +6884,17 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null) {
     })],
     // Hoàn thành theo từng hình thức — mỗi loại có DS sheet riêng
     ["— Đã xét xử", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS đã xét xử ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.da_xet_xu })],
+      formula: _thSumA(`DS đã xét xử ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.da_xet_xu }))],
     ["— Chuyển đi", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS chuyển đi ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.chuyen_di })],
+      formula: _thSumA(`DS chuyển đi ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.chuyen_di }))],
     ["— Tạm đình chỉ", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS tạm đình chỉ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.tam_dinh_chi })],
+      formula: _thSumA(`DS tạm đình chỉ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.tam_dinh_chi }))],
     ["— Đình chỉ", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS đình chỉ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.dinh_chi })],
+      formula: _thSumA(`DS đình chỉ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.dinh_chi }))],
     ["— Án huỷ", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS án huỷ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.an_huy })],
+      formula: _thSumA(`DS án huỷ ${_thGs(gd)}`), result: baoCao[gd].hoanThanhTheoGD.an_huy }))],
     ["— Nhập vào vụ khác", ...THU_TU_GIAI_DOAN.map(gd => ({
-      formula: _thSumA(`DS nhập vụ ${_thGs(gd)}`), result: baoCao[gd].soNhapVu })],
+      formula: _thSumA(`DS nhập vụ ${_thGs(gd)}`), result: baoCao[gd].soNhapVu }))],
     // ── Tồn cuối kỳ: snapshot chốt kỳ; Số tồn hiện tại: live → giữ JS
     ["Tồn cuối kỳ — Vụ",     ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonCuoiKy)],
     ["Tồn cuối kỳ — Bị can", ...THU_TU_GIAI_DOAN.map(gd => baoCao[gd].tonCuoiBiCanKy ?? 0)],
