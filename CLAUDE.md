@@ -323,6 +323,15 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       đang sửa dòng hay không — khác nhóm 4 field editable), Excel lịch sử (cột riêng sau "Tên
       vụ"); riêng **Biên bản in A4** đặt làm dòng phụ trong ô "Tên vụ" (không phải cột riêng) vì
       khổ A4 đã khá chật với 7 cột hiện có.
+      **Biên bản in A4: cột Mã vụ đổi thành ảnh QR + tách "Trạng thái HS" thành cột riêng
+      (2026-07-16, cùng đợt)** — ban đầu đặt "Hình thức giải quyết" làm dòng phụ trong ô "Tên vụ"
+      vì lo khổ A4 chật (xem ngay trên), nhưng theo yêu cầu người dùng đã tách hẳn thành cột riêng
+      "Trạng thái HS" (dùng lại đúng `moTaHinhThucGiaiQuyet`) — bù lại, cột "Mã vụ" đổi từ hiện
+      chữ sang **ảnh QR** (`taoQrDataUrl(d.maVuAn, 120)`, cùng hàm đã dùng cho Excel "Tải toàn bộ
+      lịch sử" — sinh data URL PNG đồng bộ, không cần gắn DOM thật) để tiết kiệm bề ngang, đồng
+      thời tiện quét lại thẳng từ bản giấy sau này. Các cột KSV/ĐTV/Số bút lục/Người nhận thực tế
+      thu hẹp bớt độ rộng cố định (`w-*`) để nhường chỗ cho cột mới — chưa in giấy thật để xác
+      nhận có vừa khổ A4 hay không, nên in thử 1 bản trước khi dùng cho nhiều hồ sơ.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
