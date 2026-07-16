@@ -2,6 +2,41 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Giao nhận hồ sơ — tự động lưu khi chuyển dòng + đổi nhãn/style Mức án (2026-07-17)
+
+**Tự động lưu khi chuyển sang sửa dòng khác** — trước đây mỗi dòng (`DongGiaoNhan`) tự quản trạng
+thái `dangSua` cục bộ, có thể mở sửa nhiều dòng cùng lúc không kiểm soát; người dùng bấm nhầm sang
+dòng khác mà quên bấm "Lưu" ở dòng trước là mất trắng dữ liệu vừa nhập (đặc biệt khó chịu khi kiểm
+kê nhiều hồ sơ lưu trữ liên tục, thao tác nhanh). Đổi thiết kế: `GiaoNhanHoSoModule` giữ 1 state
+duy nhất `dangSuaId` (id dòng đang sửa, CHỈ 1 dòng được sửa cùng lúc trong toàn phiên) + 1 ref
+`luuHandlersRef` (map id → hàm `luu()` MỚI NHẤT của đúng dòng đó, mỗi `DongGiaoNhan` tự đăng ký lại
+qua `onDangKyLuu` mỗi lần render). Bấm sang dòng khác gọi `yeuCauSuaDong(id)`: nếu đang có dòng
+KHÁC dở dang, tự gọi `luuHandlersRef.current[dangSuaId]()` trước — **lưu thất bại (VD mất mạng) thì
+GIỮ NGUYÊN dòng cũ, không chuyển sang dòng mới**, để người dùng thấy toast lỗi và có cơ hội sửa lại
+thay vì mất dữ liệu trong im lặng. `luu()` giờ trả về `true`/`false` để `yeuCauSuaDong` biết kết
+quả. Riêng "Huỷ" KHÔNG tự lưu (đúng ý nghĩa huỷ bỏ) — chỉ gọi thẳng `ketThucSuaDong()`.
+`dangSua` ở `DongGiaoNhan` từ state cục bộ chuyển thành PROP do cha điều khiển; nạp lại giá trị
+hiện tại của dòng khi `dangSua` chuyển `false → true` chuyển từ logic trong `batDauSua` sang 1
+`useEffect` theo dõi prop này (áp dụng đúng dù chuyển vào edit mode do người dùng bấm dòng này hay
+do dòng khác vừa tự lưu xong rồi nhường sang). Nút "Lưu phiên" vẫn khoá khi `dangSuaId !== null`
+(trường hợp bấm thẳng "Lưu phiên" mà không qua thao tác chuyển dòng — safeguard cũ ở
+[[toi-uu-he-thong]] vẫn cần, không thay thế được bởi auto-save này).
+**Đã kiểm chứng bằng Playwright + mock Firestore** (không chỉ đọc code): chuyển dòng A sang dòng B
+mà không bấm "Lưu" → xác nhận dòng A tự lưu đúng giá trị vào Firestore rồi thoát sửa, dòng B vào
+chế độ sửa; giả lập lỗi ghi Firestore cho dòng A rồi thử chuyển sang B → xác nhận dòng A VẪN ở chế
+độ sửa (không mất dữ liệu, không chuyển "trót lọt"), dòng B không bị ảnh hưởng.
+
+**Cột "Mức án" đổi tên thành "Mức án cao nhất"** (rõ nghĩa hơn — 1 vụ có thể nhiều bị can/nhiều
+mức án khác nhau, field `mucAnLoai/mucAnNam/mucAnThang` trên `vuan` chỉ lưu ĐÚNG 1 mức, hiểu ngầm
+là mức cao nhất dùng để tính thời hạn bảo quản) — đổi ở cả 4 chỗ: header bảng trên màn hình, header
+cột Excel "Tải toàn bộ lịch sử", dòng gợi ý dưới công tắc "Nộp hồ sơ lưu trữ", và header bảng Biên
+bản in A4.
+
+**"Thời hạn bảo quản" hiện đỏ + in đậm + cỡ chữ to hơn** ở cả bảng trên màn hình
+(`text-red-600 font-bold`, cỡ `text-sm` thay vì `text-xs`) lẫn Biên bản in A4 (thêm `text-base`,
+cỡ to nhất so với các cột khác trong bảng in) — dễ nhận ra ngay khi liếc mắt, đúng vai trò là con
+số quan trọng nhất của cả phiên nộp lưu trữ.
+
 ## Audit "tối ưu hệ thống" (nhánh `toi-uu-he-thong`, 2026-07-16)
 
 Rà soát toàn bộ logic hệ thống theo yêu cầu người dùng — tìm vùng dễ xung đột (race condition khi
