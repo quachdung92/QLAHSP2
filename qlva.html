@@ -8243,8 +8243,12 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
   const dsInDung = [...dsQuet].reverse(); // in theo thứ tự quét trước lên trên
   const noiDung = (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 print:bg-white overflow-auto py-8">
-      <div id="bbgn-in-a4" className="bg-white p-10" style={{ width: "210mm", minHeight: "297mm" }}>
-        <div className="text-sm text-slate-400 mb-6 print:hidden">Xem trước trang in A4 — bấm "In" để in thật.</div>
+      {/* @page ở đây (không phải khối @media print chung trong <head>) vì chỉ áp dụng khi CHÍNH
+          biên bản này đang mount trong #qr-print-root — không đụng tới khổ in A4 dọc mà InQRModal
+          (in mã QR) đang dùng, 2 modal không portal cùng lúc nên không xung đột. */}
+      <style>{"@page { size: landscape; }"}</style>
+      <div id="bbgn-in-a4" className="bg-white p-10" style={{ width: "297mm", minHeight: "210mm" }}>
+        <div className="text-sm text-slate-400 mb-6 print:hidden">Xem trước trang in A4 ngang — bấm "In" để in thật.</div>
         <div className="text-center mb-6">
           <div className="text-lg font-bold uppercase">Biên bản giao nhận hồ sơ</div>
           <div className="text-sm text-slate-500 mt-1">

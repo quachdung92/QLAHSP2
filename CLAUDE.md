@@ -332,6 +332,15 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       thời tiện quét lại thẳng từ bản giấy sau này. Các cột KSV/ĐTV/Số bút lục/Người nhận thực tế
       thu hẹp bớt độ rộng cố định (`w-*`) để nhường chỗ cho cột mới — chưa in giấy thật để xác
       nhận có vừa khổ A4 hay không, nên in thử 1 bản trước khi dùng cho nhiều hồ sơ.
+      **Đổi sang khổ ngang/landscape (2026-07-16, cùng đợt)** — theo yêu cầu người dùng sau khi
+      bảng lên 8 cột. Đổi container từ `width:210mm;minHeight:297mm` sang `width:297mm;
+      minHeight:210mm`, và thêm `<style>{"@page { size: landscape; }"}</style>` NGAY TRONG nội
+      dung được portal vào `#qr-print-root` (không sửa khối `@media print` chung trong `<head>`)
+      — vì `@page` là at-rule toàn cục, nếu đặt chung sẽ ép cả `InQRModal` (in mã QR, vẫn cần khổ
+      dọc) sang ngang theo. Đặt `<style>` bên trong chính component này thì quy tắc chỉ tồn tại
+      trong DOM khi ĐÚNG biên bản này đang mở — 2 modal in không portal cùng lúc nên không xung
+      đột. Nếu sau này có thêm màn in khác cần khổ riêng, dùng lại đúng pattern này (style cục bộ
+      theo từng component in), đừng gộp chung vào khối `@media print` ở `<head>`.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
