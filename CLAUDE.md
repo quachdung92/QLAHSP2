@@ -845,6 +845,34 @@ làm tay từng bước, script tự `mkdir` thư mục nếu chưa có (VD sau 
 Nếu sau này đổi cấu trúc file (VD app tách thành nhiều file, không còn 1 file HTML duy nhất),
 nhớ cập nhật lại logic copy trong cả 2 script, đừng để lệch nhau.
 
+## Tài liệu & dữ liệu tham khảo chưa vào code (chưa commit, ở ngoài `qlva.html`)
+
+Vài file gốc mới thêm vào thư mục, chưa được nhắc tới ở đâu khác trong file này — đọc để biết vì
+sao chúng tồn tại trước khi động vào:
+
+- **`bieu_B10_mo_ta.md`** — đặc tả chi tiết từng cột A–BT của Biểu B10 (tài liệu ngành), đối chiếu
+  trực tiếp với `tinhBaoCaoKyTuLog`/`chotKyBaoCao`/`tinhTonHienTaiTheoGD` trong `qlva.html`. Đọc
+  file này trước khi sửa bất kỳ công thức tính cột nào của B10 — xem thêm mục "Trạng thái Biểu
+  B10" ở đầu file.
+- **`B10 2025.xlsx`** — file mẫu Biểu B10 gốc của ngành (nguồn cho `bieu_B10_mo_ta.md` ở trên).
+- **`danh_muc_toi_danh.js`** — bản sao/nháp của danh mục tội danh, KHÔNG PHẢI nguồn thật đang chạy
+  — nguồn thật là hằng số `DANH_MUC_TOI_DANH_MAM` nhúng thẳng trong `qlva.html` (dòng ~527, module
+  Danh mục tội danh dùng trực tiếp từ đó; file `.js` này không được `<script src>` nạp vào app).
+  **Đang lệch nhau**: `qlva.html` đã cập nhật sang đánh số **BLHS 2025** (thêm field `soDieu`,
+  `namBLHS:"2025"`), còn `danh_muc_toi_danh.js` vẫn còn nhãn `namBLHS:"2015"` cũ — có vẻ là bản
+  nháp/backup trước khi cập nhật. Đừng copy ngược nội dung file này vào `qlva.html` mà không kiểm
+  tra kỹ, sẽ làm mất bản cập nhật BLHS 2025.
+- **`BLHS 1999.md`** / **`BLHS 2025.md`** — mục lục điều luật Bộ luật hình sự (trích từ file
+  `.docx` gốc, chỉ có tên + số điều, không có nội dung điều luật đầy đủ), dùng để tra cứu/đối
+  chiếu số điều khi cập nhật `DANH_MUC_TOI_DANH_MAM`. Tên file dễ gây nhầm — nội dung 2 file có số
+  điều khác nhau đáng kể (VD "Điều 9 - Phân loại tội phạm" chỉ có ở 1 trong 2 bản) — đối chiếu kỹ
+  đang cập nhật CHIỀU nào trước khi dùng làm căn cứ sửa mã tội danh, đừng suy đoán theo tên file.
+- **`mo_qlva.bat`** — launcher Dũng dùng để mở Claude Code (double-click): tự `cd` vào đúng thư
+  mục, `git pull` lấy bản mới nhất, rồi chạy `claude "/init"`. Đây là lý do lệnh `/init` được gọi
+  lặp lại mỗi lần Dũng mở Claude Code — khi review CLAUDE.md do lệnh này kích hoạt, ưu tiên bổ
+  sung/sửa nhỏ (file đã rất đầy đủ), đừng viết lại từ đầu làm mất lịch sử quyết định nghiệp vụ đã
+  tích luỹ qua nhiều phiên làm việc.
+
 ## Kiến trúc code trong `qlva.html`
 
 Toàn bộ code nằm trong 1 thẻ `<script type="text/babel">`, chia theo khối comment
