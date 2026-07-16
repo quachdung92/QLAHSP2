@@ -184,6 +184,47 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       từng dòng bị can (sửa lỗi nhập liệu thường — không ghi log, không hỏi kỳ, khác với các
       hành động nghiệp vụ). KSV/ĐTV vẫn là ô nhập tay nhưng có gợi ý (`<datalist>`) từ danh sách
       `canbo` — xem module Cán bộ bên dưới.
+      **Tối ưu cho dữ liệu lớn (10k+ dòng, 2026-07-16, nhánh `giao-nhan-ho-so`)** — `DanhSachPanel`
+      trước đây mở real-time listener trên TOÀN BỘ 4 collection (`vuan`, `bican`, `kybaocao`, và
+      `lichsuChuyenGiaiDoan` lọc theo loại sự kiện nhưng vẫn không giới hạn số dòng), rồi mới lọc/
+      tìm kiếm ở phía trình duyệt — càng nhiều năm dữ liệu tích luỹ, càng phải tải và giữ sống
+      càng nhiều dữ liệu mỗi lần mở màn hình, dù người dùng chỉ cần xem "đang giải quyết". Đã sửa
+      thành 2 phần, KHÔNG đụng tới bất kỳ nơi ghi dữ liệu nào (chỉ đổi cách đọc, không rủi ro cho
+      tính đúng đắn của số liệu):
+      (1) **`vuan` lọc/giới hạn ngay ở Firestore** — toggle "Đang giải quyết" (mặc định) giờ dùng
+      `.where("trangThai","==","dang_giai_quyet")` thay vì tải hết rồi lọc client (tập này tự
+      nhiên bị chặn, không tăng vô hạn vì vụ giải quyết xong sẽ rời khỏi tập). Tab "Tất cả" thêm
+      giới hạn an toàn `gioiHanTatCa` (mặc định 500, tăng dần qua nút "Tải thêm 500" — không phải
+      cursor pagination thật, chỉ tăng `.limit()` rồi tải lại, đơn giản hơn nhiều và đủ dùng ở quy
+      mô hiện tại). Cần index mới `vuan(trangThai ASC, ngayTao DESC)` — đã thêm vào
+      `firestore.indexes.json`, PHẢI deploy (`firebase deploy --only firestore:indexes`) trước khi
+      bật toggle này trên dữ liệu thật, nếu không Firestore sẽ báo lỗi thiếu index kèm link tạo.
+      (2) **`bican`/`lichsuChuyenGiaiDoan` (cột Bị can + Kỳ mới/Kỳ giải quyết/Kỳ vào Truy tố/Kỳ
+      chuyển Xét xử) đổi từ tải nguyên collection sang chia lô theo id (`chiaNhoDsId`, lô 30 —
+      đúng giới hạn mệnh đề `in` của Firestore, cùng cỡ lô đã dùng ở `batchLayBiCanList` có sẵn từ
+      trước) chỉ hỏi ĐÚNG những vụ đang hiển thị (`idsHienTaiKey`)** — không còn tải bị can/log của
+      những vụ không nằm trong danh sách đang xem. Bỏ hẳn mệnh đề `where("loaiSuKien","in",[...])`
+      trên query log (Firestore giới hạn tổng số nhánh khi kết hợp 2 mệnh đề `in` cùng lúc — lô 30
+      id × 4 loại sự kiện = 120 nhánh, vượt quá giới hạn 30), lọc loại sự kiện ở phía client
+      (`timSuKienKyTheoVuAn`) như cũ, rẻ vì đã được thu hẹp đúng theo các vụ cần hiển thị.
+      **Tìm kiếm vẫn đầy đủ dù đã giới hạn/phân trang** — nếu đang ở tab "Tất cả" VÀ đã vượt
+      `gioiHanTatCa` VÀ có gõ từ khoá, tự động tải bù 1 lần (`.get()`, KHÔNG realtime, không giữ
+      sống liên tục) toàn bộ `vuan` vào `dsTimKiemDayDu`, dùng thay cho bản đã giới hạn cho tới
+      khi xoá từ khoá — tránh bỏ sót kết quả nằm ngoài giới hạn hiển thị mặc định. "Đang giải
+      quyết" không cần bước này vì tập đó vốn đã đầy đủ (không bị giới hạn). Bị can dùng cho tìm
+      kiếm theo tên vẫn qua đúng cơ chế chia lô ở (2) (chia lô theo `dsTimKiemDayDu` khi đang tìm
+      kiếm đầy đủ), không cần tải riêng.
+      Tác dụng phụ nhỏ: sắp xếp theo cột (bấm tiêu đề Mã vụ/Ngày KTVA/Hạn ĐT) giờ CHỈ sắp xếp các
+      dòng đang tải (`nguonDanhSach`) — ở tab "Tất cả" khi đã vượt `gioiHanTatCa`, các dòng ngoài
+      giới hạn chưa tải sẽ không tham gia sắp xếp cho tới khi bấm "Tải thêm" hoặc gõ tìm kiếm. Ô
+      lọc KSV đổi nguồn: gộp roster `canbo` (vai trò KSV, luôn đầy đủ, không phụ thuộc số dòng
+      đang tải) với các tên KSV thấy được trong dữ liệu đang hiển thị (phòng dữ liệu cũ/nhập tay
+      có tên KSV không có trong danh mục Cán bộ) — tránh mất tên KSV khỏi ô lọc khi bị giới hạn.
+      **CHƯA kiểm chứng bằng dữ liệu Firestore thật** (chỉ mới kiểm tra cú pháp bằng cách biên
+      dịch qua đúng bản `@babel/standalone@7.25.6` app đang dùng) — cần mở thử `qlva-dev.html`
+      (sau khi deploy lại `firestore.indexes.json` cho project `qlahs-test`), thử cả 2 tab "Đang
+      giải quyết"/"Tất cả", bấm "Tải thêm", gõ tìm kiếm ở cả 2 tab, trước khi tin tưởng và đưa lên
+      `qlva.html` production.
 - [x] Module Cán bộ: thêm/sửa KSV, ĐTV, cán bộ thống kê (collection `canbo`). Các ô KSV
       chính/KSV hỗ trợ/ĐTV ở form Thêm vụ án và Sửa thông tin vụ án vẫn lưu **tên dạng chuỗi**
       (không phải ref cứng tới `canbo`) — lựa chọn có chủ đích để tương thích dữ liệu đã có
@@ -262,6 +303,15 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       thẳng package `exceljs` thật (ghi buffer xong load lại, xác nhận đúng số ảnh + đúng vị trí
       cột/dòng) — phần sinh ảnh QR qua `qrcodejs` (cần canvas trình duyệt thật) chưa test được
       bằng cách này, chỉ tái dùng nguyên pattern đã chạy ổn định ở `KhoiQR`.
+      **Thêm cột "Số bút lục" (2026-07-16)** — field mới `soButLuc` trên sự kiện `giao_nhan_ho_so`,
+      cùng nhóm với `nguoiNhanThucTe` (để trống mặc định, ghi tay lúc giao/nhận, KHÔNG bắt buộc,
+      không ảnh hưởng số liệu báo cáo kỳ) — dùng để cán bộ ghi lại hồ sơ thực tế có bao nhiêu
+      trang/bút lục tại đúng thời điểm giao/nhận, tiện đối chiếu sau này nếu nghi ngờ thất lạc
+      trang. Có mặt ở cả 3 chỗ hiển thị dòng giao nhận: bảng "đã quét trong phiên" (sửa được y hệt
+      3 field người liên quan, qua `DongGiaoNhan`), "Biên bản giao nhận hồ sơ" bản in A4
+      (`BienBanGiaoNhanIn`, cột riêng cạnh "Người nhận thực tế / Ký tên" — đúng chỗ cần nhất vì đây
+      là bản có chữ ký, dùng đối chiếu về sau), và Excel "Tải toàn bộ lịch sử" (`taiLichSuGiaoNhan`,
+      cột sau "Người nhận thực tế").
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
@@ -792,8 +842,33 @@ không tải được, phục vụ qua server tĩnh cục bộ đơn giản (VD 
 compile JSX ngay trong trình duyệt lúc tải trang, nên lỗi cú pháp JSX sẽ hiện ở console (F12),
 không có bước biên dịch riêng để bắt lỗi trước.
 
+**Cheat-sheet lệnh hay dùng** (luôn test trên `qlva-dev.html`/project `qlahs-test` trước, đừng
+chạy thẳng lên `qlva.html`/production):
+
+```bash
+# Mở app cục bộ để test (chọn 1 trong 2)
+#   - double-click qlva-dev.html trong File Explorer, HOẶC:
+python -m http.server 8765        # rồi mở http://localhost:8765/qlva-dev.html
+
+# Deploy (Bash, dùng chung với deploy.bat mà Dũng double-click trên Windows)
+./deploy.sh test                  # đưa lên https://qlahs-test.web.app
+./deploy.sh prod                  # đưa lên https://qlahsp2.web.app (dữ liệu thật)
+./deploy.sh all                   # test trước, rồi prod
+
+# Deploy riêng Firestore rules/index (không đụng tới hosting)
+firebase deploy --only firestore:rules --project test   # hoặc --project prod
+firebase deploy --only firestore:indexes --project test # hoặc --project prod
+```
+
 ## Môi trường dev/test & công cụ hỗ trợ
 
+- **`README.md`** — hướng dẫn nhanh viết cho Dũng (không phải lập trình viên): cách mở app bằng
+  double-click, cách deploy qua `deploy.bat`, link production/test. Không lặp lại nội dung đó ở
+  đây, chỉ tham khảo nếu cần trả lời câu hỏi kiểu "làm sao để xem thay đổi trên mạng".
+- **`mo_qlva.bat`** — launcher Dũng double-click để mở phiên làm việc với Claude Code: tự `git
+  pull` rồi chạy `claude "/init"`. Nghĩa là `/init` có thể được gọi lại ở ĐẦU MỖI PHIÊN làm việc,
+  không chỉ 1 lần khi khởi tạo repo — khi việc này xảy ra, chỉ nên **bổ sung/tinh chỉnh** file này
+  (như đang làm), đừng viết lại toàn bộ hay xoá mất lịch sử quyết định nghiệp vụ đã ghi ở trên.
 - **`qlva-dev.html`** — bản sao gần như y hệt `qlva.html`, chỉ khác `firebaseConfig` trỏ sang
   project Firebase riêng **`qlahs-test`** (thay vì `qlahsp2` production). Dùng để thử tính năng
   mới/thao tác phá hoại (xoá, seed dữ liệu giả) mà không đụng dữ liệu thật. Khi sửa `qlva.html`,

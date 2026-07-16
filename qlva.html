@@ -4152,6 +4152,15 @@ function ChonCotHienThi({ cotAn, onDoi }) {
   );
 }
 
+// Chia 1 mảng id thành các lô tối đa 30 phần tử — đúng giới hạn của mệnh đề "in" trong Firestore.
+// Dùng để hỏi bican/lichsuChuyenGiaiDoan ĐÚNG những vụ đang cần hiển thị thay vì tải nguyên
+// collection (có thể tăng vô hạn theo thời gian, đặc biệt là log sự kiện).
+function chiaNhoDsId(ids, kichThuoc = 30) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += kichThuoc) out.push(ids.slice(i, i + kichThuoc));
+  return out;
+}
+
 function DanhSachPanel({ selectedId, onSelect }) {
   const [list, setList] = useState([]);
   const [dangTai, setDangTai] = useState(true);
@@ -4164,22 +4173,73 @@ function DanhSachPanel({ selectedId, onSelect }) {
   const [sortChieu, setSortChieu] = useState("asc");
   const [hanhDongNhanh, setHanhDongNhanh] = useState(null);
   const [moRongBiCan, setMoRongBiCan] = useState(new Set());
+  const dsCanBo = useDanhSachCanBo();
+
+  // Giới hạn số dòng tải về ở tab "Tất cả" — tránh kéo cả collection vuan (có thể lên hàng chục
+  // nghìn dòng sau nhiều năm) mỗi lần mở màn hình. "Đang giải quyết" KHÔNG giới hạn vì tập đó tự
+  // nhiên bị chặn (vụ giải quyết xong sẽ rời khỏi tập, không tích luỹ vô hạn như tổng số vụ).
+  const [gioiHanTatCa, setGioiHanTatCa] = useState(500);
+  const [vuotGioiHan, setVuotGioiHan] = useState(false);
+  useEffect(() => { setGioiHanTatCa(500); }, [chiDangGiaiQuyet]);
 
   useEffect(() => {
-    const unsub = db.collection("vuan").orderBy("ngayTao", "desc").onSnapshot(
-      snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+    setDangTai(true);
+    let q = db.collection("vuan");
+    if (chiDangGiaiQuyet) q = q.where("trangThai", "==", "dang_giai_quyet");
+    q = q.orderBy("ngayTao", "desc");
+    if (!chiDangGiaiQuyet) q = q.limit(gioiHanTatCa);
+    const unsub = q.onSnapshot(
+      snap => {
+        setList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setVuotGioiHan(!chiDangGiaiQuyet && snap.size >= gioiHanTatCa);
+        setDangTai(false);
+      },
       err => { console.error(err); setDangTai(false); }
     );
     return unsub;
-  }, []);
+  }, [chiDangGiaiQuyet, gioiHanTatCa]);
 
+  // Khi đang ở tab "Tất cả" và danh sách đã bị cắt bớt (vuotGioiHan) mà người dùng gõ tìm kiếm,
+  // phải tải đủ TOÀN BỘ vuan 1 lần (KHÔNG realtime — chỉ 1 lần lúc bắt đầu gõ) để không bỏ sót
+  // các vụ nằm ngoài gioiHanTatCa dòng mới nhất. "Đang giải quyết" không cần vì list ở đó vốn đã
+  // đầy đủ (không bị giới hạn).
+  const [dsTimKiemDayDu, setDsTimKiemDayDu] = useState(null);
+  const canTimDayDu = !chiDangGiaiQuyet && vuotGioiHan && tuKhoa.trim() !== "";
   useEffect(() => {
-    const unsub = db.collection("bican").onSnapshot(
-      snap => setBiCanAll(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => console.error(err)
+    if (!canTimDayDu) { setDsTimKiemDayDu(null); return; }
+    let huy = false;
+    db.collection("vuan").get().then(snap => {
+      if (!huy) setDsTimKiemDayDu(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }).catch(err => console.error(err));
+    return () => { huy = true; };
+  }, [canTimDayDu]);
+
+  // Nguồn danh sách thực sự dùng để lọc/hiển thị: bản tìm kiếm đầy đủ (nếu đang cần) hoặc bản đã
+  // tải theo giới hạn ở trên.
+  const nguonDanhSach = dsTimKiemDayDu || list;
+  const dangTaiTimDayDu = canTimDayDu && dsTimKiemDayDu === null;
+  const idsHienTaiKey = useMemo(() => nguonDanhSach.map(v => v.id).sort().join(","), [nguonDanhSach]);
+
+  // Thay vì tải nguyên collection bican (có thể rất lớn sau nhiều năm), chỉ hỏi đúng những vụ
+  // đang cần hiển thị — chia theo lô tối đa 30 id rồi gộp kết quả. Chỉ tải lại khi TẬP id thay
+  // đổi (idsHienTaiKey), không phải mỗi khi 1 doc trong tập đó có cập nhật — tránh huỷ/tạo lại
+  // hàng chục listener liên tục.
+  useEffect(() => {
+    const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
+    if (ids.length === 0) { setBiCanAll([]); return; }
+    const nhom = chiaNhoDsId(ids);
+    const ketQuaMoiNhom = nhom.map(() => []);
+    const unsubs = nhom.map((nhomId, idx) =>
+      db.collection("bican").where("maVuAn", "in", nhomId).onSnapshot(
+        snap => {
+          ketQuaMoiNhom[idx] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setBiCanAll(ketQuaMoiNhom.flat());
+        },
+        err => console.error(err)
+      )
     );
-    return unsub;
-  }, []);
+    return () => unsubs.forEach(u => u());
+  }, [idsHienTaiKey]);
 
   const [kyBaoCaoList, setKyBaoCaoList] = useState([]);
   const [logKyEvents, setLogKyEvents] = useState([]);
@@ -4192,14 +4252,28 @@ function DanhSachPanel({ selectedId, onSelect }) {
     return unsub;
   }, []);
 
+  // Log sự kiện dùng cho cột "Kỳ mới/Kỳ giải quyết/Kỳ vào Truy tố/Kỳ chuyển Xét xử" — cùng cách
+  // chia lô theo id như bican ở trên, thay vì tải nguyên collection lichsuChuyenGiaiDoan (tăng vô
+  // hạn theo thời gian vì mỗi thao tác nghiệp vụ đều ghi 1 dòng log). KHÔNG lọc loaiSuKien ngay
+  // trong query vì Firestore giới hạn tổng số nhánh khi kết hợp 2 mệnh đề "in" cùng lúc (lô 30 id
+  // × 4 loại sự kiện = 120 nhánh, vượt quá giới hạn 30) — lọc loaiSuKien ở phía client
+  // (timSuKienKyTheoVuAn), rẻ vì đã được thu hẹp đúng theo các vụ cần hiển thị.
   useEffect(() => {
-    const unsub = db.collection("lichsuChuyenGiaiDoan")
-      .where("loaiSuKien", "in", ["khoi_to_vu", "hoan_thanh", "chuyen_giai_doan", "tra_ho_so"]).onSnapshot(
-      snap => setLogKyEvents(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => console.error(err)
+    const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
+    if (ids.length === 0) { setLogKyEvents([]); return; }
+    const nhom = chiaNhoDsId(ids);
+    const ketQuaMoiNhom = nhom.map(() => []);
+    const unsubs = nhom.map((nhomId, idx) =>
+      db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "in", nhomId).onSnapshot(
+        snap => {
+          ketQuaMoiNhom[idx] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setLogKyEvents(ketQuaMoiNhom.flat());
+        },
+        err => console.error(err)
+      )
     );
-    return unsub;
-  }, []);
+    return () => unsubs.forEach(u => u());
+  }, [idsHienTaiKey]);
 
   const kyTenTheoId = useMemo(() => Object.fromEntries(kyBaoCaoList.map(k => [k.id, k.tenKy])), [kyBaoCaoList]);
   const kyBaoCaoListSorted = useMemo(
@@ -4241,9 +4315,17 @@ function DanhSachPanel({ selectedId, onSelect }) {
     return moi;
   });
 
-  const dsKsv = useMemo(() => [...new Set(list.map(v => v.ksvChinh).filter(Boolean))], [list]);
+  // Gộp cả roster "Cán bộ" đang công tác (luôn đủ, không phụ thuộc list đang tải bao nhiêu dòng)
+  // lẫn các tên KSV thấy được trong dữ liệu đang hiển thị (phòng khi dữ liệu cũ/nhập tay có tên
+  // KSV không có trong danh mục Cán bộ) — tránh việc gioiHanTatCa ở trên làm mất tên KSV nào đó
+  // khỏi ô lọc.
+  const dsKsv = useMemo(() => {
+    const tuCanBo = dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen);
+    const tuDuLieu = nguonDanhSach.map(v => v.ksvChinh).filter(Boolean);
+    return [...new Set([...tuCanBo, ...tuDuLieu])].sort();
+  }, [dsCanBo, nguonDanhSach]);
 
-  const filtered = useMemo(() => list.filter(v => {
+  const filtered = useMemo(() => nguonDanhSach.filter(v => {
     if (chiDangGiaiQuyet && v.trangThai !== "dang_giai_quyet") return false;
     if (giaiDoan !== "tat_ca" && v.coQuanThuLy !== giaiDoan) return false;
     if (ksv !== "tat_ca" && v.ksvChinh !== ksv) return false;
@@ -4258,11 +4340,14 @@ function DanhSachPanel({ selectedId, onSelect }) {
       if (!hit) return false;
     }
     return true;
-  }), [list, chiDangGiaiQuyet, giaiDoan, ksv, tuKhoa, biCanTheoVu]);
+  }), [nguonDanhSach, chiDangGiaiQuyet, giaiDoan, ksv, tuKhoa, biCanTheoVu]);
 
   // Sắp xếp theo cột (bấm tiêu đề) — chỉ áp dụng cho cột có giá trị so sánh rõ ràng
   // (mã vụ/ngày). Không sort theo "Kỳ mới"/"Kỳ giải quyết" vì đó là chuỗi hiển thị dạng
   // "Tháng N/YYYY", sắp xếp theo chuỗi sẽ sai thứ tự thời gian (VD "Tháng 10" < "Tháng 2").
+  // Lưu ý: chỉ sắp xếp lại các dòng ĐANG TẢI (nguonDanhSach) — ở tab "Tất cả" khi đã vượt
+  // gioiHanTatCa, các dòng nằm ngoài giới hạn (chưa tải) sẽ không tham gia sắp xếp cho tới khi
+  // bấm "Tải thêm" hoặc gõ tìm kiếm (khi đó mới tải đủ toàn bộ).
   const layGiaTriSort = (v, cot) => {
     if (cot === "maVu") return hienThiMa(v) || "";
     if (cot === "ngayKtva") return v.ngayQdKtva?.toMillis?.() ?? 0;
@@ -4432,7 +4517,18 @@ function DanhSachPanel({ selectedId, onSelect }) {
           </tbody>
         </table>
       </div>
-      <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-400 bg-slate-50/60">{sorted.length} / {list.length} vụ án</div>
+      <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-400 bg-slate-50/60 flex items-center justify-between gap-3">
+        <span>
+          {sorted.length} / {nguonDanhSach.length} vụ án
+          {dangTaiTimDayDu && " — đang tải toàn bộ dữ liệu để tìm kiếm..."}
+        </span>
+        {vuotGioiHan && !dsTimKiemDayDu && (
+          <button onClick={() => setGioiHanTatCa(n => n + 500)}
+                  className="text-indigo-600 hover:text-indigo-700 font-medium whitespace-nowrap">
+            Mới nhất {gioiHanTatCa} vụ — Tải thêm 500
+          </button>
+        )}
+      </div>
 
       {hanhDongNhanh?.loai === "chuyen_giai_doan" && (
         <ChuyenGiaiDoanModal vuAn={hanhDongNhanh.vuAn} onDong={() => setHanhDongNhanh(null)} onXong={() => setHanhDongNhanh(null)} />
@@ -8016,10 +8112,14 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
   const [ksv, setKsv] = useState(dong.nguoiGiao || "");
   const [dtv, setDtv] = useState(dong.nguoiNhan || "");
   const [nguoiNhanThucTe, setNguoiNhanThucTe] = useState(dong.nguoiNhanThucTe || "");
+  const [soButLuc, setSoButLuc] = useState(dong.soButLuc || "");
   const [vuAnDeSua, setVuAnDeSua] = useState(null); // null=đóng, "loading"=đang tải, object=sẵn sàng mở form
 
   const luu = async () => {
-    await onSua(dong.id, { nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim() });
+    await onSua(dong.id, {
+      nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim(),
+      soButLuc: soButLuc.trim(),
+    });
     setDangSua(false);
   };
 
@@ -8030,6 +8130,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
   const batDauSua = () => {
     if (khoaSua || dangSua) return;
     setKsv(dong.nguoiGiao || ""); setDtv(dong.nguoiNhan || ""); setNguoiNhanThucTe(dong.nguoiNhanThucTe || "");
+    setSoButLuc(dong.soButLuc || "");
     setDangSua(true);
   };
 
@@ -8085,12 +8186,16 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
             <td className="p-2" onClick={e => e.stopPropagation()}>
               <input value={nguoiNhanThucTe} onChange={e => setNguoiNhanThucTe(e.target.value)} list="ds-canbo-gnhs" className={oInput} placeholder="Ghi rõ nếu khác ĐTV" />
             </td>
+            <td className="p-2" onClick={e => e.stopPropagation()}>
+              <input value={soButLuc} onChange={e => setSoButLuc(e.target.value)} className={oInput} placeholder="VD: 245" />
+            </td>
           </>
         ) : (
           <>
             <td className="p-3">{dong.nguoiGiao || "—"}</td>
             <td className="p-3">{dong.nguoiNhan || "—"}</td>
             <td className="p-3">{dong.nguoiNhanThucTe || <span className="text-slate-300">—</span>}</td>
+            <td className="p-3">{dong.soButLuc || <span className="text-slate-300">—</span>}</td>
           </>
         )}
         <td className="p-3 text-xs text-slate-400 whitespace-nowrap">{fmtNgayGio(dong.thoiDiemGhi)}</td>
@@ -8140,6 +8245,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
               <th className="border border-slate-800 p-2">Tên vụ</th>
               <th className="border border-slate-800 p-2 w-24">KSV</th>
               <th className="border border-slate-800 p-2 w-24">ĐTV</th>
+              <th className="border border-slate-800 p-2 w-20">Số bút lục</th>
               <th className="border border-slate-800 p-2 w-32">Người nhận thực tế / Ký tên</th>
             </tr>
           </thead>
@@ -8154,6 +8260,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
                 </td>
                 <td className="border border-slate-800 p-2 align-top">{d.nguoiGiao || "—"}</td>
                 <td className="border border-slate-800 p-2 align-top">{d.nguoiNhan || "—"}</td>
+                <td className="border border-slate-800 p-2 align-top text-center">{d.soButLuc || ""}</td>
                 <td className="border border-slate-800 p-2 align-top">{d.nguoiNhanThucTe || ""}</td>
               </tr>
             ))}
@@ -8214,7 +8321,10 @@ function GiaoNhanHoSoModule({ currentUser }) {
   // object vụ án từ kết quả tìm, khỏi phải đọc lại). "KSV" (lưu ở field nguoiGiao) / "ĐTV" (lưu
   // ở field nguoiNhan) chỉ để THỂ HIỆN hồ sơ của ai (lấy sẵn từ chính vụ án), không phải người
   // thực giao/nhận. Người thực tế cầm/ký nhận hồ sơ có thể khác (VD người khác đi nhận thay) —
-  // ghi riêng ở nguoiNhanThucTe, để trống mặc định, điền tay khi cần.
+  // ghi riêng ở nguoiNhanThucTe, để trống mặc định, điền tay khi cần. "Số bút lục" (soButLuc,
+  // 2026-07-16) cũng để trống mặc định, ghi tay ngay lúc giao/nhận — dùng để đối chiếu hồ sơ thực
+  // tế có bao nhiêu trang tại đúng thời điểm giao/nhận đó (không phải số liệu nghiệp vụ, chỉ ghi
+  // chú tham khảo — không ảnh hưởng số liệu báo cáo kỳ, giống các trường người liên quan khác).
   const ghiNhanVuVaoPhien = async (maVuAn, vuAn) => {
     const now = new Date();
     await db.collection("lichsuChuyenGiaiDoan").add(taoSuKien({
@@ -8222,7 +8332,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
       nguoiThucHien: currentUser?.email || "", thoiDiemGhi: now,
       phienGiaoNhanId: phien.id, loaiGiaoDich: phien.loaiGiaoDich, tenVu: vuAn.tenVu || "",
       soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
-      nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "",
+      nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "", soButLuc: "",
       ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
     }));
   };
@@ -8333,14 +8443,14 @@ function GiaoNhanHoSoModule({ currentUser }) {
       ws.views = [{ state: "frozen", ySplit: 1 }];
       const hRow = ws.addRow([
         "STT", "Loại giao dịch", "Thời điểm quét", "Mã vụ (QR)", "Tên vụ",
-        "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV", "Người nhận thực tế",
+        "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV", "Người nhận thực tế", "Số bút lục",
         "Người thực hiện (quét)", "Ghi chú",
       ]);
       hRow.font = { bold: true };
       hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
       ws.columns = [
         { width: 6 }, { width: 14 }, { width: 16 }, { width: 13 }, { width: 30 },
-        { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 }, { width: 16 },
+        { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 12 },
         { width: 20 }, { width: 24 },
       ];
       const QR_PX = 60; // ~60px vuông — đủ scan lại được (correctLevel M), giữ file không quá nặng
@@ -8356,6 +8466,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
           r.nguoiGiao || "",
           r.nguoiNhan || "",
           r.nguoiNhanThucTe || "",
+          r.soButLuc || "",
           r.nguoiThucHien || "",
           r.ghiChu || "",
         ]);
@@ -8518,13 +8629,14 @@ function GiaoNhanHoSoModule({ currentUser }) {
               <th className="text-left p-3">KSV</th>
               <th className="text-left p-3">ĐTV</th>
               <th className="text-left p-3">Người nhận thực tế</th>
+              <th className="text-left p-3">Số bút lục</th>
               <th className="text-left p-3">Thời điểm</th>
               {phien.trangThai === "dang_mo" && <th className="text-left p-3"></th>}
             </tr>
           </thead>
           <tbody>
             {dsQuet.length === 0 && (
-              <tr><td colSpan={8} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
+              <tr><td colSpan={9} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
             )}
             {dsQuet.map((d, i) => (
               <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}

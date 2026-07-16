@@ -24,6 +24,14 @@
         { "fieldPath": "coQuanThuLy", "order": "ASCENDING" },
         { "fieldPath": "trangThai", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "vuan",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "trangThai", "order": "ASCENDING" },
+        { "fieldPath": "ngayTao", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
