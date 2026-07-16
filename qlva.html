@@ -8200,7 +8200,7 @@ function CongTac({ checked, onChange, nhan, mauBat = "bg-emerald-600" }) {
   );
 }
 
-function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }) {
+function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan, onBatDauSua, onKetThucSua }) {
   const [dangSua, setDangSua] = useState(false);
   const [ksv, setKsv] = useState(dong.nguoiGiao || "");
   const [dtv, setDtv] = useState(dong.nguoiNhan || "");
@@ -8241,6 +8241,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
     }
     await onSua(dong.id, patch);
     setDangSua(false);
+    onKetThucSua && onKetThucSua();
   };
 
   // Bấm vào bất kỳ đâu trên dòng (không chỉ đúng chữ "Sửa" nhỏ) là vào chế độ sửa ngay — thao
@@ -8254,6 +8255,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
     setMucAnLoai(dong.mucAnLoai || "nam"); setMucAnNam(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
     setMucAnCoSauThang(!!dong.mucAnCoSauThang);
     setDangSua(true);
+    onBatDauSua && onBatDauSua();
   };
 
   // Sửa thông tin vụ án đầy đủ (KSV/ĐTV/đơn vị/điều luật/ghi chú...) ngay từ màn giao nhận — rất
@@ -8320,7 +8322,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
                     <label className="flex items-center gap-1 text-slate-500 whitespace-nowrap">
                       <input type="checkbox" checked={mucAnCoSauThang}
                              onChange={e => setMucAnCoSauThang(e.target.checked)} />
-                      +6th
+                      + 6 tháng
                     </label>
                   </>
                 )}
@@ -8364,7 +8366,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
             {dangSua ? (
               <>
                 <button onClick={luu} className="text-indigo-600 hover:text-indigo-700 font-medium mr-2">Lưu</button>
-                <button onClick={() => setDangSua(false)} className="text-red-400 hover:text-red-600">Huỷ</button>
+                <button onClick={() => { setDangSua(false); onKetThucSua && onKetThucSua(); }} className="text-red-400 hover:text-red-600">Huỷ</button>
               </>
             ) : (
               <>
@@ -8475,6 +8477,13 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [ksvTim, setKsvTim] = useState("tat_ca");
   const [dangTaiLichSu, setDangTaiLichSu] = useState(false);
   const [luuTruMoi, setLuuTruMoi] = useState(false); // bật "Nộp hồ sơ lưu trữ" trước khi bắt đầu phiên Nhận
+  // Đếm số dòng đang ở chế độ sửa (DongGiaoNhan tự báo lên qua onBatDauSua/onKetThucSua) — dùng để
+  // KHOÁ nút "Lưu phiên" trong lúc đó (xem chú thích cạnh nút). Đếm thay vì chỉ 1 boolean/id vì có
+  // thể mở sửa nhiều dòng cùng lúc (không có gì chặn việc đó), phải để đủ dòng đóng lại hết mới
+  // cho lưu phiên.
+  const [soDongDangSua, setSoDongDangSua] = useState(0);
+  const baoBatDauSua = () => setSoDongDangSua(n => n + 1);
+  const baoKetThucSua = () => setSoDongDangSua(n => Math.max(0, n - 1));
   const inputRef = React.useRef(null);
 
   // Không dùng orderBy kèm where ở đây để khỏi cần composite index mới — sắp xếp lại phía client.
@@ -8810,9 +8819,12 @@ function GiaoNhanHoSoModule({ currentUser }) {
             {phien.trangThai === "da_luu" && <Badge mau="bg-slate-200 text-slate-600">Đã lưu</Badge>}
           </div>
         </div>
+        <div className="flex flex-col items-end gap-1">
         <div className="flex gap-2">
           {phien.trangThai === "dang_mo" && (
-            <button onClick={luuPhien} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+            <button onClick={luuPhien} disabled={soDongDangSua > 0}
+                    title={soDongDangSua > 0 ? "Đang có dòng chưa lưu xong — bấm \"Lưu\"/\"Huỷ\" trên dòng đó trước." : ""}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
               Lưu phiên
             </button>
           )}
@@ -8825,6 +8837,17 @@ function GiaoNhanHoSoModule({ currentUser }) {
             {dangTaiLichSu ? "Đang tải..." : "⬇ Tải toàn bộ lịch sử"}
           </button>
           <button onClick={() => setPhien(null)} className="text-sm text-slate-500 hover:text-slate-700 px-2">Phiên mới</button>
+        </div>
+        {/* Chặn "Lưu phiên" trong lúc còn dòng đang sửa dở (2026-07-16) — trước đây bấm nhầm "Lưu
+            phiên" (nút to, dễ bấm nhầm hơn nút "Lưu" nhỏ cuối mỗi dòng) trong lúc đang sửa Mức án
+            sẽ khoá cả phiên NGAY LẬP TỨC, dòng đang sửa kẹt lại ở chế độ sửa dở mà KHÔNG CÒN nút
+            Lưu/Huỷ để bấm nữa (cột đó chỉ hiện khi phiên chưa khoá) — mức án vừa nhập mất trắng,
+            không cách nào lưu lại được. Xem `soDongDangSua`/`baoBatDauSua`/`baoKetThucSua`. */}
+        {soDongDangSua > 0 && (
+          <div className="text-xs text-amber-600">
+            Đang sửa {soDongDangSua} dòng — bấm "Lưu"/"Huỷ" trên dòng đó trước khi lưu phiên.
+          </div>
+        )}
         </div>
       </div>
 
@@ -8909,7 +8932,8 @@ function GiaoNhanHoSoModule({ currentUser }) {
             {dsQuet.map((d, i) => (
               <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}
                             hienThoiHan={phien.laLuuTru}
-                            khoaSua={phien.trangThai !== "dang_mo"} onSua={suaNguoi} onXoa={xoaDong} />
+                            khoaSua={phien.trangThai !== "dang_mo"} onSua={suaNguoi} onXoa={xoaDong}
+                            onBatDauSua={baoBatDauSua} onKetThucSua={baoKetThucSua} />
             ))}
           </tbody>
         </table>
