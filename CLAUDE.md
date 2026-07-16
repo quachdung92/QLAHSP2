@@ -341,6 +341,37 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       trong DOM khi ĐÚNG biên bản này đang mở — 2 modal in không portal cùng lúc nên không xung
       đột. Nếu sau này có thêm màn in khác cần khổ riêng, dùng lại đúng pattern này (style cục bộ
       theo từng component in), đừng gộp chung vào khối `@media print` ở `<head>`.
+      **Nộp hồ sơ lưu trữ + cột "Thời hạn bảo quản" (2026-07-16, cùng đợt)** — thêm tick "Nộp hồ
+      sơ lưu trữ" ở màn bắt đầu phiên (chỉ áp dụng khi bắt đầu phiên **Nhận** — nộp lưu trữ nghĩa
+      là bộ phận lưu trữ NHẬN hồ sơ từ KSV/ĐTV), lưu thành field `laLuuTru` trên `phienGiaoNhan`.
+      Khi `laLuuTru`, bảng phiên + Biên bản in A4 hiện thêm cột **"Thời hạn bảo quản"** (Excel
+      "Tải toàn bộ lịch sử" thì LUÔN có cột này, không điều kiện theo `laLuuTru`, vì đó là dump
+      toàn bộ lịch sử mọi phiên, không riêng phiên đang mở).
+      **Nguồn tính**: file **`thoi han bao quan.xlsx`** (thư mục gốc dự án, sheet "Bang doi
+      chieu") — chép nguyên văn thành 2 hằng số `BANG_THOI_HAN_BAO_QUAN_THEO_NAM` (mức án theo
+      năm, key là số năm đã cộng sẵn phần 6 tháng nếu có — VD `7.5` cho "7 năm 6 tháng") và
+      `THOI_HAN_BAO_QUAN_DAC_BIET` (tử hình/chung thân/án treo/phạt tiền). Hàm
+      `tinhThoiHanBaoQuanTheoMucAn`/`tinhThoiHanBaoQuanVu` **CỐ Ý trả về `null` cho mức án KHÔNG
+      có trong bảng gốc** (VD 2 năm, 9 năm 6 tháng, 12 năm 6 tháng...) — bảng gốc có nhiều "lỗ
+      hổng" không phủ hết mọi mức án có thể có (không liên tục, có bước nhảy lớn giữa các mốc, VD
+      10 năm → 47 năm nhưng 9 năm → 34 năm), KHÔNG suy đoán/nội suy công thức vì đây là hồ sơ pháp
+      lý thật, đoán sai thời hạn bảo quản là sai thật — UI hiện rõ "chưa có trong bảng hướng dẫn"
+      thay vì âm thầm đưa ra số sai. Đình chỉ/Tạm đình chỉ luôn "Vĩnh viễn" theo bảng (không cần
+      mức án). Đang giải quyết/Chuyển đi/Án huỷ/Đã nhập vụ khác KHÔNG có dòng tương ứng trong bảng
+      gốc, trả `null` (không tính).
+      **⚠ Lưu ý khi mirror/deploy**: lúc đọc file này thấy có `~$thoi han bao quan.xlsx` (file khoá
+      tạm của Excel) tồn tại cùng thư mục — dấu hiệu file gốc **đang được mở** trên máy Dũng, có
+      thể đang sửa dở. Nếu bảng đối chiếu trong code sai khác với file thật sau này, kiểm tra lại
+      file gốc đã lưu (Ctrl+S) chưa trước khi kết luận code sai.
+      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnCoSauThang` trên `vuan`, chỉ sửa
+      được qua `SuaVuAnForm` khi `vuAn.trangThai === "da_xet_xu"` (khối "Mức án" trong "Thông tin
+      giải quyết" đã có sẵn) — có preview ngay "→ Thời hạn bảo quản: ..." khi chọn, để cán bộ biết
+      ngay có tính được hay không trước khi lưu. `ghiNhanVuVaoPhien` snapshot kết quả tính
+      (`thoiHanBaoQuan`) vào chính sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách
+      `trangThaiVu`/`soQdGiaiQuyet` đã làm, KHÔNG tính lại lúc hiển thị/in.
+      **CHƯA kiểm chứng bằng dữ liệu Firestore thật** — cần thử trên `qlva-dev.html`: nhập mức án
+      cho 1 vụ Đã xét xử, bắt đầu phiên Nhận có tick lưu trữ, quét/chọn vụ đó, xem cột Thời hạn
+      bảo quản ở bảng phiên/biên bản in/Excel đều ra đúng số theo bảng gốc.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
