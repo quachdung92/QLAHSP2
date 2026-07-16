@@ -2962,7 +2962,7 @@ function moiBiCan(id) {
     dangVien: "khong", dangVienGiuChucVu: false,
     trinhDo: "", taiPham: "khong", loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
     diaChi: "", toiDanh: [""], dieuLuatBC: [""],
-    bienPhapNganChan: "tai_ngoai", hanTamGiam: "", ngayKhoiTo: "",
+    bienPhapNganChan: "tai_ngoai", hanTamGiam: "", ngayKhoiTo: "", soQdKtBiCan: "",
   };
 }
 
@@ -2991,6 +2991,14 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const [phienToaRutKN, setPhienToaRutKN] = useState(false);
   const [ghiChu, setGhiChu] = useState("");
   const [biCanRows, setBiCanRows] = useState([moiBiCan(0)]);
+
+  // Nhập bổ sung án cũ: cho khai luôn hình thức giải quyết lúc tạo vụ, thay vì phải tạo "đang
+  // giải quyết" rồi vào Hoàn thành vụ án sau — ẩn sau 1 toggle vì hiếm dùng (chỉ cần khi nhập lại
+  // án cũ đã có kết quả), tránh làm dài form thêm cho luồng tạo án mới bình thường.
+  const [capNhatKetQua, setCapNhatKetQua] = useState(false);
+  const [trangThaiKetQua, setTrangThaiKetQua] = useState("da_xet_xu");
+  const [ngayQuyetDinhKQ, setNgayQuyetDinhKQ] = useState("");
+  const [soQuyetDinhKQ, setSoQuyetDinhKQ] = useState("");
 
   const [loi, setLoi] = useState("");
   const [hienModalKy, setHienModalKy] = useState(false);
@@ -3029,6 +3037,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const onBamLuu = () => {
     if (!ngayQdKtva) { setLoi("Cần nhập ngày quyết định khởi tố vụ án (dùng để sinh mã vụ án)."); return; }
     if (!tenVu.trim()) { setLoi("Cần nhập tên vụ, hoặc thêm ít nhất 1 bị can để hệ thống tự đặt tên."); return; }
+    if (capNhatKetQua && !ngayQuyetDinhKQ) { setLoi("Đã chọn vụ án có kết quả giải quyết thì cần nhập ngày giải quyết."); return; }
     setLoi("");
     setHienModalKy(true);
   };
@@ -3057,11 +3066,15 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         dieuLuat: dieuLuatCuoi,
         vuanToiDanh: coBiCanHopLe.length > 0 ? [] : vuanToiDanh.filter(t => t.trim()),
         vuanDieuLuat: coBiCanHopLe.length > 0 ? [] : vuanToiDanh.map((_, i) => vuanDieuLuat[i] || ""),
-        coQuanThuLy, trangThai: "dang_giai_quyet",
+        coQuanThuLy, trangThai: capNhatKetQua ? trangThaiKetQua : "dang_giai_quyet",
         mucDoNghiemTrong,
         noiChuyenDen: "", nhapVaoVu: null, vuGoc: null, soDemTach: 0,
         anDiem, uyQuyenXetXu: uyQuyenXetXu.trim(), phienToaRutKN, ghiChu: ghiChu.trim(),
         ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        ...(capNhatKetQua ? {
+          ngayQuyetDinh: fromInputDate(ngayQuyetDinhKQ), kyHoanThanh: kyId,
+          [fieldSoQuyetDinhTrenVuAn(trangThaiKetQua)]: soQuyetDinhKQ.trim(),
+        } : {}),
       });
 
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), {
@@ -3071,6 +3084,15 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         ngaySuKien: ngayQd, kyThongKe: kyId, lichSuSuaKy: [], ghiChu: "",
         nguoiThucHien, thoiDiemGhi: now,
       });
+
+      if (capNhatKetQua) {
+        batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+          maVuAn: maNoiSinh, loaiSuKien: "hoan_thanh", hinhThucHoanThanh: trangThaiKetQua,
+          soQuyetDinh: soQuyetDinhKQ.trim(), ngaySuKien: fromInputDate(ngayQuyetDinhKQ),
+          kyThongKe: kyId, ghiChu: "Nhập bổ sung án cũ đã có kết quả lúc tạo vụ án.",
+          nguoiThucHien, thoiDiemGhi: now,
+        }));
+      }
 
       biCanRows.forEach((bc, i) => {
         if (!bc.hoTen.trim()) return;
@@ -3090,7 +3112,8 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           maSoThue: bc.loaiBiCan === "phap_nhan" ? bc.maSoThue.trim() : "",
           diaChi: bc.diaChi.trim(), bienPhapNganChan: bc.bienPhapNganChan,
           hanTamGiam: bc.bienPhapNganChan === "giam" && bc.hanTamGiam ? fromInputDate(bc.hanTamGiam) : null,
-          ngayKhoiTo: ngayKT, loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
+          ngayKhoiTo: ngayKT, soQdKtBiCan: (bc.soQdKtBiCan || "").trim(),
+          loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
           ngayTao: now, nguoiTao: nguoiThucHien,
         });
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), {
@@ -3115,16 +3138,18 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-40 overflow-auto py-8">
-      <div className="bg-white rounded-xl shadow-lg w-[900px] max-w-[95vw] p-6">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-xl shadow-lg w-[1400px] max-w-[97vw] p-6 flex flex-col max-h-[92vh]">
+        <div className="flex items-center justify-between mb-4 shrink-0">
           <h3 className="text-lg font-semibold">Thêm vụ án mới</h3>
           <button onClick={onDong} className="text-red-400 hover:text-red-600 text-sm">Đóng ✕</button>
         </div>
 
-        {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+        {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4 shrink-0">{loi}</div>}
 
+        <div className="flex-1 min-h-0 flex gap-4">
+        <div className="w-[380px] shrink-0 overflow-y-auto pr-1">
         <div className="text-sm font-medium text-slate-600 mb-2">Thông tin vụ án</div>
-        <div className="grid grid-cols-4 gap-3 mb-3">
+        <div className="grid grid-cols-2 gap-3 mb-3">
           <Truong nhan="Mã ngành cấp (nếu có)">
             <input value={maNganhCap} onChange={e => setMaNganhCap(e.target.value)} className={oInput} placeholder="Chưa có thì để trống" />
           </Truong>
@@ -3223,7 +3248,31 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput} />
         </Truong>
 
-        <div className="flex items-center justify-between mt-6 mb-2">
+        <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 mt-3 mb-3">
+          <label className="flex items-center gap-2 text-sm font-medium text-amber-800 cursor-pointer">
+            <input type="checkbox" checked={capNhatKetQua} onChange={e => setCapNhatKetQua(e.target.checked)} />
+            Vụ án đã có kết quả giải quyết (dùng khi nhập bổ sung án cũ)
+          </label>
+          {capNhatKetQua && (
+            <div className="grid grid-cols-1 gap-3 mt-3">
+              <Truong nhan="Hình thức giải quyết">
+                <select value={trangThaiKetQua} onChange={e => setTrangThaiKetQua(e.target.value)} className={oInput}>
+                  {TUY_CHON_HOAN_THANH.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </Truong>
+              <Truong nhan="Ngày giải quyết *">
+                <NhapNgay value={ngayQuyetDinhKQ} onChange={e => setNgayQuyetDinhKQ(e.target.value)} className={oInput} />
+              </Truong>
+              <Truong nhan={NHAN_SO_QUYET_DINH_HOAN_THANH[trangThaiKetQua]}>
+                <input value={soQuyetDinhKQ} onChange={e => setSoQuyetDinhKQ(e.target.value)} className={oInput} />
+              </Truong>
+            </div>
+          )}
+        </div>
+        </div>
+
+        <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
+        <div className="flex items-center justify-between mb-2 sticky top-0 bg-white z-10 pb-2">
           <div className="text-sm font-medium text-slate-600">Bị can ({biCanRows.length})</div>
           <button onClick={themBiCan} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">+ Thêm bị can</button>
         </div>
@@ -3308,6 +3357,9 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
                 <Truong nhan="Ngày khởi tố bị can">
                   <NhapNgay value={bc.ngayKhoiTo} onChange={e => suaBiCan(bc.id, { ngayKhoiTo: e.target.value })} className={oInput} />
                 </Truong>
+                <Truong nhan="Số QĐ khởi tố bị can">
+                  <input value={bc.soQdKtBiCan||""} onChange={e => suaBiCan(bc.id, { soQdKtBiCan: e.target.value })} placeholder="VD: 15/QĐ-VKS" className={oInput} />
+                </Truong>
 
                 <Truong nhan="Địa chỉ" rong4>
                   <textarea value={bc.diaChi} onChange={e => suaBiCan(bc.id, { diaChi: e.target.value })}
@@ -3339,8 +3391,10 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
             </div>
           ))}
         </div>
+        </div>
+        </div>
 
-        <div className="flex justify-end gap-2 mt-6">
+        <div className="flex justify-end gap-2 mt-6 shrink-0">
           <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
           <button onClick={onBamLuu} disabled={dangLuu}
                   className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
@@ -4378,6 +4432,8 @@ function InQRModal({ vuAn, onDong }) {
   return ReactDOM.createPortal(noiDung, document.getElementById("qr-print-root"));
 }
 
+const SO_BI_CAN_MAC_DINH = 10;
+
 function ChiTietPanel({ vuAnId, onDoiSelected }) {
   const [vuAn, setVuAn] = useState(null);
   const [biCanList, setBiCanList] = useState([]);
@@ -4385,11 +4441,15 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
   const [modalMo, setModalMo] = useState(null);
   const [biCanDangSua, setBiCanDangSua] = useState(null);
   const [hienThemBiCan, setHienThemBiCan] = useState(false);
+  const [timBiCan, setTimBiCan] = useState("");
+  const [xemHetBiCan, setXemHetBiCan] = useState(false);
 
   useEffect(() => {
     setModalMo(null);
     setBiCanDangSua(null);
     setHienThemBiCan(false);
+    setTimBiCan("");
+    setXemHetBiCan(false);
     if (!vuAnId) { setVuAn(null); return; }
     return db.collection("vuan").doc(vuAnId).onSnapshot(doc => {
       setVuAn(doc.exists ? { id: doc.id, ...doc.data() } : null);
@@ -4485,41 +4545,74 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
             </button>
           ) : null}
         </div>
-        {biCanList.length === 0 && <div className="text-sm text-slate-400">Chưa có bị can nào.</div>}
-        {biCanList.length > 0 && (
-          <div className="border border-slate-200 rounded-lg overflow-hidden">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="text-left p-2">Họ tên</th>
-                  <th className="text-left p-2">Năm sinh</th>
-                  <th className="text-left p-2">Tội danh</th>
-                  <th className="text-left p-2">Biện pháp</th>
-                  <th className="text-left p-2">Loại khởi tố</th>
-                  <th className="text-left p-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {biCanList.map((bc, i) => (
-                  <tr key={bc.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
-                    <td className="p-2 font-medium text-slate-700">{bc.hoTen}</td>
-                    <td className="p-2">{bc.namSinh || "—"}</td>
-                    <td className="p-2">{(bc.toiDanh || []).filter(Boolean).join(", ") || "—"}</td>
-                    <td className="p-2">
-                      <Badge mau={bc.bienPhapNganChan === "giam" ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600"}>
-                        {bc.bienPhapNganChan === "giam" ? "Tạm giam" : "Tại ngoại"}
-                      </Badge>
-                    </td>
-                    <td className="p-2">{bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "Ban đầu"}</td>
-                    <td className="p-2">
-                      <button onClick={() => setBiCanDangSua(bc)} className="text-indigo-600 hover:text-indigo-700 font-medium">Sửa</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {(() => {
+          const coNhieuBiCan = biCanList.length > SO_BI_CAN_MAC_DINH;
+          const tuKhoaBiCan = timBiCan.trim().toLowerCase();
+          const biCanLoc = tuKhoaBiCan
+            ? biCanList.filter(bc =>
+                (bc.hoTen || "").toLowerCase().includes(tuKhoaBiCan) ||
+                (bc.toiDanh || []).some(t => (t || "").toLowerCase().includes(tuKhoaBiCan)))
+            : biCanList;
+          const dangThuGon = !tuKhoaBiCan && !xemHetBiCan && biCanLoc.length > SO_BI_CAN_MAC_DINH;
+          const biCanHienThi = dangThuGon ? biCanLoc.slice(0, SO_BI_CAN_MAC_DINH) : biCanLoc;
+          return (
+            <>
+              {coNhieuBiCan && (
+                <input value={timBiCan} onChange={e => setTimBiCan(e.target.value)}
+                       placeholder="Tìm bị can theo tên hoặc tội danh..."
+                       className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 mb-2" />
+              )}
+              {biCanList.length === 0 && <div className="text-sm text-slate-400">Chưa có bị can nào.</div>}
+              {biCanList.length > 0 && biCanLoc.length === 0 && (
+                <div className="text-sm text-slate-400">Không tìm thấy bị can phù hợp.</div>
+              )}
+              {biCanLoc.length > 0 && (
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="text-left p-2">Họ tên</th>
+                        <th className="text-left p-2">Năm sinh</th>
+                        <th className="text-left p-2">Tội danh</th>
+                        <th className="text-left p-2">Biện pháp</th>
+                        <th className="text-left p-2">Loại khởi tố</th>
+                        <th className="text-left p-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {biCanHienThi.map((bc, i) => (
+                        <tr key={bc.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
+                          <td className="p-2 font-medium text-slate-700">{bc.hoTen}</td>
+                          <td className="p-2">{bc.namSinh || "—"}</td>
+                          <td className="p-2">{(bc.toiDanh || []).filter(Boolean).join(", ") || "—"}</td>
+                          <td className="p-2">
+                            <Badge mau={bc.bienPhapNganChan === "giam" ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600"}>
+                              {bc.bienPhapNganChan === "giam" ? "Tạm giam" : "Tại ngoại"}
+                            </Badge>
+                          </td>
+                          <td className="p-2">{bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "Ban đầu"}</td>
+                          <td className="p-2">
+                            <button onClick={() => setBiCanDangSua(bc)} className="text-indigo-600 hover:text-indigo-700 font-medium">Sửa</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {dangThuGon && (
+                <button onClick={() => setXemHetBiCan(true)} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">
+                  + Xem thêm {biCanLoc.length - SO_BI_CAN_MAC_DINH} bị can khác
+                </button>
+              )}
+              {!tuKhoaBiCan && xemHetBiCan && biCanList.length > SO_BI_CAN_MAC_DINH && (
+                <button onClick={() => setXemHetBiCan(false)} className="text-xs text-slate-500 hover:text-slate-700 mt-1">
+                  Thu gọn
+                </button>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       <div className="p-5">
