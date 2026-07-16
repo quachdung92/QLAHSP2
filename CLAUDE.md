@@ -312,6 +312,17 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       (`BienBanGiaoNhanIn`, cột riêng cạnh "Người nhận thực tế / Ký tên" — đúng chỗ cần nhất vì đây
       là bản có chữ ký, dùng đối chiếu về sau), và Excel "Tải toàn bộ lịch sử" (`taiLichSuGiaoNhan`,
       cột sau "Người nhận thực tế").
+      **Thêm cột "Hình thức giải quyết" (2026-07-16, cùng đợt)** — trước khi giao/nhận 1 hồ sơ đã
+      có kết quả, cán bộ cần biết ngay đã giải quyết theo hình thức nào (Đã xét xử/Chuyển đi/Tạm
+      đình chỉ/Đình chỉ/Án huỷ) kèm số QĐ tương ứng mà không cần mở lại vụ án. KHÁC HẲN "Số bút
+      lục"/"Người nhận thực tế" — đây là 2 field MỚI **snapshot tự động** lúc quét/chọn
+      (`trangThaiVu` = `vuAn.trangThai`, `soQdGiaiQuyet` = giá trị field tương ứng qua
+      `fieldSoQuyetDinhTrenVuAn` đã có sẵn từ module Án đã giải quyết), không phải ô nhập tay —
+      hiển thị qua helper dùng chung `moTaHinhThucGiaiQuyet(dong)` ("Đang giải quyết" nếu chưa có
+      kết quả, hoặc "<Nhãn> — <Số QĐ>" nếu đã có). Có ở bảng phiên (cột riêng, luôn hiện bất kể
+      đang sửa dòng hay không — khác nhóm 4 field editable), Excel lịch sử (cột riêng sau "Tên
+      vụ"); riêng **Biên bản in A4** đặt làm dòng phụ trong ô "Tên vụ" (không phải cột riêng) vì
+      khổ A4 đã khá chật với 7 cột hiện có.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy

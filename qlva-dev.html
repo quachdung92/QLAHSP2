@@ -8108,6 +8108,15 @@ function fmtNgayGio(d) {
   return `${date} ${time}`;
 }
 
+// Hiển thị hình thức giải quyết + số QĐ (nếu có) từ snapshot đã lưu trên chính sự kiện
+// giao_nhan_ho_so (trangThaiVu/soQdGiaiQuyet) — KHÔNG query lại vuan, dùng đúng cách các field
+// tenVu/soQdKtva khác đã snapshot sẵn trên sự kiện này. Vụ còn đang giải quyết chưa có số QĐ.
+function moTaHinhThucGiaiQuyet(dong) {
+  if (!dong.trangThaiVu || dong.trangThaiVu === "dang_giai_quyet") return "Đang giải quyết";
+  const nhan = NHAN_TRANG_THAI[dong.trangThaiVu] || dong.trangThaiVu;
+  return dong.soQdGiaiQuyet ? `${nhan} — ${dong.soQdGiaiQuyet}` : nhan;
+}
+
 function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
   const [dangSua, setDangSua] = useState(false);
   const [ksv, setKsv] = useState(dong.nguoiGiao || "");
@@ -8175,6 +8184,11 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa }) {
                   className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline mt-1 disabled:opacity-50">
             {vuAnDeSua === "loading" ? "Đang tải..." : "✎ Sửa thông tin vụ án"}
           </button>
+        </td>
+        <td className="p-3 text-xs whitespace-nowrap">
+          {dong.trangThaiVu && dong.trangThaiVu !== "dang_giai_quyet"
+            ? <span className="text-slate-700">{moTaHinhThucGiaiQuyet(dong)}</span>
+            : <span className="text-slate-300">Đang giải quyết</span>}
         </td>
         {dangSua ? (
           <>
@@ -8258,6 +8272,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
                 <td className="border border-slate-800 p-2 align-top">
                   <div>{d.tenVu}</div>
                   <div className="text-xs text-slate-500 mt-0.5">QĐ KTVA: {d.soQdKtva || "—"} — {fmtDate(d.ngayQdKtva)}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{moTaHinhThucGiaiQuyet(d)}</div>
                 </td>
                 <td className="border border-slate-800 p-2 align-top">{d.nguoiGiao || "—"}</td>
                 <td className="border border-slate-800 p-2 align-top">{d.nguoiNhan || "—"}</td>
@@ -8326,14 +8341,20 @@ function GiaoNhanHoSoModule({ currentUser }) {
   // 2026-07-16) cũng để trống mặc định, ghi tay ngay lúc giao/nhận — dùng để đối chiếu hồ sơ thực
   // tế có bao nhiêu trang tại đúng thời điểm giao/nhận đó (không phải số liệu nghiệp vụ, chỉ ghi
   // chú tham khảo — không ảnh hưởng số liệu báo cáo kỳ, giống các trường người liên quan khác).
+  // "Hình thức giải quyết"/"Số QĐ giải quyết" (trangThaiVu/soQdGiaiQuyet, 2026-07-16) snapshot
+  // TRẠNG THÁI của vụ NGAY LÚC quét/chọn (giống tenVu/soQdKtva ở trên) — không phải sửa tay như 2
+  // field trên, chỉ để biết ngay hồ sơ đang cầm đã có kết quả hay chưa mà không cần mở lại vụ án.
   const ghiNhanVuVaoPhien = async (maVuAn, vuAn) => {
     const now = new Date();
+    const fieldSoQd = fieldSoQuyetDinhTrenVuAn(vuAn.trangThai);
     await db.collection("lichsuChuyenGiaiDoan").add(taoSuKien({
       maVuAn, loaiSuKien: "giao_nhan_ho_so", ngaySuKien: now, kyThongKe: null,
       nguoiThucHien: currentUser?.email || "", thoiDiemGhi: now,
       phienGiaoNhanId: phien.id, loaiGiaoDich: phien.loaiGiaoDich, tenVu: vuAn.tenVu || "",
       soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
       nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "", soButLuc: "",
+      trangThaiVu: vuAn.trangThai || "dang_giai_quyet",
+      soQdGiaiQuyet: fieldSoQd ? (vuAn[fieldSoQd] || "") : "",
       ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
     }));
   };
@@ -8443,14 +8464,14 @@ function GiaoNhanHoSoModule({ currentUser }) {
       const ws = wb.addWorksheet("Lịch sử giao nhận");
       ws.views = [{ state: "frozen", ySplit: 1 }];
       const hRow = ws.addRow([
-        "STT", "Loại giao dịch", "Thời điểm quét", "Mã vụ (QR)", "Tên vụ",
+        "STT", "Loại giao dịch", "Thời điểm quét", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết",
         "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV", "Người nhận thực tế", "Số bút lục",
         "Người thực hiện (quét)", "Ghi chú",
       ]);
       hRow.font = { bold: true };
       hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
       ws.columns = [
-        { width: 6 }, { width: 14 }, { width: 16 }, { width: 13 }, { width: 30 },
+        { width: 6 }, { width: 14 }, { width: 16 }, { width: 13 }, { width: 30 }, { width: 24 },
         { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 12 },
         { width: 20 }, { width: 24 },
       ];
@@ -8462,6 +8483,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
           fmtNgayGio(r.thoiDiemGhi),
           "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
           r.tenVu || "",
+          moTaHinhThucGiaiQuyet(r),
           r.soQdKtva || "",
           fmtDate(r.ngayQdKtva),
           r.nguoiGiao || "",
@@ -8627,6 +8649,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
               <th className="text-left p-3 w-10">STT</th>
               <th className="text-left p-3 w-32">Mã vụ</th>
               <th className="text-left p-3">Tên vụ</th>
+              <th className="text-left p-3">Hình thức giải quyết</th>
               <th className="text-left p-3">KSV</th>
               <th className="text-left p-3">ĐTV</th>
               <th className="text-left p-3">Người nhận thực tế</th>
@@ -8637,7 +8660,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
           </thead>
           <tbody>
             {dsQuet.length === 0 && (
-              <tr><td colSpan={9} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
+              <tr><td colSpan={10} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
             )}
             {dsQuet.map((d, i) => (
               <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}
