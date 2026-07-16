@@ -3574,15 +3574,9 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
   // đây là dữ liệu Án đã giải quyết cần, thường thiếu/sai do import cũ (xem cờ
   // ngayQuyetDinhUocTinh) hoặc do hoàn thành trước khi có field riêng cho từng hình thức.
   const laDaHoanThanh = vuAn.trangThai !== "dang_giai_quyet";
-  const laDaXetXu = vuAn.trangThai === "da_xet_xu";
   const fieldSoQD = laDaHoanThanh ? fieldSoQuyetDinhTrenVuAn(vuAn.trangThai) : null;
   const [ngayQuyetDinh, setNgayQuyetDinh] = useState(toInputDate(vuAn.ngayQuyetDinh));
   const [soQuyetDinhGQ, setSoQuyetDinhGQ] = useState(fieldSoQD ? (vuAn[fieldSoQD] || "") : "");
-  // Mức án — chỉ áp dụng khi Đã xét xử, dùng để tự tính "Thời hạn bảo quản" lúc nộp lưu trữ (xem
-  // tinhThoiHanBaoQuanVu) theo đúng bảng hướng dẫn "thoi han bao quan.xlsx".
-  const [mucAnLoai, setMucAnLoai] = useState(vuAn.mucAnLoai || "nam");
-  const [mucAnNam, setMucAnNam] = useState(vuAn.mucAnNam != null ? String(vuAn.mucAnNam) : "");
-  const [mucAnCoSauThang, setMucAnCoSauThang] = useState(!!vuAn.mucAnCoSauThang);
   const [maNganhCap, setMaNganhCap] = useState(vuAn.maNganhCap || "");
   const [tenVu, setTenVu] = useState(vuAn.tenVu || "");
   const [nguon, setNguon] = useState(vuAn.nguon || "an_khoi_to_moi");
@@ -3646,12 +3640,6 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
           // để Án đã giải quyết thôi tô đỏ cảnh báo dòng này.
           ngayQuyetDinhUocTinh: false,
         } : {}),
-        // Mức án chỉ có ý nghĩa với Đã xét xử — vụ khác không đụng tới các field này.
-        ...(laDaXetXu ? {
-          mucAnLoai,
-          mucAnNam: mucAnLoai === "nam" ? (Number(mucAnNam) || null) : null,
-          mucAnCoSauThang: mucAnLoai === "nam" ? mucAnCoSauThang : false,
-        } : {}),
         ngayCapNhat: new Date(), nguoiCapNhatCuoi: nguoiThucHien,
       });
       addToast("Đã lưu thông tin vụ án");
@@ -3693,42 +3681,6 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
                 <input value={soQuyetDinhGQ} onChange={e => setSoQuyetDinhGQ(e.target.value)} className={oInput} />
               </Truong>
             </div>
-            {laDaXetXu && (
-              <div className="mt-3 pt-3 border-t border-slate-200">
-                <div className="text-xs text-slate-500 mb-2 font-medium">
-                  Mức án — để tự tính "Thời hạn bảo quản" lúc nộp hồ sơ lưu trữ
-                </div>
-                <div className="flex flex-wrap gap-3 items-end">
-                  <Truong nhan="Loại mức án">
-                    <select value={mucAnLoai} onChange={e => setMucAnLoai(e.target.value)} className={oInput}>
-                      {Object.entries(NHAN_LOAI_MUC_AN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                    </select>
-                  </Truong>
-                  {mucAnLoai === "nam" && (
-                    <>
-                      <Truong nhan="Số năm tù">
-                        <input type="number" min="0" step="1" value={mucAnNam}
-                               onChange={e => setMucAnNam(e.target.value)} className={oInput + " w-24"} />
-                      </Truong>
-                      <label className="flex items-center gap-1.5 text-sm text-slate-600 mb-1.5">
-                        <input type="checkbox" checked={mucAnCoSauThang}
-                               onChange={e => setMucAnCoSauThang(e.target.checked)} />
-                        Kèm 6 tháng
-                      </label>
-                    </>
-                  )}
-                </div>
-                <div className="text-xs mt-2">
-                  {(() => {
-                    const soNam = mucAnLoai === "nam" ? (Number(mucAnNam) || 0) + (mucAnCoSauThang ? 0.5 : 0) : null;
-                    const kq = tinhThoiHanBaoQuanTheoMucAn(mucAnLoai, soNam);
-                    return kq
-                      ? <span className="text-slate-500">→ Thời hạn bảo quản: <span className="font-medium text-slate-700">{kq}</span></span>
-                      : <span className="text-amber-600">→ Chưa đủ thông tin hoặc mức án này chưa có trong bảng hướng dẫn "thoi han bao quan.xlsx" — cần tra cứu/ghi chú thủ công.</span>;
-                  })()}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -8216,19 +8168,69 @@ function moTaHinhThucGiaiQuyet(dong) {
   return dong.soQdGiaiQuyet ? `${nhan} — ${dong.soQdGiaiQuyet}` : nhan;
 }
 
+// Hiển thị mức án đã nhập (snapshot mucAnLoai/mucAnNam/mucAnCoSauThang trên sự kiện, giống cách
+// moTaHinhThucGiaiQuyet đã làm) — chỉ có ý nghĩa với vụ Đã xét xử, dùng để tính thoiHanBaoQuan.
+function moTaMucAn(dong) {
+  if (!dong.mucAnLoai) return "—";
+  if (dong.mucAnLoai !== "nam") return NHAN_LOAI_MUC_AN[dong.mucAnLoai] || dong.mucAnLoai;
+  if (dong.mucAnNam == null) return "—";
+  return `${dong.mucAnNam} năm${dong.mucAnCoSauThang ? " 6 tháng" : ""}`;
+}
+
+// Công tắc bật/tắt kiểu toggle (thay cho checkbox thường) — dùng chung cho các lựa chọn nhị phân
+// muốn nhìn hiện đại hơn <input type="checkbox">, VD "Nộp hồ sơ lưu trữ" ở Giao nhận hồ sơ.
+function CongTac({ checked, onChange, nhan, mauBat = "bg-emerald-600" }) {
+  return (
+    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+      <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
+              className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${checked ? mauBat : "bg-slate-300"}`}>
+        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${checked ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+      </button>
+      {nhan && <span className="text-sm text-slate-600">{nhan}</span>}
+    </label>
+  );
+}
+
 function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }) {
   const [dangSua, setDangSua] = useState(false);
   const [ksv, setKsv] = useState(dong.nguoiGiao || "");
   const [dtv, setDtv] = useState(dong.nguoiNhan || "");
   const [nguoiNhanThucTe, setNguoiNhanThucTe] = useState(dong.nguoiNhanThucTe || "");
   const [soButLuc, setSoButLuc] = useState(dong.soButLuc || "");
+  // Mức án — chỉ áp dụng khi vụ Đã xét xử, sửa ngay tại đây để tự tính lại Thời hạn bảo quản
+  // (xem CLAUDE.md "Nộp hồ sơ lưu trữ") thay vì phải mở riêng "Sửa thông tin vụ án".
+  const [mucAnLoai, setMucAnLoai] = useState(dong.mucAnLoai || "nam");
+  const [mucAnNam, setMucAnNam] = useState(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
+  const [mucAnCoSauThang, setMucAnCoSauThang] = useState(!!dong.mucAnCoSauThang);
   const [vuAnDeSua, setVuAnDeSua] = useState(null); // null=đóng, "loading"=đang tải, object=sẵn sàng mở form
 
+  // Mức án là thuộc tính của chính VỤ ÁN (khác KSV/ĐTV/số bút lục chỉ là snapshot trên dòng log)
+  // nên phải ghi vào `vuan`, KHÔNG chỉ ghi vào dòng log — đồng thời cập nhật lại luôn
+  // thoiHanBaoQuan trên dòng log để cột "Thời hạn bảo quản" phản ánh đúng ngay, không cần quét
+  // lại vụ mới thấy số mới.
   const luu = async () => {
-    await onSua(dong.id, {
+    const patch = {
       nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim(),
       soButLuc: soButLuc.trim(),
-    });
+    };
+    if (dong.trangThaiVu === "da_xet_xu") {
+      const soNamMoi = mucAnLoai === "nam" ? (Number(mucAnNam) || null) : null;
+      const soNamTinh = mucAnLoai === "nam" ? (Number(mucAnNam) || 0) + (mucAnCoSauThang ? 0.5 : 0) : null;
+      patch.mucAnLoai = mucAnLoai;
+      patch.mucAnNam = soNamMoi;
+      patch.mucAnCoSauThang = mucAnLoai === "nam" ? mucAnCoSauThang : false;
+      patch.thoiHanBaoQuan = tinhThoiHanBaoQuanTheoMucAn(mucAnLoai, soNamTinh) || "";
+      try {
+        await db.collection("vuan").doc(dong.maVuAn).update({
+          mucAnLoai: patch.mucAnLoai, mucAnNam: patch.mucAnNam, mucAnCoSauThang: patch.mucAnCoSauThang,
+        });
+      } catch (err) {
+        console.error(err);
+        addToast("Lỗi khi lưu mức án vào vụ án: " + err.message, "error");
+        return;
+      }
+    }
+    await onSua(dong.id, patch);
     setDangSua(false);
   };
 
@@ -8240,6 +8242,8 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
     if (khoaSua || dangSua) return;
     setKsv(dong.nguoiGiao || ""); setDtv(dong.nguoiNhan || ""); setNguoiNhanThucTe(dong.nguoiNhanThucTe || "");
     setSoButLuc(dong.soButLuc || "");
+    setMucAnLoai(dong.mucAnLoai || "nam"); setMucAnNam(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
+    setMucAnCoSauThang(!!dong.mucAnCoSauThang);
     setDangSua(true);
   };
 
@@ -8289,6 +8293,34 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
             ? <span className="text-slate-700">{moTaHinhThucGiaiQuyet(dong)}</span>
             : <span className="text-slate-300">Đang giải quyết</span>}
         </td>
+        {hienThoiHan && (
+          dong.trangThaiVu !== "da_xet_xu" ? (
+            <td className="p-3 text-xs"><span className="text-slate-300">—</span></td>
+          ) : dangSua ? (
+            <td className="p-2 text-xs" onClick={e => e.stopPropagation()}>
+              <div className="flex flex-wrap items-center gap-1">
+                <select value={mucAnLoai} onChange={e => setMucAnLoai(e.target.value)}
+                        className={oInput + " text-xs py-1 px-1.5 w-24"}>
+                  {Object.entries(NHAN_LOAI_MUC_AN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+                {mucAnLoai === "nam" && (
+                  <>
+                    <input type="number" min="0" step="1" value={mucAnNam}
+                           onChange={e => setMucAnNam(e.target.value)}
+                           className={oInput + " text-xs py-1 px-1.5 w-12"} placeholder="Năm" />
+                    <label className="flex items-center gap-1 text-slate-500 whitespace-nowrap">
+                      <input type="checkbox" checked={mucAnCoSauThang}
+                             onChange={e => setMucAnCoSauThang(e.target.checked)} />
+                      +6th
+                    </label>
+                  </>
+                )}
+              </div>
+            </td>
+          ) : (
+            <td className="p-3 text-xs whitespace-nowrap"><span className="text-slate-700">{moTaMucAn(dong)}</span></td>
+          )
+        )}
         {hienThoiHan && (
           <td className="p-3 text-xs whitespace-nowrap">
             {dong.thoiHanBaoQuan || <span className="text-slate-300">—</span>}
@@ -8369,6 +8401,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
               <th className="border border-slate-800 p-2 w-24">Mã vụ</th>
               <th className="border border-slate-800 p-2">Tên vụ</th>
               <th className="border border-slate-800 p-2 w-24">Trạng thái HS</th>
+              {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Mức án</th>}
               {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Thời hạn bảo quản</th>}
               <th className="border border-slate-800 p-2 w-20">KSV</th>
               <th className="border border-slate-800 p-2 w-20">ĐTV</th>
@@ -8392,6 +8425,9 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
                     <div className="text-xs text-slate-500 mt-0.5">QĐ KTVA: {d.soQdKtva || "—"} — {fmtDate(d.ngayQdKtva)}</div>
                   </td>
                   <td className="border border-slate-800 p-2 align-top text-xs">{moTaHinhThucGiaiQuyet(d)}</td>
+                  {phien.laLuuTru && (
+                    <td className="border border-slate-800 p-2 align-top text-xs text-center">{moTaMucAn(d)}</td>
+                  )}
                   {phien.laLuuTru && (
                     <td className="border border-slate-800 p-2 align-top text-xs text-center">{d.thoiHanBaoQuan || "—"}</td>
                   )}
@@ -8427,7 +8463,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [tuKhoaTim, setTuKhoaTim] = useState("");
   const [ksvTim, setKsvTim] = useState("tat_ca");
   const [dangTaiLichSu, setDangTaiLichSu] = useState(false);
-  const [luuTruMoi, setLuuTruMoi] = useState(false); // tick "Nộp hồ sơ lưu trữ" trước khi bắt đầu phiên Nhận
+  const [luuTruMoi, setLuuTruMoi] = useState(false); // bật "Nộp hồ sơ lưu trữ" trước khi bắt đầu phiên Nhận
   const inputRef = React.useRef(null);
 
   // Không dùng orderBy kèm where ở đây để khỏi cần composite index mới — sắp xếp lại phía client.
@@ -8483,6 +8519,10 @@ function GiaoNhanHoSoModule({ currentUser }) {
       trangThaiVu: vuAn.trangThai || "dang_giai_quyet",
       soQdGiaiQuyet: fieldSoQd ? (vuAn[fieldSoQd] || "") : "",
       thoiHanBaoQuan: tinhThoiHanBaoQuanVu(vuAn) || "",
+      // Mức án cũng snapshot vào đây (giống trangThaiVu) để "Sửa" ngay tại dòng giao nhận (xem
+      // DongGiaoNhan) có sẵn giá trị hiện tại mà không cần đọc lại vuan.
+      mucAnLoai: vuAn.mucAnLoai || null, mucAnNam: vuAn.mucAnNam ?? null,
+      mucAnCoSauThang: !!vuAn.mucAnCoSauThang,
       ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
     }));
   };
@@ -8593,15 +8633,15 @@ function GiaoNhanHoSoModule({ currentUser }) {
       ws.views = [{ state: "frozen", ySplit: 1 }];
       const hRow = ws.addRow([
         "STT", "Loại giao dịch", "Thời điểm quét", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết",
-        "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV", "Người nhận thực tế",
-        "Số bút lục", "Người thực hiện (quét)", "Ghi chú",
+        "Mức án", "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV",
+        "Người nhận thực tế", "Số bút lục", "Người thực hiện (quét)", "Ghi chú",
       ]);
       hRow.font = { bold: true };
       hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
       ws.columns = [
         { width: 6 }, { width: 14 }, { width: 16 }, { width: 13 }, { width: 30 }, { width: 24 },
-        { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 }, { width: 16 },
-        { width: 12 }, { width: 20 }, { width: 24 },
+        { width: 16 }, { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 },
+        { width: 16 }, { width: 12 }, { width: 20 }, { width: 24 },
       ];
       const QR_PX = 60; // ~60px vuông — đủ scan lại được (correctLevel M), giữ file không quá nặng
       rows.forEach((r, i) => {
@@ -8612,6 +8652,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
           "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
           r.tenVu || "",
           moTaHinhThucGiaiQuyet(r),
+          moTaMucAn(r),
           r.thoiHanBaoQuan || "",
           r.soQdKtva || "",
           fmtDate(r.ngayQdKtva),
@@ -8666,19 +8707,18 @@ function GiaoNhanHoSoModule({ currentUser }) {
       <div>
         <h2 className="text-lg font-semibold mb-4">Giao nhận hồ sơ</h2>
         <div className="text-sm text-slate-500 mb-4">Chọn loại giao dịch để bắt đầu 1 phiên quét mới.</div>
-        <div className="flex gap-3 items-center flex-wrap">
+        <div className="flex gap-3 items-stretch flex-wrap">
           <button onClick={() => batDauPhien("giao")}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-5 py-3 text-sm font-medium">
             Bắt đầu phiên — Giao hồ sơ
           </button>
-          <button onClick={() => batDauPhien("nhan", luuTruMoi)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-5 py-3 text-sm font-medium">
-            Bắt đầu phiên — {luuTruMoi ? "Nhận hồ sơ (nộp lưu trữ)" : "Nhận hồ sơ"}
-          </button>
-          <label className="flex items-center gap-1.5 text-sm text-slate-600">
-            <input type="checkbox" checked={luuTruMoi} onChange={e => setLuuTruMoi(e.target.checked)} />
-            Nộp hồ sơ lưu trữ
-          </label>
+          <div className="flex items-center gap-3 border border-slate-200 rounded-lg pl-4 pr-3 py-2 bg-slate-50/60">
+            <button onClick={() => batDauPhien("nhan", luuTruMoi)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-5 py-3 text-sm font-medium">
+              Bắt đầu phiên — {luuTruMoi ? "Nhận hồ sơ (nộp lưu trữ)" : "Nhận hồ sơ"}
+            </button>
+            <CongTac checked={luuTruMoi} onChange={setLuuTruMoi} nhan="Nộp hồ sơ lưu trữ" />
+          </div>
           <button onClick={taiLichSuGiaoNhan} disabled={dangTaiLichSu}
                   className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-3 text-sm font-medium disabled:opacity-50">
             {dangTaiLichSu ? "Đang tải..." : "⬇ Tải toàn bộ lịch sử giao nhận"}
@@ -8686,8 +8726,8 @@ function GiaoNhanHoSoModule({ currentUser }) {
         </div>
         {luuTruMoi && (
           <div className="text-xs text-slate-500 mt-2">
-            Phiên "Nộp hồ sơ lưu trữ" sẽ hiện thêm cột "Thời hạn bảo quản" tự tính theo hình thức
-            giải quyết/mức án của từng vụ (xem "Sửa thông tin vụ án" nếu vụ chưa có mức án).
+            Phiên "Nộp hồ sơ lưu trữ" sẽ hiện thêm cột "Mức án"/"Thời hạn bảo quản" — nhập/sửa mức
+            án ngay tại dòng giao nhận nếu vụ Đã xét xử chưa có mức án.
           </div>
         )}
       </div>
@@ -8790,6 +8830,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
               <th className="text-left p-3 w-32">Mã vụ</th>
               <th className="text-left p-3">Tên vụ</th>
               <th className="text-left p-3">Hình thức giải quyết</th>
+              {phien.laLuuTru && <th className="text-left p-3">Mức án</th>}
               {phien.laLuuTru && <th className="text-left p-3">Thời hạn bảo quản</th>}
               <th className="text-left p-3">KSV</th>
               <th className="text-left p-3">ĐTV</th>
@@ -8801,7 +8842,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
           </thead>
           <tbody>
             {dsQuet.length === 0 && (
-              <tr><td colSpan={phien.laLuuTru ? 11 : 10} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
+              <tr><td colSpan={phien.laLuuTru ? 12 : 10} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
             )}
             {dsQuet.map((d, i) => (
               <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}

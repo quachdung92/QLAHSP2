@@ -363,15 +363,32 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       tạm của Excel) tồn tại cùng thư mục — dấu hiệu file gốc **đang được mở** trên máy Dũng, có
       thể đang sửa dở. Nếu bảng đối chiếu trong code sai khác với file thật sau này, kiểm tra lại
       file gốc đã lưu (Ctrl+S) chưa trước khi kết luận code sai.
-      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnCoSauThang` trên `vuan`, chỉ sửa
-      được qua `SuaVuAnForm` khi `vuAn.trangThai === "da_xet_xu"` (khối "Mức án" trong "Thông tin
-      giải quyết" đã có sẵn) — có preview ngay "→ Thời hạn bảo quản: ..." khi chọn, để cán bộ biết
-      ngay có tính được hay không trước khi lưu. `ghiNhanVuVaoPhien` snapshot kết quả tính
-      (`thoiHanBaoQuan`) vào chính sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách
-      `trangThaiVu`/`soQdGiaiQuyet` đã làm, KHÔNG tính lại lúc hiển thị/in.
-      **CHƯA kiểm chứng bằng dữ liệu Firestore thật** — cần thử trên `qlva-dev.html`: nhập mức án
-      cho 1 vụ Đã xét xử, bắt đầu phiên Nhận có tick lưu trữ, quét/chọn vụ đó, xem cột Thời hạn
-      bảo quản ở bảng phiên/biên bản in/Excel đều ra đúng số theo bảng gốc.
+      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnCoSauThang` trên `vuan`.
+      `ghiNhanVuVaoPhien` snapshot kết quả tính (`thoiHanBaoQuan`) VÀ chính 3 field mức án này vào
+      sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách `trangThaiVu`/`soQdGiaiQuyet` đã
+      làm, KHÔNG tính lại lúc hiển thị/in.
+      **Sửa lại (2026-07-16, cùng ngày) — chuyển hẳn việc nhập mức án ra khỏi `SuaVuAnForm`, vào
+      thẳng dòng giao nhận** (`DongGiaoNhan`) cho tiện nhập liệu đúng lúc cần (nộp lưu trữ), thay
+      vì phải mở riêng modal "Sửa thông tin vụ án" — mức án chỉ thật sự cần biết vào đúng thời điểm
+      này. Cột **"Mức án"** đặt giữa "Hình thức giải quyết" và "Thời hạn bảo quản", chỉ hiện khi
+      phiên `laLuuTru`; vụ không phải Đã xét xử hiện "—" (không sửa được, vì mức án không áp dụng).
+      Sửa dùng chung nút Sửa/Lưu của cả dòng (cùng `dangSua` với KSV/ĐTV/Số bút lục) nhưng khác
+      hẳn ở chỗ **ghi vào 2 nơi khi Lưu**: (1) `db.collection("vuan").doc(dong.maVuAn).update(...)`
+      — vì mức án là thuộc tính của VỤ ÁN, không phải chỉ của dòng log như KSV/ĐTV/số bút lục; (2)
+      `onSua` như cũ để cập nhật lại `mucAnLoai/mucAnNam/mucAnCoSauThang` VÀ tính lại
+      `thoiHanBaoQuan` ngay trên chính dòng log đang xem — để cột Thời hạn bảo quản đổi ngay tại
+      chỗ, không cần quét lại vụ mới thấy số mới. Nếu ghi `vuan` thất bại (lỗi mạng...), dừng lại
+      không gọi `onSua` (tránh trạng thái 2 nơi lệch nhau: log nói đã có mức án X nhưng `vuan` thì
+      chưa lưu được).
+      **Toggle "Nộp hồ sơ lưu trữ" đổi từ checkbox sang công tắc (2026-07-16, cùng ngày)** — thêm
+      component dùng chung `CongTac` (nút bo tròn kiểu switch, không phải `<input
+      type="checkbox">`) cho "hiện đại" hơn theo yêu cầu người dùng; đồng thời gom nút "Bắt đầu
+      phiên — Nhận hồ sơ" + công tắc vào chung 1 khung viền riêng (tách khỏi nút "Giao hồ sơ") để
+      rõ ràng công tắc này chỉ áp dụng cho việc bắt đầu phiên Nhận, không phải Giao.
+      **CHƯA kiểm chứng bằng dữ liệu Firestore thật** — cần thử trên `qlva-dev.html`: bắt đầu phiên
+      Nhận bật công tắc lưu trữ, quét/chọn 1 vụ Đã xét xử chưa có mức án, sửa dòng đó nhập mức án
+      ngay tại bảng, xem cột Thời hạn bảo quản cập nhật đúng ngay (không cần quét lại), rồi kiểm
+      tra tiếp biên bản in/Excel đều ra đúng số theo bảng gốc.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
