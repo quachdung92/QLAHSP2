@@ -21,6 +21,50 @@ trên `qlva-dev.html`** (không có commit nào ghi lại việc này vì bấm 
 code). Nếu số liệu tồn cuối kỳ theo tội danh trên B10 còn nghi ngờ sai, kiểm chứng công cụ này
 trước khi tin tưởng số liệu xuất ra từ nút đó trên `qlva.html` (production).
 
+**Nhánh `fix-bao-cao` (2026-07-15, tiếp tục sau khi merge `bieu-10-audit` vào `main`)** — audit
+tiếp bằng cách xem trực tiếp file Excel xuất ra: số vụ mới (C6 "ĐT khởi tố vụ") khớp đúng số dòng
+sheet "DS khởi tố ĐT", nhưng khối nhân khẩu học C7-C24 (tuổi/trình độ/dân tộc...) ra 0/rỗng dù
+vụ có bị can. Nguyên nhân: `seed-tool.html` (dùng để seed dữ liệu `qlva-dev.html`) có CÙNG bug
+`loaiKhoiTo` hardcode sai đã audit ở `bieu-10-audit` (đã sửa `qlva.html`/`ImportExcelModule` từ
+`1e87144`, nhưng chưa bao giờ sửa file seed riêng này) — bị can seed ra không bao giờ có
+`loaiKhoiTo === "ban_dau"` nên bị lọc mất hết khỏi C7-C24. Đã sửa `seed-tool.html`, VÀ vì bug gốc
+(`ImportExcelModule` trước `1e87144`) chỉ được chặn cho import MỚI chứ không backfill dữ liệu ĐÃ
+import trước đó (kể cả production), nên đã thêm `BackfillLoaiKhoiToTool` (Cài đặt → Import Excel)
+tính lại đúng `loaiKhoiTo` cho toàn bộ bị can hiện có, gom theo vụ, dùng đúng hàm
+`tinhLoaiKhoiToTheoNgay` app đã dùng khi thêm/sửa bị can.
+
+**Thiết kế lại khối C7-C24: bỏ hẳn tiêu chí `loaiKhoiTo` (2026-07-15)** — trong lúc thảo luận về
+bug trên, người dùng đặt câu hỏi đúng trọng tâm: tại sao khối C7-C24 cần phân biệt "ban đầu"/
+"bổ sung" theo `loaiKhoiTo`, trong khi hệ thống đã hỏi "tính vào kỳ thống kê nào" ngay lúc thêm
+bị can (`ThemBiCanForm`/`ThemVuAnForm`/Import Excel) rồi? Đã xác nhận: (1) số vụ mới (C3/C6...)
+hoàn toàn độc lập với sự kiện `khoi_to_bican` — chỉ phụ thuộc `khoi_to_vu`/`tach_vu`/
+`chuyen_giai_doan`/`tra_ho_so`, nên thêm bị can bổ sung vào 1 vụ cũ KHÔNG làm đổi kỳ "vụ mới" của
+vụ đó; (2) `loaiKhoiTo` chỉ được dùng để lọc BC ở ĐÚNG 1 khối duy nhất (C7-C24 "ĐT khởi tố mới")
+— khối TT/XX tương ứng (C43-C52, C64...) đã đếm mọi BC của vụ, không lọc `loaiKhoiTo` từ trước.
+Kết luận: thay `bc.loaiKhoiTo === "ban_dau"` bằng tiêu chí đúng bản chất hơn — **BC nào có sự
+kiện `khoi_to_bican` với `kyThongKe` khớp đúng kỳ đang tính báo cáo thì mới đếm vào C7-C24 của kỳ
+đó**, bất kể `loaiKhoiTo`. Nhờ vậy BC bổ sung thêm vào 1 vụ cũ ở kỳ SAU không còn bị đếm nhầm vào
+kỳ vụ khởi tố (đằng nào cũng không nên tính, vì đó là BC "mới" của kỳ sau chứ không phải kỳ vụ
+được mở). Chỉ áp dụng cho khối C7-C24 — usage KHÁC của `loaiKhoiTo` (`vuPrimaryDL`: chọn BC nào
+đại diện tội danh chính của 1 vụ nhiều bị can/nhiều tội, dùng để nhóm B10/TK tội danh theo điều
+luật) giữ nguyên, không liên quan gì tới câu hỏi này.
+Triển khai: `tinhBieu10` nhận thêm `bcKyKhoiToMap` (Map BC id → kỳ id, từ hàm mới
+`fetchKyKhoiToBiCan` — quét log `khoi_to_bican`, KHÔNG dùng field cache trên `bican` vì log là
+nguồn sự thật duy nhất và có thể bị "Sửa kỳ" cập nhật sau) + `kyIdSetTrongBaoCao` (mặc định
+`{ky.id}`, nhưng báo cáo TỔNG HỢP NHIỀU KỲ — `TongHopNhieuKyModal` — truyền cả set kỳ đã gộp, nếu
+không sẽ luôn ra 0 vì `ky` của báo cáo gộp là object giả `{tenKy}` không có `id` thật). Biến
+`dt_ktBcBanDau` đổi tên thành `dt_ktBcMoiKy` cho đúng ý nghĩa mới.
+Phía Excel: thêm cột **"Kỳ TK BC"** (cột AF, cuối `BC_H`, 21 cột thay vì 20 — KHÁC cột "Kỳ TK"
+cấp vụ đã có ở `extraHeaders`, vì cột đó lấy kỳ của chính VỤ, giống nhau cho mọi dòng BC của cùng
+1 vụ, không phản ánh đúng BC bổ sung thêm ở kỳ khác) ghi qua `tenKyBcRieng(bc)`. Công thức COUNTIFS
+của C7-C24 đổi từ tiêu chí cột W (`"ban_dau"`) sang cột AF khớp tên kỳ hiện tại — helper mới
+`mkCfBcKy(sheets, r, dsKyTen, ...extra)` tự OR-sum COUNTIFS qua từng kỳ trong `dsKyTen` (đáp ứng cả
+báo cáo gộp nhiều kỳ, không chỉ 1 kỳ). Đã viết test độc lập kiểm chứng cả sinh công thức lẫn logic
+lọc theo tập kỳ (đơn kỳ / gộp nhiều kỳ / BC không có kỳ do dữ liệu cũ dựng lại lịch sử) trước khi
+mirror sang `qlva-dev.html` — CHƯA kiểm chứng bằng dữ liệu Firestore thật, cần seed lại hoặc chạy
+`BackfillLoaiKhoiToTool` trên `qlva-dev.html` rồi xem thử trước khi tin tưởng số liệu trên
+`qlva.html` (production).
+
 # QLVA — Quản lý vụ án Phòng 2, VKSND Hà Nội
 
 ## Bối cảnh
@@ -558,6 +602,42 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       số liệu"** dùng công thức Excel `SUM` tự kiểm: `Tồn đầu + Σ(DS vào) − Σ(DS ra) = Tồn cuối
       (chốt)` cho mỗi giai đoạn, tô xanh nếu chênh lệch = 0, đỏ nếu ≠ 0 (dấu hiệu có sự kiện log
       với `kyThongKe = null`, thường do dữ liệu cũ dựng lại lịch sử — xem `DungLaiLichSuTool`).
+      **Sheet "Tổng hợp báo cáo" — thêm cột BC + hết phụ thuộc số JS xuất thẳng từ hệ thống
+      (2026-07-15)** — trước đây mỗi giai đoạn chỉ 1 cột (chỉ có số Vụ, không dòng nào có tổng Bị
+      can trừ riêng khối "Tồn" tách thành 2 HÀNG "— Vụ"/"— Bị can"), và nhiều dòng ("Án khởi tố
+      mới", "Tin báo khởi tố lên", "Án nơi khác chuyển đến", "Số tồn hiện tại"...) đọc thẳng số JS
+      từ `baoCao` dù ĐÃ có DS sheet tương ứng chứa đủ dữ liệu để tính ra cùng con số bằng công
+      thức Excel — nghĩa là những dòng đó không tự kiểm chứng được, khác triết lý "công thức Excel"
+      áp dụng cho B10/TK tội danh. Đã đổi cấu trúc cột thành **7 cột**: nhãn + `ĐT-Vụ/ĐT-BC/TT-Vụ/
+      TT-BC/XX-Vụ/XX-BC` (mỗi giai đoạn 2 cột thay vì 1), và chuyển MỌI ô có DS sheet tương ứng
+      sang công thức `SUM`/`COUNTIF`/`COUNTIFS`/`SUMIF` — cột BC đếm bị can THẬT trong sheet qua
+      `COUNTIF(sheet!$M:$M,"<>(Chưa có BC)")` (cột M = Họ tên BC, loại trừ dòng giả của vụ 0 BC).
+      Khối "Án khởi tố mới/Tin báo/Án nơi khác" lọc thêm theo cột **"Nguồn"** (cột AH của sheet
+      "DS khởi tố {gs}", xem `addSheetVuKy`) qua `SUMIF`/`COUNTIF(S)`. **Chỉ còn 2 cặp dòng KHÔNG
+      sheet-hoá được** vì bản chất là snapshot tại 1 thời điểm chốt kỳ (không phải danh sách sự
+      kiện của kỳ này để đếm lại): "Tồn đầu kỳ" (snapshot `tonCuoiKy`/`tonCuoiBiCan` của KỲ TRƯỚC)
+      và "Tồn cuối kỳ" (snapshot của CHÍNH kỳ này) — nhãn dòng đã ghi rõ "(snapshot chốt kỳ
+      trước/này)" để không ai tưởng nhầm là thiếu sót. Riêng "Số tồn hiện tại" KHÔNG phải snapshot
+      (luôn tính live) nên ĐÃ chuyển sang công thức qua sheet "DS tồn {gs}" có sẵn — trước đây bị
+      bỏ sót dù sheet đã tồn tại.
+      **Cột BC của khối ĐT "mới" áp dụng đúng nguyên tắc lọc theo kỳ vừa sửa ở B10 (xem "Trạng
+      thái Biểu B10" đầu file)** — Điều tra là giai đoạn DUY NHẤT bị can có thể được "Thêm bị can"
+      bổ sung vào 1 vụ đã có sẵn ở kỳ SAU kỳ vụ được mở, nên các dòng Án khởi tố mới/Tin báo/Án
+      nơi khác/Phục hồi điều tra/Khởi tạo trực tiếp/Tổng số mới ở CỘT ĐT dùng `demBcSheetKy`
+      (COUNTIFS theo cột "Kỳ TK BC" khớp đúng kỳ đang tính, dùng chung `bcKyKhoiToMap`/
+      `kyIdSetTrongBaoCao`/`dsKyTenTrongBaoCao` đã thêm cho B10) — cột TT/XX của CÙNG các dòng đó
+      dùng `demBcSheetM` thường (đếm mọi BC trong sheet, không lọc kỳ), đúng như B10 chưa từng lọc
+      loaiKhoiTo cho khối TT/XX. Đã viết test độc lập cho toàn bộ formula helper mới trước khi
+      mirror sang `qlva-dev.html` — CHƯA kiểm chứng bằng dữ liệu Firestore thật.
+      **Biểu B10 vẫn còn 1 nhóm ô chưa sheet-hoá được audit nhưng CHƯA sửa** (out of scope đợt
+      này, cần quyết định riêng nếu muốn làm tiếp) — 2 loại: (1) "Tồn kỳ trước"/"Tồn kỳ này" (vals
+      index 0-3, 34-37, 65-68) — snapshot, giống lý do "Tồn đầu/cuối kỳ" ở Tổng hợp báo cáo, không
+      sheet-hoá được; (2) "Tổng thụ lý" C3/C4/C33/C34/C60/C61 (vals index 4,5,34,35,65,66... — số
+      thực ra là phép cộng/trừ CÁC CỘT B10 KHÁC trong CÙNG dòng, VD C3 = tồn trước + C6 − nhập vụ
+      − chuyển đi − án huỷ) — về lý thuyết có thể viết thành công thức Excel tham chiếu chéo cột
+      trong cùng 1 dòng (không cần DS sheet mới), nhưng chưa làm vì cần rà soát cẩn thận việc ánh
+      xạ từng thành phần C3 sang đúng cột vals[] khác trong cùng hàng, quy mô tương đương lần sửa
+      B10 gốc — nếu cần, hỏi lại rõ trước khi làm để tránh sai sót trên báo cáo chính thức.
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng

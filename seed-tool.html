@@ -227,6 +227,17 @@ function buildData() {
     }
     vuDocs.push({ id, data: vuData });
     const bcList = bcDefs.map(([ht,ns,gt,tdk]) => mkBC(id, ht, ns, gt, tdk));
+    // loaiKhoiTo/ngayKhoiTo bị mkBC() hardcode placeholder (loaiKhoiTo:"khoi_to_moi" — giá trị
+    // KHÔNG HỢP LỆ, không bao giờ === "ban_dau"). App thật tính loaiKhoiTo = "ban_dau" cho BC có
+    // ngayKhoiTo SỚM NHẤT trong vụ (tinhLoaiKhoiToTheoNgay trong qlva.html) — Biểu B10 lọc đúng
+    // "ban_dau" mới tính vào khối nhân khẩu học (C7-C24...), nên seed thiếu field này làm B10
+    // hiện đúng số vụ/BC tổng nhưng toàn bộ cột nhân khẩu học ra 0. Seed ở đây không có nhiều
+    // ngày khởi tố khác nhau mỗi BC nên đơn giản hoá: BC đầu tiên trong bcDefs = "ban_dau", còn
+    // lại "bo_sung"; ngayKhoiTo mặc định = ngày QĐ KTVA của vụ (đủ để B10/Ngày KTBC không rỗng).
+    bcList.forEach((bc, i) => {
+      bc.data.ngayKhoiTo = ts(ngayKTVA);
+      bc.data.loaiKhoiTo = i === 0 ? "ban_dau" : "bo_sung";
+    });
     bcList.forEach(bc => bcDocs.push({ id: bc.id, data: bc.data }));
 
     evDefs.forEach(e => {
