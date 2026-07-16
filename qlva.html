@@ -313,6 +313,36 @@ function tinhLoaiKhoiTo(biCanRows) {
   return tinhLoaiKhoiToTheoNgay(biCanRows.map(bc => bc.ngayKhoiTo ? fromInputDate(bc.ngayKhoiTo) : null));
 }
 
+// Tính lại dieuLuat (vụ) + loaiKhoiTo (từng bị can) sau khi bị can của 1 vụ thay đổi (thêm/sửa/
+// nhập vụ vào vụ này) — dùng chung cho SuaBiCanForm/ThemBiCanForm/NhapVuModal thay vì mỗi nơi tự
+// đọc-tính-ghi riêng. Bọc trong transaction để tránh lost-update: nếu 2 người cùng sửa bị can của
+// CÙNG 1 vụ gần như đồng thời, đọc-tính-ghi không transaction thì người ghi sau có thể đè mất kết
+// quả người ghi trước dựa trên dữ liệu đã cũ (2026-07-16, phát hiện qua audit "tối ưu hệ thống").
+// Firestore transaction (bản SDK compat đang dùng) không hỗ trợ chạy thẳng 1 query bên trong, nên
+// query lấy DANH SÁCH ID bị can của vụ NGOÀI transaction trước, rồi đọc lại TỪNG bị can theo đúng
+// ID đó BẰNG `tx.get` BÊN TRONG transaction — transaction tự phát hiện nếu 1 trong các doc đã đọc
+// bị đổi trước khi commit và tự động thử lại. Giới hạn còn lại (chấp nhận được): nếu có 1 bị can
+// MỚI được thêm vào vụ đúng lúc giữa bước lấy danh sách ID và lúc transaction đọc xong, bị can đó
+// sẽ không được tính vào lần gọi này — không sao vì thao tác thêm bị can đó tự nó cũng gọi lại
+// đúng hàm này ngay sau khi ghi xong.
+async function capNhatDieuLuatVaLoaiKhoiTo(maVuAn) {
+  const idsSnap = await db.collection("bican").where("maVuAn", "==", maVuAn).get();
+  const bcIds = idsSnap.docs.map(d => d.id);
+  await db.runTransaction(async (tx) => {
+    const bcList = [];
+    for (const id of bcIds) {
+      const doc = await tx.get(db.collection("bican").doc(id));
+      if (doc.exists) bcList.push({ id: doc.id, ...doc.data() });
+    }
+    const dieuLuatMoi = tinhDieuLuat(bcList);
+    const loaiKhoiToMoi = tinhLoaiKhoiToTheoNgay(bcList.map(bc => bc.ngayKhoiTo ? (bc.ngayKhoiTo.toDate ? bc.ngayKhoiTo.toDate() : new Date(bc.ngayKhoiTo)) : null));
+    tx.update(db.collection("vuan").doc(maVuAn), { dieuLuat: dieuLuatMoi });
+    bcList.forEach((bc, i) => {
+      if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) tx.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
+    });
+  });
+}
+
 const NHAN_GIAI_DOAN = { dieu_tra: "Điều tra", truy_to: "Truy tố", xet_xu: "Xét xử" };
 const NHAN_TRANG_THAI = {
   dang_giai_quyet: "Đang giải quyết", da_xet_xu: "Đã xét xử", an_huy: "Án huỷ",
@@ -3039,10 +3069,11 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       }));
       await batch.commit();
 
-      // Điều luật vụ đích cần tính lại sau khi có thêm bị can — đọc lại toàn bộ rồi cập nhật riêng.
-      const bcDichSnap = await db.collection("bican").where("maVuAn", "==", dichId).get();
-      const bcDichList = bcDichSnap.docs.map(d => d.data());
-      await db.collection("vuan").doc(dichId).update({ dieuLuat: tinhDieuLuat(bcDichList) });
+      // Điều luật + loại khởi tố (ban đầu/bổ sung) của vụ đích cần tính lại sau khi có thêm bị can
+      // — dùng chung capNhatDieuLuatVaLoaiKhoiTo (xem định nghĩa) thay vì chỉ tự tính riêng
+      // dieuLuat như trước đây (bản cũ bỏ sót loaiKhoiTo — bị can nhập vào có ngày khởi tố sớm hơn
+      // mọi bị can sẵn có của vụ đích thì đúng ra phải đổi ai là "ban đầu", trước đây không tính).
+      await capNhatDieuLuatVaLoaiKhoiTo(dichId);
 
       onXong(dichId);
     });
@@ -3850,17 +3881,10 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
       });
 
-      // Tính lại dieuLuat + loaiKhoiTo cho cả vụ vì bị can này vừa đổi.
-      const bcSnap = await db.collection("bican").where("maVuAn", "==", vuAn.id).get();
-      const bcList = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const dieuLuatMoi = tinhDieuLuat(bcList);
-      const loaiKhoiToMoi = tinhLoaiKhoiToTheoNgay(bcList.map(bc => bc.ngayKhoiTo ? (bc.ngayKhoiTo.toDate ? bc.ngayKhoiTo.toDate() : new Date(bc.ngayKhoiTo)) : null));
-      const batch = db.batch();
-      batch.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi });
-      bcList.forEach((bc, i) => {
-        if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
-      });
-      await batch.commit();
+      // Tính lại dieuLuat + loaiKhoiTo cho cả vụ vì bị can này vừa đổi (transaction, xem
+      // capNhatDieuLuatVaLoaiKhoiTo — tránh lost-update nếu có người khác cùng sửa bị can khác
+      // của vụ này gần như đồng thời).
+      await capNhatDieuLuatVaLoaiKhoiTo(vuAn.id);
       addToast("Đã lưu thông tin bị can");
       xoaBiCanCache(vuAn.id);
       onXong();
@@ -4039,17 +4063,9 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
       });
       await batch.commit();
 
-      // Tính lại dieuLuat + loaiKhoiTo cho cả vụ
-      const bcSnap = await db.collection("bican").where("maVuAn", "==", vuAn.id).get();
-      const bcList = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const dieuLuatMoi = tinhDieuLuat(bcList);
-      const loaiKhoiToMoi = tinhLoaiKhoiToTheoNgay(bcList.map(bc => bc.ngayKhoiTo ? (bc.ngayKhoiTo.toDate ? bc.ngayKhoiTo.toDate() : new Date(bc.ngayKhoiTo)) : null));
-      const batch2 = db.batch();
-      batch2.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi });
-      bcList.forEach((bc, i) => {
-        if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch2.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
-      });
-      await batch2.commit();
+      // Tính lại dieuLuat + loaiKhoiTo cho cả vụ (transaction, xem capNhatDieuLuatVaLoaiKhoiTo —
+      // tránh lost-update nếu có người khác cùng thêm/sửa bị can khác của vụ này gần như đồng thời).
+      await capNhatDieuLuatVaLoaiKhoiTo(vuAn.id);
       xoaBiCanCache(vuAn.id);
       onXong();
     } catch (err) {
