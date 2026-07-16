@@ -32,6 +32,22 @@
         { "fieldPath": "trangThai", "order": "ASCENDING" },
         { "fieldPath": "ngayTao", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "vuan",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "trangThai", "order": "ASCENDING" },
+        { "fieldPath": "kyHoanThanh", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "vuan",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "trangThai", "order": "ASCENDING" },
+        { "fieldPath": "ksvChinh", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

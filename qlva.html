@@ -7998,10 +7998,19 @@ function AnDaGiaiQuyetModule() {
   }, []);
 
   // Đọc thẳng từ vuan — ngayQuyetDinh và kyHoanThanh được lưu sẵn khi tạo sự kiện hoan_thanh
-  // (dữ liệu cũ chưa có field này sẽ được backfill qua nút "Cập nhật index" ở module Cài đặt)
+  // (dữ liệu cũ chưa có field này sẽ được backfill qua nút "Cập nhật index" ở module Cài đặt).
+  // Lọc theo kỳ NGAY TẠI FIRESTORE khi đã chọn 1 kỳ cụ thể (khác "Tất cả") — trước đây tải TOÀN
+  // BỘ vụ của hình thức này (tích luỹ không giới hạn qua nhiều năm) rồi mới lọc kỳ phía client,
+  // càng nhiều án đã giải quyết càng chậm/tốn băng thông dù người dùng chỉ đang xem 1 kỳ. Đợi
+  // locKy khởi tạo xong (khác null, xem effect lấy danh sách kỳ ở trên) mới chạy query để khỏi
+  // tải 1 lần không lọc kỳ ngay lúc mount rồi tải lại ngay sau đó. Cần composite index
+  // trangThai+kyHoanThanh trên collection vuan (xem firestore.indexes.json).
   useEffect(() => {
+    if (locKy === null) return;
     setDangTai(true);
-    const unsub = db.collection("vuan").where("trangThai", "==", hinhThuc).onSnapshot(
+    let q = db.collection("vuan").where("trangThai", "==", hinhThuc);
+    if (locKy !== "tat_ca") q = q.where("kyHoanThanh", "==", locKy);
+    const unsub = q.onSnapshot(
       snap => {
         const rows = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
@@ -8016,12 +8025,13 @@ function AnDaGiaiQuyetModule() {
       err => { console.error(err); setDangTai(false); }
     );
     return () => unsub();
-  }, [hinhThuc]);
+  }, [hinhThuc, locKy]);
 
   const dsKsv = useMemo(() => [...new Set(list.map(v => v.ksvChinh).filter(Boolean))].sort(), [list]);
 
   const listHienThi = useMemo(() => {
-    let rows = (locKy && locKy !== "tat_ca") ? list.filter(v => v.kyHoanThanh === locKy) : list;
+    // Kỳ đã lọc sẵn tại Firestore (xem effect tải `list` ở trên) — chỉ còn lọc KSV/từ khoá phía client.
+    let rows = list;
     if (ksv !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksv);
     const k = tuKhoa.trim().toLowerCase();
     if (k) {
@@ -8036,7 +8046,7 @@ function AnDaGiaiQuyetModule() {
       );
     }
     return rows;
-  }, [list, locKy, ksv, tuKhoa]);
+  }, [list, ksv, tuKhoa]);
 
   const tenKyDangChon = dsKy.find(k => k.id === locKy)?.tenKy;
 
@@ -8458,7 +8468,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [dangXuLy, setDangXuLy] = useState(false);
   const [hienBienBan, setHienBienBan] = useState(false);
   const [hienTimThuCong, setHienTimThuCong] = useState(false);
-  const [dsVuDangGQ, setDsVuDangGQ] = useState(null); // null = chưa tải, tải 1 lần khi mở panel tìm
+  const [dsVuDangGQ, setDsVuDangGQ] = useState(null); // cache toàn bộ "đang giải quyết" — chỉ tải khi tìm tự do không chọn KSV
+  const [dsTheoKsv, setDsTheoKsv] = useState({});     // cache riêng từng KSV đã từng chọn: { [ksvChinh]: [...] }
+  const [dangTaiTim, setDangTaiTim] = useState(false);
   const [tuKhoaTim, setTuKhoaTim] = useState("");
   const [ksvTim, setKsvTim] = useState("tat_ca");
   const [dangTaiLichSu, setDangTaiLichSu] = useState(false);
@@ -8558,43 +8570,63 @@ function GiaoNhanHoSoModule({ currentUser }) {
     }
   };
 
-  // Tìm thủ công — cho trường hợp không có mã QR trong tay: tải 1 lần (không realtime, chỉ để
-  // tra cứu) toàn bộ vụ ĐANG GIẢI QUYẾT (hồ sơ giao nhận thực tế chỉ xoay quanh vụ đang thụ lý,
-  // không cần tìm cả vụ đã xong) rồi lọc phía client theo tên vụ/KSV/tội danh (điều luật)/số QĐ
-  // KTVA — cùng kiểu tìm kiếm tự do đã dùng ở Danh sách vụ án/Án đã giải quyết.
-  const moTimThuCong = () => {
-    setHienTimThuCong(true);
-    if (dsVuDangGQ === null) {
-      db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").get()
-        .then(snap => setDsVuDangGQ(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
-        .catch(err => { console.error(err); setDsVuDangGQ([]); });
-    }
-  };
+  // Tìm thủ công — cho trường hợp không có mã QR trong tay. Trước đây tải 1 lần TOÀN BỘ vụ đang
+  // giải quyết ngay lúc mở panel rồi lọc phía client — càng nhiều vụ đang thụ lý càng chậm/tốn
+  // băng thông dù đa số lần tìm chỉ cần đúng 1 KSV. Nay tải theo 2 nhánh, đều LƯỜI (chỉ tải khi
+  // thật sự cần, không tải ngay lúc mở panel):
+  // (1) Đã chọn 1 KSV cụ thể → lọc thẳng tại Firestore theo trangThai+ksvChinh (cần composite
+  //     index, xem firestore.indexes.json), cache riêng theo từng KSV trong `dsTheoKsv` để đổi
+  //     qua lại giữa các KSV đã xem không phải tải lại.
+  // (2) Không chọn KSV (tìm tự do theo tên vụ/tội danh/số QĐ...) → Firestore không lọc được kiểu
+  //     "khớp 1 trong nhiều trường" nên vẫn phải tải về lọc phía client như cũ, nhưng CHỈ tải khi
+  //     người dùng thật sự gõ từ khoá (không tải ngay lúc mở panel), cache trong `dsVuDangGQ`.
+  const moTimThuCong = () => setHienTimThuCong(true);
 
+  useEffect(() => {
+    if (!hienTimThuCong || ksvTim === "tat_ca" || dsTheoKsv[ksvTim]) return;
+    setDangTaiTim(true);
+    db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").where("ksvChinh", "==", ksvTim).get()
+      .then(snap => setDsTheoKsv(m => ({ ...m, [ksvTim]: snap.docs.map(d => ({ id: d.id, ...d.data() })) })))
+      .catch(err => { console.error(err); setDsTheoKsv(m => ({ ...m, [ksvTim]: [] })); })
+      .finally(() => setDangTaiTim(false));
+  }, [hienTimThuCong, ksvTim, dsTheoKsv]);
+
+  useEffect(() => {
+    if (!hienTimThuCong || ksvTim !== "tat_ca" || !tuKhoaTim.trim() || dsVuDangGQ !== null) return;
+    setDangTaiTim(true);
+    db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").get()
+      .then(snap => setDsVuDangGQ(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(err => { console.error(err); setDsVuDangGQ([]); })
+      .finally(() => setDangTaiTim(false));
+  }, [hienTimThuCong, ksvTim, tuKhoaTim, dsVuDangGQ]);
+
+  // Danh sách KSV để chọn lấy thẳng từ module Cán bộ (đã tải sẵn qua useDanhSachCanBo ở đầu
+  // component) thay vì suy ra từ dữ liệu vụ án đã tải — để dropdown này hiển thị được ngay cả
+  // khi chưa tải vụ án nào (tránh vòng lặp "phải tải hết mới biết có những KSV nào để lọc theo").
   const dsKsvTim = useMemo(
-    () => dsVuDangGQ ? [...new Set(dsVuDangGQ.map(v => v.ksvChinh).filter(Boolean))].sort() : [],
-    [dsVuDangGQ]
+    () => [...new Set(dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen).filter(Boolean))].sort(),
+    [dsCanBo]
   );
+
+  const khopTuKhoaTim = (v, k) =>
+    (hienThiMa(v) || "").toLowerCase().includes(k)
+    || (v.tenVu || "").toLowerCase().includes(k)
+    || (v.dieuLuat || "").toLowerCase().includes(k)
+    || (v.ksvChinh || "").toLowerCase().includes(k)
+    || (v.soQdKtva || "").toLowerCase().includes(k);
 
   // Cho phép lọc riêng theo KSV (không bắt buộc gõ từ khoá kèm theo) — VD chọn 1 KSV để xem hết
   // hồ sơ đang giải quyết của người đó, khỏi phải nhớ gõ đúng tên.
   const ketQuaTimThuCong = useMemo(() => {
-    if (!dsVuDangGQ) return [];
     const k = tuKhoaTim.trim().toLowerCase();
-    if (!k && ksvTim === "tat_ca") return [];
-    let rows = dsVuDangGQ;
-    if (ksvTim !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksvTim);
-    if (k) {
-      rows = rows.filter(v =>
-        (hienThiMa(v) || "").toLowerCase().includes(k)
-        || (v.tenVu || "").toLowerCase().includes(k)
-        || (v.dieuLuat || "").toLowerCase().includes(k)
-        || (v.ksvChinh || "").toLowerCase().includes(k)
-        || (v.soQdKtva || "").toLowerCase().includes(k)
-      );
+    if (ksvTim !== "tat_ca") {
+      let rows = dsTheoKsv[ksvTim] || [];
+      if (k) rows = rows.filter(v => khopTuKhoaTim(v, k));
+      return rows.slice(0, 15);
     }
-    return rows.slice(0, 15);
-  }, [dsVuDangGQ, tuKhoaTim, ksvTim]);
+    if (!k || !dsVuDangGQ) return [];
+    return dsVuDangGQ.filter(v => khopTuKhoaTim(v, k)).slice(0, 15);
+  }, [dsTheoKsv, ksvTim, tuKhoaTim, dsVuDangGQ]);
 
   const chonVuThuCong = async (v) => {
     if (dangXuLy) return;
@@ -8797,8 +8829,8 @@ function GiaoNhanHoSoModule({ currentUser }) {
                   {dsKsvTim.map(k => <option key={k} value={k}>{k}</option>)}
                 </select>
               </div>
-              {dsVuDangGQ === null && <div className="text-xs text-slate-400">Đang tải danh sách vụ đang giải quyết...</div>}
-              {dsVuDangGQ !== null && (tuKhoaTim.trim() || ksvTim !== "tat_ca") && ketQuaTimThuCong.length === 0 && (
+              {dangTaiTim && <div className="text-xs text-slate-400">Đang tải...</div>}
+              {!dangTaiTim && (tuKhoaTim.trim() || ksvTim !== "tat_ca") && ketQuaTimThuCong.length === 0 && (
                 <div className="text-xs text-slate-400">Không tìm thấy vụ nào khớp.</div>
               )}
               {ketQuaTimThuCong.length > 0 && (
