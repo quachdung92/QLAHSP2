@@ -8259,7 +8259,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
           <thead>
             <tr>
               <th className="border border-slate-800 p-2 w-8">STT</th>
-              <th className="border border-slate-800 p-2 w-16">Mã vụ</th>
+              <th className="border border-slate-800 p-2 w-24">Mã vụ</th>
               <th className="border border-slate-800 p-2">Tên vụ</th>
               <th className="border border-slate-800 p-2 w-24">Trạng thái HS</th>
               <th className="border border-slate-800 p-2 w-20">KSV</th>
@@ -8270,13 +8270,13 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
           </thead>
           <tbody>
             {dsInDung.map((d, i) => {
-              const qrDataUrl = taoQrDataUrl(d.maVuAn, 120);
+              const qrDataUrl = taoQrDataUrl(d.maVuAn, 200);
               return (
                 <tr key={d.id}>
                   <td className="border border-slate-800 p-2 text-center align-top">{i + 1}</td>
                   <td className="border border-slate-800 p-2 align-top text-center">
                     {qrDataUrl
-                      ? <img src={qrDataUrl} alt={d.maVuAn} className="w-14 h-14 mx-auto" />
+                      ? <img src={qrDataUrl} alt={d.maVuAn} className="w-20 h-20 mx-auto" />
                       : <span className="text-xs break-words">{d.maVuAn}</span>}
                   </td>
                   <td className="border border-slate-800 p-2 align-top">
