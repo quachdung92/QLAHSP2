@@ -2673,10 +2673,19 @@ const NHAN_LOAI_MUC_AN = {
   nam: "Theo năm tù", an_treo: "Án treo", phat_tien: "Phạt tiền",
   chung_than: "Chung thân", tu_hinh: "Tử hình",
 };
+// Các mốc trong bảng trên, tăng dần — dùng để tra "mốc lớn nhất không vượt quá mức án" (xem
+// tinhThoiHanBaoQuanTheoMucAn), KHÔNG phải để khớp tuyệt đối.
+const MOC_THOI_HAN_BAO_QUAN_NAM = Object.keys(BANG_THOI_HAN_BAO_QUAN_THEO_NAM).map(Number).sort((a, b) => a - b);
 
-// Tính thời hạn bảo quản theo đúng bảng trên. `soNam` là tổng số năm đã cộng sẵn phần 6 tháng
-// (VD 7 năm 6 tháng truyền vào 7.5) — trả về null nếu mức án không khớp bất kỳ dòng nào trong
-// bảng (kể cả trường hợp thiếu dữ liệu mucAnLoai/soNam).
+// Tính thời hạn bảo quản theo đúng bảng trên. `soNam` là tổng số năm quy đổi CẢ phần tháng (VD 3
+// năm 5 tháng truyền vào 3 + 5/12 ≈ 3.4167).
+// QUAN TRỌNG: bảng gốc là các MỐC của 1 hàm bậc thang, không phải danh sách giá trị khớp tuyệt
+// đối — 1 mức án nằm giữa 2 mốc liên tiếp thì tính theo mốc THẤP HƠN, áp dụng cho tới ĐÚNG trước
+// mốc kế tiếp. VD mốc "3" (19 năm) áp dụng cho mọi mức án từ "3 năm 0 tháng" đến hết "3 năm 5
+// tháng"; đúng từ "3 năm 6 tháng" mới chuyển sang mốc "3.5" (23 năm), áp dụng tới hết "4 năm 5
+// tháng" (vì mốc kế tiếp là "4.5", không phải "4"). Trả về null nếu mức án THẤP HƠN mốc nhỏ nhất
+// trong bảng (kể cả trường hợp thiếu dữ liệu mucAnLoai/soNam) — bảng gốc không phủ hết mọi mức án,
+// không suy đoán/nội suy công thức vì đây là hồ sơ pháp lý thật, sai thời hạn bảo quản là sai thật.
 function tinhThoiHanBaoQuanTheoMucAn(mucAnLoai, soNam) {
   if (mucAnLoai === "tu_hinh" || mucAnLoai === "chung_than" || mucAnLoai === "an_treo" || mucAnLoai === "phat_tien") {
     return THOI_HAN_BAO_QUAN_DAC_BIET[mucAnLoai];
@@ -2685,21 +2694,26 @@ function tinhThoiHanBaoQuanTheoMucAn(mucAnLoai, soNam) {
     const n = Number(soNam);
     if (!Number.isFinite(n) || n <= 0) return null;
     if (n >= 16) return "Vĩnh viễn";
-    return BANG_THOI_HAN_BAO_QUAN_THEO_NAM[n] || null;
+    let moc = null;
+    for (const m of MOC_THOI_HAN_BAO_QUAN_NAM) {
+      if (m <= n) moc = m; else break;
+    }
+    return moc !== null ? BANG_THOI_HAN_BAO_QUAN_THEO_NAM[moc] : null;
   }
   return null;
 }
 
 // Thời hạn bảo quản cho CẢ VỤ — Đình chỉ/Tạm đình chỉ luôn vĩnh viễn theo bảng (không cần mức án,
-// vì không có bản án). Đã xét xử thì cần mức án đã nhập trên vuAn (mucAnLoai/mucAnNam/
-// mucAnCoSauThang). Các trạng thái khác (đang giải quyết/chuyển đi/án huỷ/đã nhập vụ khác) KHÔNG
-// có dòng tương ứng trong bảng gốc — trả về null thay vì đoán, người dùng tự tra cứu thủ công.
+// vì không có bản án). Đã xét xử thì cần mức án đã nhập trên vuAn (mucAnLoai/mucAnNam/mucAnThang —
+// mucAnThang là số THÁNG lẻ 0-11, không phải cờ +6 tháng). Các trạng thái khác (đang giải quyết/
+// chuyển đi/án huỷ/đã nhập vụ khác) KHÔNG có dòng tương ứng trong bảng gốc — trả về null thay vì
+// đoán, người dùng tự tra cứu thủ công.
 function tinhThoiHanBaoQuanVu(vuAn) {
   if (!vuAn) return null;
   if (vuAn.trangThai === "dinh_chi" || vuAn.trangThai === "tam_dinh_chi") return "Vĩnh viễn";
   if (vuAn.trangThai === "da_xet_xu") {
     const soNam = vuAn.mucAnLoai === "nam"
-      ? (Number(vuAn.mucAnNam) || 0) + (vuAn.mucAnCoSauThang ? 0.5 : 0)
+      ? (Number(vuAn.mucAnNam) || 0) + (Number(vuAn.mucAnThang) || 0) / 12
       : null;
     return tinhThoiHanBaoQuanTheoMucAn(vuAn.mucAnLoai, soNam);
   }
@@ -8178,13 +8192,14 @@ function moTaHinhThucGiaiQuyet(dong) {
   return dong.soQdGiaiQuyet ? `${nhan} — ${dong.soQdGiaiQuyet}` : nhan;
 }
 
-// Hiển thị mức án đã nhập (snapshot mucAnLoai/mucAnNam/mucAnCoSauThang trên sự kiện, giống cách
+// Hiển thị mức án đã nhập (snapshot mucAnLoai/mucAnNam/mucAnThang trên sự kiện, giống cách
 // moTaHinhThucGiaiQuyet đã làm) — chỉ có ý nghĩa với vụ Đã xét xử, dùng để tính thoiHanBaoQuan.
 function moTaMucAn(dong) {
   if (!dong.mucAnLoai) return "—";
   if (dong.mucAnLoai !== "nam") return NHAN_LOAI_MUC_AN[dong.mucAnLoai] || dong.mucAnLoai;
   if (dong.mucAnNam == null) return "—";
-  return `${dong.mucAnNam} năm${dong.mucAnCoSauThang ? " 6 tháng" : ""}`;
+  const thang = Number(dong.mucAnThang) || 0;
+  return `${dong.mucAnNam} năm${thang > 0 ? ` ${thang} tháng` : ""}`;
 }
 
 // Công tắc bật/tắt kiểu toggle (thay cho checkbox thường) — dùng chung cho các lựa chọn nhị phân
@@ -8208,10 +8223,12 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan, 
   const [nguoiNhanThucTe, setNguoiNhanThucTe] = useState(dong.nguoiNhanThucTe || "");
   const [soButLuc, setSoButLuc] = useState(dong.soButLuc || "");
   // Mức án — chỉ áp dụng khi vụ Đã xét xử, sửa ngay tại đây để tự tính lại Thời hạn bảo quản
-  // (xem CLAUDE.md "Nộp hồ sơ lưu trữ") thay vì phải mở riêng "Sửa thông tin vụ án".
+  // (xem CLAUDE.md "Nộp hồ sơ lưu trữ") thay vì phải mở riêng "Sửa thông tin vụ án". Tách riêng ô
+  // Năm/Tháng (mucAnThang: số tháng lẻ 0-11) thay vì 1 checkbox "+6 tháng" cố định — mức án tù có
+  // thể lẻ bất kỳ tháng nào (VD 3 năm 5 tháng), không chỉ tròn 6 tháng.
   const [mucAnLoai, setMucAnLoai] = useState(dong.mucAnLoai || "nam");
   const [mucAnNam, setMucAnNam] = useState(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
-  const [mucAnCoSauThang, setMucAnCoSauThang] = useState(!!dong.mucAnCoSauThang);
+  const [mucAnThang, setMucAnThang] = useState(dong.mucAnThang != null ? String(dong.mucAnThang) : "");
   const [vuAnDeSua, setVuAnDeSua] = useState(null); // null=đóng, "loading"=đang tải, object=sẵn sàng mở form
 
   // Mức án là thuộc tính của chính VỤ ÁN (khác KSV/ĐTV/số bút lục chỉ là snapshot trên dòng log)
@@ -8225,14 +8242,15 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan, 
     };
     if (dong.trangThaiVu === "da_xet_xu") {
       const soNamMoi = mucAnLoai === "nam" ? (Number(mucAnNam) || null) : null;
-      const soNamTinh = mucAnLoai === "nam" ? (Number(mucAnNam) || 0) + (mucAnCoSauThang ? 0.5 : 0) : null;
+      const soThangMoi = mucAnLoai === "nam" ? (Number(mucAnThang) || 0) : null;
+      const soNamTinh = mucAnLoai === "nam" ? (Number(mucAnNam) || 0) + soThangMoi / 12 : null;
       patch.mucAnLoai = mucAnLoai;
       patch.mucAnNam = soNamMoi;
-      patch.mucAnCoSauThang = mucAnLoai === "nam" ? mucAnCoSauThang : false;
+      patch.mucAnThang = soThangMoi;
       patch.thoiHanBaoQuan = tinhThoiHanBaoQuanTheoMucAn(mucAnLoai, soNamTinh) || "";
       try {
         await db.collection("vuan").doc(dong.maVuAn).update({
-          mucAnLoai: patch.mucAnLoai, mucAnNam: patch.mucAnNam, mucAnCoSauThang: patch.mucAnCoSauThang,
+          mucAnLoai: patch.mucAnLoai, mucAnNam: patch.mucAnNam, mucAnThang: patch.mucAnThang,
         });
       } catch (err) {
         console.error(err);
@@ -8254,7 +8272,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan, 
     setKsv(dong.nguoiGiao || ""); setDtv(dong.nguoiNhan || ""); setNguoiNhanThucTe(dong.nguoiNhanThucTe || "");
     setSoButLuc(dong.soButLuc || "");
     setMucAnLoai(dong.mucAnLoai || "nam"); setMucAnNam(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
-    setMucAnCoSauThang(!!dong.mucAnCoSauThang);
+    setMucAnThang(dong.mucAnThang != null ? String(dong.mucAnThang) : "");
     setDangSua(true);
     onBatDauSua && onBatDauSua();
   };
@@ -8319,12 +8337,12 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan, 
                   <>
                     <input type="number" min="0" step="1" value={mucAnNam}
                            onChange={e => setMucAnNam(e.target.value)}
-                           className={oInput + " text-xs py-1 px-1.5 w-12"} placeholder="Năm" />
-                    <label className="flex items-center gap-1 text-slate-500 whitespace-nowrap">
-                      <input type="checkbox" checked={mucAnCoSauThang}
-                             onChange={e => setMucAnCoSauThang(e.target.checked)} />
-                      + 6 tháng
-                    </label>
+                           className={oInput + " text-xs py-1 px-1.5 w-12"} />
+                    <span className="text-slate-400">năm</span>
+                    <input type="number" min="0" max="11" step="1" value={mucAnThang}
+                           onChange={e => setMucAnThang(e.target.value)}
+                           className={oInput + " text-xs py-1 px-1.5 w-12"} />
+                    <span className="text-slate-400">tháng</span>
                   </>
                 )}
               </div>
@@ -8543,7 +8561,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
       // Mức án cũng snapshot vào đây (giống trangThaiVu) để "Sửa" ngay tại dòng giao nhận (xem
       // DongGiaoNhan) có sẵn giá trị hiện tại mà không cần đọc lại vuan.
       mucAnLoai: vuAn.mucAnLoai || null, mucAnNam: vuAn.mucAnNam ?? null,
-      mucAnCoSauThang: !!vuAn.mucAnCoSauThang,
+      mucAnThang: vuAn.mucAnThang ?? null,
       ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
     }));
   };
