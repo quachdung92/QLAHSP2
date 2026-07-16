@@ -8650,9 +8650,18 @@ function GiaoNhanHoSoModule({ currentUser }) {
   };
 
   // Tải TOÀN BỘ lịch sử giao nhận (mọi phiên, mọi thời điểm — không giới hạn 300 dòng như Nhật ký
-  // thao tác) ra file Excel, cột "Mã vụ" hiện ẢNH QR (thay vì chữ) để sau này chỉ cần quét thẳng
-  // từ file/bản in ra là tra được vụ ngay, không cần gõ tay. Dùng ExcelJS (đã tải sẵn cho Xuất
-  // Excel báo cáo tháng) vì cần nhúng ảnh — XLSX/SheetJS bản CDN đang dùng không ghi được ảnh.
+  // thao tác) ra file Excel. Tách 2 sheet riêng "Giao"/"Nhận" (2026-07-16) — trước đây gộp chung 1
+  // sheet theo loaiGiaoDich bằng 1 cột chữ, nhưng ý nghĩa 2 chiều khác hẳn nhau ("đã giao đi những
+  // gì" khác "đã nhận về những gì"), tách sheet đọc rõ hơn khi in/lọc riêng từng chiều.
+  // GOM THEO VỤ (2026-07-16, trong mỗi sheet) — 1 vụ có thể bị giao/nhận nhiều lần (chuyển qua
+  // chuyển lại nhiều đợt giữa các khâu), nếu để mỗi lần quét là 1 dòng riêng thì cùng 1 vụ lặp lại
+  // rải rác nhiều dòng, khó nhìn tổng quan đã có bao nhiêu vụ qua tay. Nay 1 vụ = ĐÚNG 1 dòng, cột
+  // "Số lần .../Lịch sử ..." consolidate mọi lần quét của vụ đó vào 1 ô (mới nhất lên trên, mỗi lần
+  // 1 dòng trong ô nhờ wrapText). Các cột snapshot vụ (Tên vụ/Hình thức giải quyết/Mức án/KSV/
+  // ĐTV...) lấy theo LẦN GẦN NHẤT vì đó là thông tin cập nhật nhất về vụ; cột "Ghi chú" cũ (chỉ lặp
+  // lại đúng nội dung 2 cột KSV/ĐTV đã có riêng) bỏ hẳn vì hết ý nghĩa khi tách 2 cột đó ra.
+  // Dùng ExcelJS (đã tải sẵn cho Xuất Excel báo cáo tháng) vì cần nhúng ảnh QR — XLSX/SheetJS bản
+  // CDN đang dùng không ghi được ảnh.
   const taiLichSuGiaoNhan = async () => {
     setDangTaiLichSu(true);
     try {
@@ -8660,51 +8669,73 @@ function GiaoNhanHoSoModule({ currentUser }) {
       const rows = snap.docs.map(d => d.data());
       rows.sort((a, b) => (b.thoiDiemGhi?.toMillis?.() || 0) - (a.thoiDiemGhi?.toMillis?.() || 0));
 
+      // Gom theo vụ án, giữ nguyên thứ tự mới nhất → cũ nhất (rows đã sort desc ở trên) — phần tử
+      // đầu tiên gặp của mỗi vụ (events[0]) chính là lần gần nhất.
+      const gomTheoVu = (list) => {
+        const map = new Map();
+        list.forEach(r => {
+          if (!map.has(r.maVuAn)) map.set(r.maVuAn, []);
+          map.get(r.maVuAn).push(r);
+        });
+        return [...map.values()];
+      };
+
+      const dongLichSuMotLan = (r) => {
+        const parts = [fmtNgayGio(r.thoiDiemGhi)];
+        if (r.nguoiNhanThucTe) parts.push(`Người nhận: ${r.nguoiNhanThucTe}`);
+        if (r.soButLuc) parts.push(`Bút lục: ${r.soButLuc}`);
+        if (r.nguoiThucHien) parts.push(`Quét: ${r.nguoiThucHien}`);
+        return parts.join(" — ");
+      };
+
       const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet("Lịch sử giao nhận");
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      const hRow = ws.addRow([
-        "STT", "Loại giao dịch", "Thời điểm quét", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết",
-        "Mức án", "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV",
-        "Người nhận thực tế", "Số bút lục", "Người thực hiện (quét)", "Ghi chú",
-      ]);
-      hRow.font = { bold: true };
-      hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-      ws.columns = [
-        { width: 6 }, { width: 14 }, { width: 16 }, { width: 13 }, { width: 30 }, { width: 24 },
-        { width: 16 }, { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 },
-        { width: 16 }, { width: 12 }, { width: 20 }, { width: 24 },
-      ];
       const QR_PX = 60; // ~60px vuông — đủ scan lại được (correctLevel M), giữ file không quá nặng
-      rows.forEach((r, i) => {
-        const row = ws.addRow([
-          i + 1,
-          r.loaiGiaoDich === "giao" ? "Giao hồ sơ" : "Nhận hồ sơ",
-          fmtNgayGio(r.thoiDiemGhi),
-          "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
-          r.tenVu || "",
-          moTaHinhThucGiaiQuyet(r),
-          moTaMucAn(r),
-          r.thoiHanBaoQuan || "",
-          r.soQdKtva || "",
-          fmtDate(r.ngayQdKtva),
-          r.nguoiGiao || "",
-          r.nguoiNhan || "",
-          r.nguoiNhanThucTe || "",
-          r.soButLuc || "",
-          r.nguoiThucHien || "",
-          r.ghiChu || "",
+
+      const themSheet = (tenSheet, nhomTheoVu, nhanCot) => {
+        const ws = wb.addWorksheet(tenSheet);
+        ws.views = [{ state: "frozen", ySplit: 1 }];
+        const hRow = ws.addRow([
+          "STT", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết", "Mức án", "Thời hạn bảo quản",
+          "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV", `Số lần ${nhanCot}`, `Lịch sử ${nhanCot}`,
         ]);
-        row.height = 46; // pt — đủ cao cho ảnh QR 60px không bị cắt
-        const dataUrl = taoQrDataUrl(r.maVuAn, 120);
-        if (dataUrl) {
-          const imgId = wb.addImage({ base64: dataUrl, extension: "png" });
-          ws.addImage(imgId, {
-            tl: { col: 3, row: row.number - 1 }, // cột D (Mã vụ) = index 3, 0-based
-            ext: { width: QR_PX, height: QR_PX },
-          });
-        }
-      });
+        hRow.font = { bold: true };
+        hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+        ws.columns = [
+          { width: 6 }, { width: 13 }, { width: 30 }, { width: 24 }, { width: 16 }, { width: 16 },
+          { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 }, { width: 10 }, { width: 50 },
+        ];
+        nhomTheoVu.forEach((events, i) => {
+          const moiNhat = events[0];
+          const row = ws.addRow([
+            i + 1,
+            "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
+            moiNhat.tenVu || "",
+            moTaHinhThucGiaiQuyet(moiNhat),
+            moTaMucAn(moiNhat),
+            moiNhat.thoiHanBaoQuan || "",
+            moiNhat.soQdKtva || "",
+            fmtDate(moiNhat.ngayQdKtva),
+            moiNhat.nguoiGiao || "",
+            moiNhat.nguoiNhan || "",
+            events.length,
+            events.map(dongLichSuMotLan).join("\n"),
+          ]);
+          row.height = Math.max(46, events.length * 15); // pt — đủ cao cho cả ảnh QR lẫn nhiều dòng lịch sử
+          row.getCell(12).alignment = { wrapText: true, vertical: "top" };
+          const dataUrl = taoQrDataUrl(moiNhat.maVuAn, 120);
+          if (dataUrl) {
+            const imgId = wb.addImage({ base64: dataUrl, extension: "png" });
+            ws.addImage(imgId, {
+              tl: { col: 1, row: row.number - 1 }, // cột B (Mã vụ) = index 1, 0-based
+              ext: { width: QR_PX, height: QR_PX },
+            });
+          }
+        });
+        return nhomTheoVu.length;
+      };
+
+      const soVuGiao = themSheet("Giao", gomTheoVu(rows.filter(r => r.loaiGiaoDich === "giao")), "giao");
+      const soVuNhan = themSheet("Nhận", gomTheoVu(rows.filter(r => r.loaiGiaoDich === "nhan")), "nhận");
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -8716,7 +8747,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      addToast(`Đã tải ${rows.length} dòng lịch sử giao nhận.`);
+      addToast(`Đã tải ${soVuGiao} vụ đã giao, ${soVuNhan} vụ đã nhận (tổng ${rows.length} lượt quét).`);
     } catch (err) {
       console.error(err);
       addToast("Lỗi khi tải lịch sử giao nhận: " + err.message, "error");
