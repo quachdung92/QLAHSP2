@@ -2,6 +2,30 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Kế hoạch tiếp theo (ghi lúc checkout nhánh `toi-uu-firestore-read`, 2026-07-17)
+
+Đang đứng ở nhánh **`toi-uu-firestore-read`** (branch mới nhất trên remote, commit cuối `e09e53c`
+lúc 15:50 17/07) — **CHƯA gộp với nhánh `bang-excel-cai-dat`** (đứng trước đó, có tính năng Cài
+đặt → "Bảng dữ liệu" kiểu Excel mà nhánh này KHÔNG có, vì 2 nhánh tách nhau từ trước rồi phát
+triển song song). Cần merge lại với nhau (hoặc cả 2 vào `main`) trước khi coi 1 trong 2 là đầy đủ.
+
+**5 commit của nhánh này (toàn bộ đều CHƯA kiểm chứng bằng dữ liệu Firestore thật trên
+`qlva-dev.html`, chỉ mới compile-check)**, đều thuộc module Giao nhận hồ sơ: "Không tiếp nhận" kèm
+lý do, danh sách "Phiên gần đây" (mở lại phiên dở/đã lưu), fix in A4 bị cắt khi dài hơn 1 trang,
+đặt tên phiên tự động theo ĐTV/KSV sau khi quét hồ sơ đầu, nút "Xoá hình thức giải quyết" (sửa lỗi
+chọn nhầm hình thức Hoàn thành vụ án), ràng buộc "Đã xét xử" chỉ chọn được ở giai đoạn Xét xử. Chi
+tiết đầy đủ nằm trong đúng các mục tương ứng bên dưới (tìm theo ngày `2026-07-17`).
+
+**Việc cần làm tiếp theo (theo yêu cầu người dùng), gộp chung 2 việc**:
+1. Kiểm chứng 5 commit trên bằng dữ liệu Firestore thật (`qlva-dev.html`), rồi merge nhánh này
+   với `bang-excel-cai-dat` (hoặc vào `main`) để không mất tính năng "Bảng dữ liệu" đang có riêng
+   ở nhánh kia.
+2. **Phát triển lại phần Báo cáo** (module Kỳ báo cáo — hiện vẫn còn nhãn "🚧 Đang xây dựng" cạnh
+   tiêu đề, xem mục "Trạng thái Biểu B10" ngay dưới đây và mục "Kỳ báo cáo" ở "Tiến độ đã code") —
+   người dùng muốn làm lại phần này, chưa nói rõ phạm vi cụ thể (sửa tiếp bug còn tồn đọng ở B10 hay
+   thiết kế lại toàn bộ UI/luồng) — **hỏi lại người dùng để làm rõ phạm vi trước khi bắt tay code**,
+   đừng tự suy đoán quy mô thay đổi.
+
 ## Trạng thái Biểu B10 (audit 2026-07-13 → đã sửa xong, để tham khảo lịch sử)
 
 Nhánh `bieu-10-audit` từng audit ra 3 bug ở Biểu B10 (loaiKhoiTo import hardcode sai, thiếu xử lý
