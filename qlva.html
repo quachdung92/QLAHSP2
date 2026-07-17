@@ -2116,6 +2116,10 @@ function ImportExcelModule() {
         const byQdNgay = new Map();
         vuSnap.docs.forEach(d => {
           const v = d.data();
+          // Vụ đã "Đưa vào thùng rác" không tính là trùng — thùng rác dùng để sửa sai sót (VD nhập
+          // trùng), nên import lại đúng dữ liệu cho trường hợp đó phải được cho phép, không bị chặn
+          // nhầm là "đã tồn tại".
+          if (v.daXoa) return;
           if (v.maNganhCap) byMa.set(String(v.maNganhCap).trim().toLowerCase(), d.id);
           if (v.maNoiSinh) byMa.set(String(v.maNoiSinh).trim().toLowerCase(), d.id);
           if (v.soQdKtva && v.ngayQdKtva) {
@@ -3082,7 +3086,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       if (!active) return;
       const list = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet")
+        .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet" && !v.daXoa)
         .filter(v => (hienThiMa(v) || "").toLowerCase().includes(k) || (v.tenVu || "").toLowerCase().includes(k))
         .slice(0, 10);
       setKetQua(list);
@@ -4380,7 +4384,11 @@ function DanhSachPanel({ selectedId, onSelect }) {
     if (!chiDangGiaiQuyet) q = q.limit(gioiHanTatCa);
     const unsub = q.onSnapshot(
       snap => {
-        setList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        // Lọc bỏ vụ đã "Đưa vào thùng rác" (daXoa) — lọc phía CLIENT, không dùng Firestore
+        // where("daXoa","!=",true), vì query "!=" bỏ qua LUÔN mọi document không có field đó
+        // (toàn bộ dữ liệu cũ chưa từng có field `daXoa`), sẽ làm mất trắng danh sách nếu lọc ở
+        // tầng Firestore.
+        setList(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
         setVuotGioiHan(!chiDangGiaiQuyet && snap.size >= gioiHanTatCa);
         setDangTai(false);
       },
@@ -4399,7 +4407,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
     if (!canTimDayDu) { setDsTimKiemDayDu(null); return; }
     let huy = false;
     db.collection("vuan").get().then(snap => {
-      if (!huy) setDsTimKiemDayDu(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      if (!huy) setDsTimKiemDayDu(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
     }).catch(err => console.error(err));
     return () => { huy = true; };
   }, [canTimDayDu]);
@@ -5029,7 +5037,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
 
       <div className="p-5 border-t border-slate-100">
         <button onClick={() => setModalMo("xoa")} className="text-xs text-red-500 hover:text-red-700 hover:underline">
-          Xóa vụ án này
+          Đưa vào thùng rác
         </button>
       </div>
 
@@ -5088,9 +5096,31 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
 // dữ liệu mồ côi khó truy vết nguồn gốc. Không tự động cập nhật `baoCaoLuu` của kỳ đã chốt (giống
 // mọi thao tác sửa dữ liệu thuộc kỳ đã chốt khác) — chỉ cảnh báo, người dùng tự chạy lại "Tính lại
 // số liệu" ở Kỳ báo cáo nếu cần.
+// Bộ ký tự sinh mã xác nhận ngẫu nhiên cho "Đưa vào thùng rác" — loại bỏ ký tự dễ đọc/gõ nhầm
+// (0/O, 1/l/I) vì mục đích của mã là buộc người dùng đọc kỹ + gõ lại có chủ ý, không phải để kiểm
+// tra chính tả; gõ sai vì nhầm lẫn ký tự là ma sát vô ích, không phải an toàn thêm.
+const BO_KY_TU_MA_XAC_NHAN = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+function taoMaXacNhanNgauNhien(soKyTu = 4) {
+  let s = "";
+  for (let i = 0; i < soKyTu; i++) s += BO_KY_TU_MA_XAC_NHAN[Math.floor(Math.random() * BO_KY_TU_MA_XAC_NHAN.length)];
+  return s;
+}
+
+// "Xóa vụ án" (2026-07-17, đổi từ xóa cứng sang THÙNG RÁC — soft-delete) — chỉ đặt cờ
+// `daXoa`/`ngayXoaMem`/`nguoiXoaMem` trên chính `vuan`, KHÔNG đụng tới `bican`/
+// `lichsuChuyenGiaiDoan` (khác hẳn bản cũ từng cascade xoá cả 2 collection này). Lý do: (1) đây là
+// 1 lần GHI (update) chứ không phải xoá document — tự động lọt vào cơ chế "có gì mới"
+// (`ngayCapNhat`) mà cache lạnh IndexedDB (xem "Ngoài phạm vi Đợt 1" ở CLAUDE.md) cần để phát hiện
+// thay đổi, query kiểu where(">") không bao giờ thấy được document bị XOÁ THẬT; (2) giữ nguyên
+// bican/log nghĩa là Khôi phục ("Thùng rác" trong Cài đặt) chỉ cần gỡ cờ, không mất gì; (3) số liệu
+// báo cáo kỳ (tính từ log) không bị ảnh hưởng cho tới khi thật sự "Xoá vĩnh viễn" ở màn Thùng rác.
+// Xác nhận đổi từ "gõ lại đúng mã vụ" (dễ đoán, người dùng có sẵn mã vụ trước mắt) sang gõ lại 1 mã
+// NGẪU NHIÊN hiện ngay trên màn hình — vì giờ thao tác này CÓ THỂ hoàn tác (Khôi phục), không cần
+// mức xác nhận chặt như "Xoá vĩnh viễn" (vẫn giữ nguyên gõ lại đúng mã vụ, xem ThungRacModule).
 function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
   const [dangKiemTra, setDangKiemTra] = useState(true);
   const [coVuCon, setCoVuCon] = useState(null); // null = chưa biết; mảng vụ đã tách ra còn tồn tại
+  const [maXacNhan] = useState(() => taoMaXacNhanNgauNhien());
   const [xacNhan, setXacNhan] = useState("");
   const [dangXoa, setDangXoa] = useState(false);
   const [loi, setLoi] = useState("");
@@ -5108,28 +5138,20 @@ function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
   }, [vuAn.id]);
 
   const coTheXoa = !dangKiemTra && coVuCon && coVuCon.length === 0;
-  const xacNhanDung = xacNhan.trim().toLowerCase() === maHienThi.trim().toLowerCase();
+  const xacNhanDung = xacNhan.trim().toUpperCase() === maXacNhan;
 
   const xoa = async () => {
     if (!xacNhanDung) return;
     setDangXoa(true);
     setLoi("");
     try {
-      const [bcSnap, logSnap] = await Promise.all([
-        db.collection("bican").where("maVuAn", "==", vuAn.id).get(),
-        db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", vuAn.id).get(),
-      ]);
-      const refs = [
-        ...bcSnap.docs.map(d => d.ref),
-        ...logSnap.docs.map(d => d.ref),
-        db.collection("vuan").doc(vuAn.id),
-      ];
-      for (let i = 0; i < refs.length; i += 400) {
-        const batch = db.batch();
-        refs.slice(i, i + 400).forEach(ref => batch.delete(ref));
-        await batch.commit();
-      }
-      addToast("Đã xóa vụ án");
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      await db.collection("vuan").doc(vuAn.id).update({
+        daXoa: true, ngayXoaMem: now, nguoiXoaMem: nguoiThucHien,
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      addToast("Đã đưa vụ án vào thùng rác — vào Cài đặt → Thùng rác nếu cần khôi phục.");
       onXong();
     } catch (err) {
       console.error(err);
@@ -5139,12 +5161,12 @@ function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
   };
 
   return (
-    <KhungModalHanhDong tieuDe="Xóa vụ án">
+    <KhungModalHanhDong tieuDe="Đưa vào thùng rác">
       <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">
-        Thao tác này xóa VĨNH VIỄN, không thể hoàn tác: vụ án <b>{maHienThi}</b>, toàn bộ{" "}
-        <b>{biCanList.length} bị can</b> và <b>{lichSu.length} sự kiện lịch sử</b> liên quan. Nếu vụ
-        đã được tính vào 1 kỳ báo cáo đã chốt, số liệu đã lưu của kỳ đó sẽ KHÔNG tự cập nhật — vào
-        "Kỳ báo cáo" bấm "Tính lại số liệu" cho kỳ liên quan sau khi xóa.
+        Vụ án <b>{maHienThi}</b> sẽ CHUYỂN VÀO THÙNG RÁC — ẩn khỏi mọi danh sách bình thường, KHÔNG
+        xoá <b>{biCanList.length} bị can</b>/<b>{lichSu.length} sự kiện lịch sử</b> liên quan (vẫn
+        khôi phục lại được đầy đủ). Vào <b>Cài đặt → Thùng rác</b> để khôi phục hoặc xoá vĩnh viễn
+        sau này.
       </div>
 
       {dangKiemTra && <div className="text-sm text-slate-400 mb-4">Đang kiểm tra liên kết với vụ án khác...</div>}
@@ -5162,9 +5184,9 @@ function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
       {coTheXoa && (
         <>
           <label className="text-xs text-slate-500 block mb-1">
-            Gõ lại chính xác mã vụ <b>{maHienThi}</b> để xác nhận:
+            Gõ lại mã xác nhận <span className="font-mono font-bold text-base tracking-widest text-red-600">{maXacNhan}</span> để tiếp tục:
           </label>
-          <input value={xacNhan} onChange={e => setXacNhan(e.target.value)} className={oInput + " mb-4"} autoFocus />
+          <input value={xacNhan} onChange={e => setXacNhan(e.target.value)} className={oInput + " mb-4 font-mono tracking-widest uppercase"} autoFocus maxLength={4} />
         </>
       )}
 
@@ -5175,7 +5197,7 @@ function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
         {coTheXoa && (
           <button onClick={xoa} disabled={!xacNhanDung || dangXoa}
                   className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50">
-            {dangXoa ? "Đang xóa..." : "Xóa vĩnh viễn"}
+            {dangXoa ? "Đang chuyển..." : "Đưa vào thùng rác"}
           </button>
         )}
       </div>
@@ -5257,7 +5279,8 @@ async function xuatExcel(setDangXuat, setLoiXuat) {
       db.collection("kybaocao").get(),
       db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "in", ["khoi_to_vu", "hoan_thanh"]).get(),
     ]);
-    const vuList = vuSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Loại vụ đã "Đưa vào thùng rác" khỏi file xuất (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
+    const vuList = vuSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa);
     const bcList = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const bcByVu = {};
     bcList.forEach(bc => { (bcByVu[bc.maVuAn] = bcByVu[bc.maVuAn] || []).push(bc); });
@@ -5481,9 +5504,14 @@ async function tinhSnapTonTheoTD() {
     )),
     db.collection("danhMucToiDanh").get(),
   ]);
+  // Loại bỏ vụ đã "Đưa vào thùng rác" (daXoa) KHỎI snapshot tồn — lọc phía client ngay tại đây
+  // (không dùng where("daXoa","!=",true) vì bỏ qua cả document thiếu field đó, tức mọi dữ liệu cũ)
+  // để mọi chỗ dùng `dems` bên dưới (đếm .size lẫn duyệt .docs) đều tự động đúng, không cần sửa
+  // rải rác từng nơi.
+  const demsDocs = dems.map(snap => snap.docs.filter(d => !d.data().daXoa));
   const tonCuoiKy = {};
   const tonCuoiBiCan = {};
-  THU_TU_GIAI_DOAN.forEach((gd, i) => { tonCuoiKy[gd] = dems[i].size; tonCuoiBiCan[gd] = 0; });
+  THU_TU_GIAI_DOAN.forEach((gd, i) => { tonCuoiKy[gd] = demsDocs[i].length; tonCuoiBiCan[gd] = 0; });
 
   const dmByTenChot = new Map();
   dmSnap.docs.forEach(d => {
@@ -5498,12 +5526,12 @@ async function tinhSnapTonTheoTD() {
     "(chưa xác định)";
 
   // Batch-load toàn bộ bị can 1 lần — thay thế sequential await trong vòng lặp lồng nhau
-  const allVuIds = dems.flatMap(snap => snap.docs.map(d => d.id));
+  const allVuIds = demsDocs.flatMap(docs => docs.map(d => d.id));
   const bicanByVuAn = await batchLayBiCanList(allVuIds);
   const tonCuoiKyTheoTD = {};
   for (let gi = 0; gi < THU_TU_GIAI_DOAN.length; gi++) {
     const gd = THU_TU_GIAI_DOAN[gi];
-    for (const vuDoc of dems[gi].docs) {
+    for (const vuDoc of demsDocs[gi]) {
       const vu = vuDoc.data();
       const bcList = bicanByVuAn[vuDoc.id] || [];
       tonCuoiBiCan[gd] += bcList.length;
@@ -5774,7 +5802,8 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       tonCuoiKy = ky.tonCuoiKy[gd] ?? 0;
     } else {
       const hienTaiSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
-      tonCuoiKy = hienTaiSnap.size;
+      // Loại vụ đã "Đưa vào thùng rác" (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
+      tonCuoiKy = hienTaiSnap.docs.filter(d => !d.data().daXoa).length;
     }
 
     const { soVuTon, soBiCanTon, dsTon } = await tinhTonHienTaiTheoGD(gd);
@@ -5803,12 +5832,14 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
 // chưa (nhãn UI ghi rõ "tại thời điểm xem"), tách riêng để tái dùng khi đọc từ baoCaoLuu.
 async function tinhTonHienTaiTheoGD(gd) {
   const vuTonSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
-  const dsTon = await Promise.all(vuTonSnap.docs.map(async d => {
+  // Loại vụ đã "Đưa vào thùng rác" khỏi số tồn (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
+  const docsTon = vuTonSnap.docs.filter(d => !d.data().daXoa);
+  const dsTon = await Promise.all(docsTon.map(async d => {
     const bcInfo = await layBiCanInfo(d.id);
     return { id: d.id, ...d.data(), _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
   }));
   const soBiCanTon = dsTon.reduce((s, v) => s + v._soBiCan, 0);
-  return { soVuTon: vuTonSnap.size, soBiCanTon, dsTon };
+  return { soVuTon: docsTon.length, soBiCanTon, dsTon };
 }
 
 // Tách phần "đông cứng" (không đổi sau khi kỳ đã chốt, trừ khi bấm "Tính lại số liệu") ra khỏi
@@ -8217,6 +8248,7 @@ function AnDaGiaiQuyetModule() {
       snap => {
         const rows = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
+          .filter(v => !v.daXoa) // ẩn vụ đã "Đưa vào thùng rác" (xem ghi chú ở DanhSachPanel)
           .sort((a, b) => {
             const ta = a.ngayQuyetDinh?.toMillis?.() ?? (a.ngayQuyetDinh ? new Date(a.ngayQuyetDinh).getTime() : 0);
             const tb = b.ngayQuyetDinh?.toMillis?.() ?? (b.ngayQuyetDinh ? new Date(b.ngayQuyetDinh).getTime() : 0);
@@ -8877,7 +8909,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
     setHienTimThuCong(true);
     if (dsVuDangGQ === null) {
       db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").get()
-        .then(snap => setDsVuDangGQ(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .then(snap => setDsVuDangGQ(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa)))
         .catch(err => { console.error(err); setDsVuDangGQ([]); });
     }
   };
@@ -9287,7 +9319,8 @@ function DashboardModule() {
     )).then(res => {
       if (huy) return;
       const d = {};
-      THU_TU_GIAI_DOAN.forEach((gd, i) => { d[gd] = res[i].size; });
+      // Loại vụ đã "Đưa vào thùng rác" khỏi số đếm (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
+      THU_TU_GIAI_DOAN.forEach((gd, i) => { d[gd] = res[i].docs.filter(doc => !doc.data().daXoa).length; });
       setDem(d);
     }).catch(err => console.error(err));
     return () => { huy = true; };
@@ -9297,7 +9330,7 @@ function DashboardModule() {
     return db.collection("vuan").where("coQuanThuLy", "==", "dieu_tra").where("trangThai", "==", "dang_giai_quyet")
       .onSnapshot(snap => {
         const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-          .filter(v => v.hanDieuTra)
+          .filter(v => !v.daXoa && v.hanDieuTra)
           .map(v => ({ ...v, conLai: Math.ceil(((v.hanDieuTra.toDate ? v.hanDieuTra.toDate() : new Date(v.hanDieuTra)) - new Date()) / 86400000) }))
           .filter(v => v.conLai <= 15)
           .sort((a, b) => a.conLai - b.conLai);
@@ -9892,15 +9925,190 @@ const MODULES = [
   { id: "dashboard",   label: "Dashboard"          },
 ];
 
+// ====================================================================
+// MODULE: THÙNG RÁC (2026-07-17)
+// Vụ án bị "Đưa vào thùng rác" (XoaVuAnModal, xem comment ở đó) chỉ ẩn khỏi danh sách bình thường
+// qua cờ `daXoa` — bican/log vẫn nguyên vẹn. Màn này liệt kê để Khôi phục hoặc Xoá vĩnh viễn thật
+// (cascade xoá bican+log+vuan, giống hệt logic XoaVuAnModal bản CŨ trước khi đổi sang thùng rác).
+// ====================================================================
+function ThungRacModule() {
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [dangKhoiPhuc, setDangKhoiPhuc] = useState(null); // id đang khôi phục
+  const [vuXoaVinhVien, setVuXoaVinhVien] = useState(null); // vuan object đang mở modal xoá hẳn
+
+  useEffect(() => {
+    return db.collection("vuan").where("daXoa", "==", true).onSnapshot(
+      snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+      err => { console.error(err); setDangTai(false); }
+    );
+  }, []);
+
+  const khoiPhuc = async (v) => {
+    setDangKhoiPhuc(v.id);
+    try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      await db.collection("vuan").doc(v.id).update({
+        daXoa: false, ngayXoaMem: null, nguoiXoaMem: null,
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      addToast(`Đã khôi phục vụ ${hienThiMa(v) || v.id}`);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi khôi phục: " + err.message, "error");
+    } finally {
+      setDangKhoiPhuc(null);
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-1">Thùng rác</h2>
+      <div className="text-sm text-slate-500 mb-4">
+        Vụ án đã bấm "Đưa vào thùng rác" — chỉ ẩn khỏi danh sách bình thường, bị can/lịch sử vẫn còn
+        nguyên vẹn. Bấm "Khôi phục" để đưa lại vào danh sách như cũ, hoặc "Xoá vĩnh viễn" để xoá hẳn
+        (không thể hoàn tác).
+      </div>
+
+      {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
+      {!dangTai && list.length === 0 && <div className="text-sm text-slate-400">Thùng rác trống.</div>}
+
+      {!dangTai && list.length > 0 && (
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs">
+              <tr>
+                <th className="text-left p-3">Mã vụ</th>
+                <th className="text-left p-3">Tên vụ</th>
+                <th className="text-left p-3">Ngày xoá</th>
+                <th className="text-left p-3">Người xoá</th>
+                <th className="text-left p-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map(v => (
+                <tr key={v.id} className="border-t border-slate-100">
+                  <td className="p-3 font-mono text-xs">{hienThiMa(v) || v.id}</td>
+                  <td className="p-3">{v.tenVu || "(chưa đặt tên)"}</td>
+                  <td className="p-3 text-xs text-slate-500">{fmtNgayGio(v.ngayXoaMem)}</td>
+                  <td className="p-3 text-xs text-slate-500">{v.nguoiXoaMem || "—"}</td>
+                  <td className="p-3 text-right whitespace-nowrap">
+                    <button onClick={() => khoiPhuc(v)} disabled={dangKhoiPhuc === v.id}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium mr-3 disabled:opacity-50">
+                      {dangKhoiPhuc === v.id ? "Đang khôi phục..." : "Khôi phục"}
+                    </button>
+                    <button onClick={() => setVuXoaVinhVien(v)} className="text-xs text-red-500 hover:text-red-700 font-medium">
+                      Xoá vĩnh viễn
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {vuXoaVinhVien && (
+        <XoaVinhVienModal vuAn={vuXoaVinhVien} onDong={() => setVuXoaVinhVien(null)}
+                          onXong={() => setVuXoaVinhVien(null)} />
+      )}
+    </div>
+  );
+}
+
+// Xoá vĩnh viễn thật SỰ (cascade xoá bican + lichsuChuyenGiaiDoan + vuan) — logic giống hệt
+// XoaVuAnModal bản CŨ trước khi đổi sang thùng rác (2026-07-17), chỉ khác nơi gọi (từ ThungRacModule,
+// không có sẵn biCanList/lichSu từ ChiTietPanel truyền vào nên tự query đếm để hiện cảnh báo).
+// Giữ NGUYÊN mức xác nhận chặt cũ (gõ lại đúng mã vụ) vì đây mới là hành động KHÔNG THỂ hoàn tác.
+function XoaVinhVienModal({ vuAn, onDong, onXong }) {
+  const [dangTai, setDangTai] = useState(true);
+  const [soBiCan, setSoBiCan] = useState(0);
+  const [soSuKien, setSoSuKien] = useState(0);
+  const [xacNhan, setXacNhan] = useState("");
+  const [dangXoa, setDangXoa] = useState(false);
+  const [loi, setLoi] = useState("");
+
+  const maHienThi = hienThiMa(vuAn) || vuAn.id;
+  const xacNhanDung = xacNhan.trim().toLowerCase() === maHienThi.trim().toLowerCase();
+
+  useEffect(() => {
+    let huy = false;
+    Promise.all([
+      db.collection("bican").where("maVuAn", "==", vuAn.id).get(),
+      db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", vuAn.id).get(),
+    ]).then(([bcSnap, logSnap]) => {
+      if (huy) return;
+      setSoBiCan(bcSnap.size); setSoSuKien(logSnap.size); setDangTai(false);
+    }).catch(err => { if (!huy) { setLoi("Lỗi khi kiểm tra: " + err.message); setDangTai(false); } });
+    return () => { huy = true; };
+  }, [vuAn.id]);
+
+  const xoa = async () => {
+    if (!xacNhanDung) return;
+    setDangXoa(true);
+    setLoi("");
+    try {
+      const [bcSnap, logSnap] = await Promise.all([
+        db.collection("bican").where("maVuAn", "==", vuAn.id).get(),
+        db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", vuAn.id).get(),
+      ]);
+      const refs = [
+        ...bcSnap.docs.map(d => d.ref),
+        ...logSnap.docs.map(d => d.ref),
+        db.collection("vuan").doc(vuAn.id),
+      ];
+      for (let i = 0; i < refs.length; i += 400) {
+        const batch = db.batch();
+        refs.slice(i, i + 400).forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
+      addToast("Đã xoá vĩnh viễn vụ án");
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi xóa: " + err.message);
+      setDangXoa(false);
+    }
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Xoá vĩnh viễn">
+      <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">
+        Thao tác này xóa VĨNH VIỄN, KHÔNG THỂ HOÀN TÁC: vụ án <b>{maHienThi}</b>
+        {!dangTai && <> cùng <b>{soBiCan} bị can</b> và <b>{soSuKien} sự kiện lịch sử</b> liên quan</>}.
+        Nếu vụ đã được tính vào 1 kỳ báo cáo đã chốt, số liệu đã lưu của kỳ đó sẽ KHÔNG tự cập nhật —
+        vào "Kỳ báo cáo" bấm "Tính lại số liệu" cho kỳ liên quan sau khi xóa.
+      </div>
+
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+
+      <label className="text-xs text-slate-500 block mb-1">
+        Gõ lại chính xác mã vụ <b>{maHienThi}</b> để xác nhận:
+      </label>
+      <input value={xacNhan} onChange={e => setXacNhan(e.target.value)} className={oInput + " mb-4"} autoFocus />
+
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} disabled={dangXoa} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+        <button onClick={xoa} disabled={!xacNhanDung || dangXoa || dangTai}
+                className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50">
+          {dangXoa ? "Đang xoá..." : "Xoá vĩnh viễn"}
+        </button>
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
 // CaiDatModule — gom Import Excel, Nhật ký thao tác, Cán bộ vào 1 chỗ để
 // tránh người dùng bình thường vô tình chạm vào các thao tác quản trị.
 function CaiDatModule() {
   const [subTab, setSubTab] = useState("log");
   const tabs = [
-    { id: "log",     label: "Nhật ký thao tác"  },
-    { id: "canbo",   label: "Cán bộ"             },
-    { id: "danhmuc", label: "Danh mục tội danh"  },
-    { id: "import",  label: "Import Excel"        },
+    { id: "log",       label: "Nhật ký thao tác"  },
+    { id: "canbo",     label: "Cán bộ"             },
+    { id: "danhmuc",   label: "Danh mục tội danh"  },
+    { id: "import",    label: "Import Excel"        },
+    { id: "thungrac",  label: "Thùng rác"           },
   ];
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -9913,10 +10121,11 @@ function CaiDatModule() {
           </button>
         ))}
       </div>
-      {subTab === "log"     && <NhatKyModule />}
-      {subTab === "canbo"   && <CanBoModule />}
-      {subTab === "danhmuc" && <DanhMucToiDanhModule />}
-      {subTab === "import"  && <ImportExcelModule />}
+      {subTab === "log"      && <NhatKyModule />}
+      {subTab === "canbo"    && <CanBoModule />}
+      {subTab === "danhmuc"  && <DanhMucToiDanhModule />}
+      {subTab === "import"   && <ImportExcelModule />}
+      {subTab === "thungrac" && <ThungRacModule />}
     </div>
   );
 }

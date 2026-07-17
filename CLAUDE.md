@@ -2,6 +2,53 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tối ưu Firestore — Đợt 2 (phần 1): Thùng rác — xoá vụ án đổi từ xoá cứng sang soft-delete (2026-07-17)
+
+Nền tảng bắt buộc cho cache lạnh IndexedDB (xem "Ngoài phạm vi Đợt 1" ở mục Đợt 1 bên dưới) —
+query kiểu `where(ngayCapNhat > lầnSyncTrước)` không bao giờ thấy được việc XOÁ document, nên phải
+biến "xoá" thành "ghi" trước khi cache lạnh có thể tin tưởng dùng delta-check.
+
+**`XoaVuAnModal` đổi hẳn từ cascade xoá cứng sang đặt cờ** — không còn `batch.delete` lên
+`bican`/`lichsuChuyenGiaiDoan`/`vuan`, chỉ `update({ daXoa: true, ngayXoaMem, nguoiXoaMem,
+ngayCapNhat, nguoiCapNhatCuoi })` lên đúng `vuan`. Giữ nguyên `bican`/log để: (1) Khôi phục chỉ cần
+gỡ cờ, không mất gì; (2) số liệu báo cáo kỳ (tính từ log) không bị ảnh hưởng cho tới khi thật sự
+"Xoá vĩnh viễn". Xác nhận đổi từ "gõ lại đúng mã vụ" sang gõ lại **1 mã 4 ký tự SINH NGẪU NHIÊN**
+hiển thị ngay trên màn hình (`taoMaXacNhanNgauNhien`, bộ ký tự `BO_KY_TU_MA_XAC_NHAN` loại bỏ
+0/O/1/l/I để tránh gõ nhầm vì đọc nhầm) — vì giờ thao tác này CÓ THỂ hoàn tác, không cần mức xác
+nhận chặt như trước. Giữ nguyên guard chặn xoá nếu còn vụ con tách ra từ vụ này (`vuGoc`).
+
+**Module mới "Thùng rác"** (`ThungRacModule`, tab thứ 5 trong `CaiDatModule`, sau "Import Excel") —
+liệt kê `vuan` có `daXoa == true` (query trực tiếp qua Firestore, KHÔNG có vấn đề như `!=` vì đây là
+so khớp `==true`), mỗi dòng có 2 nút: **"Khôi phục"** (gỡ cờ `daXoa`/`ngayXoaMem`/`nguoiXoaMem`) và
+**"Xoá vĩnh viễn"** (mở `XoaVinhVienModal` — logic cascade xoá y hệt `XoaVuAnModal` bản CŨ, giữ
+nguyên mức xác nhận chặt "gõ lại đúng mã vụ" vì đây mới là hành động thật sự không thể hoàn tác).
+
+**Lọc `daXoa` khỏi mọi nơi liệt kê `vuan` cho người dùng xem** — cố tình lọc phía **CLIENT**
+(`.filter(v => !v.daXoa)` sau khi map dữ liệu), **KHÔNG dùng Firestore `where("daXoa","!=",true)`**:
+query `!=` bỏ qua LUÔN mọi document không có field đó, mà toàn bộ dữ liệu cũ chưa từng có field
+`daXoa` — lọc ở tầng Firestore sẽ làm mất trắng danh sách. Đã áp dụng ở: `DanhSachPanel` (cả query
+chính lẫn `dsTimKiemDayDu`), `AnDaGiaiQuyetModule`, `DashboardModule` (2 nơi: đếm theo giai đoạn +
+cảnh báo hạn điều tra), `tinhSnapTonTheoTD`/`tinhTonHienTaiTheoGD`/`tinhBaoCaoKyTuLog` (3 hàm tính
+"tồn" của Kỳ báo cáo — dùng biến trung gian `demsDocs` để không phải sửa rải rác nhiều chỗ dùng lại
+cùng 1 mảng snapshot), `GiaoNhanHoSoModule` (Tìm thủ công), `NhapVuModal` (tìm vụ đích), `xuatExcel`,
+`ImportExcelModule` (đối chiếu trùng — vụ đã trashed KHÔNG tính là trùng, vì trash dùng để sửa sai
+sót nên import lại đúng dữ liệu phải được cho phép).
+**Cố tình CHƯA lọc** `vuAnTuLogDocs` (dùng bởi `tinhBaoCaoKyTuLog` để dựng các mảng `ds` xuất ra
+sheet Excel báo cáo tháng, ảnh hưởng trực tiếp tới công thức SUMIF/COUNTIF của Biểu B10) — rủi ro
+cao hơn hẳn các nơi trên vì đụng vào logic đã được audit kỹ nhiều lần trước đây (xem "Trạng thái
+Biểu B10"), cần cân nhắc riêng nếu có nhu cầu thực tế (hiện chưa có vụ nào bị trash trên production).
+
+**Đã kiểm chứng bằng Playwright thật** (cùng bộ mock Firestore/Auth dựng ở Đợt 1) — 18/18 assertion
+pass, gồm cả kịch bản end-to-end đầy đủ: mở panel chi tiết → bấm "Đưa vào thùng rác" → xác nhận mã
+ngẫu nhiên đúng định dạng 4 ký tự → gõ đúng mã → xác nhận vụ biến mất khỏi Danh sách vụ án → xác
+nhận vụ hiện đúng trong tab Thùng rác → bấm "Khôi phục" → xác nhận vụ biến mất khỏi Thùng rác VÀ
+hiện lại đúng trong Danh sách vụ án → xác nhận cả 2 lần ghi (`daXoa:true` lúc xoá, `daXoa:false` lúc
+khôi phục) đều đúng field, lần xoá có kèm `ngayCapNhat`. **Còn lại chưa kiểm chứng**: dữ liệu
+Firestore thật trên `qlva-dev.html` (project `qlahs-test`) — nên thử ít nhất 1 lần trước khi tin
+tưởng lên `qlva.html` production, đặc biệt xác nhận Security Rules hiện tại (chỉ chặn theo
+`request.auth != null`) không cần sửa gì để `update` field `daXoa` hoạt động (không có rule riêng
+theo field nên nhiều khả năng không cần, nhưng chưa xác nhận thật).
+
 ## Tối ưu Firestore — Đợt 1: gộp listener trùng + chuẩn bị nền cho cache lạnh (2026-07-17)
 
 Audit theo yêu cầu người dùng: tài khoản Firebase hết quota nhanh vì "bất kỳ thao tác nào cũng
