@@ -471,12 +471,18 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
     anDiem: vuGoc.anDiem || false, uyQuyenXetXu: vuGoc.uyQuyenXetXu || "", phienToaRutKN: vuGoc.phienToaRutKN || false,
     ghiChu: "", ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
   });
-  biCanChuyenHan.forEach(bc => batch.update(db.collection("bican").doc(bc.id), { maVuAn: maVuMoi }));
+  biCanChuyenHan.forEach(bc => batch.update(db.collection("bican").doc(bc.id), {
+    maVuAn: maVuMoi, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+  }));
   biCanSaoChep.forEach(bc => {
     const nhomId = bc.nhomBiCanId || bc.id; // lần đầu sao chép: lấy chính ID bản gốc làm định danh nhóm
     const { id, ...bcData } = bc;
-    batch.set(db.collection("bican").doc(), { ...bcData, maVuAn: maVuMoi, nhomBiCanId: nhomId });
-    if (!bc.nhomBiCanId) batch.update(db.collection("bican").doc(bc.id), { nhomBiCanId: nhomId });
+    batch.set(db.collection("bican").doc(), {
+      ...bcData, maVuAn: maVuMoi, nhomBiCanId: nhomId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+    });
+    if (!bc.nhomBiCanId) batch.update(db.collection("bican").doc(bc.id), {
+      nhomBiCanId: nhomId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+    });
   });
   batch.update(refGoc, {
     dieuLuat: tinhDieuLuat(biCanConLaiGoc), tenVu: tinhTenVu(biCanConLaiGoc) || vuGoc.tenVu,
@@ -1127,17 +1133,97 @@ function tinhNhomTuoi(namSinh, namKTVA) {
   return null;
 }
 
-// Hook danh mục tội danh — dùng chung trong form BC + tinhBieu10.
-function useDanhMucToiDanh() {
-  // Mặc định dùng mảng inline; nếu Firebase đã seed thì dùng Firebase (có thể đã chỉnh sửa)
-  const [danhMuc, setDanhMuc] = useState(DANH_MUC_TOI_DANH_MAM);
-  useEffect(() => {
-    return db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc").onSnapshot(
-      snap => { if (snap.docs.length > 0) setDanhMuc(snap.docs.map(d => ({ id: d.id, ...d.data() }))); },
+// ====== Cache/listener Firestore dùng chung ======
+// Nhiều nơi trong app subscribe CÙNG 1 query (VD canbo, kybaocao, danhMucToiDanh) độc lập với
+// nhau — mỗi lần 1 component mount (mở form, chuyển tab) là 1 listener Firestore MỚI, tính phí
+// đọc lần đầu lại từ đầu dù dữ liệu chưa đổi gì (2026-07-17, audit tối ưu quota Firestore).
+// Registry toàn cục (ngoài React, tồn tại suốt vòng đời trang) giữ đúng 1 listener sống cho mỗi
+// cacheKey, chia sẻ dữ liệu cho mọi hook đang subscribe. Giữ listener sống thêm 1 khoảng grace
+// period sau khi subscriber cuối cùng unmount — chuyển tab qua lại/đóng-mở form nhanh không phá
+// rồi dựng lại từ đầu — chỉ huỷ hẳn khi hết grace period mà không có ai subscribe lại.
+// LƯU Ý: cacheKey phải đại diện ĐÚNG 1 query duy nhất (kể cả where/orderBy) — dùng chung cacheKey
+// cho 2 query khác nhau sẽ trộn lẫn dữ liệu sai.
+const FIRESTORE_CACHE_GRACE_MS = 3 * 60 * 1000; // 3 phút
+const firestoreCacheRegistry = {}; // { [cacheKey]: { data, loaded, listeners, loadedListeners, unsub, huyTimer } }
+function ensureFirestoreCacheEntry(cacheKey, queryFn) {
+  let entry = firestoreCacheRegistry[cacheKey];
+  if (!entry) {
+    entry = { data: [], loaded: false, listeners: new Set(), loadedListeners: new Set(), unsub: null, huyTimer: null };
+    firestoreCacheRegistry[cacheKey] = entry;
+  }
+  if (entry.huyTimer) { clearTimeout(entry.huyTimer); entry.huyTimer = null; }
+  if (!entry.unsub) {
+    entry.unsub = queryFn().onSnapshot(
+      snap => {
+        entry.data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        entry.loaded = true;
+        entry.listeners.forEach(fn => fn(entry.data));
+        entry.loadedListeners.forEach(fn => fn());
+      },
       err => console.error(err)
     );
-  }, []);
-  return danhMuc;
+  }
+  return entry;
+}
+// Gọi ở cuối cleanup của MỌI hook dùng entry này (dữ liệu lẫn "loaded") — không đặt logic này chỉ
+// trong 1 hook, vì thứ tự chạy cleanup giữa nhiều hook trong cùng 1 component lúc unmount không
+// đảm bảo cố định, nếu chỉ 1 nơi tự kiểm tra "còn ai dùng không" thì có thể kiểm tra SỚM hơn lúc
+// hook kia đã dọn xong, dẫn tới bỏ sót lịch huỷ (rò rỉ listener sống mãi dù 0 người dùng).
+function lichHuyNeuKhongAiDung(cacheKey, entry) {
+  if (entry.listeners.size === 0 && entry.loadedListeners.size === 0) {
+    entry.huyTimer = setTimeout(() => {
+      if (firestoreCacheRegistry[cacheKey] === entry && entry.listeners.size === 0 && entry.loadedListeners.size === 0) {
+        entry.unsub && entry.unsub();
+        delete firestoreCacheRegistry[cacheKey];
+      }
+    }, FIRESTORE_CACHE_GRACE_MS);
+  }
+}
+function useFirestoreCollectionCache(cacheKey, queryFn) {
+  const [data, setData] = useState(() => firestoreCacheRegistry[cacheKey]?.data ?? []);
+
+  useEffect(() => {
+    const entry = ensureFirestoreCacheEntry(cacheKey, queryFn);
+    const onUpdate = (arr) => setData(arr);
+    entry.listeners.add(onUpdate);
+    setData(entry.data); // đồng bộ ngay với dữ liệu cache hiện có, không chờ snapshot mới
+
+    return () => {
+      entry.listeners.delete(onUpdate);
+      lichHuyNeuKhongAiDung(cacheKey, entry);
+    };
+  }, [cacheKey]);
+
+  return data;
+}
+// Đi kèm useFirestoreCollectionCache khi cần biết "đã có kết quả lần đầu chưa" (VD hiện spinner
+// "Đang tải...") — tách riêng vì phần lớn nơi dùng cache không cần cờ này. Tự gọi
+// ensureFirestoreCacheEntry riêng (không phụ thuộc thứ tự gọi trước/sau hook dữ liệu).
+function useFirestoreCacheLoaded(cacheKey, queryFn) {
+  const [loaded, setLoaded] = useState(() => !!firestoreCacheRegistry[cacheKey]?.loaded);
+  useEffect(() => {
+    const entry = ensureFirestoreCacheEntry(cacheKey, queryFn);
+    if (entry.loaded) setLoaded(true);
+    const onLoaded = () => setLoaded(true);
+    entry.loadedListeners.add(onLoaded);
+
+    return () => {
+      entry.loadedListeners.delete(onLoaded);
+      lichHuyNeuKhongAiDung(cacheKey, entry);
+    };
+  }, [cacheKey]);
+  return loaded;
+}
+
+// Hook danh mục tội danh — dùng chung trong form BC + tinhBieu10.
+function useDanhMucToiDanh() {
+  // Mặc định dùng mảng inline; nếu Firebase đã seed thì dùng Firebase (có thể đã chỉnh sửa) —
+  // chỉ dùng bản Firestore khi đã có dữ liệu, tránh đè mảng mặc định bằng [] lúc mới subscribe.
+  const ds = useFirestoreCollectionCache(
+    "danhMucToiDanh:asc",
+    () => db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc")
+  );
+  return ds.length > 0 ? ds : DANH_MUC_TOI_DANH_MAM;
 }
 
 // Lấy / lưu bộ luật mặc định (BLHS 2025 hoặc 1999) từ localStorage.
@@ -1279,14 +1365,10 @@ function BlhsSelector() {
 
 // Danh sách cán bộ đang công tác, dùng làm gợi ý (datalist) cho các ô KSV/ĐTV nhập tay.
 function useDanhSachCanBo() {
-  const [ds, setDs] = useState([]);
-  useEffect(() => {
-    return db.collection("canbo").where("trangThai", "==", "dang_cong_tac").onSnapshot(
-      snap => setDs(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => console.error(err)
-    );
-  }, []);
-  return ds;
+  return useFirestoreCollectionCache(
+    "canbo:dang_cong_tac",
+    () => db.collection("canbo").where("trangThai", "==", "dang_cong_tac")
+  );
 }
 
 // trangThai: { [bcId]: "o_lai" | "chuyen_han" | "sao_chep" }. "sao_chep" = bị can này có nhiều
@@ -1540,6 +1622,8 @@ function BackfillDieuLuatBCTool() {
   const run = async () => {
     setState("loading"); setInfo("Đang tải dữ liệu...");
     try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
       const [dmSnap, bcSnap] = await Promise.all([
         db.collection("danhMucToiDanh").get(),
         db.collection("bican").get(),
@@ -1587,7 +1671,7 @@ function BackfillDieuLuatBCTool() {
         }
 
         if (!changed) { soBo++; continue; }
-        batch.update(doc.ref, { toiDanh, dieuLuatBC });
+        batch.update(doc.ref, { toiDanh, dieuLuatBC, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
         soCapNhat++; batchCount++;
         if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; }
       }
@@ -1710,6 +1794,8 @@ function BackfillLoaiKhoiToTool() {
   const run = async () => {
     setState("loading"); setInfo("Đang tải dữ liệu...");
     try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
       const bcSnap = await db.collection("bican").get();
       const theoVu = new Map();
       bcSnap.docs.forEach(doc => {
@@ -1732,7 +1818,7 @@ function BackfillLoaiKhoiToTool() {
         let vuBiSua = false;
         bcList.forEach((bc, i) => {
           if (bc.data.loaiKhoiTo !== dungList[i]) {
-            batch.update(bc.ref, { loaiKhoiTo: dungList[i] });
+            batch.update(bc.ref, { loaiKhoiTo: dungList[i], ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
             soCapNhat++; batchCount++; vuBiSua = true;
           }
         });
@@ -2145,6 +2231,7 @@ function ImportExcelModule() {
             diaChi: bc.diaChi, bienPhapNganChan: bc.bienPhapNganChan, hanTamGiam: bc.hanTamGiam,
             ngayKhoiTo: v.ngayQdKtva, loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
             ngayTao: now, nguoiTao: nguoiThucHien, nguonNhapLieu: "import_excel",
+            ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
           });
           ops++; done++;
           batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
@@ -2354,24 +2441,30 @@ function ImportExcelModule() {
 // Firestore chưa có bản ghi kybaocao nào thì vẫn cho tiếp tục với kyThongKe = null.
 // ====================================================================
 function ModalXacNhanKy({ open, onXacNhan, onHuy }) {
-  const [danhSachKy, setDanhSachKy] = useState([]);
-  const [dangTai, setDangTai] = useState(true);
+  // Trước đây modal này tự .get() TOÀN BỘ collection kybaocao MỖI LẦN MỞ — vì modal này mở ở MỌI
+  // thao tác nghiệp vụ (Chuyển giai đoạn/Trả hồ sơ/Hoàn thành...), đây thực chất là điểm tốn quota
+  // nhiều nhất trong app dù không lộ ra qua onSnapshot. Đổi sang dùng chung cache "kybaocao:desc"
+  // (2026-07-17, cùng cacheKey với DanhSachPanel/KyBaoCaoModule/AnDaGiaiQuyetModule/NhatKyModule).
+  const danhSachKy = useFirestoreCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  const dataDaVe = useFirestoreCacheLoaded(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  const dangTai = open && !dataDaVe;
   const [kyChon, setKyChon] = useState("");
-
+  // Chỉ tự đặt mặc định ĐÚNG 1 LẦN cho mỗi lần mở modal (giống hệt hành vi .get() một lần cũ) —
+  // không đặt lại nếu cache có cập nhật MỚI trong lúc modal đang mở, để không ghi đè lựa chọn tay
+  // của người dùng giữa chừng.
+  const daDatMacDinhRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    setDangTai(true);
-    db.collection("kybaocao").orderBy("ngayBatDau", "desc").get()
-      .then(snap => {
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setDanhSachKy(list);
-        const dangMo = list.find(k => k.trangThai === "dang_mo" && k.loai !== "luu_tru");
-        const fallback = list.find(k => k.loai !== "luu_tru");
-        setKyChon(dangMo ? dangMo.id : (fallback ? fallback.id : (list[0] ? list[0].id : "")));
-      })
-      .catch(err => console.error(err))
-      .finally(() => setDangTai(false));
-  }, [open]);
+    if (!open) { daDatMacDinhRef.current = false; return; }
+    if (daDatMacDinhRef.current || !dataDaVe) return;
+    daDatMacDinhRef.current = true;
+    const dangMo = danhSachKy.find(k => k.trangThai === "dang_mo" && k.loai !== "luu_tru");
+    const fallback = danhSachKy.find(k => k.loai !== "luu_tru");
+    setKyChon(dangMo ? dangMo.id : (fallback ? fallback.id : (danhSachKy[0]?.id || "")));
+  }, [open, danhSachKy, dataDaVe]);
 
   if (!open) return null;
 
@@ -3020,10 +3113,10 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
         const trung = bc.nhomBiCanId ? bcDichTruoc.find(x => x.nhomBiCanId === bc.nhomBiCanId) : null;
         if (trung) {
           const toiDanhGop = [...new Set([...(trung.toiDanh || []), ...(bc.toiDanh || [])].filter(Boolean))];
-          batch.update(trung.ref, { toiDanh: toiDanhGop });
+          batch.update(trung.ref, { toiDanh: toiDanhGop, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
           batch.delete(d.ref);
         } else {
-          batch.update(d.ref, { maVuAn: dichId });
+          batch.update(d.ref, { maVuAn: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
         }
       });
       batch.update(db.collection("vuan").doc(vuAn.id), {
@@ -3272,7 +3365,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           hanTamGiam: bc.bienPhapNganChan === "giam" && bc.hanTamGiam ? fromInputDate(bc.hanTamGiam) : null,
           ngayKhoiTo: ngayKT, soQdKtBiCan: (bc.soQdKtBiCan || "").trim(),
           loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
-          ngayTao: now, nguoiTao: nguoiThucHien,
+          ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
         });
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), {
           maVuAn: maNoiSinh, loaiSuKien: "khoi_to_bican", maBiCan: bcRef.id,
@@ -3857,6 +3950,8 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
     if (!hoTen.trim()) { setLoi("Cần nhập họ tên."); return; }
     setDangLuu(true);
     try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
       const toiDanhSach = toiDanh.map(s => s.trim()).filter(Boolean);
       const dieuLuatBCSach = toiDanhSach.map((_, i) => dieuLuatBC[i] || "");
       await db.collection("bican").doc(biCan.id).update({
@@ -3873,6 +3968,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         soQdKtBiCan: soQdKtBiCan.trim(),
         toiDanh: toiDanhSach.length ? toiDanhSach : [""],
         dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
 
       // Tính lại dieuLuat + loaiKhoiTo cho cả vụ vì bị can này vừa đổi.
@@ -3883,7 +3979,9 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
       const batch = db.batch();
       batch.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi });
       bcList.forEach((bc, i) => {
-        if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
+        if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch.update(db.collection("bican").doc(bc.id), {
+          loaiKhoiTo: loaiKhoiToMoi[i], ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        });
       });
       await batch.commit();
       addToast("Đã lưu thông tin bị can");
@@ -4054,6 +4152,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         hanTamGiam: bienPhapNganChan === "giam" && hanTamGiam ? fromInputDate(hanTamGiam) : null,
         ngayKhoiTo: ngayKT, soQdKtBiCan: soQdKtBiCan.trim(),
         loaiKhoiTo: "bo_sung", ngayTao: now, nguoiTao: nguoiThucHien,
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), {
         maVuAn: vuAn.id, loaiSuKien: "khoi_to_bican", maBiCan: bcRef.id,
@@ -4072,7 +4171,9 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
       const batch2 = db.batch();
       batch2.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi });
       bcList.forEach((bc, i) => {
-        if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch2.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
+        if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch2.update(db.collection("bican").doc(bc.id), {
+          loaiKhoiTo: loaiKhoiToMoi[i], ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        });
       });
       await batch2.commit();
       xoaBiCanCache(vuAn.id);
@@ -4331,16 +4432,12 @@ function DanhSachPanel({ selectedId, onSelect }) {
     return () => unsubs.forEach(u => u());
   }, [idsHienTaiKey]);
 
-  const [kyBaoCaoList, setKyBaoCaoList] = useState([]);
+  // Dùng chung cache "kybaocao:desc" với KyBaoCaoModule/AnDaGiaiQuyetModule/NhatKyModule — thứ tự
+  // không quan trọng ở đây vì kyBaoCaoListSorted bên dưới đã tự sort lại phía client.
+  const kyBaoCaoList = useFirestoreCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
   const [logKyEvents, setLogKyEvents] = useState([]);
-
-  useEffect(() => {
-    const unsub = db.collection("kybaocao").onSnapshot(
-      snap => setKyBaoCaoList(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => console.error(err)
-    );
-    return unsub;
-  }, []);
 
   // Log sự kiện dùng cho cột "Kỳ mới/Kỳ giải quyết/Kỳ vào Truy tố/Kỳ chuyển Xét xử" — cùng cách
   // chia lô theo id như bican ở trên, thay vì tải nguyên collection lichsuChuyenGiaiDoan (tăng vô
@@ -7856,8 +7953,16 @@ function timKyTruoc(ky, listBaoCaoDesc) {
 }
 
 function KyBaoCaoModule() {
-  const [list, setList] = useState([]);
-  const [dangTai, setDangTai] = useState(true);
+  // Dùng chung cache "kybaocao:desc" với DanhSachPanel/AnDaGiaiQuyetModule/NhatKyModule — vẫn giữ
+  // nguyên orderBy("ngayBatDau","desc") do Firestore trả về (không tự sort lại phía client) vì
+  // list[0] phải là kỳ MỚI NHẤT thật (timKyTruoc dựa vào thứ tự mảng liền kề, không so sánh lại
+  // timestamp — xem comment ở timKyTruoc).
+  const list = useFirestoreCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  const dangTai = !useFirestoreCacheLoaded(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
   const [hienMoKy, setHienMoKy] = useState(false);
   const [kyDangChot, setKyDangChot] = useState(null);
   const [kyDangXem, setKyDangXem] = useState(null);
@@ -7904,14 +8009,6 @@ function KyBaoCaoModule() {
       setDangTinhLai(null);
     }
   };
-
-  // Luôn fetch desc để listBaoCao[0] là mới nhất — việc đảo chiều hiển thị chỉ là UI
-  useEffect(() => {
-    return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
-      snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
-      err => { console.error(err); setDangTai(false); }
-    );
-  }, []);
 
   return (
     <div>
@@ -8091,29 +8188,27 @@ function AnDaGiaiQuyetModule() {
   const [hinhThuc, setHinhThuc] = useState("da_xet_xu");
   const [list, setList] = useState([]);       // đầy đủ, chưa lọc kỳ
   const [dangTai, setDangTai] = useState(true);
-  const [dsKy, setDsKy] = useState([]);       // danh sách kybaocao để chọn — gồm cả kỳ lưu trữ án cũ
   const [locKy, setLocKy] = useState(null);   // null = chưa khởi tạo; "tat_ca" hoặc kyId
   const [tuKhoa, setTuKhoa] = useState("");
   const [ksv, setKsv] = useState("tat_ca");
   const [selectedId, setSelectedId] = useState(null); // vụ đang chọn — hiện chi tiết ở panel phải
 
-  // Lấy danh sách kỳ, đặt mặc định = kỳ đang mở (hoặc kỳ gần nhất nếu không có kỳ mở).
-  // Gồm cả kỳ lưu trữ án cũ (loai: "luu_tru") để chọn lọc — vụ án cũ nhập lại qua Import Excel
-  // hoặc gán tay vào kỳ lưu trữ vẫn cần xem/lọc được ở đây như mọi kỳ khác.
+  // Danh sách kỳ để chọn — gồm cả kỳ lưu trữ án cũ (loai: "luu_tru", vụ án cũ nhập lại qua Import
+  // Excel hoặc gán tay vào kỳ lưu trữ vẫn cần xem/lọc được ở đây như mọi kỳ khác). Dùng chung cache
+  // "kybaocao:desc" với DanhSachPanel/KyBaoCaoModule/NhatKyModule.
+  const dsKy = useFirestoreCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  // Đặt mặc định = kỳ đang mở (hoặc kỳ gần nhất nếu không có kỳ mở) — chỉ 1 lần lúc chưa có lựa
+  // chọn nào (giữ nguyên lựa chọn cũ nếu người dùng đã tự đổi).
   useEffect(() => {
-    return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
-      snap => {
-        const ks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setDsKy(ks);
-        setLocKy(prev => {
-          if (prev !== null) return prev; // giữ lựa chọn đã có
-          const mo = ks.find(k => k.trangThai === "dang_mo");
-          return mo ? mo.id : (ks[0]?.id || "tat_ca");
-        });
-      },
-      () => setDsKy([])
-    );
-  }, []);
+    if (dsKy.length === 0) return;
+    setLocKy(prev => {
+      if (prev !== null) return prev;
+      const mo = dsKy.find(k => k.trangThai === "dang_mo");
+      return mo ? mo.id : (dsKy[0]?.id || "tat_ca");
+    });
+  }, [dsKy]);
 
   // Đọc thẳng từ vuan — ngayQuyetDinh và kyHoanThanh được lưu sẵn khi tạo sự kiện hoan_thanh
   // (dữ liệu cũ chưa có field này sẽ được backfill qua nút "Cập nhật index" ở module Cài đặt)
@@ -9180,7 +9275,11 @@ function ChartCotChong({ labels, datasets }) {
 function DashboardModule() {
   const [dem, setDem] = useState(null);
   const [canhBao, setCanhBao] = useState([]);
-  const [kyList, setKyList] = useState([]);
+  // Riêng chiều "asc" (biểu đồ cần cũ→mới theo trục thời gian) — cacheKey khác "kybaocao:desc" ở
+  // các module khác vì server phải trả đúng thứ tự này, không tự sort lại phía client.
+  const kyList = useFirestoreCollectionCache(
+    "kybaocao:asc", () => db.collection("kybaocao").orderBy("ngayBatDau", "asc")
+  );
 
   useEffect(() => {
     let huy = false;
@@ -9205,13 +9304,6 @@ function DashboardModule() {
           .sort((a, b) => a.conLai - b.conLai);
         setCanhBao(list);
       }, err => console.error(err));
-  }, []);
-
-  useEffect(() => {
-    return db.collection("kybaocao").orderBy("ngayBatDau", "asc").onSnapshot(
-      snap => setKyList(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => console.error(err)
-    );
   }, []);
 
   const labels = kyList.map(k => k.tenKy);
@@ -9375,20 +9467,16 @@ function NhatKyModule() {
   const [locKy, setLocKy] = useState("tat_ca");
   const [sortCot, setSortCot] = useState(null);
   const [sortChieu, setSortChieu] = useState("asc");
-  const [danhSachKy, setDanhSachKy] = useState([]);
   const [dangSuaKy, setDangSuaKy] = useState(null);
+  // Dùng chung cache "kybaocao:desc" với DanhSachPanel/KyBaoCaoModule/AnDaGiaiQuyetModule.
+  const danhSachKy = useFirestoreCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
 
   useEffect(() => {
     return db.collection("lichsuChuyenGiaiDoan").orderBy("thoiDiemGhi", "desc").limit(300).onSnapshot(
       snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
       err => { console.error(err); setDangTai(false); }
-    );
-  }, []);
-
-  useEffect(() => {
-    return db.collection("kybaocao").orderBy("ngayBatDau", "desc").onSnapshot(
-      snap => setDanhSachKy(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => console.error(err)
     );
   }, []);
 
@@ -9666,19 +9754,20 @@ function ToiDanhForm({ toiDanh, maxThuTu, onDong, onXong }) {
 }
 
 function DanhMucToiDanhModule() {
-  const [list, setList] = useState([]);
-  const [dangTai, setDangTai] = useState(true);
+  // Dùng thẳng cache dùng chung ("danhMucToiDanh:asc" — cùng cacheKey với useDanhMucToiDanh() nên
+  // gộp chung 1 listener) — KHÔNG dùng useDanhMucToiDanh() vì hook đó tự fallback về mảng JS mặc
+  // định khi Firestore rỗng; ở màn quản trị này cần thấy ĐÚNG trạng thái thật của Firestore (kể cả
+  // rỗng), không phải bản đã fallback.
+  const list = useFirestoreCollectionCache(
+    "danhMucToiDanh:asc", () => db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc")
+  );
+  const dangTai = !useFirestoreCacheLoaded(
+    "danhMucToiDanh:asc", () => db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc")
+  );
   const [dangSua, setDangSua] = useState(null); // null | "moi" | object
   const [tuKhoa, setTuKhoa] = useState("");
   const [xoaId, setXoaId] = useState(null);
   const [locBlhs, setLocBlhs] = useState(""); // lọc theo blhsNam
-
-  useEffect(() => {
-    return db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc").onSnapshot(
-      snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
-      err => { console.error(err); setDangTai(false); }
-    );
-  }, []);
 
   const listLoc = list.filter(t => {
     if (locBlhs && t.blhsNam !== locBlhs) return false;

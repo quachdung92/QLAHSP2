@@ -2,6 +2,74 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tối ưu Firestore — Đợt 1: gộp listener trùng + chuẩn bị nền cho cache lạnh (2026-07-17)
+
+Audit theo yêu cầu người dùng: tài khoản Firebase hết quota nhanh vì "bất kỳ thao tác nào cũng
+truy vấn lại từ đầu". Đếm trực tiếp trong code xác nhận cụ thể (không phải áng chừng): `canbo` bị
+gắn **6 listener độc lập** (`useDanhSachCanBo()` gọi ở `ThemVuAnForm`/`SuaVuAnForm`/`DanhSachPanel`/
+`ChiTietVuAnModal`/`GiaoNhanHoSoModule` + 1 nơi riêng ở `CanBoModule`), `kybaocao` bị gắn **6 nơi
+tốn đọc độc lập** (5 `onSnapshot` ở `DanhSachPanel`/`KyBaoCaoModule`/`AnDaGiaiQuyetModule`/
+`DashboardModule`/`NhatKyModule`, **cộng thêm `ModalXacNhanKy` tự `.get()` lại TOÀN BỘ collection
+MỖI LẦN MỞ** — modal này mở ở MỌI thao tác nghiệp vụ nên đây mới là điểm tốn quota nhiều nhất, dù
+không lộ ra qua `onSnapshot` lúc grep ban đầu), `danhMucToiDanh` bị gắn 2 listener độc lập.
+
+**Thiết kế: lớp cache/listener dùng chung** (`useFirestoreCollectionCache`/`useFirestoreCacheLoaded`,
+đặt đầu file cạnh các hook dùng chung khác, dòng ~1129) — registry toàn cục (`firestoreCacheRegistry`,
+ngoài React) giữ ĐÚNG 1 listener Firestore sống cho mỗi `cacheKey`, chia sẻ dữ liệu cho mọi hook
+đang subscribe qua 1 tập callback nội bộ; giữ listener sống thêm 3 phút (`FIRESTORE_CACHE_GRACE_MS`)
+sau khi subscriber cuối unmount (chuyển tab/mở-đóng form nhanh không phá rồi dựng lại từ đầu), chỉ
+huỷ hẳn khi hết grace period mà không ai subscribe lại. Cleanup được gom vào 1 hàm dùng chung
+(`lichHuyNeuKhongAiDung`) gọi từ CẢ 2 hook (dữ liệu lẫn "loaded") — cố tình không đặt logic này chỉ
+trong 1 hook vì thứ tự chạy cleanup giữa nhiều hook cùng component lúc unmount không đảm bảo cố
+định, đã viết test riêng xác nhận cả 2 thứ tự khai báo hook đều dọn dẹp đúng, không rò rỉ.
+
+**Áp dụng**: `useDanhSachCanBo()`/`useDanhMucToiDanh()` (fallback về `DANH_MUC_TOI_DANH_MAM` khi
+Firestore rỗng — giữ nguyên hành vi cũ, chỉ đổi cách lấy dữ liệu) đổi sang dùng cache, KHÔNG cần sửa
+5+ call site vì đã là hook dùng chung. `CanBoModule` (dòng cũ tự mở listener riêng thay vì gọi hook)
+đổi sang gọi thẳng hook. `kybaocao` **KHÔNG gộp về 1 query duy nhất kèm sort lại phía client** như
+dự định ban đầu — phát hiện lúc code: `timKyTruoc` (dùng ở `KyBaoCaoModule`) có comment rõ ràng
+"Không dùng so sánh timestamp để tránh bug khi data có format không đồng nhất", dựa hẳn vào thứ tự
+Firestore trả về từ `orderBy` server-side. Sort lại phía client sẽ tái lập đúng lớp bug đó đã né
+trước đây — thay vào đó dùng ĐÚNG 2 cacheKey khớp 2 query thật sự khác nhau: `"kybaocao:desc"`
+(orderBy desc — dùng bởi `DanhSachPanel`/`KyBaoCaoModule`/`AnDaGiaiQuyetModule`/`NhatKyModule`/
+**`ModalXacNhanKy`**, gộp 6 nơi thành 1 listener) và `"kybaocao:asc"` (orderBy asc — riêng
+`DashboardModule` cần đúng chiều thời gian cho biểu đồ). `ModalXacNhanKy` đổi từ `.get()` một lần
+sang cache sống, nhưng vẫn giữ đúng hành vi "chỉ tự đặt `kyChon` mặc định 1 LẦN mỗi lần mở modal"
+qua 1 `useRef` cờ đánh dấu — tránh cache cập nhật sống trong lúc modal đang mở làm mất lựa chọn tay
+của người dùng.
+
+**Giai đoạn 2 — thêm `ngayCapNhat`/`nguoiCapNhatCuoi` vào toàn bộ 13 nơi ghi `bican`** (rà soát xác
+nhận `bican` trước đây HOÀN TOÀN không có field mốc thời gian nào, khác `vuan` đã dùng nhất quán) —
+điều kiện tiên quyết bắt buộc cho cache lạnh dựa trên delta ở Đợt 2 sau này (xem "Ngoài phạm vi Đợt
+1" bên dưới): `tachVuAn` (3 chỗ), `BackfillDieuLuatBCTool`, `BackfillLoaiKhoiToTool`,
+`ImportExcelModule`, `NhapVuModal` (2 chỗ), `ThemVuAnForm`, `SuaBiCanForm` (2 chỗ — quan trọng nhất
+vì đây là chỗ sửa bị can điển hình nhất), `ThemBiCanForm` (2 chỗ). Không sửa `XoaVuAnModal` (chỉ
+`batch.delete`, không phải create/update).
+
+**Đã kiểm chứng**: (1) biên dịch cú pháp cả `qlva.html`/`qlva-dev.html` qua `esbuild` (JSX) — sạch,
+không lỗi; (2) viết test độc lập bằng `react-test-renderer` + Firestore giả lập cho đúng phần code
+MỚI và rủi ro nhất (cơ chế cache dùng chung) — 5 kịch bản/11 assertion đều pass: dedupe đúng 1
+listener dù nhiều component subscribe, remount trong grace period không tạo listener mới, unmount
+hẳn quá grace period thì huỷ đúng (không rò rỉ), thứ tự khai báo 2 hook (dữ liệu/loaded) đảo ngược
+nhau vẫn dọn dẹp đúng, dữ liệu trả về đúng nội dung. **CHƯA kiểm chứng bằng Playwright + dữ liệu
+Firestore thật trên `qlva-dev.html`** (không có MCP trình duyệt khả dụng trong phiên code này, cũng
+không có tài khoản đăng nhập test) — cần mở thử `qlva-dev.html` thật: chuyển qua lại các tab Danh
+sách vụ án/Kỳ báo cáo/Án đã giải quyết/Dashboard/Nhật ký thao tác nhiều lần xem có tạo listener
+`kybaocao` mới không (dùng Firestore debug log hoặc DevTools Network), mở nhiều form dùng gợi ý
+KSV/ĐTV xem `canbo` chỉ đọc 1 lần, thêm/sửa bị can rồi xem trực tiếp Firestore Console xác nhận
+field `ngayCapNhat` xuất hiện đúng ở cả 13 vị trí, trước khi tin tưởng đưa lên `qlva.html`
+production.
+
+**Ngoài phạm vi Đợt 1 (để dành phiên sau, xem plan gốc đã thống nhất với người dùng)**: Thùng rác
+(soft-delete cho `XoaVuAnModal` — đổi `batch.delete` thành đặt cờ `daXoa`/`ngayXoa`, tab "Thùng rác"
+mới trong `CaiDatModule`, lọc `daXoa` ở mọi nơi liệt kê `vuan` — bao gồm `xuatExcel`/
+`ImportExcelModule` đối chiếu trùng/`NhapVuModal` tìm vụ đích) và cache lạnh IndexedDB (dựa trên
+`ngayCapNhat` vừa thêm ở Giai đoạn 2) cho vụ đã giải quyết + `baoCaoLuu` của kỳ đã chốt — mục tiêu
+cuối cùng đã thống nhất: vụ đã giải quyết gần như bất biến (trừ Tạm đình chỉ → Phục hồi, hoặc nhập
+mức án lúc nộp lưu trữ — cả 2 đều là 1 lần GHI vào `vuan` nên tự động lọt vào delta-check theo
+`ngayCapNhat`, không cần code riêng từng ngoại lệ) nên chỉ cần tải 1 lần, chỉ đồng bộ lại đúng phần
+đổi qua query rẻ `where(ngayCapNhat > lầnSyncTrước)` thay vì tải lại toàn bộ mỗi lần.
+
 ## Kế hoạch tiếp theo (ghi lúc checkout nhánh `toi-uu-firestore-read`, 2026-07-17)
 
 Đang đứng ở nhánh **`toi-uu-firestore-read`** (branch mới nhất trên remote, commit cuối `e09e53c`
