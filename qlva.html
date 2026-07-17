@@ -1214,6 +1214,24 @@ function useFirestoreCacheLoaded(cacheKey, queryFn) {
   return loaded;
 }
 
+// Cache "1 lần, hết hạn sau N phút" cho các query MỘT LẦN (.get(), không phải onSnapshot) hay bị
+// gọi lặp lại vô ích khi đóng/mở lại nhanh cùng 1 công cụ tìm kiếm (VD "Tìm thủ công" ở Giao nhận
+// hồ sơ, "Nhập vụ tìm đích") — 2026-07-18. KHÁC HẲN useFirestoreCollectionCache: KHÔNG giữ listener
+// sống liên tục, vì các công cụ này chỉ dùng để TRA CỨU-CHỌN 1 lần, không cần realtime; giữ 1
+// listener sống trên tập "đang giải quyết" (thay đổi liên tục, đông nhất hệ thống) chỉ để phục vụ 1
+// công cụ tìm kiếm ít dùng sẽ tốn đọc vô ích mỗi khi CÓ NGƯỜI KHÁC sửa BẤT KỲ vụ nào trong lúc công
+// cụ đã đóng — tệ hơn cả không cache gì. TTL mặc định 2 phút — đủ để tránh gọi lại khi người dùng
+// đóng/mở nhanh trong cùng 1 phiên thao tác, nhưng không giữ dữ liệu cũ quá lâu.
+const oneTimeCacheRegistry = {}; // { [cacheKey]: { data, fetchedAt } }
+async function fetchWithTtlCache(cacheKey, queryFn, ttlMs = 2 * 60 * 1000) {
+  const entry = oneTimeCacheRegistry[cacheKey];
+  if (entry && Date.now() - entry.fetchedAt < ttlMs) return entry.data;
+  const snap = await queryFn().get();
+  const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  oneTimeCacheRegistry[cacheKey] = { data, fetchedAt: Date.now() };
+  return data;
+}
+
 // Hook danh mục tội danh — dùng chung trong form BC + tinhBieu10.
 function useDanhMucToiDanh() {
   // Mặc định dùng mảng inline; nếu Firebase đã seed thì dùng Firebase (có thể đã chỉnh sửa) —
@@ -3078,21 +3096,28 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
 
+  // 2026-07-18: TÁCH RIÊNG tải ứng viên (chỉ 1 lần, cache TTL 2 phút — xem fetchWithTtlCache) khỏi
+  // lọc theo từ khoá (thuần client, chạy lại mỗi lần gõ) — trước đây gộp chung 1 effect theo
+  // [tuKhoa], nghĩa là MỖI KÝ TỰ gõ vào ô tìm kiếm đều gọi lại Firestore đọc tới 300 document, dù
+  // "danh sách 300 vụ gần nhất" không hề đổi giữa các lần gõ liên tiếp trong CÙNG 1 lượt tìm.
+  const [dsUngVien, setDsUngVien] = useState(null);
   useEffect(() => {
-    if (!tuKhoa.trim()) { setKetQua([]); return; }
     let active = true;
-    const k = tuKhoa.trim().toLowerCase();
-    db.collection("vuan").orderBy("ngayTao", "desc").limit(300).get().then(snap => {
-      if (!active) return;
-      const list = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet" && !v.daXoa)
-        .filter(v => (hienThiMa(v) || "").toLowerCase().includes(k) || (v.tenVu || "").toLowerCase().includes(k))
-        .slice(0, 10);
-      setKetQua(list);
-    });
+    fetchWithTtlCache("vuan:300_gan_nhat", () => db.collection("vuan").orderBy("ngayTao", "desc").limit(300))
+      .then(docs => { if (active) setDsUngVien(docs); })
+      .catch(err => console.error(err));
     return () => { active = false; };
-  }, [tuKhoa, vuAn.id]);
+  }, []);
+
+  useEffect(() => {
+    if (!tuKhoa.trim() || !dsUngVien) { setKetQua([]); return; }
+    const k = tuKhoa.trim().toLowerCase();
+    const list = dsUngVien
+      .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet" && !v.daXoa)
+      .filter(v => (hienThiMa(v) || "").toLowerCase().includes(k) || (v.tenVu || "").toLowerCase().includes(k))
+      .slice(0, 10);
+    setKetQua(list);
+  }, [tuKhoa, dsUngVien, vuAn.id]);
 
   const luu = () => {
     if (!dichId) { hd.setLoi("Cần chọn vụ đích để nhập vào."); return; }
@@ -9034,8 +9059,11 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const moTimThuCong = () => {
     setHienTimThuCong(true);
     if (dsVuDangGQ === null) {
-      db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").get()
-        .then(snap => setDsVuDangGQ(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa)))
+      // TTL cache (2 phút) — đóng/mở lại "Tìm thủ công" nhanh trong cùng phiên giao nhận không gọi
+      // lại Firestore (xem ghi chú ở fetchWithTtlCache). Không dùng listener sống vì công cụ này chỉ
+      // để tra cứu-chọn 1 lần, không cần realtime.
+      fetchWithTtlCache("vuan:dang_giai_quyet_timthucong", () => db.collection("vuan").where("trangThai", "==", "dang_giai_quyet"))
+        .then(docs => setDsVuDangGQ(docs.filter(v => !v.daXoa)))
         .catch(err => { console.error(err); setDsVuDangGQ([]); });
     }
   };
