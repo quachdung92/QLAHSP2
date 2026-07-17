@@ -2726,7 +2726,11 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       db.collection("bican").where("maVuAn", "==", vuAnId).get(),
     ]).then(([vuSnap, bcSnap]) => {
       if (!vuSnap.exists) { hd.setLoi("Không tìm thấy vụ án."); return; }
-      setVuAn({ id: vuSnap.id, ...vuSnap.data() });
+      const vuData = { id: vuSnap.id, ...vuSnap.data() };
+      setVuAn(vuData);
+      // "Đã xét xử" chỉ hợp lệ khi vụ đang ở giai đoạn Xét xử (xem TUY_CHON_HOAN_THANH bên dưới) —
+      // đổi mặc định sang lựa chọn đầu tiên còn hợp lệ nếu vụ chưa tới giai đoạn đó.
+      if (vuData.coQuanThuLy !== "xet_xu") setHinhThuc("chuyen_di");
       const bc = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       setBiCanList(bc);
       setTrangThaiBiCan(Object.fromEntries(bc.map(b => [b.id, "chuyen_han"])));
@@ -2747,11 +2751,20 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
   const idsOLai = new Set(Object.keys(trangThaiBiCan).filter(id => trangThaiBiCan[id] === "o_lai"));
   const laTdcDc = hinhThuc === "tam_dinh_chi" || hinhThuc === "dinh_chi";
   const laMotPhan = laTdcDc && biCanList.length > 0 && idsOLai.size > 0 && (idsChuyenHan.size + idsSaoChep.size) > 0;
+  // "Đã xét xử" chỉ hợp lệ khi vụ đang ở giai đoạn Xét xử — vụ còn ở Điều tra/Truy tố thì chưa
+  // thể có bản án. Lọc ngay tại đây (không sửa TUY_CHON_HOAN_THANH gốc vì hằng số đó còn dùng
+  // chung cho ThemVuAnForm — nơi có điều kiện tương tự nhưng theo `coQuanThuLy` đang CHỌN, không
+  // phải đã có sẵn trên 1 `vuAn` thật).
+  const tuyChonKhaDung = TUY_CHON_HOAN_THANH.filter(([v]) => v !== "da_xet_xu" || vuAn.coQuanThuLy === "xet_xu");
 
   const doiTrangThaiBiCan = (id, gia) => setTrangThaiBiCan(s => ({ ...s, [id]: gia }));
 
   const luu = () => {
     if (!ngay) { hd.setLoi("Cần nhập ngày quyết định."); return; }
+    if (hinhThuc === "da_xet_xu" && vuAn.coQuanThuLy !== "xet_xu") {
+      hd.setLoi("Chỉ vụ án đang ở giai đoạn Xét xử mới chọn được hình thức \"Đã xét xử\".");
+      return;
+    }
     if (hinhThuc === "chuyen_di" && !noiChuyenDen.trim()) { hd.setLoi("Cần nhập nơi chuyển đến."); return; }
     if (laTdcDc && biCanList.length > 0 && idsChuyenHan.size + idsSaoChep.size === 0) { hd.setLoi("Cần chọn ít nhất 1 bị can thuộc diện."); return; }
 
@@ -2808,13 +2821,19 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <label className="text-xs text-slate-500 block mb-1">Hình thức</label>
       <div className="grid grid-cols-3 gap-2 mb-3">
-        {TUY_CHON_HOAN_THANH.map(([v, l]) => (
+        {tuyChonKhaDung.map(([v, l]) => (
           <button key={v} onClick={() => setHinhThuc(v)}
                   className={`text-xs rounded-lg py-2 border ${hinhThuc === v ? "bg-indigo-600 text-white border-indigo-600" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
             {l}
           </button>
         ))}
       </div>
+      {vuAn.coQuanThuLy !== "xet_xu" && (
+        <div className="text-xs text-slate-400 -mt-2 mb-3">
+          Vụ đang ở giai đoạn {NHAN_GIAI_DOAN[vuAn.coQuanThuLy] || vuAn.coQuanThuLy} nên chưa chọn
+          được hình thức "Đã xét xử".
+        </div>
+      )}
       {hinhThuc === "chuyen_di" && (
         <>
           <label className="text-xs text-slate-500 block mb-1">Nơi chuyển đến</label>
@@ -3128,7 +3147,9 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   // giải quyết" rồi vào Hoàn thành vụ án sau — ẩn sau 1 toggle vì hiếm dùng (chỉ cần khi nhập lại
   // án cũ đã có kết quả), tránh làm dài form thêm cho luồng tạo án mới bình thường.
   const [capNhatKetQua, setCapNhatKetQua] = useState(false);
-  const [trangThaiKetQua, setTrangThaiKetQua] = useState("da_xet_xu");
+  // Mặc định "Chuyển đi" (không phải "Đã xét xử") vì "Cơ quan đang thụ lý" mặc định là Điều tra —
+  // "Đã xét xử" chỉ hợp lệ khi đã chọn giai đoạn Xét xử (xem select "Cơ quan đang thụ lý" ở trên).
+  const [trangThaiKetQua, setTrangThaiKetQua] = useState("chuyen_di");
   const [ngayQuyetDinhKQ, setNgayQuyetDinhKQ] = useState("");
   const [soQuyetDinhKQ, setSoQuyetDinhKQ] = useState("");
 
@@ -3170,6 +3191,10 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
     if (!ngayQdKtva) { setLoi("Cần nhập ngày quyết định khởi tố vụ án (dùng để sinh mã vụ án)."); return; }
     if (!tenVu.trim()) { setLoi("Cần nhập tên vụ, hoặc thêm ít nhất 1 bị can để hệ thống tự đặt tên."); return; }
     if (capNhatKetQua && !ngayQuyetDinhKQ) { setLoi("Đã chọn vụ án có kết quả giải quyết thì cần nhập ngày giải quyết."); return; }
+    if (capNhatKetQua && trangThaiKetQua === "da_xet_xu" && coQuanThuLy !== "xet_xu") {
+      setLoi("Chỉ vụ án ở giai đoạn Xét xử mới chọn được hình thức \"Đã xét xử\".");
+      return;
+    }
     setLoi("");
     setHienModalKy(true);
   };
@@ -3289,7 +3314,13 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
             <input value={tenVu} onChange={e => { setTenVu(e.target.value); setTenVuDaSua(true); }} className={oInput} />
           </Truong>
           <Truong nhan="Cơ quan đang thụ lý">
-            <select value={coQuanThuLy} onChange={e => setCoQuanThuLy(e.target.value)} className={oInput}>
+            <select value={coQuanThuLy} onChange={e => {
+              const gd = e.target.value;
+              setCoQuanThuLy(gd);
+              // "Đã xét xử" chỉ hợp lệ ở giai đoạn Xét xử — đổi khỏi giai đoạn đó thì bỏ chọn luôn
+              // để không kẹt lại lựa chọn không còn hiện trên UI (xem select "Hình thức giải quyết").
+              if (gd !== "xet_xu" && trangThaiKetQua === "da_xet_xu") setTrangThaiKetQua("chuyen_di");
+            }} className={oInput}>
               <option value="dieu_tra">Điều tra</option>
               <option value="truy_to">Truy tố</option>
               <option value="xet_xu">Xét xử</option>
@@ -3389,8 +3420,15 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
             <div className="grid grid-cols-1 gap-3 mt-3">
               <Truong nhan="Hình thức giải quyết">
                 <select value={trangThaiKetQua} onChange={e => setTrangThaiKetQua(e.target.value)} className={oInput}>
-                  {TUY_CHON_HOAN_THANH.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  {TUY_CHON_HOAN_THANH
+                    .filter(([v]) => v !== "da_xet_xu" || coQuanThuLy === "xet_xu")
+                    .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
+                {coQuanThuLy !== "xet_xu" && (
+                  <div className="text-xs text-slate-400 mt-1">
+                    Chọn "Cơ quan đang thụ lý" = Xét xử ở trên nếu vụ này đã có bản án.
+                  </div>
+                )}
               </Truong>
               <Truong nhan="Ngày giải quyết *">
                 <NhapNgay value={ngayQuyetDinhKQ} onChange={e => setNgayQuyetDinhKQ(e.target.value)} className={oInput} />

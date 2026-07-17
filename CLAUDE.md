@@ -660,6 +660,24 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       `qlva-dev.html`: Hoàn thành 1 vụ (chọn nhầm hình thức), bấm "Xoá hình thức giải quyết", xác
       nhận vụ về "Đang giải quyết" đúng, sự kiện `hoan_thanh` cũ biến mất khỏi Lịch sử, rồi bấm lại
       "Hoàn thành vụ án" chọn đúng hình thức xem lưu bình thường không.
+      **Ràng buộc "Đã xét xử" chỉ chọn được ở giai đoạn Xét xử (2026-07-17)** — trước đây
+      `HoanThanhVuAnModal` cho chọn cả 5 hình thức (`TUY_CHON_HOAN_THANH`) bất kể vụ đang ở giai
+      đoạn nào, dẫn tới việc lỡ chọn "Đã xét xử" cho vụ còn ở Điều tra/Truy tố (vô lý về nghiệp vụ
+      — chưa ra toà thì chưa thể có bản án). Đã thêm điều kiện lọc: nút "Đã xét xử" chỉ hiện trong
+      `HoanThanhVuAnModal` khi `vuAn.coQuanThuLy === "xet_xu"` (biến `tuyChonKhaDung`, lọc từ
+      `TUY_CHON_HOAN_THANH` — KHÔNG sửa hằng số gốc vì `ThemVuAnForm` dùng chung hằng số này cho 1
+      tình huống khác, xem ngay dưới). Vụ chưa tới giai đoạn Xét xử thì mặc định `hinhThuc` đổi
+      sang `"chuyen_di"` (đặt lúc tải xong `vuAn` trong `useEffect`, không phải lúc khởi tạo
+      `useState` vì lúc đó chưa biết `coQuanThuLy`), kèm dòng chú thích nhỏ giải thích lý do ẩn.
+      Chặn thêm ở `luu()` (phòng trường hợp state cũ còn sót lại) để không lọt xuống Firestore dù
+      UI có bị bypass thế nào. **Áp dụng tương tự cho `ThemVuAnForm`** (khối "Vụ án đã có kết quả
+      giải quyết" — nhập bổ sung án cũ đã xong ngay lúc tạo vụ, dùng lại `TUY_CHON_HOAN_THANH`):
+      dropdown "Hình thức giải quyết" lọc theo `coQuanThuLy` đang CHỌN trên form (khác
+      `HoanThanhVuAnModal` — ở đó đọc từ 1 `vuAn` đã lưu, ở đây đọc từ state đang nhập), đổi
+      `coQuanThuLy` sang khác "Xét xử" thì tự bỏ chọn "Đã xét xử" nếu đang chọn (tránh kẹt lựa
+      chọn không còn hiện trên UI), đổi mặc định `trangThaiKetQua` từ `"da_xet_xu"` sang
+      `"chuyen_di"` (khớp mặc định `coQuanThuLy` là Điều tra), và chặn thêm ở `onBamLuu()`. Đã
+      kiểm chứng cú pháp bằng compile — **CHƯA kiểm chứng bằng dữ liệu Firestore thật**.
 - [x] Module Án đã giải quyết (`AnDaGiaiQuyetModule`) — 5 tab theo `trangThai` cụ thể (Đã xét
       xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ, danh sách `TAB_DA_GIAI_QUYET`), lấy `ngày quyết
       định` từ sự kiện `hoan_thanh` trong log (không phải `ngayCapNhat` của `vuan` — field đó có
