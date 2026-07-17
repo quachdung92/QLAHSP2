@@ -8640,8 +8640,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [dangTaiLichSu, setDangTaiLichSu] = useState(false);
   const [luuTruMoi, setLuuTruMoi] = useState(false); // bật "Nộp hồ sơ lưu trữ" trước khi bắt đầu phiên Nhận
   const [dsPhienGanDay, setDsPhienGanDay] = useState(null); // null = chưa tải; danh sách phiên (mọi trạng thái) để mở lại
-  const [tenPhienMoi, setTenPhienMoi] = useState(""); // đặt tên phiên trước khi bắt đầu — chỉ để dễ tìm lại sau này
   const [tuKhoaPhien, setTuKhoaPhien] = useState(""); // tìm trong "Phiên gần đây" theo tên đã đặt
+  const [dangSuaTenPhien, setDangSuaTenPhien] = useState(false);
+  const [tenPhienDangSua, setTenPhienDangSua] = useState("");
   const inputRef = React.useRef(null);
 
   // Danh sách phiên gần đây (2026-07-17) — trước đây bấm "Phiên mới"/đóng trình duyệt là MẤT hẳn
@@ -8675,19 +8676,23 @@ function GiaoNhanHoSoModule({ currentUser }) {
     if (phien && phien.trangThai === "dang_mo") inputRef.current?.focus();
   }, [phien, dsQuet]);
 
+  // Đổi sang phiên khác (từ "Phiên gần đây" hoặc "Phiên mới") thì đóng luôn form sửa tên đang dở
+  // của phiên cũ, tránh Lưu nhầm vào phiên mới đang xem.
+  useEffect(() => { setDangSuaTenPhien(false); setTenPhienDangSua(""); }, [phien?.id]);
+
   // "Nộp hồ sơ lưu trữ" (laLuuTru, 2026-07-16) — chỉ chọn được khi bắt đầu phiên NHẬN (nộp lưu
   // trữ nghĩa là bộ phận lưu trữ NHẬN hồ sơ từ KSV/ĐTV), đánh dấu cả phiên là 1 đợt nộp lưu trữ để
   // bảng giao nhận + biên bản in hiện thêm cột "Thời hạn bảo quản" (không hiện ở phiên thường vì
   // không cần thiết cho giao nhận nội bộ hàng ngày).
   const batDauPhien = async (loaiGiaoDich, laLuuTru = false) => {
     const now = new Date();
-    const tenPhien = tenPhienMoi.trim();
+    // Không hỏi tên ngay lúc này — chưa quét vụ nào thì chưa biết KSV/ĐTV để đặt tên. Tự điền sau
+    // khi quét hồ sơ đầu tiên (xem ghiNhanVuVaoPhien), vẫn sửa tay được sau đó (xem SuaTenPhien).
     const ref = await db.collection("phienGiaoNhan").add({
-      loaiGiaoDich, laLuuTru, tenPhien, nguoiThucHien: currentUser?.email || "",
+      loaiGiaoDich, laLuuTru, tenPhien: "", nguoiThucHien: currentUser?.email || "",
       thoiDiemBatDau: now, trangThai: "dang_mo", thoiDiemLuu: null,
     });
-    setPhien({ id: ref.id, loaiGiaoDich, laLuuTru, tenPhien, trangThai: "dang_mo", thoiDiemBatDau: now });
-    setTenPhienMoi("");
+    setPhien({ id: ref.id, loaiGiaoDich, laLuuTru, tenPhien: "", trangThai: "dang_mo", thoiDiemBatDau: now });
   };
 
   // Dùng chung cho cả 2 đường vào: quét mã QR (biết trước id) và tìm thủ công (đã có sẵn cả
@@ -8722,6 +8727,20 @@ function GiaoNhanHoSoModule({ currentUser }) {
       khongTiepNhan: false, lyDoKhongTiepNhan: "",
       ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
     }));
+    // Tự đặt tên phiên NGAY SAU KHI quét hồ sơ ĐẦU TIÊN — trước đó chưa biết KSV/ĐTV để đặt tên
+    // (2026-07-17, theo yêu cầu người dùng). Chỉ tự đặt khi phiên CHƯA có tên (không ghi đè tên đã
+    // sửa tay) và đây đúng là hồ sơ đầu tiên của phiên (dsQuet hiện tại — state đã có từ onSnapshot
+    // — vẫn đang rỗng). Ưu tiên ĐTV, không có thì KSV — cả 2 đều lấy thẳng từ `vuAn` (không dùng
+    // "Người nhận thực tế" làm nguồn vì field đó không tồn tại trên `vuan`, chỉ là ghi chú tay
+    // thêm SAU trên từng dòng log, không có giá trị ngay lúc quét).
+    if (!phien.tenPhien && dsQuet.length === 0) {
+      const ten = (vuAn.dtvCbdt || vuAn.ksvChinh || "").trim();
+      if (ten) {
+        const tenPhien = phien.loaiGiaoDich === "giao" ? `Giao hồ sơ cho ${ten}` : `Nhận hồ sơ của ${ten}`;
+        db.collection("phienGiaoNhan").doc(phien.id).update({ tenPhien }).catch(err => console.error(err));
+        setPhien(p => ({ ...p, tenPhien }));
+      }
+    }
   };
 
   const xuLyQuet = async (e) => {
@@ -8904,15 +8923,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
     return (
       <div>
         <h2 className="text-lg font-semibold mb-4">Giao nhận hồ sơ</h2>
-        <div className="text-sm text-slate-500 mb-4">Chọn loại giao dịch để bắt đầu 1 phiên quét mới.</div>
-        <div className="mb-3 max-w-md">
-          <input value={tenPhienMoi} onChange={e => setTenPhienMoi(e.target.value)}
-                 placeholder="Tên phiên (không bắt buộc) — VD: Giao hồ sơ sáng cho anh Long"
-                 className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
-          <div className="text-xs text-slate-400 mt-1">
-            Chỉ để dễ tìm lại phiên này trong "Phiên gần đây" bên dưới sau này, không ảnh hưởng gì
-            khác đến phiên hay hồ sơ đã quét.
-          </div>
+        <div className="text-sm text-slate-500 mb-4">
+          Chọn loại giao dịch để bắt đầu 1 phiên quét mới — tên phiên (VD "Giao hồ sơ cho...") sẽ tự
+          điền ngay sau khi quét hồ sơ đầu tiên, dùng để tìm lại ở "Phiên gần đây" bên dưới.
         </div>
         <div className="flex gap-3 items-stretch flex-wrap">
           <button onClick={() => batDauPhien("giao")}
@@ -9003,6 +9016,29 @@ function GiaoNhanHoSoModule({ currentUser }) {
             {phien.laLuuTru && <Badge mau="bg-amber-100 text-amber-700">Nộp lưu trữ</Badge>}
             {phien.trangThai === "da_luu" && <Badge mau="bg-slate-200 text-slate-600">Đã lưu</Badge>}
           </div>
+          {/* Tên phiên (2026-07-17) — tự điền sau khi quét hồ sơ đầu tiên (xem ghiNhanVuVaoPhien),
+              vẫn sửa tay được ở đây bất kể phiên đang mở hay đã lưu (chỉ là nhãn tra cứu, không
+              phải dữ liệu nghiệp vụ nên không cần khoá theo trangThai như các dòng log khác). */}
+          {dangSuaTenPhien ? (
+            <div className="flex items-center gap-1.5 mt-1">
+              <input value={tenPhienDangSua} onChange={e => setTenPhienDangSua(e.target.value)}
+                     placeholder="VD: Giao hồ sơ cho anh Long" autoFocus
+                     className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-64" />
+              <button onClick={async () => {
+                        const tenPhien = tenPhienDangSua.trim();
+                        await db.collection("phienGiaoNhan").doc(phien.id).update({ tenPhien });
+                        setPhien(p => ({ ...p, tenPhien }));
+                        setDangSuaTenPhien(false);
+                      }}
+                      className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Lưu</button>
+              <button onClick={() => setDangSuaTenPhien(false)} className="text-xs text-red-400 hover:text-red-600">Huỷ</button>
+            </div>
+          ) : (
+            <button onClick={() => { setTenPhienDangSua(phien.tenPhien || ""); setDangSuaTenPhien(true); }}
+                    className="text-xs text-slate-400 hover:text-indigo-600 mt-1">
+              {phien.tenPhien ? <>Tên phiên: <span className="font-medium text-slate-600">{phien.tenPhien}</span> <span className="text-slate-300">✎</span></> : "✎ Đặt tên phiên"}
+            </button>
+          )}
         </div>
         <div className="flex gap-2">
           {phien.trangThai === "dang_mo" && (

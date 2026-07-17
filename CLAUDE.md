@@ -440,21 +440,37 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       `@babel/standalone@7.25.6` — **CHƯA in thử giấy thật với danh sách đủ dài (>1 trang A4
       ngang) để xác nhận việc sang trang + lặp header đúng như mong đợi**, cần thử trên
       `qlva-dev.html` với 1 phiên có nhiều vụ án trước khi tin tưởng trên production.
-      **Đặt tên phiên (2026-07-17, cùng đợt)** — field mới `tenPhien` trên `phienGiaoNhan`, nhập ở
-      1 ô text (không bắt buộc) ngay trên 2 nút "Bắt đầu phiên" lúc chưa mở phiên nào, ghi vào
-      `batDauPhien` lúc tạo phiên. **CỐ Ý thuần tuý là nhãn để tra cứu** (theo yêu cầu người dùng:
-      "không ảnh hưởng đến heading") — KHÔNG hiện trong header "Phiên hiện tại" của màn giao nhận
-      đang mở (`<h2>Giao nhận hồ sơ</h2>` + dòng badge loại giao dịch/lưu trữ/đã lưu giữ nguyên y
-      hệt trước), KHÔNG ảnh hưởng field nào khác của phiên hay của từng dòng hồ sơ đã quét, không
-      xuất hiện trên biên bản in A4 hay Excel lịch sử. Chỉ dùng ở đúng 1 nơi: danh sách **"Phiên
-      gần đây"** (đã có sẵn, xem mục ngay trên) — hiện tên (nếu có) làm dòng đậm phía trên các
-      Badge của mỗi phiên, kèm 1 ô **tìm theo tên phiên** (`tuKhoaPhien`, lọc client-side, case-
-      insensitive) đặt cạnh tiêu đề "Phiên gần đây" — chỉ tìm được trong 30 phiên gần nhất đã tải
-      sẵn (giới hạn của chính danh sách "Phiên gần đây", không phải hạn chế riêng của tìm kiếm;
-      đã ghi rõ trên UI), KHÔNG query full-collection để tìm phiên cũ hơn. Không cho sửa lại tên
-      sau khi đã bắt đầu phiên (chỉ đặt được lúc khởi tạo) — nếu sau này cần đổi tên phiên đã tạo,
-      đó là 1 tính năng riêng (rename), chưa làm. Đã kiểm chứng cú pháp bằng compile qua đúng bản
-      `@babel/standalone@7.25.6` — **CHƯA kiểm chứng bằng dữ liệu Firestore thật**.
+      **Đặt tên phiên (2026-07-17, cùng đợt) — tự động điền sau khi quét hồ sơ đầu tiên** — field
+      mới `tenPhien` trên `phienGiaoNhan`. Bản đầu tiên hỏi tên ngay lúc bắt đầu phiên (trước khi
+      quét vụ nào) nhưng người dùng chỉ ra vấn đề: lúc đó CHƯA quét hồ sơ nào nên chưa biết KSV/ĐTV
+      là ai để đặt tên có nghĩa — đã đổi hẳn sang **tự động tính ngay sau khi quét/chọn hồ sơ ĐẦU
+      TIÊN của phiên** (trong `ghiNhanVuVaoPhien`, điều kiện `!phien.tenPhien && dsQuet.length ===
+      0` — chỉ tự đặt khi phiên CHƯA có tên, không ghi đè tên đã sửa tay): `Giao hồ sơ cho <tên>`
+      (phiên Giao) hoặc `Nhận hồ sơ của <tên>` (phiên Nhận), với `<tên>` ưu tiên **ĐTV**
+      (`vuAn.dtvCbdt`), không có thì **KSV** (`vuAn.ksvChinh`) — theo đúng yêu cầu người dùng. CỐ Ý
+      KHÔNG dùng "Người nhận thực tế" (`nguoiNhanThucTe`) làm nguồn vì field đó không tồn tại trên
+      `vuan`, chỉ là ghi chú tay thêm SAU trên từng dòng log (`DongGiaoNhan`), luôn rỗng đúng lúc
+      quét nên vô nghĩa làm nguồn tự động tại thời điểm này. Cả 2 vụ (nếu vụ không có cả ĐTV lẫn
+      KSV) thì bỏ qua, không đặt tên trống nghĩa.
+      **CỐ Ý thuần tuý là nhãn để tra cứu** (theo yêu cầu người dùng: "không ảnh hưởng đến
+      heading") — `<h2>Giao nhận hồ sơ</h2>` + dòng badge loại giao dịch/lưu trữ/đã lưu giữ nguyên
+      y hệt trước, KHÔNG ảnh hưởng field nào khác của phiên hay của từng dòng hồ sơ đã quét, không
+      xuất hiện trên biên bản in A4 hay Excel lịch sử. Hiện + **sửa tay được sau đó** (khác bản đầu
+      tiên "chỉ đặt được lúc khởi tạo, không sửa được nữa") ở 1 dòng nhỏ ngay dưới "Phiên hiện tại"
+      (không phải trong `<h2>`) — bấm vào để bật input inline (`dangSuaTenPhien`/`tenPhienDangSua`),
+      Lưu/Huỷ, dùng được bất kể phiên đang mở hay đã lưu (chỉ là nhãn tra cứu, không phải dữ liệu
+      nghiệp vụ nên không khoá theo `trangThai` như các dòng log khác) — hữu ích để tự sửa lại nếu
+      tên tự động không đúng ý, hoặc đặt tên cho phiên lỡ không tự đặt được (vụ thiếu cả ĐTV/KSV).
+      Cũng dùng ở danh sách **"Phiên gần đây"** (đã có sẵn, xem mục ngay trên) — hiện tên (nếu có)
+      làm dòng đậm phía trên các Badge của mỗi phiên, kèm 1 ô **tìm theo tên phiên** (`tuKhoaPhien`,
+      lọc client-side, case-insensitive) đặt cạnh tiêu đề "Phiên gần đây" — chỉ tìm được trong 30
+      phiên gần nhất đã tải sẵn (giới hạn của chính danh sách "Phiên gần đây", không phải hạn chế
+      riêng của tìm kiếm; đã ghi rõ trên UI), KHÔNG query full-collection để tìm phiên cũ hơn. Đã
+      kiểm chứng cú pháp bằng compile qua đúng bản `@babel/standalone@7.25.6` — **CHƯA kiểm chứng
+      bằng dữ liệu Firestore thật**, cần thử trên `qlva-dev.html`: bắt đầu phiên Giao, quét 1 vụ có
+      ĐTV, xác nhận tên phiên tự điền đúng "Giao hồ sơ cho <ĐTV>" ngay sau khi quét; thử tiếp 1 vụ
+      chỉ có KSV không có ĐTV, xác nhận rơi xuống dùng KSV; bấm sửa tên tại dòng "Tên phiên" dưới
+      header, lưu lại, xác nhận cập nhật đúng cả trên UI lẫn khi mở lại từ "Phiên gần đây".
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
