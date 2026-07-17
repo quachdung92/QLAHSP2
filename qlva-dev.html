@@ -8177,6 +8177,16 @@ function moTaMucAn(dong) {
   return `${dong.mucAnNam} năm${dong.mucAnCoSauThang ? " 6 tháng" : ""}`;
 }
 
+// "Không tiếp nhận" (2026-07-17) — chỉ có ý nghĩa với giao dịch NHẬN (bên nhận là người quyết định
+// có nhận hồ sơ hay không, VD hồ sơ KSV mang sang còn thiếu thông tin). Giao dịch GIAO không có
+// khái niệm này (người giao không "từ chối nhận" chính hồ sơ của mình). Dùng chung cho cả 3 nơi
+// hiển thị (dòng bảng phiên, biên bản in A4, Excel lịch sử) như moTaHinhThucGiaiQuyet đã làm.
+function moTaTiepNhan(dong) {
+  if (dong.loaiGiaoDich !== "nhan") return "";
+  if (!dong.khongTiepNhan) return "Đã tiếp nhận";
+  return `Không tiếp nhận — ${dong.lyDoKhongTiepNhan || "(chưa ghi lý do)"}`;
+}
+
 // Công tắc bật/tắt kiểu toggle (thay cho checkbox thường) — dùng chung cho các lựa chọn nhị phân
 // muốn nhìn hiện đại hơn <input type="checkbox">, VD "Nộp hồ sơ lưu trữ" ở Giao nhận hồ sơ.
 function CongTac({ checked, onChange, nhan, mauBat = "bg-emerald-600" }) {
@@ -8202,6 +8212,10 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
   const [mucAnLoai, setMucAnLoai] = useState(dong.mucAnLoai || "nam");
   const [mucAnNam, setMucAnNam] = useState(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
   const [mucAnCoSauThang, setMucAnCoSauThang] = useState(!!dong.mucAnCoSauThang);
+  // "Không tiếp nhận" (2026-07-17) — chỉ áp dụng cho giao dịch NHẬN (xem moTaTiepNhan), đánh dấu
+  // hồ sơ KSV/ĐTV mang sang KHÔNG được nhận (VD thiếu thông tin), kèm lý do gõ tay bắt buộc.
+  const [khongTiepNhan, setKhongTiepNhan] = useState(!!dong.khongTiepNhan);
+  const [lyDoKhongTiepNhan, setLyDoKhongTiepNhan] = useState(dong.lyDoKhongTiepNhan || "");
   const [vuAnDeSua, setVuAnDeSua] = useState(null); // null=đóng, "loading"=đang tải, object=sẵn sàng mở form
 
   // Mức án là thuộc tính của chính VỤ ÁN (khác KSV/ĐTV/số bút lục chỉ là snapshot trên dòng log)
@@ -8209,9 +8223,16 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
   // thoiHanBaoQuan trên dòng log để cột "Thời hạn bảo quản" phản ánh đúng ngay, không cần quét
   // lại vụ mới thấy số mới.
   const luu = async () => {
+    // Bắt buộc gõ lý do khi đánh dấu không tiếp nhận — đánh dấu mà không rõ lý do thì vô nghĩa,
+    // khác các trường khác của dòng (KSV/ĐTV/số bút lục) vốn không bắt buộc.
+    if (khongTiepNhan && !lyDoKhongTiepNhan.trim()) {
+      addToast("Đánh dấu \"Không tiếp nhận\" cần gõ rõ lý do.", "error");
+      return;
+    }
     const patch = {
       nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim(),
       soButLuc: soButLuc.trim(),
+      khongTiepNhan, lyDoKhongTiepNhan: khongTiepNhan ? lyDoKhongTiepNhan.trim() : "",
     };
     if (dong.trangThaiVu === "da_xet_xu") {
       const soNamMoi = mucAnLoai === "nam" ? (Number(mucAnNam) || null) : null;
@@ -8244,6 +8265,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
     setSoButLuc(dong.soButLuc || "");
     setMucAnLoai(dong.mucAnLoai || "nam"); setMucAnNam(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
     setMucAnCoSauThang(!!dong.mucAnCoSauThang);
+    setKhongTiepNhan(!!dong.khongTiepNhan); setLyDoKhongTiepNhan(dong.lyDoKhongTiepNhan || "");
     setDangSua(true);
   };
 
@@ -8293,6 +8315,29 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
             ? <span className="text-slate-700">{moTaHinhThucGiaiQuyet(dong)}</span>
             : <span className="text-slate-300">Đang giải quyết</span>}
         </td>
+        {dong.loaiGiaoDich === "nhan" && (
+          dangSua ? (
+            <td className="p-2 text-xs" onClick={e => e.stopPropagation()}>
+              <CongTac checked={khongTiepNhan} onChange={setKhongTiepNhan} nhan="Không tiếp nhận" mauBat="bg-red-600" />
+              {khongTiepNhan && (
+                <input value={lyDoKhongTiepNhan} onChange={e => setLyDoKhongTiepNhan(e.target.value)}
+                       placeholder="VD: Hồ sơ KSV mang sang chưa đầy đủ thông tin"
+                       className={oInput + " text-xs py-1 px-1.5 mt-1 w-full"} />
+              )}
+            </td>
+          ) : (
+            <td className="p-3 text-xs max-w-[220px]">
+              {dong.khongTiepNhan ? (
+                <>
+                  <Badge mau="bg-red-100 text-red-700">✗ Không tiếp nhận</Badge>
+                  <div className="text-slate-500 mt-1">{dong.lyDoKhongTiepNhan || "(chưa ghi lý do)"}</div>
+                </>
+              ) : (
+                <Badge mau="bg-emerald-100 text-emerald-700">✓ Đã tiếp nhận</Badge>
+              )}
+            </td>
+          )
+        )}
         {hienThoiHan && (
           dong.trangThaiVu !== "da_xet_xu" ? (
             <td className="p-3 text-xs"><span className="text-slate-300">—</span></td>
@@ -8379,11 +8424,18 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
 function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
   const dsInDung = [...dsQuet].reverse(); // in theo thứ tự quét trước lên trên
   const noiDung = (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 print:bg-white overflow-auto py-8">
+    // 2026-07-17: bỏ "fixed"/"overflow-auto" khi IN (chỉ giữ lại lúc xem trước trên màn hình) —
+    // "fixed inset-0" + "overflow-auto" ép khối này cao đúng 1 viewport rồi cho cuộn bên trong,
+    // khiến trình duyệt CẮT MẤT phần bảng vượt quá 1 trang thay vì tự sang trang khi in (nhiều
+    // vụ án bị mất khỏi bản in). Đổi sang position:static + overflow:visible khi in để nội dung
+    // tự nhiên tràn ra nhiều trang, <thead> tự lặp lại đầu mỗi trang mới (hành vi mặc định của
+    // trình duyệt với bảng HTML, không cần thêm gì).
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 overflow-auto py-8 print:static print:overflow-visible print:block print:bg-white print:p-0">
       {/* @page ở đây (không phải khối @media print chung trong <head>) vì chỉ áp dụng khi CHÍNH
           biên bản này đang mount trong #qr-print-root — không đụng tới khổ in A4 dọc mà InQRModal
-          (in mã QR) đang dùng, 2 modal không portal cùng lúc nên không xung đột. */}
-      <style>{"@page { size: landscape; }"}</style>
+          (in mã QR) đang dùng, 2 modal không portal cùng lúc nên không xung đột. Thêm "tr { break-
+          inside: avoid }" để 1 dòng vụ án không bị cắt ngang giữa 2 trang khi bảng dài hơn 1 trang. */}
+      <style>{"@page { size: landscape; } @media print { tr { break-inside: avoid; page-break-inside: avoid; } }"}</style>
       <div id="bbgn-in-a4" className="bg-white p-10" style={{ width: "297mm", minHeight: "210mm" }}>
         <div className="text-sm text-slate-400 mb-6 print:hidden">Xem trước trang in A4 ngang — bấm "In" để in thật.</div>
         <div className="text-center mb-6">
@@ -8401,6 +8453,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
               <th className="border border-slate-800 p-2 w-24">Mã vụ</th>
               <th className="border border-slate-800 p-2">Tên vụ</th>
               <th className="border border-slate-800 p-2 w-24">Trạng thái HS</th>
+              {phien.loaiGiaoDich === "nhan" && <th className="border border-slate-800 p-2 w-28">Tiếp nhận</th>}
               {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Mức án</th>}
               {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Thời hạn bảo quản</th>}
               <th className="border border-slate-800 p-2 w-20">KSV</th>
@@ -8425,6 +8478,11 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
                     <div className="text-xs text-slate-500 mt-0.5">QĐ KTVA: {d.soQdKtva || "—"} — {fmtDate(d.ngayQdKtva)}</div>
                   </td>
                   <td className="border border-slate-800 p-2 align-top text-xs">{moTaHinhThucGiaiQuyet(d)}</td>
+                  {phien.loaiGiaoDich === "nhan" && (
+                    <td className="border border-slate-800 p-2 align-top text-xs">
+                      {d.khongTiepNhan ? `⚠ Không tiếp nhận — ${d.lyDoKhongTiepNhan || "(chưa ghi lý do)"}` : "Đã tiếp nhận"}
+                    </td>
+                  )}
                   {phien.laLuuTru && (
                     <td className="border border-slate-800 p-2 align-top text-xs text-center">{moTaMucAn(d)}</td>
                   )}
@@ -8464,7 +8522,22 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [ksvTim, setKsvTim] = useState("tat_ca");
   const [dangTaiLichSu, setDangTaiLichSu] = useState(false);
   const [luuTruMoi, setLuuTruMoi] = useState(false); // bật "Nộp hồ sơ lưu trữ" trước khi bắt đầu phiên Nhận
+  const [dsPhienGanDay, setDsPhienGanDay] = useState(null); // null = chưa tải; danh sách phiên (mọi trạng thái) để mở lại
   const inputRef = React.useRef(null);
+
+  // Danh sách phiên gần đây (2026-07-17) — trước đây bấm "Phiên mới"/đóng trình duyệt là MẤT hẳn
+  // đường vào lại 1 phiên đã có (kể cả phiên đã "Lưu phiên" chỉ còn xem/in được, hay phiên "Đang
+  // mở" bị bỏ dở giữa chừng do đóng nhầm tab) — không có danh sách nào liệt kê `phienGiaoNhan` để
+  // bấm vào lại, chỉ có Nhật ký thao tác (liệt kê từng SỰ KIỆN, không theo phiên) hay Excel lịch sử
+  // (dump phẳng, không bấm mở lại được). Chỉ orderBy 1 field duy nhất (không kèm where) nên KHÔNG
+  // cần composite index mới. Chỉ tải khi đang ở màn hình chưa mở phiên (phien === null).
+  useEffect(() => {
+    if (phien) return;
+    return db.collection("phienGiaoNhan").orderBy("thoiDiemBatDau", "desc").limit(30).onSnapshot(
+      snap => setDsPhienGanDay(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error(err)
+    );
+  }, [phien]);
 
   // Không dùng orderBy kèm where ở đây để khỏi cần composite index mới — sắp xếp lại phía client.
   useEffect(() => {
@@ -8523,6 +8596,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
       // DongGiaoNhan) có sẵn giá trị hiện tại mà không cần đọc lại vuan.
       mucAnLoai: vuAn.mucAnLoai || null, mucAnNam: vuAn.mucAnNam ?? null,
       mucAnCoSauThang: !!vuAn.mucAnCoSauThang,
+      // Mặc định là ĐÃ tiếp nhận (quét/chọn xong coi như nhận bình thường) — chỉ đổi thành false
+      // khi người quét chủ động sửa dòng đánh dấu "Không tiếp nhận" kèm lý do (xem DongGiaoNhan).
+      khongTiepNhan: false, lyDoKhongTiepNhan: "",
       ghiChu: `KSV: ${vuAn.ksvChinh || "—"} — ĐTV: ${vuAn.dtvCbdt || "—"}`,
     }));
   };
@@ -8633,15 +8709,15 @@ function GiaoNhanHoSoModule({ currentUser }) {
       ws.views = [{ state: "frozen", ySplit: 1 }];
       const hRow = ws.addRow([
         "STT", "Loại giao dịch", "Thời điểm quét", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết",
-        "Mức án", "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV",
+        "Tiếp nhận", "Mức án", "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV",
         "Người nhận thực tế", "Số bút lục", "Người thực hiện (quét)", "Ghi chú",
       ]);
       hRow.font = { bold: true };
       hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
       ws.columns = [
         { width: 6 }, { width: 14 }, { width: 16 }, { width: 13 }, { width: 30 }, { width: 24 },
-        { width: 16 }, { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 },
-        { width: 16 }, { width: 12 }, { width: 20 }, { width: 24 },
+        { width: 28 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 },
+        { width: 16 }, { width: 16 }, { width: 12 }, { width: 20 }, { width: 24 },
       ];
       const QR_PX = 60; // ~60px vuông — đủ scan lại được (correctLevel M), giữ file không quá nặng
       rows.forEach((r, i) => {
@@ -8652,6 +8728,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
           "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
           r.tenVu || "",
           moTaHinhThucGiaiQuyet(r),
+          moTaTiepNhan(r),
           moTaMucAn(r),
           r.thoiHanBaoQuan || "",
           r.soQdKtva || "",
@@ -8730,6 +8807,38 @@ function GiaoNhanHoSoModule({ currentUser }) {
             án ngay tại dòng giao nhận nếu vụ Đã xét xử chưa có mức án.
           </div>
         )}
+
+        <div className="mt-8">
+          <div className="text-sm font-medium text-slate-600 mb-2">Phiên gần đây</div>
+          <div className="text-xs text-slate-400 mb-2">
+            Bấm vào 1 phiên để xem lại — phiên "Đang mở" (bỏ dở, VD lỡ đóng trình duyệt) tiếp tục
+            quét/sửa được ngay; phiên "Đã lưu" chỉ xem/in lại, không sửa được nữa.
+          </div>
+          {dsPhienGanDay === null && <div className="text-xs text-slate-400">Đang tải...</div>}
+          {dsPhienGanDay && dsPhienGanDay.length === 0 && (
+            <div className="text-xs text-slate-400">Chưa có phiên nào.</div>
+          )}
+          {dsPhienGanDay && dsPhienGanDay.length > 0 && (
+            <div className="border border-slate-200 rounded-lg overflow-hidden bg-white divide-y divide-slate-100 max-w-2xl">
+              {dsPhienGanDay.map(p => (
+                <button key={p.id} onClick={() => setPhien(p)}
+                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-indigo-50 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge mau={p.loaiGiaoDich === "giao" ? "bg-indigo-100 text-indigo-700" : "bg-emerald-100 text-emerald-700"}>
+                      {p.loaiGiaoDich === "giao" ? "Giao" : "Nhận"}
+                    </Badge>
+                    {p.laLuuTru && <Badge mau="bg-amber-100 text-amber-700">Lưu trữ</Badge>}
+                    {p.trangThai === "da_luu"
+                      ? <Badge mau="bg-slate-200 text-slate-600">Đã lưu</Badge>
+                      : <Badge mau="bg-yellow-100 text-yellow-700">Đang mở</Badge>}
+                    <span className="text-slate-400 text-xs">{p.nguoiThucHien || ""}</span>
+                  </div>
+                  <div className="text-xs text-slate-400 whitespace-nowrap">{fmtNgayGio(p.thoiDiemLuu || p.thoiDiemBatDau)}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -8830,6 +8939,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
               <th className="text-left p-3 w-32">Mã vụ</th>
               <th className="text-left p-3">Tên vụ</th>
               <th className="text-left p-3">Hình thức giải quyết</th>
+              {phien.loaiGiaoDich === "nhan" && <th className="text-left p-3">Tiếp nhận</th>}
               {phien.laLuuTru && <th className="text-left p-3">Mức án</th>}
               {phien.laLuuTru && <th className="text-left p-3">Thời hạn bảo quản</th>}
               <th className="text-left p-3">KSV</th>
@@ -8842,7 +8952,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
           </thead>
           <tbody>
             {dsQuet.length === 0 && (
-              <tr><td colSpan={phien.laLuuTru ? 12 : 10} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
+              <tr><td colSpan={9 + (phien.laLuuTru ? 2 : 0) + (phien.loaiGiaoDich === "nhan" ? 1 : 0) + (phien.trangThai === "dang_mo" ? 1 : 0)} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
             )}
             {dsQuet.map((d, i) => (
               <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}

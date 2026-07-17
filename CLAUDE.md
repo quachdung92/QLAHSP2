@@ -389,6 +389,57 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       Nhận bật công tắc lưu trữ, quét/chọn 1 vụ Đã xét xử chưa có mức án, sửa dòng đó nhập mức án
       ngay tại bảng, xem cột Thời hạn bảo quản cập nhật đúng ngay (không cần quét lại), rồi kiểm
       tra tiếp biên bản in/Excel đều ra đúng số theo bảng gốc.
+      **Thêm lựa chọn "Không tiếp nhận" kèm lý do (2026-07-17)** — chỉ áp dụng cho giao dịch NHẬN
+      (bên nhận là người quyết định có nhận hồ sơ hay không, VD hồ sơ KSV/ĐTV mang sang còn thiếu
+      thông tin), giao dịch Giao không có khái niệm này. Không phải 1 modal chặn ngay lúc quét
+      (sẽ phá nhịp quét nhanh của đầu đọc QR) — vẫn quét/ghi nhận bình thường như cũ (mặc định
+      `khongTiepNhan: false`), rồi đánh dấu NGAY TẠI DÒNG qua đúng cơ chế "sửa dòng" đã có (bấm cả
+      dòng → `dangSua`): thêm 1 cột **"Tiếp nhận"** (chỉ hiện khi `dong.loaiGiaoDich === "nhan"`)
+      với `CongTac` "Không tiếp nhận" (đỏ) + ô nhập lý do hiện ra khi bật — **bắt buộc gõ lý do**
+      mới lưu được (chặn bằng toast lỗi, khác các trường KSV/ĐTV/số bút lục khác của dòng vốn
+      không bắt buộc, vì đánh dấu "không tiếp nhận" mà không rõ lý do thì vô nghĩa). Lưu 2 field
+      mới trên chính sự kiện `giao_nhan_ho_so`: `khongTiepNhan`/`lyDoKhongTiepNhan`.
+      **Quan trọng: đây chỉ là 1 ghi chú/annotation thêm vào đúng dòng đó, KHÔNG xoá/ẩn dòng khỏi
+      phiên, không đổi trạng thái vụ án `vuan`, không ảnh hưởng số liệu báo cáo kỳ** (giống mọi
+      field khác của sự kiện `giao_nhan_ho_so` — log hành chính, không phải sự kiện nghiệp vụ) —
+      hồ sơ vẫn hiện bình thường ở mọi nơi (bảng phiên, biên bản in, Excel lịch sử), chỉ thêm nội
+      dung ghi chú giải thích tại sao chưa được nhận, để bên giao biết mà bổ sung rồi mang lại.
+      Helper dùng chung `moTaTiepNhan(dong)` (cùng pattern `moTaHinhThucGiaiQuyet`) áp dụng ở cả 3
+      nơi: cột "Tiếp nhận" trong bảng phiên (Badge xanh "✓ Đã tiếp nhận" / đỏ "✗ Không tiếp nhận"
+      kèm lý do), cột "Tiếp nhận" trong Biên bản in A4 (chỉ hiện khi `phien.loaiGiaoDich ===
+      "nhan"`, dùng chữ "⚠ Không tiếp nhận — <lý do>" thay vì Badge vì bản in không có màu nền),
+      và cột "Tiếp nhận" trong Excel "Tải toàn bộ lịch sử" (luôn có cột, rỗng với giao dịch Giao).
+      Đã kiểm chứng cú pháp bằng cách biên dịch qua đúng bản `@babel/standalone@7.25.6` app đang
+      dùng — **CHƯA kiểm chứng bằng dữ liệu Firestore thật**, cần thử trên `qlva-dev.html`: bắt
+      đầu phiên Nhận, quét 1 vụ, sửa dòng bật "Không tiếp nhận" mà bỏ trống lý do (phải bị chặn),
+      gõ lý do rồi lưu (phải thành công), kiểm tra cột hiện đúng ở bảng/biên bản in/Excel.
+      **Danh sách "Phiên gần đây" để mở lại phiên đã lưu/bỏ dở (2026-07-17)** — trước đây bấm
+      "Phiên mới" hoặc lỡ đóng trình duyệt là MẤT hẳn đường vào lại 1 phiên đã có: phiên đã "Lưu
+      phiên" chỉ còn xem/in được nhưng không có danh sách nào để bấm vào, phiên "Đang mở" bị bỏ dở
+      giữa chừng (đóng nhầm tab, tưởng đã lưu) coi như mất luôn, chỉ tra được qua Nhật ký thao tác
+      (liệt kê từng SỰ KIỆN lẻ, không theo phiên) hoặc Excel lịch sử (dump phẳng, không mở lại
+      được). Thêm state `dsPhienGanDay` (`onSnapshot` trên `phienGiaoNhan`, `orderBy
+      thoiDiemBatDau desc` + `limit(30)` — chỉ 1 field orderBy, KHÔNG kèm `where` nên không cần
+      composite index mới) hiện ở màn hình chưa mở phiên, dưới 2 nút "Bắt đầu phiên". Bấm vào 1
+      dòng = `setPhien(p)` — tái dùng nguyên state/effect sẵn có (đổi `phien` tự kích hoạt lại
+      subscribe `dsQuet` theo `phien.id`), nên phiên "Đang mở" mở lại tiếp tục quét/sửa được ngay
+      (đúng UI cũ vì `khoaSua = phien.trangThai !== "dang_mo"`), phiên "Đã lưu" chỉ xem/bấm "In
+      phiên" lại (nút này vốn đã không phụ thuộc `trangThai`, chỉ cần `dsQuet.length > 0`) — không
+      cần sửa gì thêm ở phần render đã có, chỉ cần đường vào lại phiên.
+      **Fix bản in A4 bị cắt mất vụ án khi danh sách dài hơn 1 trang (2026-07-17, cùng đợt)** —
+      `BienBanGiaoNhanIn` dùng `fixed inset-0 ... overflow-auto` cho khung xem trước/backdrop
+      trên MÀN HÌNH, nhưng lúc IN THẬT, `position:fixed` ép khối cao đúng 1 viewport rồi
+      `overflow-auto` chỉ hiện phần cuộn được trong đó — khiến các dòng vụ án vượt quá 1 trang A4
+      bị CẮT MẤT khỏi bản in thay vì tự sang trang. Sửa bằng cách thêm biến thể Tailwind
+      `print:static print:overflow-visible print:block print:bg-white print:p-0` (chỉ áp dụng khi
+      in, giữ nguyên hành vi xem trước trên màn hình) để nội dung tự tràn ra nhiều trang bình
+      thường — `<thead>` của bảng tự lặp lại đầu mỗi trang mới (hành vi mặc định trình duyệt với
+      bảng HTML, không cần code thêm). Thêm `tr { break-inside: avoid; page-break-inside: avoid; }`
+      vào đúng khối `<style>{"@page..."}</style>` cục bộ đã có (xem ghi chú `@page` ở trên) để 1
+      dòng vụ án không bị cắt ngang giữa 2 trang. Đã kiểm chứng cú pháp bằng compile qua đúng bản
+      `@babel/standalone@7.25.6` — **CHƯA in thử giấy thật với danh sách đủ dài (>1 trang A4
+      ngang) để xác nhận việc sang trang + lặp header đúng như mong đợi**, cần thử trên
+      `qlva-dev.html` với 1 phiên có nhiều vụ án trước khi tin tưởng trên production.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
