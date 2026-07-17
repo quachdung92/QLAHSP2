@@ -47,18 +47,25 @@ vì đây là chỗ sửa bị can điển hình nhất), `ThemBiCanForm` (2 ch�
 `batch.delete`, không phải create/update).
 
 **Đã kiểm chứng**: (1) biên dịch cú pháp cả `qlva.html`/`qlva-dev.html` qua `esbuild` (JSX) — sạch,
-không lỗi; (2) viết test độc lập bằng `react-test-renderer` + Firestore giả lập cho đúng phần code
-MỚI và rủi ro nhất (cơ chế cache dùng chung) — 5 kịch bản/11 assertion đều pass: dedupe đúng 1
-listener dù nhiều component subscribe, remount trong grace period không tạo listener mới, unmount
-hẳn quá grace period thì huỷ đúng (không rò rỉ), thứ tự khai báo 2 hook (dữ liệu/loaded) đảo ngược
-nhau vẫn dọn dẹp đúng, dữ liệu trả về đúng nội dung. **CHƯA kiểm chứng bằng Playwright + dữ liệu
-Firestore thật trên `qlva-dev.html`** (không có MCP trình duyệt khả dụng trong phiên code này, cũng
-không có tài khoản đăng nhập test) — cần mở thử `qlva-dev.html` thật: chuyển qua lại các tab Danh
-sách vụ án/Kỳ báo cáo/Án đã giải quyết/Dashboard/Nhật ký thao tác nhiều lần xem có tạo listener
-`kybaocao` mới không (dùng Firestore debug log hoặc DevTools Network), mở nhiều form dùng gợi ý
-KSV/ĐTV xem `canbo` chỉ đọc 1 lần, thêm/sửa bị can rồi xem trực tiếp Firestore Console xác nhận
-field `ngayCapNhat` xuất hiện đúng ở cả 13 vị trí, trước khi tin tưởng đưa lên `qlva.html`
-production.
+không lỗi; (2) test độc lập bằng `react-test-renderer` + Firestore giả lập cho đúng cơ chế cache
+dùng chung — 5 kịch bản/11 assertion pass (dedupe đúng 1 listener dù nhiều component subscribe,
+remount trong grace period không tạo listener mới, unmount hẳn quá grace period thì huỷ đúng —
+không rò rỉ, thứ tự khai báo 2 hook dữ liệu/loaded đảo ngược nhau vẫn dọn dẹp đúng, dữ liệu đúng
+nội dung); (3) **test bằng Playwright THẬT trên `qlva-dev.html`** (không có tài khoản Firebase test
+thật/MCP trình duyệt trong phiên này, nên tự dựng: chặn 3 script CDN Firebase compat qua
+`page.route()`, thay bằng 1 file mock Firestore/Auth trong bộ nhớ — bypass đăng nhập, có
+`.collection().where().orderBy().limit().onSnapshot()/.get()`, `batch()`, đếm số lần `onSnapshot()`
+THẬT được gọi theo từng chữ ký query — chạy app THẬT qua Babel-in-browser thật, không phải mock cô
+lập) — 6/6 assertion pass: không lỗi console (ngoại trừ 1 cảnh báo Babel vô hại về kích thước file,
+không liên quan); **chuyển qua lại đúng 18 lần (3 vòng × 6 tab) chỉ tạo ĐÚNG 2 listener thật cho
+`kybaocao` và 1 cho `canbo`** (không tăng theo số lần chuyển tab — xác nhận cơ chế gộp hoạt động
+đúng trong runtime thật); mở lại form "Thêm vụ án" 3 lần không tạo thêm listener `canbo`; thực hiện
+trọn luồng "Thêm bị can" thật qua UI — xác nhận CẢ 2 lần ghi `bican` do luồng này gây ra (tạo mới +
+cập nhật lại `loaiKhoiTo` cho vụ) đều có đúng field `ngayCapNhat`/`nguoiCapNhatCuoi`.
+**Còn lại chưa kiểm chứng**: dữ liệu Firestore THẬT (project `qlahs-test`) — test trên chỉ dùng mock
+trong bộ nhớ, chưa xác nhận với rules/index/latency thật của Firestore. Nên mở thử `qlva-dev.html`
+thật ít nhất 1 lần (đăng nhập thật, thao tác vài nghiệp vụ) trước khi tin tưởng tuyệt đối lên
+`qlva.html` production.
 
 **Ngoài phạm vi Đợt 1 (để dành phiên sau, xem plan gốc đã thống nhất với người dùng)**: Thùng rác
 (soft-delete cho `XoaVuAnModal` — đổi `batch.delete` thành đặt cờ `daXoa`/`ngayXoa`, tab "Thùng rác"
