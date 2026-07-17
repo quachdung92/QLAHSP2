@@ -8215,10 +8215,116 @@ const TAB_DA_GIAI_QUYET = [
   ["dinh_chi", "Đình chỉ"], ["an_huy", "Án huỷ"],
 ];
 
+// ====================================================================
+// CACHE LẠNH (IndexedDB) — vụ án ĐÃ GIẢI QUYẾT (2026-07-17, Đợt 2 tối ưu Firestore)
+// Vụ đã giải quyết (trangThai ≠ "dang_giai_quyet") gần như bất biến — chỉ đổi khi Phục hồi (Tạm
+// đình chỉ → Đang giải quyết), "Xoá hình thức giải quyết", hoặc nhập mức án lúc nộp lưu trữ. Cả 3
+// đều là 1 lần GHI vào `vuan`, tự động cập nhật `ngayCapNhat` (thêm nhất quán từ Đợt 1) — nên có
+// thể lưu VĨNH VIỄN trên máy người dùng qua IndexedDB, chỉ hỏi lại Firestore đúng phần THAY ĐỔI
+// qua `where("ngayCapNhat", ">", lầnSyncTrước)` thay vì tải lại toàn bộ mỗi lần mở màn hình —
+// càng nhiều năm dữ liệu tích luỹ, càng tiết kiệm (chi phí đồng bộ tỉ lệ với SỐ THAY ĐỔI THẬT,
+// không tỉ lệ với tổng số vụ đã giải quyết từ trước tới nay).
+// LƯU Ý: Firestore KHÔNG cho kết hợp 2 field bất đẳng thức khác nhau trong 1 query (`trangThai !=
+// X` và `ngayCapNhat > Y` không thể đứng chung 1 query) — nên đồng bộ tăng dần lọc theo
+// `ngayCapNhat` cho MỌI vụ (bất kể trạng thái), rồi tự phân loại lại ở phía client: vụ vừa chuyển
+// SANG trạng thái khác "dang_giai_quyet" thì thêm/cập nhật vào cache; vụ vừa chuyển VỀ
+// "dang_giai_quyet" (Phục hồi/Xoá hình thức giải quyết) thì xoá khỏi cache lạnh (đã hoạt động trở
+// lại, không còn "lạnh" nữa). Lần đầu (chưa có cache) tải trọn vẹn 1 lần bằng where("trangThai",
+// "!=", "dang_giai_quyet") — hợp lệ vì chỉ có ĐÚNG 1 field bất đẳng thức trong query đó.
+const COLD_DB_NAME = "qlva_cold_cache_v1";
+const COLD_STORE_VUAN_GQ = "vuan_giai_quyet";
+const COLD_STORE_META = "meta";
+
+// Firestore Timestamp là 1 class riêng (không phải kiểu dữ liệu gốc trình duyệt) — thuật toán
+// "structured clone" mà IndexedDB dùng để lưu dữ liệu KHÔNG đảm bảo giữ nguyên prototype của class
+// tự định nghĩa như Timestamp (khác `Date` gốc — được structured clone hỗ trợ đúng, giữ nguyên
+// `.getTime()`). Nếu lưu thẳng Timestamp vào IndexedDB, đọc lại có thể mất `.toDate()`/`.toMillis()`
+// làm hỏng mọi chỗ hiển thị ngày tháng của dữ liệu lấy từ cache lạnh. Chuyển các field dạng
+// Timestamp sang `Date` gốc TRƯỚC khi ghi — an toàn vì `fmtDate`/`fmtNgayGio`/mọi so sánh ngày
+// trong app đều đã viết theo kiểu `x?.toDate?.() ?? (x instanceof Date ? x : new Date(x))`, tương
+// thích sẵn với cả 2 dạng Timestamp lẫn Date gốc.
+function sanitizeChoIndexedDb(doc) {
+  const out = { ...doc };
+  for (const k of Object.keys(out)) {
+    const v = out[k];
+    if (v && typeof v.toDate === "function") out[k] = v.toDate();
+  }
+  return out;
+}
+function openColdDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(COLD_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const idb = req.result;
+      if (!idb.objectStoreNames.contains(COLD_STORE_VUAN_GQ)) idb.createObjectStore(COLD_STORE_VUAN_GQ, { keyPath: "id" });
+      if (!idb.objectStoreNames.contains(COLD_STORE_META)) idb.createObjectStore(COLD_STORE_META, { keyPath: "key" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function coldGetAll(idb, storeName) {
+  return new Promise((resolve, reject) => {
+    const req = idb.transaction(storeName, "readonly").objectStore(storeName).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function coldGetMeta(idb, key) {
+  return new Promise((resolve, reject) => {
+    const req = idb.transaction(COLD_STORE_META, "readonly").objectStore(COLD_STORE_META).get(key);
+    req.onsuccess = () => resolve(req.result ? req.result.value : null);
+    req.onerror = () => reject(req.error);
+  });
+}
+function coldWriteBatch(idb, storeName, putDocs, deleteIds) {
+  return new Promise((resolve, reject) => {
+    const store = idb.transaction(storeName, "readwrite").objectStore(storeName);
+    putDocs.forEach(d => store.put(d));
+    deleteIds.forEach(id => store.delete(id));
+    store.transaction.oncomplete = () => resolve();
+    store.transaction.onerror = () => reject(store.transaction.error);
+  });
+}
+function coldSetMeta(idb, key, value) {
+  return new Promise((resolve, reject) => {
+    const store = idb.transaction(COLD_STORE_META, "readwrite").objectStore(COLD_STORE_META);
+    store.put({ key, value });
+    store.transaction.oncomplete = () => resolve();
+    store.transaction.onerror = () => reject(store.transaction.error);
+  });
+}
+
+// Đồng bộ + trả về TOÀN BỘ vụ án đã giải quyết hiện có trên máy (đã cache + vừa đồng bộ thêm).
+// An toàn gọi lại nhiều lần (mỗi lần mount module) — chi phí tỉ lệ với số thay đổi thật kể từ lần
+// đồng bộ trước, không phải tổng số vụ đã giải quyết.
+async function dongBoColdCacheVuAnDaGiaiQuyet() {
+  const idb = await openColdDb();
+  const lastSyncStr = await coldGetMeta(idb, "vuan_giai_quyet_lastSync");
+  const now = new Date();
+
+  if (!lastSyncStr) {
+    const snap = await db.collection("vuan").where("trangThai", "!=", "dang_giai_quyet").get();
+    const docs = snap.docs.map(d => sanitizeChoIndexedDb({ id: d.id, ...d.data() }));
+    await coldWriteBatch(idb, COLD_STORE_VUAN_GQ, docs, []);
+    await coldSetMeta(idb, "vuan_giai_quyet_lastSync", now.toISOString());
+    return docs;
+  }
+
+  const snap = await db.collection("vuan").where("ngayCapNhat", ">", new Date(lastSyncStr)).get();
+  const changed = snap.docs.map(d => sanitizeChoIndexedDb({ id: d.id, ...d.data() }));
+  const conLai = changed.filter(v => v.trangThai !== "dang_giai_quyet");
+  const khongConNua = changed.filter(v => v.trangThai === "dang_giai_quyet").map(v => v.id);
+  await coldWriteBatch(idb, COLD_STORE_VUAN_GQ, conLai, khongConNua);
+  await coldSetMeta(idb, "vuan_giai_quyet_lastSync", now.toISOString());
+  return coldGetAll(idb, COLD_STORE_VUAN_GQ);
+}
+
 function AnDaGiaiQuyetModule() {
   const [hinhThuc, setHinhThuc] = useState("da_xet_xu");
-  const [list, setList] = useState([]);       // đầy đủ, chưa lọc kỳ
+  const [list, setList] = useState([]);       // TOÀN BỘ vụ đã giải quyết (mọi hình thức) từ cache lạnh
   const [dangTai, setDangTai] = useState(true);
+  const [loiTai, setLoiTai] = useState("");
   const [locKy, setLocKy] = useState(null);   // null = chưa khởi tạo; "tat_ca" hoặc kyId
   const [tuKhoa, setTuKhoa] = useState("");
   const [ksv, setKsv] = useState("tat_ca");
@@ -8241,32 +8347,42 @@ function AnDaGiaiQuyetModule() {
     });
   }, [dsKy]);
 
-  // Đọc thẳng từ vuan — ngayQuyetDinh và kyHoanThanh được lưu sẵn khi tạo sự kiện hoan_thanh
-  // (dữ liệu cũ chưa có field này sẽ được backfill qua nút "Cập nhật index" ở module Cài đặt)
+  // Cache lạnh IndexedDB (2026-07-17) — thay hẳn `onSnapshot` theo TỪNG hinhThuc (5 listener khác
+  // nhau tuỳ tab đang chọn, tải lại mỗi lần đổi tab) bằng 1 lần đồng bộ TOÀN BỘ vụ đã giải quyết
+  // (mọi hình thức) lúc mount, lưu vĩnh viễn trên máy — chuyển tab sau đó chỉ lọc lại phía client
+  // (xem `listTheoHinhThuc` bên dưới), KHÔNG gọi lại Firestore. Xem `dongBoColdCacheVuAnDaGiaiQuyet`
+  // để biết cơ chế đồng bộ tăng dần dựa trên `ngayCapNhat`. Không dùng onSnapshot/live nữa — chấp
+  // nhận đánh đổi vì dữ liệu đã giải quyết gần như bất biến (đúng tiền đề của cache lạnh), không
+  // cần phản ứng tức thời với thay đổi của người khác trong lúc đang mở màn hình này.
   useEffect(() => {
+    let huy = false;
     setDangTai(true);
-    const unsub = db.collection("vuan").where("trangThai", "==", hinhThuc).onSnapshot(
-      snap => {
-        const rows = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(v => !v.daXoa) // ẩn vụ đã "Đưa vào thùng rác" (xem ghi chú ở DanhSachPanel)
-          .sort((a, b) => {
-            const ta = a.ngayQuyetDinh?.toMillis?.() ?? (a.ngayQuyetDinh ? new Date(a.ngayQuyetDinh).getTime() : 0);
-            const tb = b.ngayQuyetDinh?.toMillis?.() ?? (b.ngayQuyetDinh ? new Date(b.ngayQuyetDinh).getTime() : 0);
-            return tb - ta;
-          });
-        setList(rows);
+    setLoiTai("");
+    dongBoColdCacheVuAnDaGiaiQuyet()
+      .then(docs => {
+        if (huy) return;
+        setList(docs.filter(v => !v.daXoa)); // ẩn vụ đã "Đưa vào thùng rác" (xem ghi chú ở DanhSachPanel)
         setDangTai(false);
-      },
-      err => { console.error(err); setDangTai(false); }
-    );
-    return () => unsub();
-  }, [hinhThuc]);
+      })
+      .catch(err => {
+        console.error(err);
+        if (!huy) { setLoiTai("Lỗi khi tải dữ liệu: " + err.message); setDangTai(false); }
+      });
+    return () => { huy = true; };
+  }, []);
 
-  const dsKsv = useMemo(() => [...new Set(list.map(v => v.ksvChinh).filter(Boolean))].sort(), [list]);
+  const listTheoHinhThuc = useMemo(() => {
+    return list.filter(v => v.trangThai === hinhThuc).sort((a, b) => {
+      const ta = a.ngayQuyetDinh?.toMillis?.() ?? (a.ngayQuyetDinh ? new Date(a.ngayQuyetDinh).getTime() : 0);
+      const tb = b.ngayQuyetDinh?.toMillis?.() ?? (b.ngayQuyetDinh ? new Date(b.ngayQuyetDinh).getTime() : 0);
+      return tb - ta;
+    });
+  }, [list, hinhThuc]);
+
+  const dsKsv = useMemo(() => [...new Set(listTheoHinhThuc.map(v => v.ksvChinh).filter(Boolean))].sort(), [listTheoHinhThuc]);
 
   const listHienThi = useMemo(() => {
-    let rows = (locKy && locKy !== "tat_ca") ? list.filter(v => v.kyHoanThanh === locKy) : list;
+    let rows = (locKy && locKy !== "tat_ca") ? listTheoHinhThuc.filter(v => v.kyHoanThanh === locKy) : listTheoHinhThuc;
     if (ksv !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksv);
     const k = tuKhoa.trim().toLowerCase();
     if (k) {
@@ -8281,7 +8397,7 @@ function AnDaGiaiQuyetModule() {
       );
     }
     return rows;
-  }, [list, locKy, ksv, tuKhoa]);
+  }, [listTheoHinhThuc, locKy, ksv, tuKhoa]);
 
   const tenKyDangChon = dsKy.find(k => k.id === locKy)?.tenKy;
 
@@ -8327,6 +8443,7 @@ function AnDaGiaiQuyetModule() {
       <div className="flex-1 flex gap-4 min-h-0">
         <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
           {dangTai && <div className="p-4 text-sm text-slate-400">Đang tải...</div>}
+          {loiTai && <div className="p-4 text-sm text-red-600">{loiTai}</div>}
           {!dangTai && listHienThi.length === 0 && (
             <div className="p-4 text-sm text-slate-400">
               {tuKhoa.trim()
@@ -8382,7 +8499,16 @@ function AnDaGiaiQuyetModule() {
             {locKy && locKy !== "tat_ca" ? ` trong ${tenKyDangChon}` : " (tất cả kỳ)"}.
           </div>
         </div>
-        <ChiTietPanel vuAnId={selectedId} onDoiSelected={setSelectedId} />
+        <ChiTietPanel vuAnId={selectedId} onDoiSelected={(id) => {
+          setSelectedId(id);
+          // ChiTietPanel báo có thay đổi (VD vừa "Phục hồi"/"Xoá hình thức giải quyết" ngay tại
+          // panel bên phải, không qua remount cả module) — làm mới cache lạnh ngay để danh sách
+          // bên trái không bị vênh với trạng thái mới của chính vụ vừa sửa. Rẻ vì chỉ đồng bộ phần
+          // THAY ĐỔI (delta theo ngayCapNhat), không phải tải lại toàn bộ.
+          dongBoColdCacheVuAnDaGiaiQuyet()
+            .then(docs => setList(docs.filter(v => !v.daXoa)))
+            .catch(err => console.error(err));
+        }} />
       </div>
     </div>
   );

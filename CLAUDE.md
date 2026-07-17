@@ -2,6 +2,62 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tối ưu Firestore — Đợt 2 (phần 2): Cache lạnh IndexedDB cho vụ án ĐÃ GIẢI QUYẾT (2026-07-17)
+
+Mảnh cuối của kế hoạch tối ưu Firestore 4 giai đoạn — mục tiêu: vụ đã giải quyết gần như bất biến
+nên lưu VĨNH VIỄN trên máy người dùng qua IndexedDB, chỉ hỏi lại Firestore đúng phần THAY ĐỔI thay
+vì tải lại toàn bộ mỗi lần mở "Án đã giải quyết" — chi phí đồng bộ tỉ lệ với SỐ THAY ĐỔI THẬT, không
+tỉ lệ với tổng số vụ đã giải quyết tích luỹ từ trước (sẽ càng quan trọng khi dữ liệu nhiều năm).
+
+**Cơ chế (`dongBoColdCacheVuAnDaGiaiQuyet`, đặt cạnh `AnDaGiaiQuyetModule`)**: lần đầu (chưa có
+cache) tải trọn 1 lần bằng `where("trangThai", "!=", "dang_giai_quyet")` — hợp lệ vì chỉ 1 field bất
+đẳng thức. Lần sau, **Firestore KHÔNG cho kết hợp 2 field bất đẳng thức khác nhau trong 1 query**
+(không thể vừa `trangThai != X` vừa `ngayCapNhat > Y`), nên đồng bộ tăng dần dùng ĐÚNG 1 field bất
+đẳng thức duy nhất — `where("ngayCapNhat", ">", lầnSyncTrước)` cho MỌI vụ bất kể trạng thái — rồi tự
+phân loại lại ở phía client: vụ vừa chuyển SANG "đã giải quyết" thì thêm/cập nhật vào cache; vụ vừa
+chuyển VỀ "đang giải quyết" (Phục hồi/"Xoá hình thức giải quyết") thì xoá khỏi cache lạnh (không còn
+lạnh nữa). Nhờ vậy các trường hợp đặc biệt (Phục hồi, nhập mức án lúc nộp lưu trữ...) tự động được
+xử lý đúng mà không cần code riêng — cả 2 đều là 1 lần GHI vào `vuan`, tự cập nhật `ngayCapNhat`.
+
+**Lưu ý kỹ thuật quan trọng phát hiện lúc code (không phải lý thuyết suông)**: Firestore `Timestamp`
+là 1 class riêng, KHÔNG phải kiểu dữ liệu gốc trình duyệt — thuật toán "structured clone" mà
+IndexedDB dùng để lưu dữ liệu không đảm bảo giữ nguyên prototype của class tự định nghĩa (khác
+`Date` gốc — được hỗ trợ đúng, giữ nguyên `.getTime()`). Lưu thẳng `Timestamp` vào IndexedDB sẽ mất
+`.toDate()`/`.toMillis()` khi đọc lại, làm hỏng MỌI chỗ hiển thị ngày tháng của dữ liệu lấy từ cache
+— đã thêm `sanitizeChoIndexedDb(doc)` chuyển các field dạng Timestamp sang `Date` gốc TRƯỚC khi ghi
+(an toàn vì `fmtDate`/`fmtNgayGio`/mọi so sánh ngày trong app đều đã viết theo kiểu
+`x?.toDate?.() ?? (x instanceof Date ? x : new Date(x))` — tương thích sẵn cả 2 dạng).
+
+**`AnDaGiaiQuyetModule` đấu nối vào cache lạnh** — bỏ hẳn `onSnapshot` theo TỪNG hình thức giải
+quyết (5 listener khác nhau tuỳ tab, tải lại Firestore mỗi lần đổi tab); giờ đồng bộ 1 lần lúc mount
+(toàn bộ vụ đã giải quyết mọi hình thức), 5 tab chuyển đổi CHỈ lọc lại phía client
+(`listTheoHinhThuc`), **không gọi Firestore nữa khi đổi tab** — tác dụng phụ tốt: chuyển tab giờ tức
+thời. Đánh đổi: không còn realtime — chấp nhận vì đúng tiền đề "gần như bất biến" của cache lạnh.
+Vá 1 khe hở còn lại: nếu người dùng thao tác (Phục hồi/Xoá hình thức giải quyết) NGAY TẠI
+`ChiTietPanel` bên phải của chính module này (không phải remount cả module) — bọc `onDoiSelected`
+để tự đồng bộ lại (delta, rẻ) ngay sau đó, tránh danh sách bên trái vênh với trạng thái mới nhất.
+
+**Đã kiểm chứng bằng Playwright thật + IndexedDB thật của trình duyệt** (không mock IndexedDB — dùng
+API `indexedDB` thật trong Chromium headless) — 26/26 assertion pass tổng cộng cho cả Đợt 1+2, riêng
+phần cache lạnh: xác nhận IndexedDB lưu đúng 1 document, field ngày là `Date` gốc hợp lệ (không phải
+Timestamp hỏng/Invalid Date); lần mount tiếp theo KHÔNG lặp lại full-sync mà dùng đúng đường delta;
+dữ liệu vẫn hiển thị đúng sau khi chuyển từ full-sync sang delta-sync. **Sự cố gặp phải khi tự viết
+test (đã tự phát hiện và sửa, không phải bug thật của app)**: quên mirror thay đổi từ `qlva.html`
+sang `qlva-dev.html` trước khi chạy test lần đầu — test "im lặng" báo 0 lượt gọi Firestore vì code
+mới chưa tồn tại ở file đang test; sau khi mirror đúng thì pass sạch — bài học: LUÔN mirror trước
+khi test, không chỉ trước khi commit.
+**Còn lại chưa kiểm chứng**: dữ liệu Firestore THẬT trên `qlva-dev.html` (project `qlahs-test`) —
+nên mở thử ít nhất 1 lần, xem "Án đã giải quyết" tải đúng, chuyển tab tức thời, và F12 → Application
+→ IndexedDB xác nhận thấy đúng database `qlva_cold_cache_v1` trước khi tin tưởng lên production.
+
+**Ngoài phạm vi Đợt 2 (không làm, chấp nhận là giới hạn hiện tại)**: cache lạnh CHƯA áp dụng cho
+`baoCaoLuu` của kỳ báo cáo đã chốt (mục tiêu ban đầu có nhắc tới) — phần lớn lợi ích thực tế đã đạt
+được gián tiếp qua Đợt 1 (cache `kybaocao` dùng chung, tránh đọc lặp `baoCaoLuu` giữa nhiều
+component), phần còn thiếu chỉ là bền vững qua LẦN TẢI TRANG MỚI — giá trị tăng thêm nhỏ so với rủi
+ro đụng vào logic Biểu B10 đã audit kỹ nhiều lần, nên dừng lại ở đây. Cache lạnh cũng CHƯA áp dụng
+cho tab "Tất cả" của Danh sách vụ án (trộn lẫn vụ đang + đã giải quyết, khó tách hot/cold sạch như
+`AnDaGiaiQuyetModule` — module dành riêng cho dữ liệu lạnh nên là ứng viên tự nhiên nhất).
+
 ## Tối ưu Firestore — Đợt 2 (phần 1): Thùng rác — xoá vụ án đổi từ xoá cứng sang soft-delete (2026-07-17)
 
 Nền tảng bắt buộc cho cache lạnh IndexedDB (xem "Ngoài phạm vi Đợt 1" ở mục Đợt 1 bên dưới) —
