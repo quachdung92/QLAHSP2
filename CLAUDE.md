@@ -440,6 +440,21 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       `@babel/standalone@7.25.6` — **CHƯA in thử giấy thật với danh sách đủ dài (>1 trang A4
       ngang) để xác nhận việc sang trang + lặp header đúng như mong đợi**, cần thử trên
       `qlva-dev.html` với 1 phiên có nhiều vụ án trước khi tin tưởng trên production.
+      **Đặt tên phiên (2026-07-17, cùng đợt)** — field mới `tenPhien` trên `phienGiaoNhan`, nhập ở
+      1 ô text (không bắt buộc) ngay trên 2 nút "Bắt đầu phiên" lúc chưa mở phiên nào, ghi vào
+      `batDauPhien` lúc tạo phiên. **CỐ Ý thuần tuý là nhãn để tra cứu** (theo yêu cầu người dùng:
+      "không ảnh hưởng đến heading") — KHÔNG hiện trong header "Phiên hiện tại" của màn giao nhận
+      đang mở (`<h2>Giao nhận hồ sơ</h2>` + dòng badge loại giao dịch/lưu trữ/đã lưu giữ nguyên y
+      hệt trước), KHÔNG ảnh hưởng field nào khác của phiên hay của từng dòng hồ sơ đã quét, không
+      xuất hiện trên biên bản in A4 hay Excel lịch sử. Chỉ dùng ở đúng 1 nơi: danh sách **"Phiên
+      gần đây"** (đã có sẵn, xem mục ngay trên) — hiện tên (nếu có) làm dòng đậm phía trên các
+      Badge của mỗi phiên, kèm 1 ô **tìm theo tên phiên** (`tuKhoaPhien`, lọc client-side, case-
+      insensitive) đặt cạnh tiêu đề "Phiên gần đây" — chỉ tìm được trong 30 phiên gần nhất đã tải
+      sẵn (giới hạn của chính danh sách "Phiên gần đây", không phải hạn chế riêng của tìm kiếm;
+      đã ghi rõ trên UI), KHÔNG query full-collection để tìm phiên cũ hơn. Không cho sửa lại tên
+      sau khi đã bắt đầu phiên (chỉ đặt được lúc khởi tạo) — nếu sau này cần đổi tên phiên đã tạo,
+      đó là 1 tính năng riêng (rename), chưa làm. Đã kiểm chứng cú pháp bằng compile qua đúng bản
+      `@babel/standalone@7.25.6` — **CHƯA kiểm chứng bằng dữ liệu Firestore thật**.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
