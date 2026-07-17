@@ -2,6 +2,34 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tối ưu Firestore Đợt 1+2 — đã kiểm chứng bằng dữ liệu Firestore THẬT trên `qlva-dev.html` (2026-07-17)
+
+Tiếp theo 2 mục "Tối ưu Firestore" bên dưới (Đợt 1: gộp listener + `ngayCapNhat`; Đợt 2: Thùng rác +
+cache lạnh IndexedDB) — cả 2 trước đó mới chỉ kiểm chứng bằng mock Firestore trong bộ nhớ. Đã đăng
+nhập THẬT vào `qlva-dev.html` (tài khoản có sẵn từ `seed-tool.html`: `admintest@local.com` /
+`12345678`, project `qlahs-test`) qua Playwright tự dựng, thao tác trên dữ liệu thật (54 vụ đang
+giải quyết, 1331 vụ đã giải quyết) — không phải bản mô phỏng nhỏ.
+
+**Kết quả**: cache lạnh IndexedDB lưu đúng **1331 document thật** (không phải vài document giả lập),
+field ngày tháng chuyển đúng sang `Date` gốc hợp lệ ở quy mô thật. Thùng rác test trọn vòng đời trên
+2 vụ án tự tạo (tạo → đưa vào thùng rác → biến mất khỏi Danh sách vụ án trong vòng ~0.5s → hiện đúng
+trong Thùng rác → Xoá vĩnh viễn → dọn sạch, không để lại rác trên `qlahs-test`) — đúng hoàn toàn,
+không phát sinh lỗi console nào do các thay đổi Đợt 1/2 gây ra.
+
+**Phát hiện 1 lỗi CÓ SẴN TỪ TRƯỚC, không liên quan tối ưu Firestore**: mở panel chi tiết bất kỳ vụ
+án nào báo lỗi console thật `FirebaseError: The query requires an index` cho query
+`lichsuChuyenGiaiDoan` (`maVuAn`+`thoiDiemGhi`). Index này **đã có sẵn đúng trong
+`firestore.indexes.json`** (dòng 13-19) nhưng chưa từng được deploy lên project `qlahs-test` (có lẽ
+chỉ deploy lên production `qlahsp2` trước đây) — nghĩa là tab "Lịch sử" trong panel chi tiết đã bị
+lỗi thật trên môi trường test trong 1 khoảng thời gian không rõ từ khi nào. Đã chạy `firebase deploy
+--only firestore:indexes --project test` để sửa — Firestore cần vài phút để build xong index mới
+trên collection đã có nhiều document, nên lỗi có thể còn thấy tạm thời ngay sau khi deploy, tự hết
+khi build xong (không cần làm gì thêm, kiểm tra lại sau vài phút nếu còn thấy lỗi này).
+
+**Kết luận**: Đợt 1+2 tối ưu Firestore sẵn sàng cân nhắc đưa lên `qlva.html` production — đã qua đủ
+2 lớp kiểm chứng (mock cô lập + dữ liệu Firestore thật quy mô lớn), không phát hiện lỗi nào do chính
+các thay đổi này gây ra.
+
 ## Tối ưu Firestore — Đợt 2 (phần 2): Cache lạnh IndexedDB cho vụ án ĐÃ GIẢI QUYẾT (2026-07-17)
 
 Mảnh cuối của kế hoạch tối ưu Firestore 4 giai đoạn — mục tiêu: vụ đã giải quyết gần như bất biến
