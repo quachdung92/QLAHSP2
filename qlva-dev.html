@@ -9664,6 +9664,494 @@ function DanhMucToiDanhModule() {
 }
 
 // ====================================================================
+// BẢNG DỮ LIỆU KIỂU EXCEL (Cài đặt → Bảng dữ liệu, 2026-07-17)
+// ====================================================================
+// Công cụ sửa nhanh hàng loạt cho người dùng thành thạo — mỗi vụ án 1 dòng (kéo mở rộng ra xem/
+// sửa bị can lồng bên dưới, giống Excel outline/group), MỌI Ô LUÔN Ở TRẠNG THÁI SỬA (không có
+// bước bấm "Sửa" riêng như các form khác trong app — đúng cảm giác 1 bảng tính, click vào ô là gõ
+// được ngay), hỗ trợ "kéo fill" xuống nhiều dòng cùng lúc (giữ chuột ở góc dưới-phải 1 ô rồi kéo
+// qua các dòng khác — y hệt fill handle của Excel).
+// QUYẾT ĐỊNH THIẾT KẾ (đã hỏi rõ người dùng trước khi làm, KHÔNG tự suy đoán):
+// 1. Phạm vi: Vụ án + Bị can lồng nhau (không phải chỉ vụ án, không phải chỉ bị can riêng).
+// 2. Cho sửa CẢ Giai đoạn/Trạng thái ngay trên bảng — NGƯỢC với khuyến nghị ban đầu (2 field này
+//    điều khiển số liệu báo cáo kỳ, đúng nguyên tắc thiết kế cốt lõi #1/#3 thì phải qua đúng luồng
+//    nghiệp vụ có hỏi kỳ + ghi log). Người dùng xác nhận muốn sửa trực tiếp (mục đích: dọn dữ liệu
+//    cũ hàng loạt nhanh hơn). ĐÃ THÊM cảnh báo rõ ràng ngay trên bảng (xem `CANH_BAO_GIAI_DOAN`) —
+//    sửa trực tiếp ở đây KHÔNG ghi sự kiện vào lichsuChuyenGiaiDoan, số liệu Kỳ báo cáo/Dashboard/
+//    Biểu B10 (đều tính từ log, không phải từ field hiện tại) SẼ KHÔNG phản ánh thay đổi này. Chỉ
+//    nên dùng cho dữ liệu lịch sử/đã xong xuôi, không phải cho nghiệp vụ đang diễn ra (việc đó vẫn
+//    phải dùng đúng nút "Chuyển giai đoạn"/"Hoàn thành vụ án" ở Danh sách vụ án).
+// Cột kiểu combobox: 2 LOẠI khác nhau, KHÔNG lẫn lộn —
+// - Enum CỐ ĐỊNH (Nguồn/Giai đoạn/Trạng thái/Mức độ nghiêm trọng/Giới tính/Đảng viên/Biện pháp
+//   ngăn chặn): luôn <select>, KHÔNG cho gõ giá trị mới tuỳ ý — các giá trị này có ý nghĩa cố định
+//   trong logic thống kê/hiển thị ở khắp nơi trong app, gõ 1 giá trị lạ vào sẽ làm hỏng thống kê.
+// - Danh sách tham chiếu MỞ (KSV chính/ĐTV/Dân tộc): <input list> + <datalist> — cho CHỌN có sẵn
+//   HOẶC GÕ MỚI tự do (đúng yêu cầu người dùng), vì đây là tên người/tên dân tộc, không phải enum
+//   khép kín, KSV/ĐTV mới vẫn hợp lệ dù chưa có trong danh mục Cán bộ.
+const CANH_BAO_GIAI_DOAN_TRANG_THAI =
+  "⚠ Sửa Giai đoạn/Trạng thái ở đây KHÔNG ghi log sự kiện — số liệu Kỳ báo cáo/Dashboard/Biểu B10 " +
+  "sẽ KHÔNG cập nhật theo. Chỉ dùng để sửa dữ liệu lịch sử/lỗi nhập liệu cũ, KHÔNG dùng thay cho " +
+  "nút \"Chuyển giai đoạn\"/\"Hoàn thành vụ án\" ở Danh sách vụ án cho nghiệp vụ đang diễn ra.";
+
+const DANH_SACH_DAN_TOC_PHO_BIEN = [
+  "Kinh", "Tày", "Thái", "Mường", "Khmer", "Hoa", "Nùng", "H'Mông", "Dao", "Gia Rai",
+  "Ê Đê", "Ba Na", "Sán Chay", "Chăm", "Cơ Ho", "Xơ Đăng", "Sán Dìu", "Hrê", "Ra Glai", "Mnông",
+];
+
+// Class dùng chung cho mọi ô trong bảng — viền trong suốt, chỉ hiện khi hover/focus để trông gọn
+// như 1 bảng tính thật (không viền dày đặc như 1 form thường).
+const oCellExcel = "w-full text-xs border border-transparent hover:border-slate-300 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 rounded px-1.5 py-1 bg-transparent";
+
+// Hook dùng chung cho cơ chế "kéo fill" kiểu Excel — 1 PHẠM VI độc lập (1 bảng vụ án, HOẶC 1 bảng
+// con bị can của 1 vụ) gọi hook này riêng, vì kéo-fill không bao giờ trộn giữa 2 phạm vi khác
+// nhau. `danhSachDong` là mảng các dòng ĐANG HIỂN THỊ trong đúng phạm vi đó (thứ tự = thứ tự hiện
+// trên màn hình, dùng để tính đoạn kéo qua). `apDungGiaTri(dsDongApDung, field, giaTri)` do nơi
+// gọi tự định nghĩa (vụ án và bị can ghi vào 2 collection khác nhau, bị can còn cần tính lại
+// dieuLuat/loaiKhoiTo cho 1 số field).
+function useKeoFillNgang(danhSachDong, apDungGiaTri) {
+  const [dangKeo, setDangKeo] = useState(null); // { field, giaTri, anchorIndex, hoverIndex }
+
+  useEffect(() => {
+    if (!dangKeo) return;
+    const ketThuc = async () => {
+      const tu = Math.min(dangKeo.anchorIndex, dangKeo.hoverIndex);
+      const den = Math.max(dangKeo.anchorIndex, dangKeo.hoverIndex);
+      const dsApDung = danhSachDong.slice(tu, den + 1);
+      setDangKeo(null);
+      if (dsApDung.length > 1) {
+        try {
+          await apDungGiaTri(dsApDung, dangKeo.field, dangKeo.giaTri);
+        } catch (err) {
+          console.error(err);
+          addToast("Lỗi khi điền nhanh: " + err.message, "error");
+        }
+      }
+    };
+    window.addEventListener("mouseup", ketThuc, { once: true });
+    return () => window.removeEventListener("mouseup", ketThuc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dangKeo]);
+
+  return {
+    batDauKeo: (index, field, giaTri) => setDangKeo({ field, giaTri, anchorIndex: index, hoverIndex: index }),
+    diChuyenQua: (index) => setDangKeo(k => (k ? { ...k, hoverIndex: index } : k)),
+    dangDuocChon: (index, field) => {
+      if (!dangKeo || dangKeo.field !== field) return false;
+      const tu = Math.min(dangKeo.anchorIndex, dangKeo.hoverIndex);
+      const den = Math.max(dangKeo.anchorIndex, dangKeo.hoverIndex);
+      return index >= tu && index <= den;
+    },
+  };
+}
+
+// Tay cầm kéo fill — hiện khi hover cả ô (group-hover), góc dưới-phải, giống Excel.
+function TayKeoFill({ onBatDau }) {
+  return (
+    <span onMouseDown={e => { e.preventDefault(); onBatDau(); }}
+          className="hidden group-hover:block absolute right-0 bottom-0 w-2 h-2 bg-indigo-600 border border-white cursor-crosshair z-10"
+          title="Kéo xuống để điền nhanh các dòng bên dưới" />
+  );
+}
+
+// Ô chọn cố định (KHÔNG cho gõ giá trị mới) — dùng cho mọi enum khép kín. `options` là mảng
+// [key, nhãn] (VD Object.entries(NHAN_NGUON)) — commit ngay lúc chọn, không cần blur.
+function OSelectExcelEnum({ value, onChange, options }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} className={oCellExcel}>
+      {options.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+    </select>
+  );
+}
+
+// Ô text/số thường — commit lúc rời khỏi ô (blur), KHÔNG ghi Firestore mỗi phím gõ. Giữ state cục
+// bộ nạp 1 LẦN lúc mount (KHÔNG tự đồng bộ lại từ prop sau đó — giống cách DongGiaoNhan chỉ nạp
+// lại lúc bắt đầu sửa, ở đây "bắt đầu sửa" = lúc dòng được render lần đầu vì cả bảng luôn ở trạng
+// thái sửa) — tránh việc dữ liệu realtime từ người khác ghi đè ngay giữa lúc đang gõ dở.
+function OCellText({ value, onCommit, type }) {
+  const [v, setV] = useState(value ?? "");
+  return (
+    <input type={type || "text"} value={v} onChange={e => setV(e.target.value)}
+           onBlur={() => { if (v !== (value ?? "")) onCommit(v); }}
+           className={oCellExcel} />
+  );
+}
+
+// Ô ngày — NhapNgay chỉ gọi onChange khi đã nhận diện được đúng 1 ngày hợp lệ (xem định nghĩa
+// NhapNgay), không phải mỗi phím gõ dở dang, nên commit thẳng trong onChange là an toàn.
+function OCellDate({ value, onCommit }) {
+  return (
+    <NhapNgay value={toInputDate(value)}
+              onChange={e => onCommit(e.target.value ? fromInputDate(e.target.value) : null)}
+              className={oCellExcel} />
+  );
+}
+
+// Ô combobox MỞ (chọn có sẵn HOẶC gõ giá trị mới) — dùng <datalist> chung, commit lúc blur.
+function OCellCombo({ value, onCommit, listId }) {
+  const [v, setV] = useState(value ?? "");
+  return (
+    <input value={v} list={listId} onChange={e => setV(e.target.value)}
+           onBlur={() => { if (v !== (value ?? "")) onCommit(v.trim()); }}
+           className={oCellExcel} />
+  );
+}
+
+function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
+  const oTd = (field) => ({
+    onMouseEnter: () => keo.diChuyenQua(index),
+    className: `relative group p-0 border-t border-slate-100 ${keo.dangDuocChon(index, field) ? "bg-indigo-50" : ""}`,
+  });
+  return (
+    <tr>
+      <td {...oTd("hoTen")}>
+        <OCellText value={bc.hoTen} onCommit={v => suaBiCanTruong(bc, { hoTen: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "hoTen", bc.hoTen)} />
+      </td>
+      <td {...oTd("namSinh")}>
+        <OCellText type="number" value={bc.namSinh} onCommit={v => suaBiCanTruong(bc, { namSinh: v ? Number(v) : null })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "namSinh", bc.namSinh)} />
+      </td>
+      <td {...oTd("gioiTinh")}>
+        <OSelectExcelEnum value={bc.gioiTinh || "nam"} onChange={v => suaBiCanTruong(bc, { gioiTinh: v })}
+                          options={[["nam", "Nam"], ["nu", "Nữ"]]} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "gioiTinh", bc.gioiTinh || "nam")} />
+      </td>
+      <td {...oTd("danToc")}>
+        <OCellCombo value={bc.danToc} listId="ds-dantoc-excel" onCommit={v => suaBiCanTruong(bc, { danToc: v || "Kinh" })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "danToc", bc.danToc || "Kinh")} />
+      </td>
+      <td {...oTd("dangVien")}>
+        <OSelectExcelEnum value={bc.dangVien || "khong"} onChange={v => suaBiCanTruong(bc, { dangVien: v })}
+                          options={[["khong", "Không"], ["co", "Có"]]} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "dangVien", bc.dangVien || "khong")} />
+      </td>
+      <td {...oTd("bienPhapNganChan")}>
+        <OSelectExcelEnum value={bc.bienPhapNganChan || "tai_ngoai"} onChange={v => suaBiCanTruong(bc, { bienPhapNganChan: v })}
+                          options={[["tai_ngoai", "Tại ngoại"], ["giam", "Tạm giam"]]} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "bienPhapNganChan", bc.bienPhapNganChan || "tai_ngoai")} />
+      </td>
+      <td {...oTd("ngayKhoiTo")}>
+        <OCellDate value={bc.ngayKhoiTo} onCommit={v => suaBiCanTruong(bc, { ngayKhoiTo: v }, true)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ngayKhoiTo", bc.ngayKhoiTo)} />
+      </td>
+      <td {...oTd("toiDanhChinh")} className={oTd("toiDanhChinh").className + " min-w-[220px]"}>
+        <ToiDanhInput ten={bc.toiDanh?.[0] || ""} dieuLuat={bc.dieuLuatBC?.[0] || ""} danhMuc={danhMucTD}
+                      onChange={({ ten, dieuLuat }) => suaBiCanTruong(bc, {
+                        toiDanh: [ten, ...(bc.toiDanh || []).slice(1)],
+                        dieuLuatBC: [dieuLuat, ...(bc.dieuLuatBC || []).slice(1)],
+                      }, true)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "toiDanhChinh", { ten: bc.toiDanh?.[0] || "", dieuLuat: bc.dieuLuatBC?.[0] || "" })} />
+      </td>
+    </tr>
+  );
+}
+
+// Bảng con bị can của 1 vụ — tự query/onSnapshot riêng, chỉ tải khi vụ được mở rộng (expand).
+function BangBiCanCon({ vuAnId, danhMucTD }) {
+  const [dsBiCan, setDsBiCan] = useState(null); // null = đang tải
+
+  useEffect(() => {
+    return db.collection("bican").where("maVuAn", "==", vuAnId).onSnapshot(
+      snap => setDsBiCan(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error(err)
+    );
+  }, [vuAnId]);
+
+  const suaBiCanTruong = async (bc, patch, canTinhLaiDieuLuat) => {
+    try {
+      await db.collection("bican").doc(bc.id).update(patch);
+      xoaBiCanCache(vuAnId);
+      if (canTinhLaiDieuLuat) await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi lưu bị can: " + err.message, "error");
+    }
+  };
+
+  const CAC_TRUONG_ANH_HUONG_DIEU_LUAT = new Set(["ngayKhoiTo", "toiDanhChinh"]);
+  const apDungGiaTri = async (dsDong, field, giaTri) => {
+    const batch = db.batch();
+    dsDong.forEach(bc => {
+      if (field === "toiDanhChinh") {
+        batch.update(db.collection("bican").doc(bc.id), {
+          toiDanh: [giaTri.ten, ...(bc.toiDanh || []).slice(1)],
+          dieuLuatBC: [giaTri.dieuLuat, ...(bc.dieuLuatBC || []).slice(1)],
+        });
+      } else {
+        batch.update(db.collection("bican").doc(bc.id), { [field]: giaTri });
+      }
+    });
+    await batch.commit();
+    xoaBiCanCache(vuAnId);
+    if (CAC_TRUONG_ANH_HUONG_DIEU_LUAT.has(field)) await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+  };
+
+  const keo = useKeoFillNgang(dsBiCan || [], apDungGiaTri);
+
+  if (dsBiCan === null) return <div className="p-3 text-xs text-slate-400">Đang tải bị can...</div>;
+  if (dsBiCan.length === 0) return <div className="p-3 text-xs text-slate-400">Vụ này chưa có bị can nào.</div>;
+
+  return (
+    <table className="w-full text-xs border-collapse bg-white rounded-lg overflow-hidden">
+      <thead>
+        <tr className="bg-slate-200 text-slate-600">
+          <th className="p-1.5 text-left w-40">Họ tên</th>
+          <th className="p-1.5 text-left w-16">Năm sinh</th>
+          <th className="p-1.5 text-left w-16">Giới tính</th>
+          <th className="p-1.5 text-left w-24">Dân tộc</th>
+          <th className="p-1.5 text-left w-20">Đảng viên</th>
+          <th className="p-1.5 text-left w-24">Biện pháp</th>
+          <th className="p-1.5 text-left w-28">Ngày khởi tố</th>
+          <th className="p-1.5 text-left">Tội danh chính</th>
+        </tr>
+      </thead>
+      <tbody>
+        {dsBiCan.map((bc, i) => (
+          <DongBiCanBangExcel key={bc.id} bc={bc} index={i} keo={keo}
+                               suaBiCanTruong={suaBiCanTruong} danhMucTD={danhMucTD} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+const SO_COT_BANG_EXCEL_VU = 16;
+
+function DongVuBangExcel({ vuAn, index, keo, suaVu, daMoRong, onToggleMoRong }) {
+  const oTd = (field) => ({
+    onMouseEnter: () => keo.diChuyenQua(index),
+    className: `relative group p-0 border-t border-slate-100 ${keo.dangDuocChon(index, field) ? "bg-indigo-50" : ""}`,
+  });
+  return (
+    <tr>
+      <td className="p-2 text-center border-t border-slate-100">
+        <button onClick={onToggleMoRong} className="text-slate-400 hover:text-indigo-600" title={daMoRong ? "Thu gọn" : "Mở rộng xem bị can"}>
+          {daMoRong ? "▼" : "▶"}
+        </button>
+      </td>
+      <td className="p-2 text-slate-400 whitespace-nowrap border-t border-slate-100">{hienThiMa(vuAn)}</td>
+      <td {...oTd("tenVu")}>
+        <OCellText value={vuAn.tenVu} onCommit={v => suaVu(vuAn.id, { tenVu: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "tenVu", vuAn.tenVu)} />
+      </td>
+      <td {...oTd("nguon")}>
+        <OSelectExcelEnum value={vuAn.nguon || "an_khoi_to_moi"} onChange={v => suaVu(vuAn.id, { nguon: v })}
+                          options={Object.entries(NHAN_NGUON)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "nguon", vuAn.nguon || "an_khoi_to_moi")} />
+      </td>
+      <td {...oTd("nguonChiTiet")}>
+        <OCellText value={vuAn.nguonChiTiet} onCommit={v => suaVu(vuAn.id, { nguonChiTiet: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "nguonChiTiet", vuAn.nguonChiTiet)} />
+      </td>
+      <td {...oTd("soQdKtva")}>
+        <OCellText value={vuAn.soQdKtva} onCommit={v => suaVu(vuAn.id, { soQdKtva: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "soQdKtva", vuAn.soQdKtva)} />
+      </td>
+      <td {...oTd("ngayQdKtva")}>
+        <OCellDate value={vuAn.ngayQdKtva} onCommit={v => suaVu(vuAn.id, { ngayQdKtva: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ngayQdKtva", vuAn.ngayQdKtva)} />
+      </td>
+      <td {...oTd("hanDieuTra")}>
+        <OCellDate value={vuAn.hanDieuTra} onCommit={v => suaVu(vuAn.id, { hanDieuTra: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "hanDieuTra", vuAn.hanDieuTra)} />
+      </td>
+      <td {...oTd("ksvChinh")}>
+        <OCellCombo value={vuAn.ksvChinh} listId="ds-ksv-excel" onCommit={v => suaVu(vuAn.id, { ksvChinh: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ksvChinh", vuAn.ksvChinh)} />
+      </td>
+      <td {...oTd("ksvHoTro")}>
+        <OCellText value={(vuAn.ksvHoTro || []).join(", ")}
+                   onCommit={v => suaVu(vuAn.id, { ksvHoTro: v.split(",").map(s => s.trim()).filter(Boolean) })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ksvHoTro", (vuAn.ksvHoTro || []).join(", "))} />
+      </td>
+      <td {...oTd("dtvCbdt")}>
+        <OCellCombo value={vuAn.dtvCbdt} listId="ds-dtv-excel" onCommit={v => suaVu(vuAn.id, { dtvCbdt: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "dtvCbdt", vuAn.dtvCbdt)} />
+      </td>
+      <td {...oTd("donViThuLy")}>
+        <OCellText value={vuAn.donViThuLy} onCommit={v => suaVu(vuAn.id, { donViThuLy: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "donViThuLy", vuAn.donViThuLy)} />
+      </td>
+      <td {...oTd("coQuanThuLy")}>
+        <OSelectExcelEnum value={vuAn.coQuanThuLy || "dieu_tra"} onChange={v => suaVu(vuAn.id, { coQuanThuLy: v })}
+                          options={Object.entries(NHAN_GIAI_DOAN)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "coQuanThuLy", vuAn.coQuanThuLy || "dieu_tra")} />
+      </td>
+      <td {...oTd("trangThai")}>
+        <OSelectExcelEnum value={vuAn.trangThai || "dang_giai_quyet"} onChange={v => suaVu(vuAn.id, { trangThai: v })}
+                          options={Object.entries(NHAN_TRANG_THAI)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "trangThai", vuAn.trangThai || "dang_giai_quyet")} />
+      </td>
+      <td {...oTd("mucDoNghiemTrong")}>
+        <OSelectExcelEnum value={vuAn.mucDoNghiemTrong || "dac_biet_nghiem_trong"} onChange={v => suaVu(vuAn.id, { mucDoNghiemTrong: v })}
+                          options={Object.entries(NHAN_MUC_DO_NGHIEM_TRONG)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "mucDoNghiemTrong", vuAn.mucDoNghiemTrong || "dac_biet_nghiem_trong")} />
+      </td>
+      <td {...oTd("ghiChu")}>
+        <OCellText value={vuAn.ghiChu} onCommit={v => suaVu(vuAn.id, { ghiChu: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ghiChu", vuAn.ghiChu)} />
+      </td>
+    </tr>
+  );
+}
+
+function BangExcelModule() {
+  const dsCanBo = useDanhSachCanBo();
+  const danhMucTD = useDanhMucToiDanh();
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [gioiHan, setGioiHan] = useState(500);
+  const [vuotGioiHan, setVuotGioiHan] = useState(false);
+  const [moRong, setMoRong] = useState(() => new Set());
+  const [tuKhoa, setTuKhoa] = useState("");
+
+  useEffect(() => {
+    setDangTai(true);
+    const q = db.collection("vuan").orderBy("ngayTao", "desc").limit(gioiHan);
+    return q.onSnapshot(
+      snap => {
+        setList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setVuotGioiHan(snap.size >= gioiHan);
+        setDangTai(false);
+      },
+      err => { console.error(err); setDangTai(false); }
+    );
+  }, [gioiHan]);
+
+  const dsLoc = useMemo(() => {
+    const k = tuKhoa.trim().toLowerCase();
+    if (!k) return list;
+    return list.filter(v =>
+      (hienThiMa(v) || "").toLowerCase().includes(k) ||
+      (v.tenVu || "").toLowerCase().includes(k) ||
+      (v.ksvChinh || "").toLowerCase().includes(k) ||
+      (v.soQdKtva || "").toLowerCase().includes(k)
+    );
+  }, [list, tuKhoa]);
+
+  const suaVu = async (id, patch) => {
+    try {
+      await db.collection("vuan").doc(id).update(patch);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi lưu: " + err.message, "error");
+    }
+  };
+  // `ksvHoTro` hiển thị trên ô như 1 chuỗi nối dấu phẩy (giống OCellText's onCommit) nhưng lưu
+  // Firestore dạng mảng — kéo fill lấy "giá trị hiện có trên ô" (chuỗi) làm giaTri, nên phải áp
+  // dụng ĐÚNG phép biến đổi chuỗi→mảng y hệt lúc gõ tay commit, không được ghi thẳng chuỗi vào
+  // field mảng (lỗi thật đã bắt được qua test: ghi chuỗi thẳng vào ksvHoTro làm hỏng cấu trúc dữ
+  // liệu, các chỗ khác trong app gọi `.join`/`.map` trên field này sẽ crash).
+  const apDungGiaTriVu = async (dsDong, field, giaTri) => {
+    const batch = db.batch();
+    dsDong.forEach(v => {
+      const patch = field === "ksvHoTro"
+        ? { ksvHoTro: String(giaTri).split(",").map(s => s.trim()).filter(Boolean) }
+        : { [field]: giaTri };
+      batch.update(db.collection("vuan").doc(v.id), patch);
+    });
+    await batch.commit();
+  };
+  const keo = useKeoFillNgang(dsLoc, apDungGiaTriVu);
+
+  const toggleMoRong = (id) => setMoRong(s => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+
+  const dsKsv = [...new Set(dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen).filter(Boolean))];
+  const dsDtv = [...new Set(dsCanBo.filter(c => c.vaiTro === "dtv").map(c => c.hoTen).filter(Boolean))];
+
+  return (
+    <div className="h-full flex flex-col min-h-0">
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap shrink-0">
+        <div>
+          <h3 className="text-base font-semibold">Bảng dữ liệu (kiểu Excel)</h3>
+          <div className="text-xs text-slate-500 mt-0.5">
+            Sửa nhanh hàng loạt: click vào ô để gõ, kéo góc dưới-phải 1 ô để điền nhanh xuống nhiều
+            dòng, bấm ▶ để mở rộng xem/sửa bị can của từng vụ.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setMoRong(new Set(dsLoc.map(v => v.id)))}
+                  className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Mở tất cả</button>
+          <button onClick={() => setMoRong(new Set())}
+                  className="text-xs text-slate-500 hover:text-slate-700 font-medium">Thu gọn tất cả</button>
+          <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)}
+                 placeholder="Tìm theo mã vụ, tên vụ, KSV, số QĐ KTVA..."
+                 className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 w-72" />
+        </div>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2 mb-3 shrink-0">
+        {CANH_BAO_GIAI_DOAN_TRANG_THAI}
+      </div>
+
+      <datalist id="ds-ksv-excel">{dsKsv.map(k => <option key={k} value={k} />)}</datalist>
+      <datalist id="ds-dtv-excel">{dsDtv.map(k => <option key={k} value={k} />)}</datalist>
+      <datalist id="ds-dantoc-excel">{DANH_SACH_DAN_TOC_PHO_BIEN.map(k => <option key={k} value={k} />)}</datalist>
+
+      <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded-xl bg-white">
+        {dangTai ? (
+          <div className="p-4 text-sm text-slate-400">Đang tải...</div>
+        ) : (
+          <table className="w-full text-xs border-collapse">
+            <thead className="sticky top-0 bg-slate-100 z-20">
+              <tr className="text-slate-500">
+                <th className="p-2 w-8"></th>
+                <th className="p-2 text-left w-28">Mã vụ</th>
+                <th className="p-2 text-left w-48">Tên vụ</th>
+                <th className="p-2 text-left w-36">Nguồn</th>
+                <th className="p-2 text-left w-32">Chi tiết nguồn</th>
+                <th className="p-2 text-left w-24">Số QĐ KTVA</th>
+                <th className="p-2 text-left w-24">Ngày QĐ KTVA</th>
+                <th className="p-2 text-left w-24">Hạn điều tra</th>
+                <th className="p-2 text-left w-28">KSV chính</th>
+                <th className="p-2 text-left w-32">KSV hỗ trợ</th>
+                <th className="p-2 text-left w-28">ĐTV/CBĐT</th>
+                <th className="p-2 text-left w-28">Đơn vị thụ lý</th>
+                <th className="p-2 text-left w-24" title="Sửa trực tiếp không qua nút Chuyển giai đoạn">Giai đoạn ⚠</th>
+                <th className="p-2 text-left w-28" title="Sửa trực tiếp không qua nút Hoàn thành vụ án">Trạng thái ⚠</th>
+                <th className="p-2 text-left w-36">Mức độ nghiêm trọng</th>
+                <th className="p-2 text-left w-40">Ghi chú</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dsLoc.length === 0 && (
+                <tr><td colSpan={SO_COT_BANG_EXCEL_VU} className="p-4 text-center text-slate-400">Không có vụ án nào khớp.</td></tr>
+              )}
+              {dsLoc.map((v, i) => (
+                <React.Fragment key={v.id}>
+                  <DongVuBangExcel vuAn={v} index={i} keo={keo} suaVu={suaVu}
+                                   daMoRong={moRong.has(v.id)} onToggleMoRong={() => toggleMoRong(v.id)} />
+                  {moRong.has(v.id) && (
+                    <tr>
+                      <td colSpan={SO_COT_BANG_EXCEL_VU} className="bg-slate-50 p-2 pl-8">
+                        <BangBiCanCon vuAnId={v.id} danhMucTD={danhMucTD} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="px-1 py-2 text-xs text-slate-400 flex items-center justify-between shrink-0">
+        <span>{dsLoc.length} / {list.length} vụ án đã tải{tuKhoa.trim() && vuotGioiHan ? " (tìm kiếm chỉ trong số đã tải)" : ""}</span>
+        {vuotGioiHan && (
+          <button onClick={() => setGioiHan(n => n + 500)}
+                  className="text-indigo-600 hover:text-indigo-700 font-medium">
+            Mới nhất {gioiHan} vụ — Tải thêm 500
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ====================================================================
 // KHUNG CHÍNH (SIDEBAR + NỘI DUNG)
 // ====================================================================
 const MODULES = [
@@ -9683,6 +10171,7 @@ function CaiDatModule() {
     { id: "canbo",   label: "Cán bộ"             },
     { id: "danhmuc", label: "Danh mục tội danh"  },
     { id: "import",  label: "Import Excel"        },
+    { id: "bangexcel", label: "Bảng dữ liệu"      },
   ];
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -9695,10 +10184,20 @@ function CaiDatModule() {
           </button>
         ))}
       </div>
-      {subTab === "log"     && <NhatKyModule />}
-      {subTab === "canbo"   && <CanBoModule />}
-      {subTab === "danhmuc" && <DanhMucToiDanhModule />}
-      {subTab === "import"  && <ImportExcelModule />}
+      {/* "Bảng dữ liệu" tự cuộn nội bộ (bảng dài, toolbar/cảnh báo cố định phía trên) nên cần bọc
+          trong flex-1 min-h-0 để h-full bên trong nó có chiều cao xác định — đúng pattern "Bố cục
+          cuộn trang" đã ghi trong CLAUDE.md. Các tab khác (Nhật ký/Cán bộ/Danh mục/Import) vẫn để
+          cả trang cuộn qua <main> như trước, không đổi hành vi của chúng. */}
+      {subTab === "bangexcel" ? (
+        <div className="flex-1 min-h-0"><BangExcelModule /></div>
+      ) : (
+        <>
+          {subTab === "log"     && <NhatKyModule />}
+          {subTab === "canbo"   && <CanBoModule />}
+          {subTab === "danhmuc" && <DanhMucToiDanhModule />}
+          {subTab === "import"  && <ImportExcelModule />}
+        </>
+      )}
     </div>
   );
 }

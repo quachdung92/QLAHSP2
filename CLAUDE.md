@@ -914,6 +914,56 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       trong cùng 1 dòng (không cần DS sheet mới), nhưng chưa làm vì cần rà soát cẩn thận việc ánh
       xạ từng thành phần C3 sang đúng cột vals[] khác trong cùng hàng, quy mô tương đương lần sửa
       B10 gốc — nếu cần, hỏi lại rõ trước khi làm để tránh sai sót trên báo cáo chính thức.
+- [x] **Cài đặt → "Bảng dữ liệu" (2026-07-17, `BangExcelModule`, nhánh `bang-excel-cai-dat`)** —
+      công cụ sửa nhanh hàng loạt kiểu bảng tính Excel cho người dùng thành thạo, thêm 1 tab mới
+      trong `CaiDatModule` (5 tab: Nhật ký/Cán bộ/Danh mục/Import/**Bảng dữ liệu**). Mỗi vụ án 1
+      dòng, bấm nút mở rộng (▸) hiện bảng con bị can lồng bên dưới (giống Excel outline/group) —
+      component `BangBiCanCon` tự query/`onSnapshot` riêng theo `maVuAn`, chỉ tải khi dòng vụ được
+      mở rộng, không tải trước toàn bộ `bican`. **Mọi ô LUÔN ở trạng thái sửa** (không có bước bấm
+      "Sửa" riêng như mọi form khác trong app — đúng cảm giác 1 bảng tính, click vào ô là gõ được
+      ngay, blur/onChange mới commit Firestore tuỳ loại ô: `OCellText`/`OCellDate` commit lúc blur/
+      onChange hợp lệ, `OSelectExcelEnum` commit ngay lúc chọn). **Kéo fill kiểu Excel** (hook dùng
+      chung `useKeoFillNgang`, 1 phạm vi riêng cho bảng vụ và bảng con bị can của từng vụ — không
+      trộn giữa 2 phạm vi) — giữ chuột ở tay cầm góc dưới-phải 1 ô (`TayKeoFill`, hiện khi hover
+      qua `group-hover`) rồi kéo qua các dòng khác, thả chuột ghi hàng loạt qua 1 `batch.commit()`
+      duy nhất cho toàn bộ đoạn kéo.
+      **2 loại combobox KHÔNG lẫn lộn** (theo đúng yêu cầu người dùng): enum CỐ ĐỊNH (Nguồn/Giai
+      đoạn/Trạng thái/Mức độ nghiêm trọng/Giới tính/Đảng viên/Biện pháp ngăn chặn) dùng `<select>`
+      qua `OSelectExcelEnum`, KHÔNG cho gõ giá trị lạ (các giá trị này có ý nghĩa cố định trong
+      logic thống kê ở khắp nơi trong app); danh sách tham chiếu MỞ (KSV chính/ĐTV/Dân tộc — dùng
+      `<input list>` + `<datalist>` qua `OCellCombo`, 3 datalist `ds-ksv-excel`/`ds-dtv-excel`/
+      `ds-dantoc-excel`) cho CHỌN có sẵn HOẶC GÕ MỚI tự do, vì đây là tên người/tên dân tộc, KSV/
+      ĐTV mới vẫn hợp lệ dù chưa có trong danh mục Cán bộ.
+      **Quyết định thiết kế đã hỏi rõ người dùng trước khi làm (KHÔNG tự suy đoán)**: (1) phạm vi
+      Vụ án + Bị can lồng nhau (không phải chỉ 1 trong 2 — người dùng chọn đúng lựa chọn khuyến
+      nghị); (2) **cho sửa CẢ Giai đoạn/Trạng thái ngay trên bảng — NGƯỢC với khuyến nghị ban đầu**
+      của Claude (2 field này điều khiển số liệu báo cáo kỳ, đúng nguyên tắc thiết kế cốt lõi #1/#3
+      thì phải qua đúng luồng nghiệp vụ có hỏi kỳ + ghi log vào `lichsuChuyenGiaiDoan`) — người
+      dùng xác nhận muốn sửa trực tiếp để dọn dữ liệu cũ hàng loạt nhanh hơn. Vì vậy: sửa 2 field
+      này ở `BangExcelModule` **KHÔNG ghi log sự kiện**, số liệu Kỳ báo cáo/Dashboard/Biểu B10 (đều
+      tính từ log, không phải từ field hiện tại của `vuan`) **SẼ KHÔNG phản ánh thay đổi này** —
+      đã thêm banner cảnh báo màu vàng cố định đầu bảng (`CANH_BAO_GIAI_DOAN_TRANG_THAI`) nhắc rõ
+      điều này, chỉ nên dùng để sửa dữ liệu lịch sử/lỗi nhập liệu cũ, KHÔNG dùng thay cho nút
+      "Chuyển giai đoạn"/"Hoàn thành vụ án" ở Danh sách vụ án cho nghiệp vụ đang diễn ra.
+      Sửa bị can qua bảng này vẫn gọi `capNhatDieuLuatVaLoaiKhoiTo` (helper transaction dùng chung,
+      xem mục "tối ưu hệ thống" trên) khi field ảnh hưởng `dieuLuat`/`loaiKhoiTo` (`ngayKhoiTo`,
+      `toiDanhChinh`) bị đổi — kể cả khi đổi hàng loạt qua kéo fill, không chỉ khi sửa từng ô.
+      Cột **KSV hỗ trợ** (`ksvHoTro`, field mảng trên `vuan`) hiển thị/sửa dạng chuỗi nối bằng dấu
+      phẩy, nhưng thao tác **kéo fill** phải tự parse lại thành mảng trước khi ghi (bug thật gặp
+      phải lúc viết tính năng: kéo fill ban đầu ghi thẳng chuỗi nguồn vào field mảng, làm hỏng
+      field — phát hiện qua Playwright test dựng `TypeError: (vuAn.ksvHoTro || []).join is not a
+      function` ở nơi khác trong app đọc field này — đã sửa `apDungGiaTriVu` đặc cách riêng field
+      `ksvHoTro`: parse `String(giaTri).split(",").map(s => s.trim()).filter(Boolean)` trước khi
+      đưa vào batch, giống hệt cách ô đơn `OCellCombo` của cột này đã tự làm đúng từ đầu). Nếu
+      thêm cột mảng mới vào bảng vụ/bị can sau này, nhớ áp dụng cùng cách xử lý này ở hàm
+      `apDungGiaTri`/`apDungGiaTriVu` tương ứng, đừng để lặp lại lỗi này.
+      Bảng vụ tải `orderBy("ngayTao", "desc").limit(gioiHan)` (mặc định 500, nút "Tải thêm 500" ở
+      cuối bảng khi còn có thể còn dữ liệu) — không tải toàn bộ `vuan` cùng lúc để tránh chậm với
+      dữ liệu lớn, có ô tìm kiếm tự do (`tuKhoa`, khớp mã vụ/tên vụ/KSV chính/số QĐ KTVA) lọc trên
+      `list` đã tải. Đã kiểm chứng đầy đủ bằng Playwright thật (không chỉ đọc code): sửa ô text/
+      select/combobox, mở/thu gọn bị can, kéo fill cả ở bảng vụ (KSV hỗ trợ, xuyên qua dòng ở giữa
+      không bị kéo) lẫn bảng con bị can (Dân tộc dạng chuỗi, Tội danh chính dạng object `{ten,
+      dieuLuat}`) — không còn lỗi console sau khi sửa bug `ksvHoTro` ở trên.
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
