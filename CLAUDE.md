@@ -627,6 +627,39 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       Tách — xóa vụ gốc sẽ làm ID nhóm đó không còn trỏ tới bị can thật nào, nhưng không phá dữ
       liệu bản sao, chỉ mất khả năng "Nhập vụ" nhận diện gộp về sau; chưa cần xử lý vì chưa gặp
       yêu cầu thực tế, nếu phát sinh vấn đề thì bổ sung cảnh báo tương tự cảnh báo vụ tách.
+      **Xoá hình thức giải quyết (2026-07-17, `XoaHinhThucGiaiQuyetModal`)** — nhu cầu thực tế:
+      chọn NHẦM hình thức lúc bấm "Hoàn thành vụ án" (VD chọn "Đã xét xử" nhưng đúng ra phải là
+      "Tạm đình chỉ") — trước đây KHÔNG có cách nào tự sửa, vì 1 khi vụ đã ở trạng thái đã giải
+      quyết, panel chi tiết chỉ còn 3 nút (In mã QR/Sửa thông tin/Xóa vụ án), "Sửa thông tin vụ án"
+      cố tình chặn sửa giai đoạn/trạng thái, và "Phục hồi" chỉ hiện cho riêng "Tạm đình chỉ". Nút
+      mới **"Xoá hình thức giải quyết"** hiện cho cả 5 trạng thái do "Hoàn thành vụ án" tạo ra
+      (điều kiện `FIELD_SO_QD_HOAN_THANH[vuAn.trangThai]` — tự động KHÔNG áp dụng cho "Đã nhập vào
+      vụ khác" vì trạng thái đó không có entry trong map này, đúng vì đó là luồng khác hẳn, xem
+      `NhapVuModal`). **KHÁC HẲN "Phục hồi"** (giữ nguyên như cũ, không đụng vào — theo yêu cầu
+      người dùng đây là 1 tính năng riêng sẽ phát triển tiếp sau này): Phục hồi là hành động
+      NGHIỆP VỤ chính thức (ghi sự kiện `phuc_hoi` mới, giữ nguyên sự kiện `hoan_thanh` cũ trong
+      lịch sử, cần nhập ngày/số quyết định phục hồi điều tra, đi qua `ModalXacNhanKy` hỏi kỳ) —
+      còn "Xoá hình thức giải quyết" là công cụ SỬA SAI SÓT thuần tuý (không hỏi kỳ, không ghi sự
+      kiện mới): xoá hẳn `ngayQuyetDinh`/`kyHoanThanh`/`ngayQuyetDinhUocTinh`/`noiChuyenDen` + field
+      số quyết định tương ứng (qua `fieldSoQuyetDinhTrenVuAn`) trên `vuan`, set `trangThai:
+      "dang_giai_quyet"`, VÀ XOÁ LUÔN đúng sự kiện `hoan_thanh` đã gây ra trạng thái hiện tại khỏi
+      `lichsuChuyenGiaiDoan` (đúng nguyên tắc thiết kế #1 — nếu không xoá log, số liệu báo cáo kỳ
+      vẫn tính vụ này là "đã giải quyết" dù `vuan.trangThai` đã về "đang giải quyết", gây lệch số
+      giữa `tinhTonHienTaiTheoGD` (đọc live `vuan`) và `tinhBaoCaoKyTuLog` (đọc log)). Sau khi xoá,
+      bấm lại "Hoàn thành vụ án" để nhập đúng hình thức từ đầu.
+      Tìm đúng sự kiện `hoan_thanh` cần xoá bằng cách lọc trên `lichSu` **ĐÃ CÓ SẴN** trong
+      `ChiTietPanel` (đã tải, sắp xếp `desc` theo `thoiDiemGhi`) — lấy phần tử `hoan_thanh` ĐẦU
+      TIÊN gặp trong mảng (= gần nhất), KHÔNG query Firestore riêng để tránh phải thêm composite
+      index mới (`maVuAn` + `loaiSuKien` + `orderBy`) chỉ dùng 1 chỗ này. Cách này cũng tự nhiên
+      không đụng tới các lần `hoan_thanh` CŨ HƠN nếu vụ từng Phục hồi rồi Hoàn thành lại nhiều lần
+      trong lịch sử (chỉ xoá đúng sự kiện gần nhất). Không bắt gõ lại mã vụ để xác nhận như
+      `XoaVuAnModal` (ít phá huỷ hơn — chỉ ảnh hưởng 1 vụ, không cascade xoá bị can/toàn bộ lịch
+      sử) nhưng vẫn cảnh báo rõ không thể hoàn tác + nhắc "Tính lại số liệu" nếu vụ đã tính vào kỳ
+      đã chốt (giống cảnh báo ở `XoaVuAnModal`). Đã kiểm chứng cú pháp bằng compile qua đúng bản
+      `@babel/standalone@7.25.6` — **CHƯA kiểm chứng bằng dữ liệu Firestore thật**, cần thử trên
+      `qlva-dev.html`: Hoàn thành 1 vụ (chọn nhầm hình thức), bấm "Xoá hình thức giải quyết", xác
+      nhận vụ về "Đang giải quyết" đúng, sự kiện `hoan_thanh` cũ biến mất khỏi Lịch sử, rồi bấm lại
+      "Hoàn thành vụ án" chọn đúng hình thức xem lưu bình thường không.
 - [x] Module Án đã giải quyết (`AnDaGiaiQuyetModule`) — 5 tab theo `trangThai` cụ thể (Đã xét
       xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ, danh sách `TAB_DA_GIAI_QUYET`), lấy `ngày quyết
       định` từ sự kiện `hoan_thanh` trong log (không phải `ngayCapNhat` của `vuan` — field đó có

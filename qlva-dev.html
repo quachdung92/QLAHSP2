@@ -4753,6 +4753,15 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
             {vuAn.trangThai === "tam_dinh_chi" && (
               <NutHanhDong nhan="Phục hồi" onClick={() => setModalMo("phuc_hoi")} />
             )}
+            {/* Sửa lỗi chọn NHẦM hình thức giải quyết (VD "Đã xét xử" nhưng đúng ra là "Tạm đình
+                chỉ") — chỉ hiện cho 5 trạng thái do "Hoàn thành vụ án" tạo ra (FIELD_SO_QD_HOAN_THANH
+                có key tương ứng), KHÔNG áp dụng cho "Đã nhập vào vụ khác" (khác luồng, không có
+                sự kiện hoan_thanh). KHÁC "Phục hồi" ở trên (hành động nghiệp vụ chính thức, ghi log
+                riêng, chỉ áp dụng Tạm đình chỉ) — đây là công cụ sửa sai sót thuần tuý, xem
+                XoaHinhThucGiaiQuyetModal. */}
+            {FIELD_SO_QD_HOAN_THANH[vuAn.trangThai] && (
+              <NutHanhDong nhan="Xoá hình thức giải quyết" onClick={() => setModalMo("xoa_hinh_thuc")} />
+            )}
             <NutHanhDong nhan="In mã QR" onClick={() => setModalMo("qr")} />
             <NutHanhDong nhan="Sửa thông tin" onClick={() => setModalMo("sua_thong_tin")} />
           </div>
@@ -4928,6 +4937,11 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
                       onDong={() => setModalMo(null)}
                       onXong={() => { setModalMo(null); onDoiSelected && onDoiSelected(null); }} />
       )}
+      {modalMo === "xoa_hinh_thuc" && (
+        <XoaHinhThucGiaiQuyetModal vuAn={vuAn} lichSu={lichSu}
+                                    onDong={() => setModalMo(null)}
+                                    onXong={() => setModalMo(null)} />
+      )}
     </div>
   );
 }
@@ -5030,6 +5044,71 @@ function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
             {dangXoa ? "Đang xóa..." : "Xóa vĩnh viễn"}
           </button>
         )}
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
+// Sửa lỗi chọn NHẦM hình thức giải quyết lúc bấm "Hoàn thành vụ án" (VD chọn "Đã xét xử" nhưng
+// đúng ra là "Tạm đình chỉ") — đưa vụ về đúng "Đang giải quyết" NHƯ LÚC MỚI NHẬP (2026-07-17).
+// KHÁC "Phục hồi" (PhucHoiModal, hành động nghiệp vụ chính thức "phục hồi điều tra" từ Tạm đình
+// chỉ, có ngày/số quyết định riêng, giữ nguyên log cũ) — đây là công cụ sửa sai sót THUẦN TUÝ,
+// không phải sự kiện nghiệp vụ: xoá hẳn field kết quả (ngày/số quyết định) VÀ đúng sự kiện
+// `hoan_thanh` đã gây ra trạng thái hiện tại (không hỏi kỳ báo cáo, giống XoaVuAnModal).
+// Tìm sự kiện cần xoá bằng cách lọc trên `lichSu` ĐÃ CÓ SẴN (ChiTietPanel đã tải, sắp xếp desc
+// theo thoiDiemGhi) thay vì query Firestore riêng — tránh cần thêm composite index mới
+// (maVuAn + loaiSuKien + orderBy) chỉ để dùng 1 lần ở đây. Phần tử `hoan_thanh` ĐẦU TIÊN gặp
+// trong mảng đã sort desc chính là sự kiện GẦN NHẤT, không đụng các lần hoàn thành cũ hơn (nếu
+// vụ từng Phục hồi rồi Hoàn thành lại nhiều lần trong lịch sử).
+function XoaHinhThucGiaiQuyetModal({ vuAn, lichSu, onDong, onXong }) {
+  const [dangXoa, setDangXoa] = useState(false);
+  const [loi, setLoi] = useState("");
+
+  const suKienHoanThanh = lichSu.find(ls => ls.loaiSuKien === "hoan_thanh");
+  const fieldVuAn = fieldSoQuyetDinhTrenVuAn(vuAn.trangThai);
+
+  const xoa = async () => {
+    setDangXoa(true);
+    setLoi("");
+    try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), {
+        trangThai: "dang_giai_quyet", ngayQuyetDinh: null, kyHoanThanh: null,
+        ngayQuyetDinhUocTinh: false, noiChuyenDen: "",
+        ...(fieldVuAn ? { [fieldVuAn]: "" } : {}),
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      if (suKienHoanThanh) batch.delete(db.collection("lichsuChuyenGiaiDoan").doc(suKienHoanThanh.id));
+      await batch.commit();
+      addToast("Đã xoá hình thức giải quyết — vụ án quay về Đang giải quyết.");
+      onXong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi xoá: " + err.message);
+      setDangXoa(false);
+    }
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Xoá hình thức giải quyết">
+      <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">
+        Vụ án sẽ quay về <b>"Đang giải quyết"</b> như lúc mới nhập — xoá luôn Ngày/Số quyết định đã
+        ghi{fieldVuAn ? ` (${NHAN_SO_QUYET_DINH_HOAN_THANH[vuAn.trangThai] || "số quyết định"})` : ""}
+        {suKienHoanThanh ? " và sự kiện \"Hoàn thành\" tương ứng trong lịch sử" : ""}. Dùng khi chọn
+        NHẦM hình thức giải quyết (VD chọn "Đã xét xử" nhưng đúng ra là "Tạm đình chỉ") — sau khi
+        xoá, bấm lại "Hoàn thành vụ án" để nhập đúng hình thức. Nếu vụ đã được tính vào 1 kỳ báo cáo
+        đã chốt, số liệu đã lưu của kỳ đó sẽ KHÔNG tự cập nhật — vào "Kỳ báo cáo" bấm "Tính lại số
+        liệu" cho kỳ liên quan sau khi xoá. Không thể hoàn tác.
+      </div>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} disabled={dangXoa} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+        <button onClick={xoa} disabled={dangXoa}
+                className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50">
+          {dangXoa ? "Đang xoá..." : "Xoá hình thức giải quyết"}
+        </button>
       </div>
     </KhungModalHanhDong>
   );
