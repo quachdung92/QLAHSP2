@@ -2,6 +2,40 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Bug đã sửa: "Mở tất cả" ở Bảng dữ liệu Excel tạo hàng trăm listener sống song song (2026-07-18)
+
+Người dùng báo Firebase Console hiện "3 connections nhưng 121 listeners" — con số quá cao so với 3
+kết nối thật. Đối chiếu bảng Query Insights người dùng dán vào: mọi query trên `canbo`/
+`danhMucToiDanh`/`kybaocao` đều khớp đúng thiết kế cache dùng chung (Đợt 1) — 1 listener/collection,
+bình thường. Riêng `boDemMaVu` (69 docs full-collection) không khớp bất kỳ query nào trong code
+(app chỉ đọc `.doc(yymm)` theo transaction, không bao giờ query cả collection) — nhiều khả năng là
+Firebase Console TỰ browse collection đó lúc người dùng mở tab Firestore Data, không phải app.
+
+**Nguyên nhân thật (grep toàn bộ `onSnapshot` trong code, đối chiếu số lượng instance có thể mở
+cùng lúc)**: `BangBiCanCon` (bảng bị can lồng trong "Cài đặt → Bảng dữ liệu" kiểu Excel) dùng
+`onSnapshot` SỐNG cho MỖI dòng vụ án được mở rộng — khác hẳn 2 nơi `onSnapshot` theo `maVuAn` còn
+lại trong app (`ChiTietPanel`, `ChiTietVuAnModal`) vốn chỉ mở đúng 1 vụ tại 1 thời điểm nên không
+sao. Nút **"Mở tất cả"** ở Bảng dữ liệu Excel mở rộng MỌI dòng đang tải (`gioiHan` mặc định 500) —
+mỗi dòng mở rộng là 1 listener sống mới, tồn tại tới khi thu gọn/rời trang. Đây đúng dạng gap đã
+loại bỏ khắp app trong đợt tối ưu Firestore trước đó ("hot data không cần live") nhưng bị bỏ sót ở
+tính năng Bảng dữ liệu Excel — vì nhánh đó (`bang-excel-cai-dat`) tách ra và phát triển độc lập
+trước khi có tư duy "tải 1 lần" được thống nhất ở các module khác.
+
+**Đã sửa**: `BangBiCanCon` đổi từ `onSnapshot` sang `.get()` tải 1 lần lúc mount/expand (hàm
+`taiLai`, dùng `useCallback`), rồi gọi lại `taiLai()` NGAY SAU MỖI lần chính component này ghi
+Firestore (`suaBiCanTruong`/`apDungGiaTri`) — giữ đúng UX cũ (cột "Loại khởi tố" tự tính vẫn cập
+nhật ngay sau khi sửa, không cần chờ remount) mà KHÔNG còn giữ kết nối sống nào ở nền. Đánh đổi:
+mất realtime với thay đổi từ NGƯỜI KHÁC khi đang mở rộng — chấp nhận được vì đây là công cụ sửa
+hàng loạt cho 1 người thao tác tại 1 thời điểm, không phải màn hình xem chung nhiều người.
+
+**Đã kiểm chứng bằng Playwright thật**: seed 8 vụ án + 8 bị can, bấm "Mở tất cả" — xác nhận **0
+listener** xuất hiện trên `bican` (trước fix sẽ ra đúng 8, tỉ lệ thuận số dòng mở), thay vào đó
+đúng 8 lượt `.get()` một lần (mỗi lượt lọc đúng 1 `maVuAn`); cả 8 vụ vẫn hiện đúng dữ liệu bị can;
+sửa 1 ô vẫn ghi đúng Firestore VÀ UI tự cập nhật ngay (không cần remount) nhờ `taiLai()` sau ghi; 0
+lỗi console. Chạy lại toàn bộ 2 bộ test hồi quy có sẵn của Bảng dữ liệu Excel (26 assertion cấu
+trúc/filter/ghi dữ liệu) và kéo-fill (5 assertion) — không có gì bị phá vỡ. PASS trên cả
+`qlva.html`/`qlva-dev.html`.
+
 ## Sự cố "deploy đè mất fix" + merge `toi-uu-firestore-read` vào `main` (2026-07-18, cuối ngày)
 
 **Chuyện đã xảy ra**: sáng 2026-07-18, 1 phiên làm việc port 2 bug fix (thời hạn bảo quản floor-

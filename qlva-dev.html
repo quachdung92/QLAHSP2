@@ -11062,18 +11062,27 @@ function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
 function BangBiCanCon({ vuAnId, danhMucTD }) {
   const [dsBiCan, setDsBiCan] = useState(null); // null = đang tải
 
-  useEffect(() => {
-    return db.collection("bican").where("maVuAn", "==", vuAnId).onSnapshot(
-      snap => setDsBiCan(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => console.error(err)
-    );
+  // Tải 1 LẦN (không onSnapshot sống) — đúng nguyên tắc "hot data không cần live" đã áp dụng khắp
+  // app (xem CLAUDE.md "Tối ưu Firestore"). Bảng dữ liệu Excel cho "Mở tất cả" (▸ mọi dòng cùng
+  // lúc, có thể tới 500 vụ) — nếu dùng onSnapshot ở đây, mỗi dòng mở rộng là 1 listener SỐNG song
+  // song, dễ tạo hàng trăm listener cùng lúc (bug thật đã gặp: 121 listener chỉ từ 3 kết nối, xem
+  // ghi chú lúc phát hiện). Tải lại thủ công ngay sau MỖI lần chính component này ghi Firestore
+  // (suaBiCanTruong/apDungGiaTri) để các cột tự tính (Loại khởi tố) vẫn cập nhật đúng ngay, không
+  // cần chờ remount — không mất tính đúng đắn, chỉ mất realtime với thay đổi từ NGƯỜI KHÁC (chấp
+  // nhận được, đây là công cụ sửa hàng loạt cho 1 người thao tác, không phải màn hình xem chung).
+  const taiLai = useCallback(async () => {
+    const snap = await db.collection("bican").where("maVuAn", "==", vuAnId).get();
+    setDsBiCan(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   }, [vuAnId]);
+
+  useEffect(() => { taiLai(); }, [taiLai]);
 
   const suaBiCanTruong = async (bc, patch, canTinhLaiDieuLuat) => {
     try {
       await db.collection("bican").doc(bc.id).update(patch);
       xoaBiCanCache(vuAnId);
       if (canTinhLaiDieuLuat) await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+      await taiLai();
     } catch (err) {
       console.error(err);
       addToast("Lỗi khi lưu bị can: " + err.message, "error");
@@ -11096,6 +11105,7 @@ function BangBiCanCon({ vuAnId, danhMucTD }) {
     await batch.commit();
     xoaBiCanCache(vuAnId);
     if (CAC_TRUONG_ANH_HUONG_DIEU_LUAT.has(field)) await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+    await taiLai();
   };
 
   const { filters, onLoc, reset } = useColumnFilters();
