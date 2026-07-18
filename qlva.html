@@ -300,6 +300,15 @@ function tinhTenVu(biCanList) {
   return coTen[0].hoTen.trim() + (coTen.length > 1 ? " và đồng phạm" : "");
 }
 
+// Cache tóm tắt bị can lên vuan (soBiCan/biCanDaiDien) — để Danh sách vụ án không cần đọc riêng
+// collection bican cho cột "Bị can" (Tối ưu Firestore Đợt 3, 2026-07-18). `biCanList` phải là mảng
+// bị can CUỐI CÙNG (đã lọc rỗng, đúng trạng thái SAU khi ghi) — không có quy ước sắp xếp nào có sẵn
+// để noi theo (query bican không orderBy), nên "đại diện" = phần tử ĐẦU MẢNG tại thời điểm ghi, áp
+// dụng nhất quán ở mọi nơi gọi.
+function tomTatBiCan(biCanList) {
+  return { soBiCan: biCanList.length, biCanDaiDien: biCanList[0]?.hoTen || "" };
+}
+
 // loaiKhoiTo: "ban_dau" cho bị can có ngayKhoiTo sớm nhất trong vụ, còn lại "bo_sung".
 // Nhận thẳng mảng Date|null (song song với danh sách bị can) — dùng khi đã có Date sẵn (đọc từ Firestore).
 function tinhLoaiKhoiToTheoNgay(ngayList) {
@@ -336,9 +345,17 @@ async function capNhatDieuLuatVaLoaiKhoiTo(maVuAn) {
     }
     const dieuLuatMoi = tinhDieuLuat(bcList);
     const loaiKhoiToMoi = tinhLoaiKhoiToTheoNgay(bcList.map(bc => bc.ngayKhoiTo ? (bc.ngayKhoiTo.toDate ? bc.ngayKhoiTo.toDate() : new Date(bc.ngayKhoiTo)) : null));
-    tx.update(db.collection("vuan").doc(maVuAn), { dieuLuat: dieuLuatMoi });
+    // ...tomTatBiCan(bcList) (Tối ưu Firestore Đợt 3) gộp vào ĐÚNG update này — bcList vừa đọc
+    // trong transaction đã là danh sách bị can CUỐI CÙNG của vụ, đúng yêu cầu của tomTatBiCan.
+    tx.update(db.collection("vuan").doc(maVuAn), { dieuLuat: dieuLuatMoi, ...tomTatBiCan(bcList) });
+    // ngayCapNhat/nguoiCapNhatCuoi (Tối ưu Firestore Đợt 1 — mọi nơi ghi bican đều cần field này)
+    // giữ nguyên ngay cả khi tính lại loaiKhoiTo qua hàm dùng chung này.
+    const nowTx = new Date();
+    const nguoiTx = auth.currentUser?.email || "";
     bcList.forEach((bc, i) => {
-      if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) tx.update(db.collection("bican").doc(bc.id), { loaiKhoiTo: loaiKhoiToMoi[i] });
+      if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) tx.update(db.collection("bican").doc(bc.id), {
+        loaiKhoiTo: loaiKhoiToMoi[i], ngayCapNhat: nowTx, nguoiCapNhatCuoi: nguoiTx,
+      });
     });
   });
 }
@@ -499,6 +516,7 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
     noiChuyenDen: "", nhapVaoVu: null, vuGoc: vuGoc.id, soDemTach: 0,
     anDiem: vuGoc.anDiem || false, uyQuyenXetXu: vuGoc.uyQuyenXetXu || "", phienToaRutKN: vuGoc.phienToaRutKN || false,
     ghiChu: "", ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+    ...tomTatBiCan(biCanVuMoi),
   });
   // Vụ mới tách ra là 1 vụ "mới" theo đúng ý nghĩa của sentinel — báo ngay để client khác không bỏ
   // sót (xem dsDangGiaiQuyetRegistry/dongBoDsDangGiaiQuyet).
@@ -519,6 +537,7 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
   batch.update(refGoc, {
     dieuLuat: tinhDieuLuat(biCanConLaiGoc), tenVu: tinhTenVu(biCanConLaiGoc) || vuGoc.tenVu,
     ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+    ...tomTatBiCan(biCanConLaiGoc),
   });
   return { maVuMoi, batch, now };
 }
@@ -2000,6 +2019,72 @@ function BackfillLoaiKhoiToTool() {
   );
 }
 
+// Điền/sửa soBiCan/biCanDaiDien (tomTatBiCan) trên toàn bộ vuan hiện có — cần cho dữ liệu TẠO
+// TRƯỚC khi có tính năng này (Tối ưu Firestore Đợt 3, 2026-07-18); vụ tạo/sửa bị can sau đó đã tự
+// có 2 field này qua chính các form/công cụ ghi bình thường. An toàn chạy lại nhiều lần (idempotent
+// — chỉ ghi các vụ có giá trị khác đang lưu).
+function BackfillTomTatBiCanTool() {
+  const [state, setState] = useState("idle");
+  const [info, setInfo] = useState("");
+
+  const run = async () => {
+    setState("loading"); setInfo("Đang tải dữ liệu...");
+    try {
+      const [bcSnap, vuSnap] = await Promise.all([
+        db.collection("bican").get(),
+        db.collection("vuan").get(),
+      ]);
+      const theoVu = new Map();
+      bcSnap.docs.forEach(doc => {
+        const bc = doc.data();
+        if (!theoVu.has(bc.maVuAn)) theoVu.set(bc.maVuAn, []);
+        theoVu.get(bc.maVuAn).push(bc);
+      });
+
+      let soCapNhat = 0;
+      const BATCH_SIZE = 400;
+      let batch = db.batch(); let batchCount = 0;
+      const commitNeu = async () => { if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; } };
+
+      for (const vuDoc of vuSnap.docs) {
+        const dung = tomTatBiCan(theoVu.get(vuDoc.id) || []);
+        const hienTai = vuDoc.data();
+        if (hienTai.soBiCan !== dung.soBiCan || hienTai.biCanDaiDien !== dung.biCanDaiDien) {
+          batch.update(vuDoc.ref, dung);
+          soCapNhat++; batchCount++;
+        }
+        await commitNeu();
+      }
+      if (batchCount > 0) await batch.commit();
+
+      setState("done");
+      setInfo(soCapNhat === 0
+        ? "Không có vụ nào cần cập nhật — dữ liệu đã đúng."
+        : `Đã cập nhật soBiCan/biCanDaiDien cho ${soCapNhat} vụ án.`);
+    } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Cập nhật số bị can/tên đại diện lên vụ án (soBiCan/biCanDaiDien)</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Điền/sửa 2 field mới trên vụ án để cột "Bị can" ở Danh sách vụ án không cần đọc riêng
+        collection bị can nữa (Tối ưu Firestore Đợt 3, 2026-07-18). Chỉ cần cho dữ liệu cũ — vụ
+        tạo/sửa bị can sau khi có tính năng này đã tự có sẵn 2 field. An toàn khi chạy lại nhiều lần.
+      </p>
+      {info && (
+        <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
+          {info}
+        </div>
+      )}
+      <button onClick={run} disabled={state === "loading"}
+              className="px-3 py-1.5 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
+        {state === "loading" ? "Đang chạy..." : "Chạy cập nhật"}
+      </button>
+    </div>
+  );
+}
+
 // Sửa dữ liệu tonCuoiKyTheoTD/tonCuoiBiCan đã bị ghi sai bởi bug cũ (tinhLaiBaoCaoLuu từng chụp
 // ảnh LIVE hiện tại thay vì lịch sử — đã sửa code 2026-07-13 để không sai THÊM, nhưng dữ liệu đã
 // ghi sai trước đó không tự phục hồi). Chạy 1 lần để tính lại ĐÚNG từ log cho toàn bộ kỳ đã chốt,
@@ -2238,6 +2323,13 @@ function ImportExcelModule() {
   const [hienModalKy, setHienModalKy] = useState(false);
   const [ketQuaGhi, setKetQuaGhi] = useState(null);
 
+  // Set các INDEX trong ketQuaDoc.trung mà người dùng đã tích "Thay vụ cũ" — reset ở onFile mỗi
+  // khi chọn file mới (xem 2026-07-18 "Import Excel: cho phép thay thế vụ trùng").
+  const [trungDuocChon, setTrungDuocChon] = useState(() => new Set());
+  // ID các vụ trùng KHÔNG được phép thay thế vì còn vụ tách ra từ nó (đúng nguyên tắc XoaVuAnModal
+  // đã áp dụng cho xoá thủ công — không mồ côi hoá vụ tách khi soft-delete vụ gốc).
+  const [idsCoVuCon, setIdsCoVuCon] = useState(new Set());
+
   const onFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -2246,6 +2338,8 @@ function ImportExcelModule() {
     setErrorMsg("");
     setKetQuaDoc(null);
     setKetQuaGhi(null);
+    setTrungDuocChon(new Set());
+    setIdsCoVuCon(new Set());
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
@@ -2276,14 +2370,25 @@ function ImportExcelModule() {
           if (v._loi) { loi.push(v); return; }
           if (v.maVu) {
             const idTrungMa = byMa.get(v.maVu.toLowerCase());
-            if (idTrungMa) { trung.push({ ...v, _lyDoTrung: `Trùng mã vụ với vụ đã có (${idTrungMa})` }); return; }
+            if (idTrungMa) { trung.push({ ...v, _lyDoTrung: `Trùng mã vụ với vụ đã có (${idTrungMa})`, _idTrung: idTrungMa }); return; }
           }
           if (v.soQdKtva && v.ngayQdKtva) {
             const idTrungQd = byQdNgay.get(`${v.soQdKtva.trim().toLowerCase()}__${fmtDate(v.ngayQdKtva)}`);
-            if (idTrungQd) { trung.push({ ...v, _lyDoTrung: `Trùng Số/Ngày QĐ KTVA với vụ đã có (${idTrungQd})` }); return; }
+            if (idTrungQd) { trung.push({ ...v, _lyDoTrung: `Trùng Số/Ngày QĐ KTVA với vụ đã có (${idTrungQd})`, _idTrung: idTrungQd }); return; }
           }
           moi.push(v);
         });
+
+        // Kiểm tra sớm vụ trùng nào có vụ TÁCH RA từ nó — không cho thay thế các vụ đó (xem
+        // XoaVuAnModal, cùng nguyên tắc chặn xoá khi còn vụ con để tránh mồ côi hoá vụ tách).
+        if (trung.length > 0) {
+          const idsTrung = [...new Set(trung.map(v => v._idTrung))];
+          const nhom = chiaNhoDsId(idsTrung);
+          const snaps = await Promise.all(nhom.map(nhomId => db.collection("vuan").where("vuGoc", "in", nhomId).get()));
+          const coVuCon = new Set();
+          snaps.forEach(s => s.docs.forEach(d => { const vg = d.data().vuGoc; if (vg) coVuCon.add(vg); }));
+          setIdsCoVuCon(coVuCon);
+        }
 
         setKetQuaDoc({ moi, trung, loi, warnings });
         setStatus("ready");
@@ -2296,12 +2401,27 @@ function ImportExcelModule() {
     reader.readAsArrayBuffer(file);
   };
 
+  const toggleTrungChon = (i) => setTrungDuocChon(s => {
+    const moi = new Set(s);
+    moi.has(i) ? moi.delete(i) : moi.add(i);
+    return moi;
+  });
+  const toggleChonTatCaTrung = () => {
+    if (!ketQuaDoc) return;
+    const idsHopLe = ketQuaDoc.trung.map((v, i) => ({ v, i })).filter(({ v }) => !idsCoVuCon.has(v._idTrung)).map(({ i }) => i);
+    const dangChonHet = idsHopLe.length > 0 && idsHopLe.every(i => trungDuocChon.has(i));
+    setTrungDuocChon(dangChonHet ? new Set() : new Set(idsHopLe));
+  };
+
   const ghiVaoCoSoDuLieu = async (kyId) => {
-    if (!ketQuaDoc || ketQuaDoc.moi.length === 0) return;
+    // Các dòng "vụ trùng" người dùng đã tích "Thay vụ cũ" — xử lý y hệt vụ mới bình thường TỪ ĐÂY
+    // TRỞ ĐI (sinh mã mới, ghi log...), chỉ khác thêm bước đưa vụ CŨ vào thùng rác (xem bên dưới).
+    const dsThayThe = ketQuaDoc ? ketQuaDoc.trung.filter((_, i) => trungDuocChon.has(i)) : [];
+    if (!ketQuaDoc || (ketQuaDoc.moi.length === 0 && dsThayThe.length === 0)) return;
     setStatus("writing");
     setProgress(0);
     try {
-      const dsMoi = ketQuaDoc.moi;
+      const dsMoi = [...ketQuaDoc.moi, ...dsThayThe];
       await sinhNhieuMaVuAn(dsMoi);
 
       const now = new Date();
@@ -2320,6 +2440,17 @@ function ImportExcelModule() {
       batch.set(db.collection("meta").doc("vuAnMoiNhat"), { capNhatLuc: now }, { merge: true });
       ops++;
 
+      // Đưa các vụ CŨ bị thay thế vào thùng rác — đúng field XoaVuAnModal dùng (soft-delete, chỉ
+      // đặt cờ, không đụng bican/log của vụ cũ — khôi phục được nếu tích nhầm).
+      dsThayThe.forEach(v => {
+        batch.update(db.collection("vuan").doc(v._idTrung), {
+          daXoa: true, ngayXoaMem: now, nguoiXoaMem: nguoiThucHien,
+          ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        });
+        ops++;
+      });
+      await commitNeu();
+
       for (const v of dsMoi) {
         const maNoiSinh = v._maNoiSinh;
         const vuData = {
@@ -2336,6 +2467,7 @@ function ImportExcelModule() {
           soQuyetDinhChuyenDi: "", soQuyetDinhTamDinhChi: "", soQuyetDinhDinhChi: "", soQuyetDinhAnHuy: "",
           ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
           nguonNhapLieu: "import_excel",
+          ...tomTatBiCan(v.biCanList),
         };
         if (v.trangThai !== "dang_giai_quyet") {
           vuData.ngayQuyetDinh = v.ngayQuyetDinh;
@@ -2399,6 +2531,10 @@ function ImportExcelModule() {
         }
       }
       if (ops > 0) await batch.commit();
+      // Cập nhật cục bộ danh sách "đang giải quyết" cho từng vụ vừa bị thay thế — đúng
+      // capNhatCucBoDsDangGiaiQuyet đã dùng ở XoaVuAnModal, tránh vụ cũ còn hiện sai trên chính máy
+      // người vừa import cho tới khi remount.
+      dsThayThe.forEach(v => capNhatCucBoDsDangGiaiQuyet(v._idTrung, null));
 
       setProgress(100);
       setKetQuaGhi({ soVu: dsMoi.length, soBiCan: dsMoi.reduce((s, v) => s + v.biCanList.length, 0) });
@@ -2503,20 +2639,50 @@ function ImportExcelModule() {
           )}
 
           {ketQuaDoc.trung.length > 0 && (
-            <details className="mb-4">
+            <details className="mb-4" open={trungDuocChon.size > 0}>
               <summary className="text-sm font-medium text-slate-600 cursor-pointer">
-                {ketQuaDoc.trung.length} vụ trùng sẽ bị bỏ qua — bấm để xem
+                {ketQuaDoc.trung.length} vụ trùng
+                {trungDuocChon.size > 0
+                  ? ` — đã chọn thay thế ${trungDuocChon.size}, còn lại vẫn bỏ qua — bấm để xem`
+                  : " sẽ bị bỏ qua — bấm để xem"}
               </summary>
+              <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mt-2 mb-2">
+                Tích "Thay vụ cũ" ở dòng nào để đưa vụ ĐÃ CÓ (trùng mã/Số+Ngày QĐ KTVA) vào Thùng rác
+                và nhập đúng dữ liệu MỚI từ file thay vào — vẫn khôi phục lại được vụ cũ qua Cài đặt
+                → Thùng rác nếu tích nhầm. Vụ có ⚠ bên dưới không thay thế được vì còn vụ tách ra từ
+                nó (đưa vào thùng rác sẽ làm vụ tách mất gốc).
+              </div>
+              <div className="flex justify-end mb-1">
+                <button onClick={toggleChonTatCaTrung} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">
+                  Chọn/Bỏ chọn tất cả (đủ điều kiện)
+                </button>
+              </div>
               <div className="border border-slate-200 rounded-xl overflow-hidden mt-2">
                 <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="text-left p-2 w-24">Thay vụ cũ</th>
+                      <th className="text-left p-2">Mã vụ</th>
+                      <th className="text-left p-2">Tên vụ</th>
+                      <th className="text-left p-2">Lý do trùng</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {ketQuaDoc.trung.map((v,i) => (
-                      <tr key={i} className="border-t border-slate-100">
-                        <td className="p-2 text-slate-500 whitespace-nowrap">{v.maVu}</td>
-                        <td className="p-2">{v.tenVu}</td>
-                        <td className="p-2 text-slate-400">{v._lyDoTrung}</td>
-                      </tr>
-                    ))}
+                    {ketQuaDoc.trung.map((v,i) => {
+                      const khongDuThayThe = idsCoVuCon.has(v._idTrung);
+                      return (
+                        <tr key={i} className="border-t border-slate-100">
+                          <td className="p-2">
+                            <input type="checkbox" checked={trungDuocChon.has(i)} disabled={khongDuThayThe}
+                                   onChange={() => toggleTrungChon(i)} />
+                            {khongDuThayThe && <div className="text-red-500 mt-0.5">⚠ Có vụ tách ra từ vụ này</div>}
+                          </td>
+                          <td className="p-2 text-slate-500 whitespace-nowrap">{v.maVu}</td>
+                          <td className="p-2">{v.tenVu}</td>
+                          <td className="p-2 text-slate-400">{v._lyDoTrung}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2551,9 +2717,10 @@ function ImportExcelModule() {
             không cần chạy công cụ "Dựng lại lịch sử" bên dưới cho dữ liệu import bằng mẫu này.
           </div>
 
-          <button onClick={() => setHienModalKy(true)} disabled={ketQuaDoc.moi.length === 0}
+          <button onClick={() => setHienModalKy(true)} disabled={ketQuaDoc.moi.length === 0 && trungDuocChon.size === 0}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
-            Ghi {ketQuaDoc.moi.length} vụ mới vào hệ thống
+            Ghi {ketQuaDoc.moi.length + trungDuocChon.size} vụ vào hệ thống
+            {trungDuocChon.size > 0 ? ` (gồm ${trungDuocChon.size} vụ thay vụ trùng)` : ""}
           </button>
         </div>
       )}
@@ -2583,6 +2750,7 @@ function ImportExcelModule() {
       <SeedDanhMucTool />
       <BackfillDieuLuatBCTool />
       <BackfillLoaiKhoiToTool />
+      <BackfillTomTatBiCanTool />
       <TaiTaoTonTheoTDTool />
     </div>
   );
@@ -3296,6 +3464,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       });
       batch.update(db.collection("vuan").doc(vuAn.id), {
         trangThai: "da_nhap", nhapVaoVu: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        ...tomTatBiCan([]),
       });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "nhap_vu", vuNhapVao: dichId, soQuyetDinh: soQuyetDinh.trim(),
@@ -3313,10 +3482,11 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       }));
       await batch.commit();
 
-      // Điều luật + loại khởi tố (ban đầu/bổ sung) của vụ đích cần tính lại sau khi có thêm bị can
-      // — dùng chung capNhatDieuLuatVaLoaiKhoiTo (xem định nghĩa) thay vì chỉ tự tính riêng
-      // dieuLuat như trước đây (bản cũ bỏ sót loaiKhoiTo — bị can nhập vào có ngày khởi tố sớm hơn
-      // mọi bị can sẵn có của vụ đích thì đúng ra phải đổi ai là "ban đầu", trước đây không tính).
+      // Điều luật + loại khởi tố (ban đầu/bổ sung) + cache tóm tắt bị can (tomTatBiCan, Tối ưu
+      // Firestore Đợt 3 — gộp sẵn trong chính capNhatDieuLuatVaLoaiKhoiTo) của vụ đích cần tính lại
+      // sau khi có thêm bị can — dùng hàm dùng chung thay vì chỉ tự tính riêng dieuLuat như trước
+      // đây (bản cũ bỏ sót loaiKhoiTo — bị can nhập vào có ngày khởi tố sớm hơn mọi bị can sẵn có
+      // của vụ đích thì đúng ra phải đổi ai là "ban đầu", trước đây không tính).
       await capNhatDieuLuatVaLoaiKhoiTo(dichId);
 
       onXong(dichId);
@@ -3498,6 +3668,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         noiChuyenDen: "", nhapVaoVu: null, vuGoc: null, soDemTach: 0,
         anDiem, uyQuyenXetXu: uyQuyenXetXu.trim(), phienToaRutKN, ghiChu: ghiChu.trim(),
         ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        ...tomTatBiCan(coBiCanHopLe),
         ...(capNhatKetQua ? {
           ngayQuyetDinh: fromInputDate(ngayQuyetDinhKQ), kyHoanThanh: kyId,
           [fieldSoQuyetDinhTrenVuAn(trangThaiKetQua)]: soQuyetDinhKQ.trim(),
@@ -4150,9 +4321,9 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
 
-      // Tính lại dieuLuat + loaiKhoiTo cho cả vụ vì bị can này vừa đổi (transaction, xem
-      // capNhatDieuLuatVaLoaiKhoiTo — tránh lost-update nếu có người khác cùng sửa bị can khác
-      // của vụ này gần như đồng thời).
+      // Tính lại dieuLuat + loaiKhoiTo + cache tomTatBiCan cho cả vụ vì bị can này vừa đổi
+      // (transaction, xem capNhatDieuLuatVaLoaiKhoiTo — tránh lost-update nếu có người khác cùng
+      // sửa bị can khác của vụ này gần như đồng thời).
       await capNhatDieuLuatVaLoaiKhoiTo(vuAn.id);
       addToast("Đã lưu thông tin bị can");
       xoaBiCanCache(vuAn.id);
@@ -4333,8 +4504,9 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
       });
       await batch.commit();
 
-      // Tính lại dieuLuat + loaiKhoiTo cho cả vụ (transaction, xem capNhatDieuLuatVaLoaiKhoiTo —
-      // tránh lost-update nếu có người khác cùng thêm/sửa bị can khác của vụ này gần như đồng thời).
+      // Tính lại dieuLuat + loaiKhoiTo + cache tomTatBiCan cho cả vụ (transaction, xem
+      // capNhatDieuLuatVaLoaiKhoiTo — tránh lost-update nếu có người khác cùng thêm/sửa bị can
+      // khác của vụ này gần như đồng thời).
       await capNhatDieuLuatVaLoaiKhoiTo(vuAn.id);
       xoaBiCanCache(vuAn.id);
       onXong();
@@ -4515,7 +4687,6 @@ function chiaNhoDsId(ids, kichThuoc = 30) {
 function DanhSachPanel({ selectedId, onSelect }) {
   const [list, setList] = useState([]);
   const [dangTai, setDangTai] = useState(true);
-  const [biCanAll, setBiCanAll] = useState([]);
   const [giaiDoan, setGiaiDoan] = useState("tat_ca");
   const [ksv, setKsv] = useState("tat_ca");
   const [tuKhoa, setTuKhoa] = useState("");
@@ -4526,12 +4697,29 @@ function DanhSachPanel({ selectedId, onSelect }) {
   const [moRongBiCan, setMoRongBiCan] = useState(new Set());
   const dsCanBo = useDanhSachCanBo();
 
-  // Giới hạn số dòng tải về ở tab "Tất cả" — tránh kéo cả collection vuan (có thể lên hàng chục
-  // nghìn dòng sau nhiều năm) mỗi lần mở màn hình. "Đang giải quyết" KHÔNG giới hạn vì tập đó tự
-  // nhiên bị chặn (vụ giải quyết xong sẽ rời khỏi tập, không tích luỹ vô hạn như tổng số vụ).
-  const [gioiHanTatCa, setGioiHanTatCa] = useState(500);
+  // Cursor pagination thật cho tab "Tất cả" (Tối ưu Firestore Đợt 3, 2026-07-18) — trước đây nút
+  // "Tải thêm 500" chỉ tăng .limit() rồi mở lại listener từ đầu, khiến Firestore tính lại lượt đọc
+  // cho TOÀN BỘ số dòng đã đọc trước đó mỗi lần bấm, không chỉ phần tăng thêm. Thiết kế mới: trang
+  // đầu (dsCoBan) vẫn LIVE y hệt trước — chỉ CHỪNG NÀO chưa bấm "Tải thêm" lần nào (dsThem rỗng).
+  // Bấm "Tải thêm" lần đầu sẽ huỷ subscribe live đó (đóng băng dsCoBan), rồi mọi trang sau đều tải
+  // 1 lần bằng .startAfter(cursor) — CHỈ đọc đúng phần MỚI mỗi lần bấm. Chấp nhận từ đó tab "Tất cả"
+  // hết live (đúng tinh thần "chấp nhận cũ, tự mới khi remount" đã dùng cho Đang giải quyết/cache
+  // lạnh — xem CLAUDE.md) — không đổi tính live của TRANG ĐẦU, đúng phạm vi yêu cầu.
+  const TRANG_KICH_THUOC = 500;
+  const [dsCoBan, setDsCoBan] = useState([]);
+  const [dsThem, setDsThem] = useState([]);
   const [vuotGioiHan, setVuotGioiHan] = useState(false);
-  useEffect(() => { setGioiHanTatCa(500); }, [chiDangGiaiQuyet]);
+  const [dangTaiThem, setDangTaiThem] = useState(false);
+  const cursorRef = useRef(null);
+  // Cờ đánh dấu NGAY LÚC BẤM (không đợi re-render) rằng đã bắt đầu phân trang thủ công — phát hiện
+  // qua test thật: Firestore bắn onSnapshot LẠI (hành vi chuẩn — cache rồi server, hoặc 1 thay đổi
+  // thật ở trang 1) có thể xảy ra ĐÚNG lúc React chưa kịp dọn effect live (dsThem.length > 0 chỉ có
+  // hiệu lực sau khi re-render) — nếu không chặn, callback live "bắn muộn" đó sẽ ghi đè cursorRef về
+  // đúng ranh giới trang 1, khiến lần "Tải thêm" kế tiếp coi như không có gì mới (đã tự kiểm chứng
+  // lỗi này bằng Playwright thật trước khi sửa). useRef (không phải state) vì cần có hiệu lực NGAY,
+  // không chờ qua 1 vòng render.
+  const dangPhanTrangRef = useRef(false);
+  useEffect(() => { setDsThem([]); cursorRef.current = null; dangPhanTrangRef.current = false; }, [chiDangGiaiQuyet]);
 
   // "Đang giải quyết" — KHÔNG còn onSnapshot sống trên cả tập (2026-07-18, xem ghi chú đầy đủ ở
   // useDanhSachDangGiaiQuyet) — tải 1 lần, chỉ có 1 listener rẻ trên document cảm biến "có vụ mới"
@@ -4544,30 +4732,62 @@ function DanhSachPanel({ selectedId, onSelect }) {
     setDangTai(dangTaiDangGiaiQuyet);
   }, [chiDangGiaiQuyet, dsDangGiaiQuyet, dangTaiDangGiaiQuyet]);
 
-  // "Tất cả" — giữ nguyên onSnapshot có giới hạn như cũ (trộn cả vụ đang + đã giải quyết, chưa áp
-  // dụng cache lạnh/sentinel cho nhánh này — xem "Ngoài phạm vi Đợt 2" trong CLAUDE.md).
+  // "Tất cả" — trang đầu LIVE, y hệt hành vi cũ (trộn cả vụ đang + đã giải quyết, chưa áp dụng cache
+  // lạnh/sentinel cho nhánh này — xem "Ngoài phạm vi Đợt 2" trong CLAUDE.md), CHỈ đổi thêm tie-break
+  // documentId() (cursor ổn định — nhiều vụ import cùng lúc có thể trùng ngayTao, xem 3.1 trong plan
+  // đã lưu) và CHỈ chạy khi chưa bấm "Tải thêm" lần nào.
   useEffect(() => {
-    if (chiDangGiaiQuyet) return;
+    if (chiDangGiaiQuyet || dsThem.length > 0) return;
     setDangTai(true);
-    const unsub = db.collection("vuan").orderBy("ngayTao", "desc").limit(gioiHanTatCa).onSnapshot(
-      snap => {
-        // Lọc bỏ vụ đã "Đưa vào thùng rác" (daXoa) — lọc phía CLIENT, không dùng Firestore
-        // where("daXoa","!=",true), vì query "!=" bỏ qua LUÔN mọi document không có field đó
-        // (toàn bộ dữ liệu cũ chưa từng có field `daXoa`), sẽ làm mất trắng danh sách nếu lọc ở
-        // tầng Firestore.
-        setList(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
-        setVuotGioiHan(snap.size >= gioiHanTatCa);
-        setDangTai(false);
-      },
-      err => { console.error(err); setDangTai(false); }
-    );
+    const unsub = db.collection("vuan")
+      .orderBy("ngayTao", "desc").orderBy(firebase.firestore.FieldPath.documentId(), "desc")
+      .limit(TRANG_KICH_THUOC).onSnapshot(
+        snap => {
+          // Nếu đã bắt đầu phân trang thủ công (xem dangPhanTrangRef), bỏ qua callback này dù nó
+          // vẫn lọt qua trước khi effect kịp huỷ subscribe — không được ghi đè cursorRef/vuotGioiHan.
+          // (Đã kiểm chứng bằng Playwright thật + console log tạm thời rằng callback live không hề
+          // bị "bắn muộn" trong thực tế — race chỉ là giả thuyết phòng ngừa lúc code, không quan
+          // sát được thật, nhưng giữ lại guard này vì rẻ và an toàn hơn không có.)
+          if (dangPhanTrangRef.current) return;
+          // Lọc bỏ vụ đã "Đưa vào thùng rác" (daXoa) — lọc phía CLIENT, không dùng Firestore
+          // where("daXoa","!=",true), vì query "!=" bỏ qua LUÔN mọi document không có field đó
+          // (toàn bộ dữ liệu cũ chưa từng có field `daXoa`), sẽ làm mất trắng danh sách nếu lọc ở
+          // tầng Firestore.
+          setDsCoBan(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
+          setVuotGioiHan(snap.size >= TRANG_KICH_THUOC);
+          cursorRef.current = snap.docs[snap.docs.length - 1] || null;
+          setDangTai(false);
+        },
+        err => { console.error(err); setDangTai(false); }
+      );
     return unsub;
-  }, [chiDangGiaiQuyet, gioiHanTatCa]);
+  }, [chiDangGiaiQuyet, dsThem.length > 0]);
+
+  // "Tải thêm" — tải 1 lần (KHÔNG live) đúng batch MỚI theo cursor, nối vào dsThem. Lần bấm ĐẦU
+  // TIÊN sẽ tự huỷ subscribe live ở trên (qua điều kiện dsThem.length > 0 trong dependency array).
+  const taiThemVuAn = async () => {
+    if (!cursorRef.current || dangTaiThem) return;
+    dangPhanTrangRef.current = true; // đánh dấu NGAY (đồng bộ) — chặn callback live "bắn muộn" ở trên
+    setDangTaiThem(true);
+    try {
+      const snap = await db.collection("vuan")
+        .orderBy("ngayTao", "desc").orderBy(firebase.firestore.FieldPath.documentId(), "desc")
+        .startAfter(cursorRef.current).limit(TRANG_KICH_THUOC).get();
+      const trangMoi = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa);
+      setDsThem(ds => [...ds, ...trangMoi]);
+      setVuotGioiHan(snap.size >= TRANG_KICH_THUOC);
+      if (snap.docs.length > 0) cursorRef.current = snap.docs[snap.docs.length - 1];
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDangTaiThem(false);
+    }
+  };
 
   // Khi đang ở tab "Tất cả" và danh sách đã bị cắt bớt (vuotGioiHan) mà người dùng gõ tìm kiếm,
   // phải tải đủ TOÀN BỘ vuan 1 lần (KHÔNG realtime — chỉ 1 lần lúc bắt đầu gõ) để không bỏ sót
-  // các vụ nằm ngoài gioiHanTatCa dòng mới nhất. "Đang giải quyết" không cần vì list ở đó vốn đã
-  // đầy đủ (không bị giới hạn).
+  // các vụ nằm ngoài số dòng đã tải (dsCoBan + dsThem). "Đang giải quyết" không cần vì list ở đó
+  // vốn đã đầy đủ (không bị giới hạn).
   const [dsTimKiemDayDu, setDsTimKiemDayDu] = useState(null);
   const canTimDayDu = !chiDangGiaiQuyet && vuotGioiHan && tuKhoa.trim() !== "";
   useEffect(() => {
@@ -4579,32 +4799,56 @@ function DanhSachPanel({ selectedId, onSelect }) {
     return () => { huy = true; };
   }, [canTimDayDu]);
 
-  // Nguồn danh sách thực sự dùng để lọc/hiển thị: bản tìm kiếm đầy đủ (nếu đang cần) hoặc bản đã
-  // tải theo giới hạn ở trên.
-  const nguonDanhSach = dsTimKiemDayDu || list;
+  // Nguồn danh sách thực sự dùng để lọc/hiển thị: bản tìm kiếm đầy đủ (nếu đang cần), hoặc — ở tab
+  // "Tất cả" — trang đầu (live) nối với các trang "Tải thêm" (dsThem), hoặc "Đang giải quyết".
+  const nguonDanhSach = dsTimKiemDayDu || (chiDangGiaiQuyet ? list : [...dsCoBan, ...dsThem]);
   const dangTaiTimDayDu = canTimDayDu && dsTimKiemDayDu === null;
   const idsHienTaiKey = useMemo(() => nguonDanhSach.map(v => v.id).sort().join(","), [nguonDanhSach]);
 
-  // Thay vì tải nguyên collection bican (có thể rất lớn sau nhiều năm), chỉ hỏi đúng những vụ
-  // đang cần hiển thị — chia theo lô tối đa 30 id rồi gộp kết quả. Chỉ tải lại khi TẬP id thay
-  // đổi (idsHienTaiKey), không phải mỗi khi 1 doc trong tập đó có cập nhật — tránh huỷ/tạo lại
-  // hàng chục listener liên tục.
+  // Cột "Bị can" đọc thẳng v.soBiCan/v.biCanDaiDien đã cache sẵn trên vuan (Tối ưu Firestore Đợt 3,
+  // 2026-07-18, xem tomTatBiCan) — KHÔNG còn listener bican luôn bật cho mọi dòng đang hiển thị như
+  // trước (đây từng là phần tốn đọc nhất của cả màn hình). Chỉ còn 2 nơi tải bican theo YÊU CẦU:
+  // (1) "mở rộng xem hết bị can" 1 dòng cụ thể — tải 1 lần, cache theo phiên (biCanChiTietTheoVu);
+  // (2) tìm theo tên bị can — CHỈ khi đang gõ từ khoá, debounce, tải 1 lần cho các vụ đang hiển thị
+  // CHƯA có trong cache phiên (bicanTimKiemTheoVu) — xem 2 khối bên dưới.
+  const [biCanChiTietTheoVu, setBiCanChiTietTheoVu] = useState({});
+  const moRongBiCanClick = (id) => {
+    const dangMoRong = moRongBiCan.has(id);
+    toggleMoRongBiCan(id);
+    if (!dangMoRong && !biCanChiTietTheoVu[id]) {
+      db.collection("bican").where("maVuAn", "==", id).get().then(snap => {
+        setBiCanChiTietTheoVu(cu => ({ ...cu, [id]: snap.docs.map(d => ({ id: d.id, ...d.data() })) }));
+      }).catch(err => console.error(err));
+    }
+  };
+
+  const [bicanTimKiemTheoVu, setBicanTimKiemTheoVu] = useState({});
+  const [dangTaiTimBiCan, setDangTaiTimBiCan] = useState(false);
   useEffect(() => {
-    const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
-    if (ids.length === 0) { setBiCanAll([]); return; }
-    const nhom = chiaNhoDsId(ids);
-    const ketQuaMoiNhom = nhom.map(() => []);
-    const unsubs = nhom.map((nhomId, idx) =>
-      db.collection("bican").where("maVuAn", "in", nhomId).onSnapshot(
-        snap => {
-          ketQuaMoiNhom[idx] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          setBiCanAll(ketQuaMoiNhom.flat());
-        },
-        err => console.error(err)
-      )
-    );
-    return () => unsubs.forEach(u => u());
-  }, [idsHienTaiKey]);
+    if (!tuKhoa.trim()) return;
+    const timer = setTimeout(() => {
+      const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
+      const idsCanTai = ids.filter(id => !bicanTimKiemTheoVu[id]);
+      if (idsCanTai.length === 0) return;
+      setDangTaiTimBiCan(true);
+      const nhom = chiaNhoDsId(idsCanTai);
+      Promise.all(nhom.map(nhomId => db.collection("bican").where("maVuAn", "in", nhomId).get()))
+        .then(snaps => {
+          setBicanTimKiemTheoVu(cu => {
+            const moi = { ...cu };
+            idsCanTai.forEach(id => { moi[id] = []; });
+            snaps.flatMap(s => s.docs).forEach(d => {
+              const bc = { id: d.id, ...d.data() };
+              (moi[bc.maVuAn] = moi[bc.maVuAn] || []).push(bc);
+            });
+            return moi;
+          });
+        })
+        .catch(err => console.error(err))
+        .finally(() => setDangTaiTimBiCan(false));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [tuKhoa, idsHienTaiKey]);
 
   // Dùng chung cache "kybaocao:desc" với KyBaoCaoModule/AnDaGiaiQuyetModule/NhatKyModule — thứ tự
   // không quan trọng ở đây vì kyBaoCaoListSorted bên dưới đã tự sort lại phía client.
@@ -4662,14 +4906,6 @@ function DanhSachPanel({ selectedId, onSelect }) {
   });
   const soCotHien = 3 + DS_COT_TUY_CHON.length - cotAn.size;
 
-  const biCanTheoVu = useMemo(() => {
-    const map = {};
-    for (const bc of biCanAll) {
-      (map[bc.maVuAn] = map[bc.maVuAn] || []).push(bc);
-    }
-    return map;
-  }, [biCanAll]);
-
   const toggleMoRongBiCan = (id) => setMoRongBiCan(s => {
     const moi = new Set(s);
     moi.has(id) ? moi.delete(id) : moi.add(id);
@@ -4678,8 +4914,8 @@ function DanhSachPanel({ selectedId, onSelect }) {
 
   // Gộp cả roster "Cán bộ" đang công tác (luôn đủ, không phụ thuộc list đang tải bao nhiêu dòng)
   // lẫn các tên KSV thấy được trong dữ liệu đang hiển thị (phòng khi dữ liệu cũ/nhập tay có tên
-  // KSV không có trong danh mục Cán bộ) — tránh việc gioiHanTatCa ở trên làm mất tên KSV nào đó
-  // khỏi ô lọc.
+  // KSV không có trong danh mục Cán bộ) — tránh việc giới hạn số dòng tải ở trên làm mất tên KSV
+  // nào đó khỏi ô lọc.
   const dsKsv = useMemo(() => {
     const tuCanBo = dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen);
     const tuDuLieu = nguonDanhSach.map(v => v.ksvChinh).filter(Boolean);
@@ -4692,23 +4928,27 @@ function DanhSachPanel({ selectedId, onSelect }) {
     if (ksv !== "tat_ca" && v.ksvChinh !== ksv) return false;
     if (tuKhoa.trim()) {
       const k = tuKhoa.trim().toLowerCase();
-      const dsBiCan = biCanTheoVu[v.id] || [];
+      // dsBiCan: tải theo yêu cầu (debounce, xem effect ở trên) — trong lúc chưa tải xong, vẫn
+      // khớp ngay theo biCanDaiDien (đại diện, đã có sẵn trên vuan) để không có cảm giác "0 kết
+      // quả" trong lúc chờ; kết quả khớp bị can KHÁC (không phải đại diện) hiện thêm khi tải xong.
+      const dsBiCan = bicanTimKiemTheoVu[v.id] || [];
       const hit = (hienThiMa(v) || "").toLowerCase().includes(k)
         || (v.tenVu || "").toLowerCase().includes(k)
         || (v.dieuLuat || "").toLowerCase().includes(k)
         || (v.soQdKtva || "").toLowerCase().includes(k)
+        || (v.biCanDaiDien || "").toLowerCase().includes(k)
         || dsBiCan.some(bc => (bc.hoTen || "").toLowerCase().includes(k));
       if (!hit) return false;
     }
     return true;
-  }), [nguonDanhSach, chiDangGiaiQuyet, giaiDoan, ksv, tuKhoa, biCanTheoVu]);
+  }), [nguonDanhSach, chiDangGiaiQuyet, giaiDoan, ksv, tuKhoa, bicanTimKiemTheoVu]);
 
   // Sắp xếp theo cột (bấm tiêu đề) — chỉ áp dụng cho cột có giá trị so sánh rõ ràng
   // (mã vụ/ngày). Không sort theo "Kỳ mới"/"Kỳ giải quyết" vì đó là chuỗi hiển thị dạng
   // "Tháng N/YYYY", sắp xếp theo chuỗi sẽ sai thứ tự thời gian (VD "Tháng 10" < "Tháng 2").
-  // Lưu ý: chỉ sắp xếp lại các dòng ĐANG TẢI (nguonDanhSach) — ở tab "Tất cả" khi đã vượt
-  // gioiHanTatCa, các dòng nằm ngoài giới hạn (chưa tải) sẽ không tham gia sắp xếp cho tới khi
-  // bấm "Tải thêm" hoặc gõ tìm kiếm (khi đó mới tải đủ toàn bộ).
+  // Lưu ý: chỉ sắp xếp lại các dòng ĐANG TẢI (nguonDanhSach) — ở tab "Tất cả" khi đã vượt số dòng
+  // đã tải, các dòng nằm ngoài (chưa tải) sẽ không tham gia sắp xếp cho tới khi bấm "Tải thêm"
+  // hoặc gõ tìm kiếm (khi đó mới tải đủ toàn bộ).
   const layGiaTriSort = (v, cot) => {
     if (cot === "maVu") return hienThiMa(v) || "";
     if (cot === "ngayKtva") return v.ngayQdKtva?.toMillis?.() ?? 0;
@@ -4806,19 +5046,36 @@ function DanhSachPanel({ selectedId, onSelect }) {
                 {!cotAn.has("biCan") && (
                   <td className="px-3 py-2 align-top text-xs w-28 max-w-[7rem]">
                     {(() => {
-                      const dsBiCan = biCanTheoVu[v.id] || [];
-                      if (dsBiCan.length === 0) return <span className="text-slate-300">—</span>;
+                      const soBiCan = v.soBiCan ?? 0;
+                      if (soBiCan === 0) return <span className="text-slate-300">—</span>;
                       const daMoRong = moRongBiCan.has(v.id);
-                      const hienThi = daMoRong ? dsBiCan : dsBiCan.slice(0, 1);
+                      if (!daMoRong) {
+                        return (
+                          <div>
+                            <div className="text-slate-700 break-words">{v.biCanDaiDien}</div>
+                            {soBiCan > 1 && (
+                              <button onClick={e => { e.stopPropagation(); moRongBiCanClick(v.id); }}
+                                      className="text-indigo-600 hover:text-indigo-700 font-medium mt-0.5 whitespace-nowrap">
+                                {`+${soBiCan - 1} bị can khác`}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      }
+                      // Mở rộng: tải đủ tên từng bị can theo yêu cầu (xem moRongBiCanClick) — chỉ
+                      // đúng lúc người dùng thật sự cần xem hết, không tải sẵn cho mọi dòng.
+                      const chiTiet = biCanChiTietTheoVu[v.id];
                       return (
                         <div>
-                          {hienThi.map(bc => <div key={bc.id} className="text-slate-700 break-words">{bc.hoTen}</div>)}
-                          {dsBiCan.length > 1 && (
-                            <button onClick={e => { e.stopPropagation(); toggleMoRongBiCan(v.id); }}
-                                    className="text-indigo-600 hover:text-indigo-700 font-medium mt-0.5 whitespace-nowrap">
-                              {daMoRong ? "Thu gọn" : `+${dsBiCan.length - 1} bị can khác`}
-                            </button>
+                          {!chiTiet ? (
+                            <div className="text-slate-400">Đang tải...</div>
+                          ) : (
+                            chiTiet.map(bc => <div key={bc.id} className="text-slate-700 break-words">{bc.hoTen}</div>)
                           )}
+                          <button onClick={e => { e.stopPropagation(); moRongBiCanClick(v.id); }}
+                                  className="text-indigo-600 hover:text-indigo-700 font-medium mt-0.5 whitespace-nowrap">
+                            Thu gọn
+                          </button>
                         </div>
                       );
                     })()}
@@ -4882,11 +5139,12 @@ function DanhSachPanel({ selectedId, onSelect }) {
         <span>
           {sorted.length} / {nguonDanhSach.length} vụ án
           {dangTaiTimDayDu && " — đang tải toàn bộ dữ liệu để tìm kiếm..."}
+          {dangTaiTimBiCan && " — đang tìm theo tên bị can..."}
         </span>
         {vuotGioiHan && !dsTimKiemDayDu && (
-          <button onClick={() => setGioiHanTatCa(n => n + 500)}
-                  className="text-indigo-600 hover:text-indigo-700 font-medium whitespace-nowrap">
-            Mới nhất {gioiHanTatCa} vụ — Tải thêm 500
+          <button onClick={taiThemVuAn} disabled={dangTaiThem}
+                  className="text-indigo-600 hover:text-indigo-700 font-medium whitespace-nowrap disabled:opacity-50">
+            {dangTaiThem ? "Đang tải..." : `Đã tải ${nguonDanhSach.length} vụ — Tải thêm ${TRANG_KICH_THUOC}`}
           </button>
         )}
       </div>
@@ -8742,8 +9000,7 @@ function CongTac({ checked, onChange, nhan, mauBat = "bg-emerald-600" }) {
   );
 }
 
-function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }) {
-  const [dangSua, setDangSua] = useState(false);
+function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hienThoiHan, onYeuCauSua, onDangKyLuu, onKetThucSua }) {
   const [ksv, setKsv] = useState(dong.nguoiGiao || "");
   const [dtv, setDtv] = useState(dong.nguoiNhan || "");
   const [nguoiNhanThucTe, setNguoiNhanThucTe] = useState(dong.nguoiNhanThucTe || "");
@@ -8761,16 +9018,36 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
   const [lyDoKhongTiepNhan, setLyDoKhongTiepNhan] = useState(dong.lyDoKhongTiepNhan || "");
   const [vuAnDeSua, setVuAnDeSua] = useState(null); // null=đóng, "loading"=đang tải, object=sẵn sàng mở form
 
+  // `dangSua` giờ là PROP do module cha điều khiển (chỉ 1 dòng được sửa cùng lúc trong toàn phiên
+  // — xem `dangSuaId` ở GiaoNhanHoSoModule) thay vì mỗi dòng tự quản trạng thái sửa riêng như
+  // trước. Mỗi lần dòng NÀY vừa được chọn để sửa (dangSua chuyển false -> true, bất kể do người
+  // dùng bấm đúng dòng này hay do dòng khác vừa tự động lưu xong rồi nhường sang) thì nạp lại giá
+  // trị hiện tại của dòng — phòng khi dữ liệu đã đổi từ lần sửa trước (`onSnapshot` ở module cha
+  // có thể cập nhật `dong` trong lúc dòng đang đóng).
+  useEffect(() => {
+    if (!dangSua) return;
+    setKsv(dong.nguoiGiao || ""); setDtv(dong.nguoiNhan || ""); setNguoiNhanThucTe(dong.nguoiNhanThucTe || "");
+    setSoButLuc(dong.soButLuc || "");
+    setMucAnLoai(dong.mucAnLoai || "nam"); setMucAnNam(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
+    setMucAnThang(dong.mucAnThang != null ? String(dong.mucAnThang) : "");
+    setKhongTiepNhan(!!dong.khongTiepNhan); setLyDoKhongTiepNhan(dong.lyDoKhongTiepNhan || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dangSua]);
+
   // Mức án là thuộc tính của chính VỤ ÁN (khác KSV/ĐTV/số bút lục chỉ là snapshot trên dòng log)
   // nên phải ghi vào `vuan`, KHÔNG chỉ ghi vào dòng log — đồng thời cập nhật lại luôn
   // thoiHanBaoQuan trên dòng log để cột "Thời hạn bảo quản" phản ánh đúng ngay, không cần quét
-  // lại vụ mới thấy số mới.
+  // lại vụ mới thấy số mới. Trả về `true`/`false` (lưu thành công hay không) — module cha cần biết
+  // để quyết định có cho chuyển sang sửa dòng khác hay không khi tự động lưu hộ (xem
+  // `yeuCauSuaDong`), tránh chuyển dòng "trót lọt" trong khi dữ liệu dòng cũ chưa lưu được; đồng
+  // thời dòng thiếu lý do "Không tiếp nhận" bắt buộc (validate ngay đầu `luu`) cũng phải trả `false`
+  // để không bị coi là "đã lưu xong" một cách âm thầm.
   const luu = async () => {
     // Bắt buộc gõ lý do khi đánh dấu không tiếp nhận — đánh dấu mà không rõ lý do thì vô nghĩa,
     // khác các trường khác của dòng (KSV/ĐTV/số bút lục) vốn không bắt buộc.
     if (khongTiepNhan && !lyDoKhongTiepNhan.trim()) {
       addToast("Đánh dấu \"Không tiếp nhận\" cần gõ rõ lý do.", "error");
-      return;
+      return false;
     }
     const patch = {
       nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim(),
@@ -8792,25 +9069,28 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
       } catch (err) {
         console.error(err);
         addToast("Lỗi khi lưu mức án vào vụ án: " + err.message, "error");
-        return;
+        return false;
       }
     }
     await onSua(dong.id, patch);
-    setDangSua(false);
+    onKetThucSua && onKetThucSua();
+    return true;
   };
+
+  // Đăng ký lại hàm `luu` MỚI NHẤT (đóng đúng giá trị state hiện tại của dòng) lên module cha mỗi
+  // lần render — để module cha gọi được đúng bản mới nhất khi cần tự động lưu hộ lúc người dùng
+  // chuyển sang sửa dòng khác (không cần mảng dependency — cố ý chạy lại mỗi render).
+  useEffect(() => {
+    onDangKyLuu && onDangKyLuu(dong.id, luu);
+  });
 
   // Bấm vào bất kỳ đâu trên dòng (không chỉ đúng chữ "Sửa" nhỏ) là vào chế độ sửa ngay — thao
   // tác giao nhận diễn ra nhanh, đầu đọc QR quét liên tục, không nên bắt rê chuột chính xác vào
-  // 1 link nhỏ mới sửa được. Nạp lại giá trị hiện tại của dòng phòng khi dữ liệu đã đổi từ lần
-  // sửa trước (`onSnapshot` ở module cha có thể cập nhật `dong` trong lúc dòng đang đóng).
+  // 1 link nhỏ mới sửa được. Việc nạp lại giá trị + báo module cha nay nằm ở effect phía trên +
+  // `onYeuCauSua` (module cha tự lo tự động lưu dòng cũ nếu có trước khi chuyển).
   const batDauSua = () => {
     if (khoaSua || dangSua) return;
-    setKsv(dong.nguoiGiao || ""); setDtv(dong.nguoiNhan || ""); setNguoiNhanThucTe(dong.nguoiNhanThucTe || "");
-    setSoButLuc(dong.soButLuc || "");
-    setMucAnLoai(dong.mucAnLoai || "nam"); setMucAnNam(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
-    setMucAnThang(dong.mucAnThang != null ? String(dong.mucAnThang) : "");
-    setKhongTiepNhan(!!dong.khongTiepNhan); setLyDoKhongTiepNhan(dong.lyDoKhongTiepNhan || "");
-    setDangSua(true);
+    onYeuCauSua && onYeuCauSua(dong.id);
   };
 
   // Sửa thông tin vụ án đầy đủ (KSV/ĐTV/đơn vị/điều luật/ghi chú...) ngay từ màn giao nhận — rất
@@ -8911,8 +9191,10 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
           )
         )}
         {hienThoiHan && (
-          <td className="p-3 text-xs whitespace-nowrap">
-            {dong.thoiHanBaoQuan || <span className="text-slate-300">—</span>}
+          <td className="p-3 text-sm whitespace-nowrap">
+            {dong.thoiHanBaoQuan
+              ? <span className="text-red-600 font-bold">{dong.thoiHanBaoQuan}</span>
+              : <span className="text-slate-300 text-xs">—</span>}
           </td>
         )}
         {dangSua ? (
@@ -8944,7 +9226,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
             {dangSua ? (
               <>
                 <button onClick={luu} className="text-indigo-600 hover:text-indigo-700 font-medium mr-2">Lưu</button>
-                <button onClick={() => setDangSua(false)} className="text-red-400 hover:text-red-600">Huỷ</button>
+                <button onClick={() => onKetThucSua && onKetThucSua()} className="text-red-400 hover:text-red-600">Huỷ</button>
               </>
             ) : (
               <>
@@ -8998,7 +9280,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
               <th className="border border-slate-800 p-2">Tên vụ</th>
               <th className="border border-slate-800 p-2 w-24">Trạng thái HS</th>
               {phien.loaiGiaoDich === "nhan" && <th className="border border-slate-800 p-2 w-28">Tiếp nhận</th>}
-              {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Mức án</th>}
+              {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Mức án cao nhất</th>}
               {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Thời hạn bảo quản</th>}
               <th className="border border-slate-800 p-2 w-20">KSV</th>
               <th className="border border-slate-800 p-2 w-20">ĐTV</th>
@@ -9031,7 +9313,11 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
                     <td className="border border-slate-800 p-2 align-top text-xs text-center">{moTaMucAn(d)}</td>
                   )}
                   {phien.laLuuTru && (
-                    <td className="border border-slate-800 p-2 align-top text-xs text-center">{d.thoiHanBaoQuan || "—"}</td>
+                    <td className="border border-slate-800 p-2 align-top text-center">
+                      {d.thoiHanBaoQuan
+                        ? <span className="text-red-600 font-bold text-base">{d.thoiHanBaoQuan}</span>
+                        : <span className="text-xs">—</span>}
+                    </td>
                   )}
                   <td className="border border-slate-800 p-2 align-top">{d.nguoiGiao || "—"}</td>
                   <td className="border border-slate-800 p-2 align-top">{d.nguoiNhan || "—"}</td>
@@ -9065,7 +9351,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
   // useDanhSachDangGiaiQuyet thay vì tự fetchWithTtlCache riêng — 2 nơi cùng cần ĐÚNG 1 tập dữ liệu
   // (where trangThai=="dang_giai_quyet"), gộp lại tránh 2 cơ chế cache khác nhau cùng tồn tại cho
   // cùng 1 dữ liệu (dễ lệch nhau/khó hiểu về sau). Nếu Danh sách vụ án đã tải sẵn (rất thường gặp,
-  // vì đó là tab mặc định) thì ở đây dùng lại ngay, không tốn đọc thêm.
+  // vì đó là tab mặc định) thì ở đây dùng lại ngay, không tốn đọc thêm. Thay thế hẳn cách cache
+  // riêng theo từng KSV (`dsTheoKsv`) + cache toàn bộ tải lười (`dsVuDangGQ` cục bộ) mà nhánh
+  // `bang-excel-cai-dat` từng dùng trước khi có hook dùng chung này.
   const [dsVuDangGQ, dangTaiVuDangGQ] = useDanhSachDangGiaiQuyet();
   const [tuKhoaTim, setTuKhoaTim] = useState("");
   const [ksvTim, setKsvTim] = useState("tat_ca");
@@ -9075,6 +9363,32 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [tuKhoaPhien, setTuKhoaPhien] = useState(""); // tìm trong "Phiên gần đây" theo tên đã đặt
   const [dangSuaTenPhien, setDangSuaTenPhien] = useState(false);
   const [tenPhienDangSua, setTenPhienDangSua] = useState("");
+  // Đang sửa dòng nào (id sự kiện log, hoặc null) — CHỈ 1 dòng được sửa cùng lúc trong toàn phiên
+  // (2026-07-17: trước đây mỗi dòng tự quản trạng thái sửa riêng, có thể mở sửa nhiều dòng cùng
+  // lúc không kiểm soát). Chuyển sang sửa dòng KHÁC trong lúc còn dòng dở dang sẽ TỰ ĐỘNG LƯU dòng
+  // cũ trước (xem `yeuCauSuaDong`) — người dùng khỏi phải nhớ bấm "Lưu" mỗi dòng trước khi sang
+  // dòng tiếp theo, đúng nhịp thao tác nhanh khi kiểm kê nhiều hồ sơ lưu trữ liên tục. Cũng là nền
+  // tảng để "Lưu phiên"/"In phiên" tự lưu hộ dòng đang dở dang trước khi thực hiện (xem `luuPhien`/
+  // `moBienBanIn`/`luuDongDangSuaNeuCo`, dùng lại đúng `luuHandlersRef` thay vì chỉ khoá nút).
+  const [dangSuaId, setDangSuaId] = useState(null);
+  // Map dong.id -> hàm luu() MỚI NHẤT của đúng dòng đó — mỗi DongGiaoNhan tự đăng ký lại mỗi lần
+  // render (đóng đúng giá trị state nội bộ hiện tại), qua đó module cha gọi được đúng bản mới nhất
+  // khi cần tự động lưu hộ lúc chuyển dòng.
+  const luuHandlersRef = React.useRef({});
+  const dangKyLuu = (id, fn) => { luuHandlersRef.current[id] = fn; };
+  // Bấm vào 1 dòng để bắt đầu sửa — nếu đang có dòng KHÁC dở dang thì tự lưu dòng đó trước. Lưu
+  // lỗi (VD mất mạng, hoặc thiếu lý do "Không tiếp nhận" bắt buộc) thì GIỮ NGUYÊN dòng cũ đang sửa,
+  // KHÔNG chuyển sang dòng mới — để người dùng thấy lỗi ngay (toast từ `luu()`) và có cơ hội sửa
+  // lại, tránh mất dữ liệu trong im lặng.
+  const yeuCauSuaDong = async (id) => {
+    if (dangSuaId !== null && dangSuaId !== id) {
+      const luuCu = luuHandlersRef.current[dangSuaId];
+      const ok = luuCu ? await luuCu() : true;
+      if (!ok) return;
+    }
+    setDangSuaId(id);
+  };
+  const ketThucSuaDong = () => setDangSuaId(null);
   const inputRef = React.useRef(null);
 
   // Danh sách phiên gần đây (2026-07-17) — trước đây bấm "Phiên mới"/đóng trình duyệt là MẤT hẳn
@@ -9211,13 +9525,25 @@ function GiaoNhanHoSoModule({ currentUser }) {
   // QUYẾT (hồ sơ giao nhận thực tế chỉ xoay quanh vụ đang thụ lý, không cần tìm cả vụ đã xong) rồi
   // lọc phía client theo tên vụ/KSV/tội danh (điều luật)/số QĐ KTVA — cùng kiểu tìm kiếm tự do đã
   // dùng ở Danh sách vụ án/Án đã giải quyết. `dsVuDangGQ` đến từ useDanhSachDangGiaiQuyet (dùng
-  // chung với DanhSachPanel) — không cần tự fetch riêng ở đây nữa.
+  // chung với DanhSachPanel) — không cần tự fetch riêng ở đây nữa (thay thế hẳn cách tải lười theo
+  // 2 nhánh — lọc tại Firestore theo từng KSV / tải toàn bộ khi tìm tự do — mà nhánh
+  // `bang-excel-cai-dat` từng dùng trước khi có hook dùng chung này).
   const moTimThuCong = () => setHienTimThuCong(true);
 
+  // Danh sách KSV để chọn lấy thẳng từ module Cán bộ (đã tải sẵn qua useDanhSachCanBo ở đầu
+  // component) thay vì suy ra từ dữ liệu vụ án đã tải — để dropdown này hiển thị được ngay cả
+  // khi chưa tải vụ án nào (tránh vòng lặp "phải tải hết mới biết có những KSV nào để lọc theo").
   const dsKsvTim = useMemo(
-    () => dsVuDangGQ ? [...new Set(dsVuDangGQ.map(v => v.ksvChinh).filter(Boolean))].sort() : [],
-    [dsVuDangGQ]
+    () => [...new Set(dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen).filter(Boolean))].sort(),
+    [dsCanBo]
   );
+
+  const khopTuKhoaTim = (v, k) =>
+    (hienThiMa(v) || "").toLowerCase().includes(k)
+    || (v.tenVu || "").toLowerCase().includes(k)
+    || (v.dieuLuat || "").toLowerCase().includes(k)
+    || (v.ksvChinh || "").toLowerCase().includes(k)
+    || (v.soQdKtva || "").toLowerCase().includes(k);
 
   // Cho phép lọc riêng theo KSV (không bắt buộc gõ từ khoá kèm theo) — VD chọn 1 KSV để xem hết
   // hồ sơ đang giải quyết của người đó, khỏi phải nhớ gõ đúng tên.
@@ -9227,17 +9553,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
     if (!k && ksvTim === "tat_ca") return [];
     let rows = dsVuDangGQ;
     if (ksvTim !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksvTim);
-    if (k) {
-      rows = rows.filter(v =>
-        (hienThiMa(v) || "").toLowerCase().includes(k)
-        || (v.tenVu || "").toLowerCase().includes(k)
-        || (v.dieuLuat || "").toLowerCase().includes(k)
-        || (v.ksvChinh || "").toLowerCase().includes(k)
-        || (v.soQdKtva || "").toLowerCase().includes(k)
-      );
-    }
+    if (k) rows = rows.filter(v => khopTuKhoaTim(v, k));
     return rows.slice(0, 15);
-  }, [dsVuDangGQ, tuKhoaTim, ksvTim]);
+  }, [dsVuDangGQ, ksvTim, tuKhoaTim]);
 
   const chonVuThuCong = async (v) => {
     if (dangXuLy) return;
@@ -9260,9 +9578,18 @@ function GiaoNhanHoSoModule({ currentUser }) {
   };
 
   // Tải TOÀN BỘ lịch sử giao nhận (mọi phiên, mọi thời điểm — không giới hạn 300 dòng như Nhật ký
-  // thao tác) ra file Excel, cột "Mã vụ" hiện ẢNH QR (thay vì chữ) để sau này chỉ cần quét thẳng
-  // từ file/bản in ra là tra được vụ ngay, không cần gõ tay. Dùng ExcelJS (đã tải sẵn cho Xuất
-  // Excel báo cáo tháng) vì cần nhúng ảnh — XLSX/SheetJS bản CDN đang dùng không ghi được ảnh.
+  // thao tác) ra file Excel. Tách 2 sheet riêng "Giao"/"Nhận" (2026-07-16) — trước đây gộp chung 1
+  // sheet theo loaiGiaoDich bằng 1 cột chữ, nhưng ý nghĩa 2 chiều khác hẳn nhau ("đã giao đi những
+  // gì" khác "đã nhận về những gì"), tách sheet đọc rõ hơn khi in/lọc riêng từng chiều.
+  // GOM THEO VỤ (2026-07-16, trong mỗi sheet) — 1 vụ có thể bị giao/nhận nhiều lần (chuyển qua
+  // chuyển lại nhiều đợt giữa các khâu), nếu để mỗi lần quét là 1 dòng riêng thì cùng 1 vụ lặp lại
+  // rải rác nhiều dòng, khó nhìn tổng quan đã có bao nhiêu vụ qua tay. Nay 1 vụ = ĐÚNG 1 dòng, cột
+  // "Số lần .../Lịch sử ..." consolidate mọi lần quét của vụ đó vào 1 ô (mới nhất lên trên, mỗi lần
+  // 1 dòng trong ô nhờ wrapText). Các cột snapshot vụ (Tên vụ/Hình thức giải quyết/Mức án/KSV/
+  // ĐTV...) lấy theo LẦN GẦN NHẤT vì đó là thông tin cập nhật nhất về vụ; cột "Ghi chú" cũ (chỉ lặp
+  // lại đúng nội dung 2 cột KSV/ĐTV đã có riêng) bỏ hẳn vì hết ý nghĩa khi tách 2 cột đó ra.
+  // Dùng ExcelJS (đã tải sẵn cho Xuất Excel báo cáo tháng) vì cần nhúng ảnh QR — XLSX/SheetJS bản
+  // CDN đang dùng không ghi được ảnh.
   const taiLichSuGiaoNhan = async () => {
     setDangTaiLichSu(true);
     try {
@@ -9270,52 +9597,74 @@ function GiaoNhanHoSoModule({ currentUser }) {
       const rows = snap.docs.map(d => d.data());
       rows.sort((a, b) => (b.thoiDiemGhi?.toMillis?.() || 0) - (a.thoiDiemGhi?.toMillis?.() || 0));
 
+      // Gom theo vụ án, giữ nguyên thứ tự mới nhất → cũ nhất (rows đã sort desc ở trên) — phần tử
+      // đầu tiên gặp của mỗi vụ (events[0]) chính là lần gần nhất.
+      const gomTheoVu = (list) => {
+        const map = new Map();
+        list.forEach(r => {
+          if (!map.has(r.maVuAn)) map.set(r.maVuAn, []);
+          map.get(r.maVuAn).push(r);
+        });
+        return [...map.values()];
+      };
+
+      const dongLichSuMotLan = (r) => {
+        const parts = [fmtNgayGio(r.thoiDiemGhi)];
+        if (r.nguoiNhanThucTe) parts.push(`Người nhận: ${r.nguoiNhanThucTe}`);
+        if (r.soButLuc) parts.push(`Bút lục: ${r.soButLuc}`);
+        if (r.nguoiThucHien) parts.push(`Quét: ${r.nguoiThucHien}`);
+        return parts.join(" — ");
+      };
+
       const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet("Lịch sử giao nhận");
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      const hRow = ws.addRow([
-        "STT", "Loại giao dịch", "Thời điểm quét", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết",
-        "Tiếp nhận", "Mức án", "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV",
-        "Người nhận thực tế", "Số bút lục", "Người thực hiện (quét)", "Ghi chú",
-      ]);
-      hRow.font = { bold: true };
-      hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-      ws.columns = [
-        { width: 6 }, { width: 14 }, { width: 16 }, { width: 13 }, { width: 30 }, { width: 24 },
-        { width: 28 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 },
-        { width: 16 }, { width: 16 }, { width: 12 }, { width: 20 }, { width: 24 },
-      ];
       const QR_PX = 60; // ~60px vuông — đủ scan lại được (correctLevel M), giữ file không quá nặng
-      rows.forEach((r, i) => {
-        const row = ws.addRow([
-          i + 1,
-          r.loaiGiaoDich === "giao" ? "Giao hồ sơ" : "Nhận hồ sơ",
-          fmtNgayGio(r.thoiDiemGhi),
-          "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
-          r.tenVu || "",
-          moTaHinhThucGiaiQuyet(r),
-          moTaTiepNhan(r),
-          moTaMucAn(r),
-          r.thoiHanBaoQuan || "",
-          r.soQdKtva || "",
-          fmtDate(r.ngayQdKtva),
-          r.nguoiGiao || "",
-          r.nguoiNhan || "",
-          r.nguoiNhanThucTe || "",
-          r.soButLuc || "",
-          r.nguoiThucHien || "",
-          r.ghiChu || "",
+
+      const themSheet = (tenSheet, nhomTheoVu, nhanCot) => {
+        const ws = wb.addWorksheet(tenSheet);
+        ws.views = [{ state: "frozen", ySplit: 1 }];
+        const hRow = ws.addRow([
+          "STT", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết", "Tiếp nhận", "Mức án cao nhất",
+          "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV", `Số lần ${nhanCot}`, `Lịch sử ${nhanCot}`,
         ]);
-        row.height = 46; // pt — đủ cao cho ảnh QR 60px không bị cắt
-        const dataUrl = taoQrDataUrl(r.maVuAn, 120);
-        if (dataUrl) {
-          const imgId = wb.addImage({ base64: dataUrl, extension: "png" });
-          ws.addImage(imgId, {
-            tl: { col: 3, row: row.number - 1 }, // cột D (Mã vụ) = index 3, 0-based
-            ext: { width: QR_PX, height: QR_PX },
-          });
-        }
-      });
+        hRow.font = { bold: true };
+        hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+        ws.columns = [
+          { width: 6 }, { width: 13 }, { width: 30 }, { width: 24 }, { width: 22 }, { width: 16 },
+          { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 }, { width: 10 }, { width: 50 },
+        ];
+        nhomTheoVu.forEach((events, i) => {
+          const moiNhat = events[0];
+          const row = ws.addRow([
+            i + 1,
+            "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
+            moiNhat.tenVu || "",
+            moTaHinhThucGiaiQuyet(moiNhat),
+            moTaTiepNhan(moiNhat),
+            moTaMucAn(moiNhat),
+            moiNhat.thoiHanBaoQuan || "",
+            moiNhat.soQdKtva || "",
+            fmtDate(moiNhat.ngayQdKtva),
+            moiNhat.nguoiGiao || "",
+            moiNhat.nguoiNhan || "",
+            events.length,
+            events.map(dongLichSuMotLan).join("\n"),
+          ]);
+          row.height = Math.max(46, events.length * 15); // pt — đủ cao cho cả ảnh QR lẫn nhiều dòng lịch sử
+          row.getCell(13).alignment = { wrapText: true, vertical: "top" };
+          const dataUrl = taoQrDataUrl(moiNhat.maVuAn, 120);
+          if (dataUrl) {
+            const imgId = wb.addImage({ base64: dataUrl, extension: "png" });
+            ws.addImage(imgId, {
+              tl: { col: 1, row: row.number - 1 }, // cột B (Mã vụ) = index 1, 0-based
+              ext: { width: QR_PX, height: QR_PX },
+            });
+          }
+        });
+        return nhomTheoVu.length;
+      };
+
+      const soVuGiao = themSheet("Giao", gomTheoVu(rows.filter(r => r.loaiGiaoDich === "giao")), "giao");
+      const soVuNhan = themSheet("Nhận", gomTheoVu(rows.filter(r => r.loaiGiaoDich === "nhan")), "nhận");
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -9327,7 +9676,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      addToast(`Đã tải ${rows.length} dòng lịch sử giao nhận.`);
+      addToast(`Đã tải ${soVuGiao} vụ đã giao, ${soVuNhan} vụ đã nhận (tổng ${rows.length} lượt quét).`);
     } catch (err) {
       console.error(err);
       addToast("Lỗi khi tải lịch sử giao nhận: " + err.message, "error");
@@ -9339,10 +9688,36 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const suaNguoi = (id, patch) => db.collection("lichsuChuyenGiaiDoan").doc(id).update(patch).catch(err => console.error(err));
   const xoaDong = (id) => db.collection("lichsuChuyenGiaiDoan").doc(id).delete().catch(err => console.error(err));
 
+  // Tự lưu hộ dòng đang sửa dở (nếu có) trước khi "Lưu phiên"/"In phiên" (2026-07-18, theo yêu cầu
+  // người dùng: "mọi thứ chưa ấn lưu (mức án, số bút lục...) sẽ tự động được lưu lại") — dùng lại
+  // ĐÚNG cơ chế `luuHandlersRef`/`dangSuaId` đã có sẵn cho auto-save khi CHUYỂN DÒNG (xem
+  // `yeuCauSuaDong`) thay vì chỉ khoá nút chờ người dùng tự bấm "Lưu" trên dòng đó. Lưu thất bại
+  // (VD thiếu lý do "Không tiếp nhận" bắt buộc, hoặc mất mạng) thì GIỮ NGUYÊN dòng đang sửa, không
+  // coi là đã xong — trả `false` để 2 nơi gọi dừng lại, không lưu/in phiên với dữ liệu dở dang.
+  const luuDongDangSuaNeuCo = async () => {
+    if (dangSuaId === null) return true;
+    const luuCu = luuHandlersRef.current[dangSuaId];
+    const ok = luuCu ? await luuCu() : true;
+    if (ok) setDangSuaId(null);
+    return ok;
+  };
+
   const luuPhien = async () => {
+    if (!(await luuDongDangSuaNeuCo())) {
+      addToast("Dòng đang sửa dở chưa hợp lệ (VD thiếu lý do \"Không tiếp nhận\") — kiểm tra lại trước khi lưu phiên.", "error");
+      return;
+    }
     const now = new Date();
     await db.collection("phienGiaoNhan").doc(phien.id).update({ trangThai: "da_luu", thoiDiemLuu: now });
     setPhien(p => ({ ...p, trangThai: "da_luu", thoiDiemLuu: now }));
+  };
+
+  const moBienBanIn = async () => {
+    if (!(await luuDongDangSuaNeuCo())) {
+      addToast("Dòng đang sửa dở chưa hợp lệ (VD thiếu lý do \"Không tiếp nhận\") — kiểm tra lại trước khi in phiên.", "error");
+      return;
+    }
+    setHienBienBan(true);
   };
 
   if (!phien) {
@@ -9372,8 +9747,8 @@ function GiaoNhanHoSoModule({ currentUser }) {
         </div>
         {luuTruMoi && (
           <div className="text-xs text-slate-500 mt-2">
-            Phiên "Nộp hồ sơ lưu trữ" sẽ hiện thêm cột "Mức án"/"Thời hạn bảo quản" — nhập/sửa mức
-            án ngay tại dòng giao nhận nếu vụ Đã xét xử chưa có mức án.
+            Phiên "Nộp hồ sơ lưu trữ" sẽ hiện thêm cột "Mức án cao nhất"/"Thời hạn bảo quản" — nhập/
+            sửa mức án ngay tại dòng giao nhận nếu vụ Đã xét xử chưa có mức án.
           </div>
         )}
 
@@ -9466,13 +9841,15 @@ function GiaoNhanHoSoModule({ currentUser }) {
             </button>
           )}
         </div>
+        <div className="flex flex-col items-end gap-1">
         <div className="flex gap-2">
           {phien.trangThai === "dang_mo" && (
-            <button onClick={luuPhien} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+            <button onClick={luuPhien}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
               Lưu phiên
             </button>
           )}
-          <button onClick={() => setHienBienBan(true)} disabled={dsQuet.length === 0}
+          <button onClick={moBienBanIn} disabled={dsQuet.length === 0}
                   className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
             In phiên
           </button>
@@ -9481,6 +9858,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
             {dangTaiLichSu ? "Đang tải..." : "⬇ Tải toàn bộ lịch sử"}
           </button>
           <button onClick={() => setPhien(null)} className="text-sm text-slate-500 hover:text-slate-700 px-2">Phiên mới</button>
+        </div>
         </div>
       </div>
 
@@ -9549,7 +9927,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
               <th className="text-left p-3">Tên vụ</th>
               <th className="text-left p-3">Hình thức giải quyết</th>
               {phien.loaiGiaoDich === "nhan" && <th className="text-left p-3">Tiếp nhận</th>}
-              {phien.laLuuTru && <th className="text-left p-3">Mức án</th>}
+              {phien.laLuuTru && <th className="text-left p-3">Mức án cao nhất</th>}
               {phien.laLuuTru && <th className="text-left p-3">Thời hạn bảo quản</th>}
               <th className="text-left p-3">KSV</th>
               <th className="text-left p-3">ĐTV</th>
@@ -9565,8 +9943,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
             )}
             {dsQuet.map((d, i) => (
               <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}
-                            hienThoiHan={phien.laLuuTru}
-                            khoaSua={phien.trangThai !== "dang_mo"} onSua={suaNguoi} onXoa={xoaDong} />
+                            hienThoiHan={phien.laLuuTru} dangSua={dangSuaId === d.id}
+                            khoaSua={phien.trangThai !== "dang_mo"} onSua={suaNguoi} onXoa={xoaDong}
+                            onYeuCauSua={yeuCauSuaDong} onDangKyLuu={dangKyLuu} onKetThucSua={ketThucSuaDong} />
             ))}
           </tbody>
         </table>
@@ -10215,6 +10594,869 @@ function DanhMucToiDanhModule() {
 }
 
 // ====================================================================
+// BẢNG DỮ LIỆU KIỂU EXCEL (Cài đặt → Bảng dữ liệu, 2026-07-17)
+// ====================================================================
+// Công cụ sửa nhanh hàng loạt cho người dùng thành thạo — mỗi vụ án 1 dòng (kéo mở rộng ra xem/
+// sửa bị can lồng bên dưới, giống Excel outline/group), MỌI Ô LUÔN Ở TRẠNG THÁI SỬA (không có
+// bước bấm "Sửa" riêng như các form khác trong app — đúng cảm giác 1 bảng tính, click vào ô là gõ
+// được ngay), hỗ trợ "kéo fill" xuống nhiều dòng cùng lúc (giữ chuột ở góc dưới-phải 1 ô rồi kéo
+// qua các dòng khác — y hệt fill handle của Excel).
+// QUYẾT ĐỊNH THIẾT KẾ (đã hỏi rõ người dùng trước khi làm, KHÔNG tự suy đoán):
+// 1. Phạm vi: Vụ án + Bị can lồng nhau (không phải chỉ vụ án, không phải chỉ bị can riêng).
+// 2. Cho sửa CẢ Giai đoạn/Trạng thái ngay trên bảng — NGƯỢC với khuyến nghị ban đầu (2 field này
+//    điều khiển số liệu báo cáo kỳ, đúng nguyên tắc thiết kế cốt lõi #1/#3 thì phải qua đúng luồng
+//    nghiệp vụ có hỏi kỳ + ghi log). Người dùng xác nhận muốn sửa trực tiếp (mục đích: dọn dữ liệu
+//    cũ hàng loạt nhanh hơn). ĐÃ THÊM cảnh báo rõ ràng ngay trên bảng (xem `CANH_BAO_GIAI_DOAN`) —
+//    sửa trực tiếp ở đây KHÔNG ghi sự kiện vào lichsuChuyenGiaiDoan, số liệu Kỳ báo cáo/Dashboard/
+//    Biểu B10 (đều tính từ log, không phải từ field hiện tại) SẼ KHÔNG phản ánh thay đổi này. Chỉ
+//    nên dùng cho dữ liệu lịch sử/đã xong xuôi, không phải cho nghiệp vụ đang diễn ra (việc đó vẫn
+//    phải dùng đúng nút "Chuyển giai đoạn"/"Hoàn thành vụ án" ở Danh sách vụ án).
+// Cột kiểu combobox: 2 LOẠI khác nhau, KHÔNG lẫn lộn —
+// - Enum CỐ ĐỊNH (Nguồn/Giai đoạn/Trạng thái/Mức độ nghiêm trọng/Giới tính/Đảng viên/Biện pháp
+//   ngăn chặn): luôn <select>, KHÔNG cho gõ giá trị mới tuỳ ý — các giá trị này có ý nghĩa cố định
+//   trong logic thống kê/hiển thị ở khắp nơi trong app, gõ 1 giá trị lạ vào sẽ làm hỏng thống kê.
+// - Danh sách tham chiếu MỞ (KSV chính/ĐTV/Dân tộc): <input list> + <datalist> — cho CHỌN có sẵn
+//   HOẶC GÕ MỚI tự do (đúng yêu cầu người dùng), vì đây là tên người/tên dân tộc, không phải enum
+//   khép kín, KSV/ĐTV mới vẫn hợp lệ dù chưa có trong danh mục Cán bộ.
+const CANH_BAO_GIAI_DOAN_TRANG_THAI =
+  "⚠ Sửa Giai đoạn/Trạng thái ở đây KHÔNG ghi log sự kiện — số liệu Kỳ báo cáo/Dashboard/Biểu B10 " +
+  "sẽ KHÔNG cập nhật theo. Chỉ dùng để sửa dữ liệu lịch sử/lỗi nhập liệu cũ, KHÔNG dùng thay cho " +
+  "nút \"Chuyển giai đoạn\"/\"Hoàn thành vụ án\" ở Danh sách vụ án cho nghiệp vụ đang diễn ra.";
+
+const DANH_SACH_DAN_TOC_PHO_BIEN = [
+  "Kinh", "Tày", "Thái", "Mường", "Khmer", "Hoa", "Nùng", "H'Mông", "Dao", "Gia Rai",
+  "Ê Đê", "Ba Na", "Sán Chay", "Chăm", "Cơ Ho", "Xơ Đăng", "Sán Dìu", "Hrê", "Ra Glai", "Mnông",
+];
+
+// ====================================================================
+// METADATA NHÓM CỘT + FILTER THEO CỘT (2026-07-18, theo yêu cầu người dùng: "bảng phải gồm TẤT
+// CẢ trường trong hệ thống, chia nhóm, có filter từng cột") — 1 nguồn dữ liệu DUY NHẤT (mảng
+// NHOM_COT_VU/NHOM_COT_BICAN) mô tả (id, nhãn, kiểu filter, cách lấy giá trị) cho MỌI cột, dùng để
+// tự sinh: (1) hàng nhóm + hàng nhãn của <thead> (colSpan theo số cột trong nhóm), (2) hàng filter
+// ngay dưới nhãn, (3) hàm lọc `apDungLocCot` áp dụng chung cho cả 2 bảng. Cách render/sửa TỪNG Ô
+// (DongVuBangExcel/DongBiCanBangExcel) vẫn viết JSX tường minh như cũ — không gộp vào metadata vì
+// mỗi field có logic ghi khác nhau (field mảng, field tính lại dieuLuat, field theo cặp
+// enable/disable...) — cố tình KHÔNG tự động hoá phần ghi để giữ đúng logic nghiệp vụ riêng từng
+// trường; chỉ metadata hoá phần THUẦN HIỂN THỊ/LỌC (không ảnh hưởng cách ghi dữ liệu).
+// CỐ Ý bỏ qua các field nội bộ/quan hệ do luồng nghiệp vụ riêng quản lý (vuGoc, nhapVaoVu,
+// soDemTach, daXoa/ngayXoaMem/nguoiXoaMem, maNoiSinh riêng — đã gộp vào cột "Mã vụ" qua
+// hienThiMa) — sửa tay trực tiếp các field này trong bảng Excel dễ phá vỡ bất biến do Tách vụ/Nhập
+// vụ/Thùng rác quản lý, nên các field đó chỉ sửa được qua đúng luồng hành động chuyên trách.
+function OLocText({ value, onChange }) {
+  const [v, setV] = useState(value || "");
+  useEffect(() => { setV(value || ""); }, [value]);
+  return (
+    <input value={v} onChange={e => setV(e.target.value)}
+           onBlur={() => onChange(v)}
+           onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+           placeholder="Lọc..."
+           className="w-full text-[11px] border border-slate-300 rounded px-1 py-0.5 bg-white" />
+  );
+}
+function OLocEnum({ value, onChange, options }) {
+  return (
+    <select value={value || ""} onChange={e => onChange(e.target.value)}
+            className="w-full text-[11px] border border-slate-300 rounded px-1 py-0.5 bg-white">
+      <option value="">Tất cả</option>
+      {options.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+    </select>
+  );
+}
+function OLocBool({ value, onChange }) {
+  return (
+    <select value={value || ""} onChange={e => onChange(e.target.value)}
+            className="w-full text-[11px] border border-slate-300 rounded px-1 py-0.5 bg-white">
+      <option value="">Tất cả</option>
+      <option value="true">Có</option>
+      <option value="false">Không</option>
+    </select>
+  );
+}
+function OLocDate({ value, onChange }) {
+  const v = value || { tu: "", den: "" };
+  return (
+    <div className="flex gap-0.5">
+      <input type="date" value={v.tu} onChange={e => onChange({ ...v, tu: e.target.value })}
+             className="w-full text-[10px] border border-slate-300 rounded px-0.5 py-0.5 bg-white" title="Từ ngày" />
+      <input type="date" value={v.den} onChange={e => onChange({ ...v, den: e.target.value })}
+             className="w-full text-[10px] border border-slate-300 rounded px-0.5 py-0.5 bg-white" title="Đến ngày" />
+    </div>
+  );
+}
+function OLocCot({ col, value, onChange }) {
+  if (col.filter === "enum") return <OLocEnum value={value} onChange={onChange} options={col.options} />;
+  if (col.filter === "bool") return <OLocBool value={value} onChange={onChange} />;
+  if (col.filter === "date") return <OLocDate value={value} onChange={onChange} />;
+  return <OLocText value={value} onChange={onChange} />;
+}
+function laFilterRong(col, f) {
+  if (f == null) return true;
+  if (col.filter === "date") return !f.tu && !f.den;
+  return f === "";
+}
+function khopFilterCot(col, f, row) {
+  const val = col.getValue(row);
+  if (col.filter === "enum") return val === f;
+  if (col.filter === "bool") return f === "true" ? !!val : !val;
+  if (col.filter === "date") {
+    const ms = val ? (val.toMillis ? val.toMillis() : (val instanceof Date ? val.getTime() : new Date(val).getTime())) : null;
+    if (f.tu && (ms == null || ms < fromInputDate(f.tu).getTime())) return false;
+    if (f.den && (ms == null || ms > fromInputDate(f.den).getTime() + 86399999)) return false;
+    return true;
+  }
+  return (val == null ? "" : String(val)).toLowerCase().includes(String(f).toLowerCase());
+}
+// Áp toàn bộ filter cột (theo đúng NHOM_COT_*) lên 1 danh sách — dùng chung cho cả bảng vụ án và
+// bảng bị can lồng bên trong, vì cả 2 đều cùng cấu trúc metadata {nhom, cols:[{id,filter,getValue}]}.
+function apDungLocCot(list, nhomCot, filters) {
+  const allCols = nhomCot.flatMap(n => n.cols);
+  return list.filter(row => allCols.every(col => laFilterRong(col, filters[col.id]) || khopFilterCot(col, filters[col.id], row)));
+}
+function demTongCot(nhomCot) { return nhomCot.reduce((s, n) => s + n.cols.length, 0); }
+function demFilterDangDung(nhomCot, filters) {
+  const allCols = nhomCot.flatMap(n => n.cols);
+  return allCols.filter(col => !laFilterRong(col, filters[col.id])).length;
+}
+// Hàng <thead> 3 tầng dùng chung: (1) nhóm (colSpan), (2) nhãn từng cột, (3) ô filter từng cột.
+// `colsDauRowSpan` là các cột đứng đầu KHÔNG thuộc nhóm nào (VD nút mở rộng) — rowSpan qua cả 3 hàng.
+function TheadNhomCot({ colsDauRowSpan, nhomCot, filters, onLoc, dinhTren = true }) {
+  return (
+    <thead className={`${dinhTren ? "sticky top-0 z-20" : ""} bg-slate-100`}>
+      <tr className="text-slate-500">
+        {colsDauRowSpan.map((c, i) => (
+          <th key={"pre-" + i} rowSpan={3} className={`p-2 align-middle ${c.width || ""}`}>{c.label}</th>
+        ))}
+        {nhomCot.map(n => (
+          <th key={n.nhom} colSpan={n.cols.length}
+              className="p-1.5 text-center bg-slate-200 border-l border-slate-300 font-semibold whitespace-nowrap">
+            {n.nhom}
+          </th>
+        ))}
+      </tr>
+      <tr className="text-slate-500">
+        {nhomCot.flatMap(n => n.cols.map(col => (
+          <th key={col.id} className={`p-1.5 text-left border-l border-slate-200 whitespace-nowrap ${col.width || ""}`} title={col.title || ""}>
+            {col.label}
+          </th>
+        )))}
+      </tr>
+      <tr>
+        {nhomCot.flatMap(n => n.cols.map(col => (
+          <th key={"f-" + col.id} className="p-1 border-l border-slate-200 bg-white font-normal">
+            <OLocCot col={col} value={filters[col.id]} onChange={v => onLoc(col.id, v)} />
+          </th>
+        )))}
+      </tr>
+    </thead>
+  );
+}
+function useColumnFilters() {
+  const [filters, setFilters] = useState({});
+  return { filters, onLoc: (id, v) => setFilters(f => ({ ...f, [id]: v })), reset: () => setFilters({}) };
+}
+
+// Metadata các nhóm cột VỤ ÁN — thứ tự trong `cols` PHẢI khớp đúng thứ tự các <td> tương ứng viết
+// tay trong DongVuBangExcel (xem SO_COT_BANG_EXCEL_VU ngay dưới component đó).
+const NHOM_COT_VU = [
+  { nhom: "Định danh", cols: [
+    { id: "ma", label: "Mã vụ", filter: "text", getValue: v => hienThiMa(v) || "" },
+    { id: "maNganhCap", label: "Mã ngành cấp", filter: "text", getValue: v => v.maNganhCap || "" },
+    { id: "tenVu", label: "Tên vụ", filter: "text", getValue: v => v.tenVu || "" },
+  ]},
+  { nhom: "Nguồn & khởi tố", cols: [
+    { id: "nguon", label: "Nguồn", filter: "enum", options: Object.entries(NHAN_NGUON), getValue: v => v.nguon || "an_khoi_to_moi" },
+    { id: "nguonChiTiet", label: "Chi tiết nguồn", filter: "text", getValue: v => v.nguonChiTiet || "" },
+    { id: "soQdKtva", label: "Số QĐ KTVA", filter: "text", getValue: v => v.soQdKtva || "" },
+    { id: "ngayQdKtva", label: "Ngày QĐ KTVA", filter: "date", getValue: v => v.ngayQdKtva },
+  ]},
+  { nhom: "Cán bộ - đơn vị thụ lý", cols: [
+    { id: "ksvChinh", label: "KSV chính", filter: "text", getValue: v => v.ksvChinh || "" },
+    { id: "ksvHoTro", label: "KSV hỗ trợ", filter: "text", getValue: v => (v.ksvHoTro || []).join(", ") },
+    { id: "dtvCbdt", label: "ĐTV/CBĐT", filter: "text", getValue: v => v.dtvCbdt || "" },
+    { id: "donViThuLy", label: "Đơn vị thụ lý", filter: "text", getValue: v => v.donViThuLy || "" },
+    { id: "uyQuyenXetXu", label: "Uỷ quyền xét xử", filter: "text", getValue: v => v.uyQuyenXetXu || "" },
+  ]},
+  { nhom: "Giai đoạn & trạng thái", cols: [
+    { id: "coQuanThuLy", label: "Giai đoạn ⚠", title: "Sửa trực tiếp không qua nút Chuyển giai đoạn", filter: "enum", options: Object.entries(NHAN_GIAI_DOAN), getValue: v => v.coQuanThuLy || "dieu_tra" },
+    { id: "trangThai", label: "Trạng thái ⚠", title: "Sửa trực tiếp không qua nút Hoàn thành vụ án", filter: "enum", options: Object.entries(NHAN_TRANG_THAI), getValue: v => v.trangThai || "dang_giai_quyet" },
+    { id: "hanDieuTra", label: "Hạn điều tra", filter: "date", getValue: v => v.hanDieuTra },
+    { id: "noiChuyenDen", label: "Nơi chuyển đến", filter: "text", getValue: v => v.noiChuyenDen || "" },
+  ]},
+  { nhom: "Phân loại", cols: [
+    { id: "mucDoNghiemTrong", label: "Mức độ nghiêm trọng", filter: "enum", options: Object.entries(NHAN_MUC_DO_NGHIEM_TRONG), getValue: v => v.mucDoNghiemTrong || "dac_biet_nghiem_trong" },
+    { id: "anDiem", label: "Án điểm", filter: "bool", getValue: v => !!v.anDiem },
+    { id: "phienToaRutKN", label: "Phiên toà rút KN", filter: "bool", getValue: v => !!v.phienToaRutKN },
+  ]},
+  { nhom: "Điều luật", cols: [
+    { id: "dieuLuat", label: "Điều luật (tự tính)", filter: "text", getValue: v => v.dieuLuat || "" },
+  ]},
+  { nhom: "Kết quả giải quyết", cols: [
+    { id: "ngayQuyetDinh", label: "Ngày giải quyết", filter: "date", getValue: v => v.ngayQuyetDinh },
+    { id: "soQuyetDinhGQ", label: "Số QĐ giải quyết", filter: "text", getValue: v => { const f = fieldSoQuyetDinhTrenVuAn(v.trangThai); return f ? (v[f] || "") : ""; } },
+    { id: "soKetLuanDieuTra", label: "Số kết luận ĐT", filter: "text", getValue: v => v.soKetLuanDieuTra || "" },
+    { id: "soCaoTrang", label: "Số cáo trạng", filter: "text", getValue: v => v.soCaoTrang || "" },
+  ]},
+  { nhom: "Mức án & lưu trữ", cols: [
+    { id: "mucAnLoai", label: "Loại mức án", filter: "enum", options: [["", "— chưa nhập —"], ...Object.entries(NHAN_LOAI_MUC_AN)], getValue: v => v.mucAnLoai || "" },
+    { id: "mucAnNam", label: "Mức án - năm", filter: "text", getValue: v => v.mucAnNam ?? "" },
+    { id: "mucAnThang", label: "Mức án - tháng", filter: "text", getValue: v => v.mucAnThang ?? "" },
+    { id: "thoiHanBaoQuan", label: "Thời hạn bảo quản", filter: "text", getValue: v => tinhThoiHanBaoQuanVu(v) || "" },
+  ]},
+  { nhom: "Khác", cols: [
+    { id: "ghiChu", label: "Ghi chú", filter: "text", getValue: v => v.ghiChu || "" },
+    { id: "ngayTao", label: "Ngày tạo", filter: "date", getValue: v => v.ngayTao },
+    { id: "nguoiTao", label: "Người tạo", filter: "text", getValue: v => v.nguoiTao || "" },
+    { id: "ngayCapNhat", label: "Cập nhật lúc", filter: "date", getValue: v => v.ngayCapNhat },
+    { id: "nguoiCapNhatCuoi", label: "Người cập nhật cuối", filter: "text", getValue: v => v.nguoiCapNhatCuoi || "" },
+  ]},
+];
+
+// Metadata các nhóm cột BỊ CAN — thứ tự trong `cols` PHẢI khớp đúng thứ tự <td> viết tay trong
+// DongBiCanBangExcel.
+const NHOM_COT_BICAN = [
+  { nhom: "Nhân thân", cols: [
+    { id: "hoTen", label: "Họ tên", filter: "text", getValue: bc => bc.hoTen || "" },
+    { id: "namSinh", label: "Năm sinh", filter: "text", getValue: bc => bc.namSinh ?? "" },
+    { id: "gioiTinh", label: "Giới tính", filter: "enum", options: [["nam", "Nam"], ["nu", "Nữ"]], getValue: bc => bc.gioiTinh || "nam" },
+    { id: "danToc", label: "Dân tộc", filter: "text", getValue: bc => bc.danToc || "Kinh" },
+    { id: "quocTich", label: "Quốc tịch", filter: "text", getValue: bc => bc.quocTich || "Việt Nam" },
+  ]},
+  { nhom: "Đảng viên & trình độ", cols: [
+    { id: "dangVien", label: "Đảng viên", filter: "enum", options: [["khong", "Không"], ["co", "Có"]], getValue: bc => bc.dangVien || "khong" },
+    { id: "dangVienGiuChucVu", label: "Giữ chức vụ QL", filter: "bool", getValue: bc => !!bc.dangVienGiuChucVu },
+    { id: "trinhDo", label: "Trình độ", filter: "enum", options: [["", "— chưa rõ —"], ...Object.entries(NHAN_TRINH_DO)], getValue: bc => bc.trinhDo || "" },
+    { id: "taiPham", label: "Tái phạm", filter: "enum", options: Object.entries(NHAN_TAI_PHAM), getValue: bc => bc.taiPham || "khong" },
+  ]},
+  { nhom: "Loại bị can / pháp nhân", cols: [
+    { id: "loaiBiCan", label: "Loại bị can", filter: "enum", options: [["ca_nhan", "Cá nhân"], ["phap_nhan", "Pháp nhân"]], getValue: bc => bc.loaiBiCan || "ca_nhan" },
+    { id: "tenPhapNhan", label: "Tên pháp nhân", filter: "text", getValue: bc => bc.tenPhapNhan || "" },
+    { id: "maSoThue", label: "Mã số thuế", filter: "text", getValue: bc => bc.maSoThue || "" },
+  ]},
+  { nhom: "Địa chỉ & ngăn chặn", cols: [
+    { id: "diaChi", label: "Địa chỉ", filter: "text", getValue: bc => bc.diaChi || "" },
+    { id: "bienPhapNganChan", label: "Biện pháp", filter: "enum", options: [["tai_ngoai", "Tại ngoại"], ["giam", "Tạm giam"]], getValue: bc => bc.bienPhapNganChan || "tai_ngoai" },
+    { id: "hanTamGiam", label: "Hạn tạm giam", filter: "date", getValue: bc => bc.hanTamGiam },
+  ]},
+  { nhom: "Khởi tố & tội danh", cols: [
+    { id: "ngayKhoiTo", label: "Ngày khởi tố", filter: "date", getValue: bc => bc.ngayKhoiTo },
+    { id: "soQdKtBiCan", label: "Số QĐ khởi tố BC", filter: "text", getValue: bc => bc.soQdKtBiCan || "" },
+    { id: "loaiKhoiTo", label: "Loại khởi tố", filter: "enum", options: [["ban_dau", "Ban đầu"], ["bo_sung", "Bổ sung"]], getValue: bc => bc.loaiKhoiTo || "" },
+    { id: "toiDanhChinh", label: "Tội danh chính", filter: "text", getValue: bc => bc.toiDanh?.[0] || "" },
+  ]},
+];
+
+// Class dùng chung cho mọi ô trong bảng — viền trong suốt, chỉ hiện khi hover/focus để trông gọn
+// như 1 bảng tính thật (không viền dày đặc như 1 form thường).
+const oCellExcel = "w-full text-xs border border-transparent hover:border-slate-300 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 rounded px-1.5 py-1 bg-transparent";
+
+// Hook dùng chung cho cơ chế "kéo fill" kiểu Excel — 1 PHẠM VI độc lập (1 bảng vụ án, HOẶC 1 bảng
+// con bị can của 1 vụ) gọi hook này riêng, vì kéo-fill không bao giờ trộn giữa 2 phạm vi khác
+// nhau. `danhSachDong` là mảng các dòng ĐANG HIỂN THỊ trong đúng phạm vi đó (thứ tự = thứ tự hiện
+// trên màn hình, dùng để tính đoạn kéo qua). `apDungGiaTri(dsDongApDung, field, giaTri)` do nơi
+// gọi tự định nghĩa (vụ án và bị can ghi vào 2 collection khác nhau, bị can còn cần tính lại
+// dieuLuat/loaiKhoiTo cho 1 số field).
+function useKeoFillNgang(danhSachDong, apDungGiaTri) {
+  const [dangKeo, setDangKeo] = useState(null); // { field, giaTri, anchorIndex, hoverIndex }
+
+  useEffect(() => {
+    if (!dangKeo) return;
+    const ketThuc = async () => {
+      const tu = Math.min(dangKeo.anchorIndex, dangKeo.hoverIndex);
+      const den = Math.max(dangKeo.anchorIndex, dangKeo.hoverIndex);
+      const dsApDung = danhSachDong.slice(tu, den + 1);
+      setDangKeo(null);
+      if (dsApDung.length > 1) {
+        try {
+          await apDungGiaTri(dsApDung, dangKeo.field, dangKeo.giaTri);
+        } catch (err) {
+          console.error(err);
+          addToast("Lỗi khi điền nhanh: " + err.message, "error");
+        }
+      }
+    };
+    window.addEventListener("mouseup", ketThuc, { once: true });
+    return () => window.removeEventListener("mouseup", ketThuc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dangKeo]);
+
+  return {
+    batDauKeo: (index, field, giaTri) => setDangKeo({ field, giaTri, anchorIndex: index, hoverIndex: index }),
+    diChuyenQua: (index) => setDangKeo(k => (k ? { ...k, hoverIndex: index } : k)),
+    dangDuocChon: (index, field) => {
+      if (!dangKeo || dangKeo.field !== field) return false;
+      const tu = Math.min(dangKeo.anchorIndex, dangKeo.hoverIndex);
+      const den = Math.max(dangKeo.anchorIndex, dangKeo.hoverIndex);
+      return index >= tu && index <= den;
+    },
+  };
+}
+
+// Tay cầm kéo fill — hiện khi hover cả ô (group-hover), góc dưới-phải, giống Excel.
+function TayKeoFill({ onBatDau }) {
+  return (
+    <span onMouseDown={e => { e.preventDefault(); onBatDau(); }}
+          className="hidden group-hover:block absolute right-0 bottom-0 w-2 h-2 bg-indigo-600 border border-white cursor-crosshair z-10"
+          title="Kéo xuống để điền nhanh các dòng bên dưới" />
+  );
+}
+
+// Ô chọn cố định (KHÔNG cho gõ giá trị mới) — dùng cho mọi enum khép kín. `options` là mảng
+// [key, nhãn] (VD Object.entries(NHAN_NGUON)) — commit ngay lúc chọn, không cần blur.
+function OSelectExcelEnum({ value, onChange, options }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} className={oCellExcel}>
+      {options.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+    </select>
+  );
+}
+
+// Ô text/số thường — commit lúc rời khỏi ô (blur), KHÔNG ghi Firestore mỗi phím gõ. Giữ state cục
+// bộ nạp 1 LẦN lúc mount (KHÔNG tự đồng bộ lại từ prop sau đó — giống cách DongGiaoNhan chỉ nạp
+// lại lúc bắt đầu sửa, ở đây "bắt đầu sửa" = lúc dòng được render lần đầu vì cả bảng luôn ở trạng
+// thái sửa) — tránh việc dữ liệu realtime từ người khác ghi đè ngay giữa lúc đang gõ dở.
+function OCellText({ value, onCommit, type }) {
+  const [v, setV] = useState(value ?? "");
+  return (
+    <input type={type || "text"} value={v} onChange={e => setV(e.target.value)}
+           onBlur={() => { if (v !== (value ?? "")) onCommit(v); }}
+           className={oCellExcel} />
+  );
+}
+
+// Ô ngày — NhapNgay chỉ gọi onChange khi đã nhận diện được đúng 1 ngày hợp lệ (xem định nghĩa
+// NhapNgay), không phải mỗi phím gõ dở dang, nên commit thẳng trong onChange là an toàn.
+function OCellDate({ value, onCommit }) {
+  return (
+    <NhapNgay value={toInputDate(value)}
+              onChange={e => onCommit(e.target.value ? fromInputDate(e.target.value) : null)}
+              className={oCellExcel} />
+  );
+}
+
+// Ô combobox MỞ (chọn có sẵn HOẶC gõ giá trị mới) — dùng <datalist> chung, commit lúc blur.
+function OCellCombo({ value, onCommit, listId }) {
+  const [v, setV] = useState(value ?? "");
+  return (
+    <input value={v} list={listId} onChange={e => setV(e.target.value)}
+           onBlur={() => { if (v !== (value ?? "")) onCommit(v.trim()); }}
+           className={oCellExcel} />
+  );
+}
+
+function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
+  const oTd = (field) => ({
+    onMouseEnter: () => keo.diChuyenQua(index),
+    className: `relative group p-0 border-t border-slate-100 border-l border-slate-100 ${keo.dangDuocChon(index, field) ? "bg-indigo-50" : ""}`,
+  });
+  const laPhapNhan = bc.loaiBiCan === "phap_nhan";
+  const laGiam = bc.bienPhapNganChan === "giam";
+  return (
+    <tr>
+      {/* Nhân thân */}
+      <td {...oTd("hoTen")}>
+        <OCellText value={bc.hoTen} onCommit={v => suaBiCanTruong(bc, { hoTen: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "hoTen", bc.hoTen)} />
+      </td>
+      <td {...oTd("namSinh")}>
+        <OCellText type="number" value={bc.namSinh} onCommit={v => suaBiCanTruong(bc, { namSinh: v ? Number(v) : null })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "namSinh", bc.namSinh)} />
+      </td>
+      <td {...oTd("gioiTinh")}>
+        <OSelectExcelEnum value={bc.gioiTinh || "nam"} onChange={v => suaBiCanTruong(bc, { gioiTinh: v })}
+                          options={[["nam", "Nam"], ["nu", "Nữ"]]} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "gioiTinh", bc.gioiTinh || "nam")} />
+      </td>
+      <td {...oTd("danToc")}>
+        <OCellCombo value={bc.danToc} listId="ds-dantoc-excel" onCommit={v => suaBiCanTruong(bc, { danToc: v || "Kinh" })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "danToc", bc.danToc || "Kinh")} />
+      </td>
+      <td {...oTd("quocTich")}>
+        <OCellText value={bc.quocTich || "Việt Nam"} onCommit={v => suaBiCanTruong(bc, { quocTich: v.trim() || "Việt Nam" })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "quocTich", bc.quocTich || "Việt Nam")} />
+      </td>
+      {/* Đảng viên & trình độ */}
+      <td {...oTd("dangVien")}>
+        <OSelectExcelEnum value={bc.dangVien || "khong"} onChange={v => suaBiCanTruong(bc, { dangVien: v, ...(v === "khong" ? { dangVienGiuChucVu: false } : {}) })}
+                          options={[["khong", "Không"], ["co", "Có"]]} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "dangVien", bc.dangVien || "khong")} />
+      </td>
+      <td {...oTd("dangVienGiuChucVu")}>
+        {bc.dangVien === "co" ? (
+          <label className="flex items-center justify-center h-full text-xs gap-1 px-1">
+            <input type="checkbox" checked={!!bc.dangVienGiuChucVu} onChange={e => suaBiCanTruong(bc, { dangVienGiuChucVu: e.target.checked })} /> Có
+          </label>
+        ) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      <td {...oTd("trinhDo")}>
+        <select value={bc.trinhDo || ""} onChange={e => suaBiCanTruong(bc, { trinhDo: e.target.value })} className={oCellExcel}>
+          <option value="">— chưa rõ —</option>
+          {Object.entries(NHAN_TRINH_DO).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "trinhDo", bc.trinhDo || "")} />
+      </td>
+      <td {...oTd("taiPham")}>
+        <OSelectExcelEnum value={bc.taiPham || "khong"} onChange={v => suaBiCanTruong(bc, { taiPham: v })}
+                          options={Object.entries(NHAN_TAI_PHAM)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "taiPham", bc.taiPham || "khong")} />
+      </td>
+      {/* Loại bị can / pháp nhân */}
+      <td {...oTd("loaiBiCan")}>
+        <OSelectExcelEnum value={bc.loaiBiCan || "ca_nhan"} onChange={v => suaBiCanTruong(bc, { loaiBiCan: v })}
+                          options={[["ca_nhan", "Cá nhân"], ["phap_nhan", "Pháp nhân"]]} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "loaiBiCan", bc.loaiBiCan || "ca_nhan")} />
+      </td>
+      <td {...oTd("tenPhapNhan")}>
+        {laPhapNhan ? (<>
+          <OCellText value={bc.tenPhapNhan} onCommit={v => suaBiCanTruong(bc, { tenPhapNhan: v.trim() })} />
+          <TayKeoFill onBatDau={() => keo.batDauKeo(index, "tenPhapNhan", bc.tenPhapNhan)} />
+        </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      <td {...oTd("maSoThue")}>
+        {laPhapNhan ? (<>
+          <OCellText value={bc.maSoThue} onCommit={v => suaBiCanTruong(bc, { maSoThue: v.trim() })} />
+          <TayKeoFill onBatDau={() => keo.batDauKeo(index, "maSoThue", bc.maSoThue)} />
+        </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      {/* Địa chỉ & ngăn chặn */}
+      <td {...oTd("diaChi")}>
+        <OCellText value={bc.diaChi} onCommit={v => suaBiCanTruong(bc, { diaChi: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "diaChi", bc.diaChi)} />
+      </td>
+      <td {...oTd("bienPhapNganChan")}>
+        <OSelectExcelEnum value={bc.bienPhapNganChan || "tai_ngoai"} onChange={v => suaBiCanTruong(bc, { bienPhapNganChan: v, ...(v !== "giam" ? { hanTamGiam: null } : {}) })}
+                          options={[["tai_ngoai", "Tại ngoại"], ["giam", "Tạm giam"]]} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "bienPhapNganChan", bc.bienPhapNganChan || "tai_ngoai")} />
+      </td>
+      <td {...oTd("hanTamGiam")}>
+        {laGiam ? (<>
+          <OCellDate value={bc.hanTamGiam} onCommit={v => suaBiCanTruong(bc, { hanTamGiam: v })} />
+          <TayKeoFill onBatDau={() => keo.batDauKeo(index, "hanTamGiam", bc.hanTamGiam)} />
+        </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      {/* Khởi tố & tội danh */}
+      <td {...oTd("ngayKhoiTo")}>
+        <OCellDate value={bc.ngayKhoiTo} onCommit={v => suaBiCanTruong(bc, { ngayKhoiTo: v }, true)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ngayKhoiTo", bc.ngayKhoiTo)} />
+      </td>
+      <td {...oTd("soQdKtBiCan")}>
+        <OCellText value={bc.soQdKtBiCan} onCommit={v => suaBiCanTruong(bc, { soQdKtBiCan: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "soQdKtBiCan", bc.soQdKtBiCan)} />
+      </td>
+      <td className="p-2 text-slate-400 text-xs border-t border-l border-slate-100 whitespace-nowrap" title="Tự tính: sớm nhất trong vụ = Ban đầu, còn lại = Bổ sung">
+        {bc.loaiKhoiTo === "ban_dau" ? "Ban đầu" : bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "—"}
+      </td>
+      <td {...oTd("toiDanhChinh")} className={oTd("toiDanhChinh").className + " min-w-[220px]"}>
+        <ToiDanhInput ten={bc.toiDanh?.[0] || ""} dieuLuat={bc.dieuLuatBC?.[0] || ""} danhMuc={danhMucTD}
+                      onChange={({ ten, dieuLuat }) => suaBiCanTruong(bc, {
+                        toiDanh: [ten, ...(bc.toiDanh || []).slice(1)],
+                        dieuLuatBC: [dieuLuat, ...(bc.dieuLuatBC || []).slice(1)],
+                      }, true)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "toiDanhChinh", { ten: bc.toiDanh?.[0] || "", dieuLuat: bc.dieuLuatBC?.[0] || "" })} />
+      </td>
+    </tr>
+  );
+}
+
+// Bảng con bị can của 1 vụ — tự query/onSnapshot riêng, chỉ tải khi vụ được mở rộng (expand).
+function BangBiCanCon({ vuAnId, danhMucTD }) {
+  const [dsBiCan, setDsBiCan] = useState(null); // null = đang tải
+
+  useEffect(() => {
+    return db.collection("bican").where("maVuAn", "==", vuAnId).onSnapshot(
+      snap => setDsBiCan(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error(err)
+    );
+  }, [vuAnId]);
+
+  const suaBiCanTruong = async (bc, patch, canTinhLaiDieuLuat) => {
+    try {
+      await db.collection("bican").doc(bc.id).update(patch);
+      xoaBiCanCache(vuAnId);
+      if (canTinhLaiDieuLuat) await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi lưu bị can: " + err.message, "error");
+    }
+  };
+
+  const CAC_TRUONG_ANH_HUONG_DIEU_LUAT = new Set(["ngayKhoiTo", "toiDanhChinh"]);
+  const apDungGiaTri = async (dsDong, field, giaTri) => {
+    const batch = db.batch();
+    dsDong.forEach(bc => {
+      if (field === "toiDanhChinh") {
+        batch.update(db.collection("bican").doc(bc.id), {
+          toiDanh: [giaTri.ten, ...(bc.toiDanh || []).slice(1)],
+          dieuLuatBC: [giaTri.dieuLuat, ...(bc.dieuLuatBC || []).slice(1)],
+        });
+      } else {
+        batch.update(db.collection("bican").doc(bc.id), { [field]: giaTri });
+      }
+    });
+    await batch.commit();
+    xoaBiCanCache(vuAnId);
+    if (CAC_TRUONG_ANH_HUONG_DIEU_LUAT.has(field)) await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+  };
+
+  const { filters, onLoc, reset } = useColumnFilters();
+  const dsBiCanLoc = useMemo(() => apDungLocCot(dsBiCan || [], NHOM_COT_BICAN, filters), [dsBiCan, filters]);
+  const soFilterDangDung = demFilterDangDung(NHOM_COT_BICAN, filters);
+  const keo = useKeoFillNgang(dsBiCanLoc, apDungGiaTri);
+
+  if (dsBiCan === null) return <div className="p-3 text-xs text-slate-400">Đang tải bị can...</div>;
+  if (dsBiCan.length === 0) return <div className="p-3 text-xs text-slate-400">Vụ này chưa có bị can nào.</div>;
+
+  return (
+    <div>
+      {soFilterDangDung > 0 && (
+        <div className="text-[11px] text-indigo-600 mb-1 flex items-center gap-2">
+          Đang lọc {soFilterDangDung} cột — {dsBiCanLoc.length}/{dsBiCan.length} bị can khớp.
+          <button onClick={reset} className="text-slate-400 hover:text-red-600 underline">Bỏ lọc</button>
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-xs border-collapse bg-white">
+          <TheadNhomCot colsDauRowSpan={[]} nhomCot={NHOM_COT_BICAN} filters={filters} onLoc={onLoc} dinhTren={false} />
+          <tbody>
+            {dsBiCanLoc.length === 0 && (
+              <tr><td colSpan={demTongCot(NHOM_COT_BICAN)} className="p-3 text-center text-slate-400">Không có bị can nào khớp bộ lọc.</td></tr>
+            )}
+            {dsBiCanLoc.map((bc, i) => (
+              <DongBiCanBangExcel key={bc.id} bc={bc} index={i} keo={keo}
+                                   suaBiCanTruong={suaBiCanTruong} danhMucTD={danhMucTD} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// 1 (toggle) + tổng số cột trong NHOM_COT_VU — tính động để không phải sửa tay mỗi lần thêm cột.
+const SO_COT_BANG_EXCEL_VU = 1 + demTongCot(NHOM_COT_VU);
+
+function DongVuBangExcel({ vuAn, index, keo, suaVu, daMoRong, onToggleMoRong }) {
+  const oTd = (field) => ({
+    onMouseEnter: () => keo.diChuyenQua(index),
+    className: `relative group p-0 border-t border-l border-slate-100 ${keo.dangDuocChon(index, field) ? "bg-indigo-50" : ""}`,
+  });
+  const oReadonly = "p-2 text-slate-400 text-xs whitespace-nowrap border-t border-l border-slate-100";
+  const fieldSoQD = fieldSoQuyetDinhTrenVuAn(vuAn.trangThai);
+  const laDaHoanThanh = vuAn.trangThai !== "dang_giai_quyet";
+  return (
+    <tr>
+      <td className="p-2 text-center border-t border-slate-100">
+        <button onClick={onToggleMoRong} className="text-slate-400 hover:text-indigo-600" title={daMoRong ? "Thu gọn" : "Mở rộng xem bị can"}>
+          {daMoRong ? "▼" : "▶"}
+        </button>
+      </td>
+      {/* Định danh */}
+      <td className={oReadonly}>{hienThiMa(vuAn)}</td>
+      <td {...oTd("maNganhCap")}>
+        <OCellText value={vuAn.maNganhCap} onCommit={v => suaVu(vuAn.id, { maNganhCap: v.trim() || null })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "maNganhCap", vuAn.maNganhCap)} />
+      </td>
+      <td {...oTd("tenVu")}>
+        <OCellText value={vuAn.tenVu} onCommit={v => suaVu(vuAn.id, { tenVu: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "tenVu", vuAn.tenVu)} />
+      </td>
+      {/* Nguồn & khởi tố */}
+      <td {...oTd("nguon")}>
+        <OSelectExcelEnum value={vuAn.nguon || "an_khoi_to_moi"} onChange={v => suaVu(vuAn.id, { nguon: v })}
+                          options={Object.entries(NHAN_NGUON)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "nguon", vuAn.nguon || "an_khoi_to_moi")} />
+      </td>
+      <td {...oTd("nguonChiTiet")}>
+        <OCellText value={vuAn.nguonChiTiet} onCommit={v => suaVu(vuAn.id, { nguonChiTiet: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "nguonChiTiet", vuAn.nguonChiTiet)} />
+      </td>
+      <td {...oTd("soQdKtva")}>
+        <OCellText value={vuAn.soQdKtva} onCommit={v => suaVu(vuAn.id, { soQdKtva: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "soQdKtva", vuAn.soQdKtva)} />
+      </td>
+      <td {...oTd("ngayQdKtva")}>
+        <OCellDate value={vuAn.ngayQdKtva} onCommit={v => suaVu(vuAn.id, { ngayQdKtva: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ngayQdKtva", vuAn.ngayQdKtva)} />
+      </td>
+      {/* Cán bộ - đơn vị thụ lý */}
+      <td {...oTd("ksvChinh")}>
+        <OCellCombo value={vuAn.ksvChinh} listId="ds-ksv-excel" onCommit={v => suaVu(vuAn.id, { ksvChinh: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ksvChinh", vuAn.ksvChinh)} />
+      </td>
+      <td {...oTd("ksvHoTro")}>
+        <OCellText value={(vuAn.ksvHoTro || []).join(", ")}
+                   onCommit={v => suaVu(vuAn.id, { ksvHoTro: v.split(",").map(s => s.trim()).filter(Boolean) })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ksvHoTro", (vuAn.ksvHoTro || []).join(", "))} />
+      </td>
+      <td {...oTd("dtvCbdt")}>
+        <OCellCombo value={vuAn.dtvCbdt} listId="ds-dtv-excel" onCommit={v => suaVu(vuAn.id, { dtvCbdt: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "dtvCbdt", vuAn.dtvCbdt)} />
+      </td>
+      <td {...oTd("donViThuLy")}>
+        <OCellText value={vuAn.donViThuLy} onCommit={v => suaVu(vuAn.id, { donViThuLy: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "donViThuLy", vuAn.donViThuLy)} />
+      </td>
+      <td {...oTd("uyQuyenXetXu")}>
+        <OCellText value={vuAn.uyQuyenXetXu} onCommit={v => suaVu(vuAn.id, { uyQuyenXetXu: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "uyQuyenXetXu", vuAn.uyQuyenXetXu)} />
+      </td>
+      {/* Giai đoạn & trạng thái */}
+      <td {...oTd("coQuanThuLy")}>
+        <OSelectExcelEnum value={vuAn.coQuanThuLy || "dieu_tra"} onChange={v => suaVu(vuAn.id, { coQuanThuLy: v })}
+                          options={Object.entries(NHAN_GIAI_DOAN)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "coQuanThuLy", vuAn.coQuanThuLy || "dieu_tra")} />
+      </td>
+      <td {...oTd("trangThai")}>
+        <OSelectExcelEnum value={vuAn.trangThai || "dang_giai_quyet"} onChange={v => suaVu(vuAn.id, { trangThai: v })}
+                          options={Object.entries(NHAN_TRANG_THAI)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "trangThai", vuAn.trangThai || "dang_giai_quyet")} />
+      </td>
+      <td {...oTd("hanDieuTra")}>
+        <OCellDate value={vuAn.hanDieuTra} onCommit={v => suaVu(vuAn.id, { hanDieuTra: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "hanDieuTra", vuAn.hanDieuTra)} />
+      </td>
+      <td {...oTd("noiChuyenDen")}>
+        {vuAn.trangThai === "chuyen_di" ? (<>
+          <OCellText value={vuAn.noiChuyenDen} onCommit={v => suaVu(vuAn.id, { noiChuyenDen: v.trim() })} />
+          <TayKeoFill onBatDau={() => keo.batDauKeo(index, "noiChuyenDen", vuAn.noiChuyenDen)} />
+        </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      {/* Phân loại */}
+      <td {...oTd("mucDoNghiemTrong")}>
+        <OSelectExcelEnum value={vuAn.mucDoNghiemTrong || "dac_biet_nghiem_trong"} onChange={v => suaVu(vuAn.id, { mucDoNghiemTrong: v })}
+                          options={Object.entries(NHAN_MUC_DO_NGHIEM_TRONG)} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "mucDoNghiemTrong", vuAn.mucDoNghiemTrong || "dac_biet_nghiem_trong")} />
+      </td>
+      <td {...oTd("anDiem")} className={oTd("anDiem").className + " text-center"}>
+        <input type="checkbox" checked={!!vuAn.anDiem} onChange={e => suaVu(vuAn.id, { anDiem: e.target.checked })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "anDiem", !!vuAn.anDiem)} />
+      </td>
+      <td {...oTd("phienToaRutKN")} className={oTd("phienToaRutKN").className + " text-center"}>
+        <input type="checkbox" checked={!!vuAn.phienToaRutKN} onChange={e => suaVu(vuAn.id, { phienToaRutKN: e.target.checked })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "phienToaRutKN", !!vuAn.phienToaRutKN)} />
+      </td>
+      {/* Điều luật */}
+      <td className={oReadonly} title="Tự tính gộp từ tội danh bị can (hoặc nhập tay ở 'Sửa thông tin vụ án' nếu vụ chưa có bị can)">
+        {vuAn.dieuLuat || "—"}
+      </td>
+      {/* Kết quả giải quyết */}
+      <td {...oTd("ngayQuyetDinh")}>
+        {laDaHoanThanh ? (<>
+          <OCellDate value={vuAn.ngayQuyetDinh} onCommit={v => suaVu(vuAn.id, { ngayQuyetDinh: v, ngayQuyetDinhUocTinh: false })} />
+          <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ngayQuyetDinh", vuAn.ngayQuyetDinh)} />
+        </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      <td {...oTd("soQuyetDinhGQ")}>
+        {fieldSoQD ? (<>
+          <OCellText value={vuAn[fieldSoQD]} onCommit={v => suaVu(vuAn.id, { [fieldSoQD]: v.trim() })} />
+          <TayKeoFill onBatDau={() => keo.batDauKeo(index, "soQuyetDinhGQ", vuAn[fieldSoQD])} />
+        </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      <td {...oTd("soKetLuanDieuTra")}>
+        <OCellText value={vuAn.soKetLuanDieuTra} onCommit={v => suaVu(vuAn.id, { soKetLuanDieuTra: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "soKetLuanDieuTra", vuAn.soKetLuanDieuTra)} />
+      </td>
+      <td {...oTd("soCaoTrang")}>
+        <OCellText value={vuAn.soCaoTrang} onCommit={v => suaVu(vuAn.id, { soCaoTrang: v.trim() })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "soCaoTrang", vuAn.soCaoTrang)} />
+      </td>
+      {/* Mức án & lưu trữ */}
+      <td {...oTd("mucAnLoai")}>
+        <select value={vuAn.mucAnLoai || ""} onChange={e => suaVu(vuAn.id, { mucAnLoai: e.target.value || null })} className={oCellExcel}>
+          <option value="">— chưa nhập —</option>
+          {Object.entries(NHAN_LOAI_MUC_AN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "mucAnLoai", vuAn.mucAnLoai || "")} />
+      </td>
+      <td {...oTd("mucAnNam")}>
+        {vuAn.mucAnLoai === "nam" ? (<>
+          <OCellText type="number" value={vuAn.mucAnNam} onCommit={v => suaVu(vuAn.id, { mucAnNam: v ? Number(v) : null })} />
+          <TayKeoFill onBatDau={() => keo.batDauKeo(index, "mucAnNam", vuAn.mucAnNam)} />
+        </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      <td {...oTd("mucAnThang")}>
+        {vuAn.mucAnLoai === "nam" ? (<>
+          <OCellText type="number" value={vuAn.mucAnThang} onCommit={v => suaVu(vuAn.id, { mucAnThang: v ? Number(v) : null })} />
+          <TayKeoFill onBatDau={() => keo.batDauKeo(index, "mucAnThang", vuAn.mucAnThang)} />
+        </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
+      </td>
+      <td className={oReadonly}>{tinhThoiHanBaoQuanVu(vuAn) || "—"}</td>
+      {/* Khác */}
+      <td {...oTd("ghiChu")}>
+        <OCellText value={vuAn.ghiChu} onCommit={v => suaVu(vuAn.id, { ghiChu: v })} />
+        <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ghiChu", vuAn.ghiChu)} />
+      </td>
+      <td className={oReadonly}>{fmtDate(vuAn.ngayTao)}</td>
+      <td className={oReadonly}>{vuAn.nguoiTao || "—"}</td>
+      <td className={oReadonly}>{fmtDate(vuAn.ngayCapNhat)}</td>
+      <td className={oReadonly}>{vuAn.nguoiCapNhatCuoi || "—"}</td>
+    </tr>
+  );
+}
+
+function BangExcelModule() {
+  const dsCanBo = useDanhSachCanBo();
+  const danhMucTD = useDanhMucToiDanh();
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [gioiHan, setGioiHan] = useState(500);
+  const [vuotGioiHan, setVuotGioiHan] = useState(false);
+  const [moRong, setMoRong] = useState(() => new Set());
+  const [tuKhoa, setTuKhoa] = useState("");
+
+  useEffect(() => {
+    setDangTai(true);
+    const q = db.collection("vuan").orderBy("ngayTao", "desc").limit(gioiHan);
+    return q.onSnapshot(
+      snap => {
+        setList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setVuotGioiHan(snap.size >= gioiHan);
+        setDangTai(false);
+      },
+      err => { console.error(err); setDangTai(false); }
+    );
+  }, [gioiHan]);
+
+  const dsTimKiem = useMemo(() => {
+    const k = tuKhoa.trim().toLowerCase();
+    if (!k) return list;
+    return list.filter(v =>
+      (hienThiMa(v) || "").toLowerCase().includes(k) ||
+      (v.tenVu || "").toLowerCase().includes(k) ||
+      (v.ksvChinh || "").toLowerCase().includes(k) ||
+      (v.soQdKtva || "").toLowerCase().includes(k)
+    );
+  }, [list, tuKhoa]);
+
+  const { filters, onLoc, reset: resetLoc } = useColumnFilters();
+  const dsLoc = useMemo(() => apDungLocCot(dsTimKiem, NHOM_COT_VU, filters), [dsTimKiem, filters]);
+  const soFilterDangDung = demFilterDangDung(NHOM_COT_VU, filters);
+
+  const suaVu = async (id, patch) => {
+    try {
+      await db.collection("vuan").doc(id).update(patch);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi lưu: " + err.message, "error");
+    }
+  };
+  // `ksvHoTro` hiển thị trên ô như 1 chuỗi nối dấu phẩy (giống OCellText's onCommit) nhưng lưu
+  // Firestore dạng mảng — kéo fill lấy "giá trị hiện có trên ô" (chuỗi) làm giaTri, nên phải áp
+  // dụng ĐÚNG phép biến đổi chuỗi→mảng y hệt lúc gõ tay commit, không được ghi thẳng chuỗi vào
+  // field mảng (lỗi thật đã bắt được qua test: ghi chuỗi thẳng vào ksvHoTro làm hỏng cấu trúc dữ
+  // liệu, các chỗ khác trong app gọi `.join`/`.map` trên field này sẽ crash).
+  // `soQuyetDinhGQ` là field ẢO (không tồn tại thẳng trên vuan) — field Firestore thật cần ghi phụ
+  // thuộc trangThai CỦA TỪNG DÒNG (fieldSoQuyetDinhTrenVuAn), khác nhau giữa các dòng nếu kéo fill
+  // qua nhiều vụ có hình thức giải quyết khác nhau — dòng nào không có field tương ứng (VD đang
+  // giải quyết) thì BỎ QUA, không ghi nhầm sang field khác.
+  const apDungGiaTriVu = async (dsDong, field, giaTri) => {
+    const batch = db.batch();
+    dsDong.forEach(v => {
+      let patch;
+      if (field === "ksvHoTro") {
+        patch = { ksvHoTro: String(giaTri).split(",").map(s => s.trim()).filter(Boolean) };
+      } else if (field === "soQuyetDinhGQ") {
+        const f = fieldSoQuyetDinhTrenVuAn(v.trangThai);
+        if (!f) return;
+        patch = { [f]: giaTri };
+      } else if (field === "mucAnLoai") {
+        patch = { mucAnLoai: giaTri || null };
+      } else if (field === "ngayQuyetDinh") {
+        patch = { ngayQuyetDinh: giaTri, ngayQuyetDinhUocTinh: false };
+      } else {
+        patch = { [field]: giaTri };
+      }
+      batch.update(db.collection("vuan").doc(v.id), patch);
+    });
+    await batch.commit();
+  };
+  const keo = useKeoFillNgang(dsLoc, apDungGiaTriVu);
+
+  const toggleMoRong = (id) => setMoRong(s => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+
+  const dsKsv = [...new Set(dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen).filter(Boolean))];
+  const dsDtv = [...new Set(dsCanBo.filter(c => c.vaiTro === "dtv").map(c => c.hoTen).filter(Boolean))];
+
+  return (
+    <div className="h-full flex flex-col min-h-0">
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap shrink-0">
+        <div>
+          <h3 className="text-base font-semibold">Bảng dữ liệu (kiểu Excel)</h3>
+          <div className="text-xs text-slate-500 mt-0.5">
+            Sửa nhanh hàng loạt: click vào ô để gõ, kéo góc dưới-phải 1 ô để điền nhanh xuống nhiều
+            dòng, bấm ▶ để mở rộng xem/sửa bị can của từng vụ.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setMoRong(new Set(dsLoc.map(v => v.id)))}
+                  className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Mở tất cả</button>
+          <button onClick={() => setMoRong(new Set())}
+                  className="text-xs text-slate-500 hover:text-slate-700 font-medium">Thu gọn tất cả</button>
+          <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)}
+                 placeholder="Tìm theo mã vụ, tên vụ, KSV, số QĐ KTVA..."
+                 className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 w-72" />
+        </div>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2 mb-3 shrink-0">
+        {CANH_BAO_GIAI_DOAN_TRANG_THAI}
+      </div>
+
+      {soFilterDangDung > 0 && (
+        <div className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5 mb-2 shrink-0 flex items-center gap-2">
+          Đang lọc {soFilterDangDung} cột — {dsLoc.length}/{dsTimKiem.length} vụ án khớp.
+          <button onClick={resetLoc} className="text-indigo-500 hover:text-red-600 underline">Bỏ toàn bộ lọc cột</button>
+        </div>
+      )}
+
+      <datalist id="ds-ksv-excel">{dsKsv.map(k => <option key={k} value={k} />)}</datalist>
+      <datalist id="ds-dtv-excel">{dsDtv.map(k => <option key={k} value={k} />)}</datalist>
+      <datalist id="ds-dantoc-excel">{DANH_SACH_DAN_TOC_PHO_BIEN.map(k => <option key={k} value={k} />)}</datalist>
+
+      <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded-xl bg-white">
+        {dangTai ? (
+          <div className="p-4 text-sm text-slate-400">Đang tải...</div>
+        ) : (
+          <table className="w-full text-xs border-collapse">
+            <TheadNhomCot colsDauRowSpan={[{ label: "", width: "w-8" }]} nhomCot={NHOM_COT_VU} filters={filters} onLoc={onLoc} />
+            <tbody>
+              {dsLoc.length === 0 && (
+                <tr><td colSpan={SO_COT_BANG_EXCEL_VU} className="p-4 text-center text-slate-400">Không có vụ án nào khớp.</td></tr>
+              )}
+              {dsLoc.map((v, i) => (
+                <React.Fragment key={v.id}>
+                  <DongVuBangExcel vuAn={v} index={i} keo={keo} suaVu={suaVu}
+                                   daMoRong={moRong.has(v.id)} onToggleMoRong={() => toggleMoRong(v.id)} />
+                  {moRong.has(v.id) && (
+                    <tr>
+                      <td colSpan={SO_COT_BANG_EXCEL_VU} className="bg-slate-50 p-2 pl-8">
+                        <BangBiCanCon vuAnId={v.id} danhMucTD={danhMucTD} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="px-1 py-2 text-xs text-slate-400 flex items-center justify-between shrink-0">
+        <span>{dsLoc.length} / {list.length} vụ án đã tải{tuKhoa.trim() && vuotGioiHan ? " (tìm kiếm chỉ trong số đã tải)" : ""}</span>
+        {vuotGioiHan && (
+          <button onClick={() => setGioiHan(n => n + 500)}
+                  className="text-indigo-600 hover:text-indigo-700 font-medium">
+            Mới nhất {gioiHan} vụ — Tải thêm 500
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ====================================================================
 // KHUNG CHÍNH (SIDEBAR + NỘI DUNG)
 // ====================================================================
 const MODULES = [
@@ -10414,6 +11656,7 @@ function CaiDatModule() {
     { id: "danhmuc",   label: "Danh mục tội danh"  },
     { id: "import",    label: "Import Excel"        },
     { id: "thungrac",  label: "Thùng rác"           },
+    { id: "bangexcel", label: "Bảng dữ liệu"      },
   ];
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -10426,11 +11669,21 @@ function CaiDatModule() {
           </button>
         ))}
       </div>
-      {subTab === "log"      && <NhatKyModule />}
-      {subTab === "canbo"    && <CanBoModule />}
-      {subTab === "danhmuc"  && <DanhMucToiDanhModule />}
-      {subTab === "import"   && <ImportExcelModule />}
-      {subTab === "thungrac" && <ThungRacModule />}
+      {/* "Bảng dữ liệu" tự cuộn nội bộ (bảng dài, toolbar/cảnh báo cố định phía trên) nên cần bọc
+          trong flex-1 min-h-0 để h-full bên trong nó có chiều cao xác định — đúng pattern "Bố cục
+          cuộn trang" đã ghi trong CLAUDE.md. Các tab khác (Nhật ký/Cán bộ/Danh mục/Import/Thùng
+          rác) vẫn để cả trang cuộn qua <main> như trước, không đổi hành vi của chúng. */}
+      {subTab === "bangexcel" ? (
+        <div className="flex-1 min-h-0"><BangExcelModule /></div>
+      ) : (
+        <>
+          {subTab === "log"      && <NhatKyModule />}
+          {subTab === "canbo"    && <CanBoModule />}
+          {subTab === "danhmuc"  && <DanhMucToiDanhModule />}
+          {subTab === "import"   && <ImportExcelModule />}
+          {subTab === "thungrac" && <ThungRacModule />}
+        </>
+      )}
     </div>
   );
 }

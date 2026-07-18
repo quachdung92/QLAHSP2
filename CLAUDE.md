@@ -2,6 +2,146 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Sự cố "deploy đè mất fix" + merge `toi-uu-firestore-read` vào `main` (2026-07-18, cuối ngày)
+
+**Chuyện đã xảy ra**: sáng 2026-07-18, 1 phiên làm việc port 2 bug fix (thời hạn bảo quản floor-
+lookup + race condition sửa bị can, xem mục "Port 2 bug fix" bên dưới) từ `bang-excel-cai-dat` vào
+`main` rồi deploy production lúc ~09:xx. Đồng thời/sau đó, 1 phiên làm việc KHÁC (song song, không
+biết về việc trên) tiếp tục phát triển trực tiếp trên nhánh `toi-uu-firestore-read` (Đợt 3 tối ưu
+Firestore, Import Excel thay vụ trùng — 2 mục ngay trên) rồi **deploy production lúc 14:53** — vì
+`toi-uu-firestore-read` lúc đó CHƯA merge với `bang-excel-cai-dat` nên KHÔNG có 2 bug fix, deploy
+này đã **ghi đè mất** bản production đúng của buổi sáng. Phiên đó tự phát hiện qua chính commit
+message, đã merge `bang-excel-cai-dat` (9 commit, gồm cả 2 fix + toàn bộ tính năng Bảng dữ liệu
+Excel) vào `toi-uu-firestore-read` lúc 17:56 (`6642784`) để khôi phục, nhưng chưa kịp deploy lại.
+
+**Phiên phát hiện & khôi phục** (đọc `git fetch` + đối chiếu trực tiếp qua `curl` cả 2 URL thật —
+không chỉ tin tưởng lịch sử git): xác nhận cả `qlahsp2.web.app` VÀ `qlahs-test.web.app` đều đang
+thiếu `mucAnThang`/`capNhatDieuLuatVaLoaiKhoiTo` (2 field/hàm đặc trưng của 2 fix), có
+`mucAnCoSauThang` (field cũ trước khi sửa) — xác nhận đúng như commit message mô tả. Đã hỏi người
+dùng qua AskUserQuestion, được xác nhận deploy ngay từ `toi-uu-firestore-read` — `./deploy.sh test`
+rồi `./deploy.sh prod` + `firebase deploy --only firestore:indexes` cho cả 2 project, xác nhận lại
+bằng `curl` + Playwright: production đã có đúng `mucAnThang`, hết `mucAnCoSauThang`, 0 lỗi console.
+
+**Sự cố phụ tự gây ra rồi tự sửa lúc đồng bộ nhánh**: chạy nhầm `git merge --ff-only
+toi-uu-firestore-read origin/toi-uu-firestore-read` (dạng 2 tham số) trong lúc đang đứng ở nhánh
+`bang-excel-cai-dat` — lệnh 2-tham-số merge NHÁNH HIỆN TẠI với 2 ref đó, vô tình đẩy con trỏ local
+`bang-excel-cai-dat` tiến lên trùng `toi-uu-firestore-read` (không mất commit nào — mọi thứ vẫn
+nằm nguyên trên remote, chỉ là con trỏ nhánh local bị lệch định danh). Tự phát hiện qua đối chiếu
+`git rev-parse bang-excel-cai-dat` với `origin/bang-excel-cai-dat`, sửa bằng `git reset --hard
+origin/bang-excel-cai-dat` (an toàn vì working tree sạch lúc đó), rồi checkout đúng
+`toi-uu-firestore-read` và fast-forward riêng nhánh đó bằng đúng lệnh 1-tham-số.
+**Bài học cho phiên sau**: KHÔNG dùng `git merge <ref1> <ref2>` (2 tham số) để "cập nhật nhánh X
+theo remote" trừ khi ĐANG đứng đúng trên nhánh X — luôn `git checkout <branch>` trước rồi mới
+`git merge --ff-only origin/<branch>` (1 tham số).
+
+**Merge `toi-uu-firestore-read` vào `main`** (theo yêu cầu người dùng, sau khi xác nhận production
+đã khôi phục) — `main` lúc này chỉ còn 5 commit riêng (đúng phần "Port 2 bug fix" bên dưới, đã
+TRỞ NÊN DƯ THỪA vì nội dung tương đương đã có sẵn trong `toi-uu-firestore-read` qua đường merge
+`bang-excel-cai-dat` GỐC — khác hash commit nhưng cùng nội dung), còn `toi-uu-firestore-read` có 13
+commit main chưa có. Merge `--no-ff`, xung đột thủ công ở 3 vùng quen thuộc (đều là main giữ bản
+CŨ/ĐƠN GIẢN hơn của cùng 1 đoạn code, `toi-uu-firestore-read` đã có bản ĐẦY ĐỦ hơn — lấy nguyên bản
+`toi-uu-firestore-read`, không giữ gì từ bản main cũ):
+- `capNhatDieuLuatVaLoaiKhoiTo`: `toi-uu-firestore-read` có thêm cập nhật cache `tomTatBiCan`
+  (Đợt 3) trong CÙNG transaction — main chưa biết field này.
+- `DongGiaoNhan.batDauSua`: `toi-uu-firestore-read` đã đổi hẳn sang kiến trúc `dangSuaId` (module
+  cha quản lý dòng nào đang sửa, tự lưu hộ khi chuyển dòng — xem mục ngay trên) qua `onYeuCauSua`,
+  main vẫn còn bản cũ tự set state cục bộ trong `DongGiaoNhan` — bỏ hẳn bản cũ.
+- CLAUDE.md: 2 chỗ chèn nội dung tài liệu khác nhau cùng vị trí (không phải xung đột logic) — gộp
+  cả 2, không bỏ nội dung nào, đặt "Port 2 bug fix" xuống dưới "Tối ưu Firestore Đợt 3" (đúng thứ
+  tự thời gian thật trong ngày).
+Đã compile-check sạch cả `qlva.html`/`qlva-dev.html` qua `@babel/standalone@7.25.6` sau merge —
+CHƯA deploy lại (không cần, vì `main` giờ chỉ đang "đuổi kịp" đúng những gì ĐÃ deploy thật từ
+`toi-uu-firestore-read` phía trên, không có nội dung mới nào cần lên production thêm).
+**Khuyến nghị cho phiên sau**: cân nhắc coi `toi-uu-firestore-read` là nhánh phát triển chính từ
+nay (đổi tên/đặt làm default trên GitHub?) thay vì tiếp tục dùng tên `main` song song 2 nhánh dễ
+lệch nhau — nguyên nhân gốc của sự cố hôm nay là 2 phiên làm việc không biết nhau đang tồn tại
+CÙNG LÚC trên 2 nhánh gần giống nhau. `bang-excel-cai-dat` coi như đã "hết vai trò" (nội dung nằm
+trọn trong `toi-uu-firestore-read` qua merge) nhưng CHƯA xoá, để dành xác nhận với người dùng.
+
+## Import Excel: cho phép "thay thế" vụ trùng bằng cách đưa vụ cũ vào Thùng rác (2026-07-18)
+
+Import Excel trước đây phát hiện vụ trùng (theo mã vụ HOẶC theo cặp Số+Ngày QĐ KTVA) thì LOẠI THẲNG
+dòng đó, không có cách nào ghi đè. Dũng phản ánh: giai đoạn đầu dùng hệ thống, dữ liệu cũ lẫn
+lộn/sai sót là bình thường — cần 1 lựa chọn chủ động "thay thế": đưa vụ cũ vào Thùng rác (soft-delete,
+`daXoa:true`, vẫn khôi phục được), rồi nhập đúng dữ liệu mới từ file vào.
+
+**Thiết kế** (`ImportExcelModule`): mỗi phần tử `ketQuaDoc.trung` giờ có thêm `_idTrung` (ID vụ đã
+có, tách riêng khỏi chuỗi `_lyDoTrung` để dùng được trong code). Ngay sau khi tính `trung`, chạy 1
+lần `where("vuGoc","in",...)` (chia lô 30 qua `chiaNhoDsId` có sẵn) để biết trước vụ trùng nào CÓ
+vụ tách ra từ nó — các vụ đó bị vô hiệu hoá ô tích (không cho thay thế, tránh mồ côi hoá vụ tách,
+đúng nguyên tắc `XoaVuAnModal` đã áp dụng cho xoá thủ công).
+Bảng xem trước "vụ trùng" thêm cột checkbox "Thay vụ cũ" + nút "Chọn/Bỏ chọn tất cả (đủ điều
+kiện)" (state `trungDuocChon`, Set các index). `ghiVaoCoSoDuLieu` gộp các dòng đã tích
+(`dsThayThe`) vào `dsMoi` (xử lý y hệt vụ mới bình thường — sinh mã, ghi log...), thêm 1 vòng
+`batch.update` soft-delete các vụ cũ bị thay thế (ĐÚNG field `XoaVuAnModal` dùng: `daXoa`,
+`ngayXoaMem`, `nguoiXoaMem`, không đụng `bican`/log của vụ cũ) vào CHUNG batch/`commitNeu` đã có,
+gọi `capNhatCucBoDsDangGiaiQuyet(id, null)` sau khi commit cho từng vụ bị thay thế (tránh vụ cũ còn
+hiện sai trên chính máy vừa import cho tới khi remount — đúng cách `XoaVuAnModal` đã làm).
+**Không cần mã xác nhận kiểu gõ lại** — đã xác nhận qua code `XoaVuAnModal`: xác nhận ngẫu nhiên chỉ
+tồn tại ở tầng UI của modal đó, không phải điều kiện bắt buộc ở tầng ghi Firestore, và thao tác vẫn
+hoàn toàn khôi phục được — giữ đúng tinh thần "ít xác nhận hơn xoá vĩnh viễn" khi làm hàng loạt lúc
+import.
+
+**Đã kiểm chứng bằng Playwright thật, đăng nhập thật vào `qlva-dev.html`** (không mock): import 1
+vụ test tạo "vụ cũ" thật qua chính luồng import bình thường → import file thứ 2 trùng đúng Số/Ngày
+QĐ KTVA → hệ thống nhận diện đúng "1 vụ trùng" → tích "Thay vụ cũ" → nút đổi đúng thành "Ghi 1 vụ
+vào hệ thống (gồm 1 vụ thay vụ trùng)" → ghi thành công → xác nhận qua Firestore: vụ cũ có
+`daXoa:true`, vụ mới tồn tại đúng dữ liệu, đúng tổng 2 vụ — dọn sạch dữ liệu test sau đó. Test riêng
+kịch bản "vụ có con tách ra": tạo vụ gốc + 1 vụ con trỏ `vuGoc` về nó qua Firestore, import file
+trùng Số/Ngày QĐ KTVA vụ gốc — xác nhận ô tích bị vô hiệu hoá đúng + hiện rõ "⚠ Có vụ tách ra từ vụ
+này". Cả 2 kịch bản: 0 lỗi console.
+
+## Tối ưu Firestore Đợt 3: cache tóm tắt bị can lên vụ án + cursor pagination thật (2026-07-18)
+
+Đối chiếu 1 tài liệu hướng dẫn tối ưu chi phí Firestore của Dũng (offline persistence, denormalize,
+tránh offset khi phân trang, debounce ghi liên tục, Firestore Bundles) với code thật — xác nhận 3/5
+điểm đã làm hoặc không áp dụng được (persistence đã bật; không có ghi nào theo từng phím gõ để cần
+debounce; Bundles đụng triết lý "không build step" nên bỏ), còn lại 2 điểm làm trong đợt này.
+
+**Cache `soBiCan`/`biCanDaiDien` lên `vuan`** — cột "Bị can" ở Danh sách vụ án trước đây phải join
+sang collection `bican` qua 1 listener LUÔN BẬT cho mọi dòng đang hiển thị (`biCanAll`, chia lô 30
+id). Phát hiện quan trọng lúc đào sâu: listener đó không chỉ để hiển thị — ô tìm kiếm tự do CŨNG
+dùng chính dữ liệu đó để tìm theo tên bị can, nên chỉ thêm field mà giữ nguyên listener sẽ KHÔNG
+giảm đọc thật. Đã làm đầy đủ (theo yêu cầu Dũng): helper `tomTatBiCan(biCanList)` (đại diện = phần
+tử ĐẦU mảng cuối cùng tại thời điểm ghi — không có quy ước sắp xếp sẵn nào để noi theo) gắn vào
+ĐÚNG 1 object `batch.set`/`batch.update` đã có sẵn ở cả 6 nơi tạo/sửa/xoá/di chuyển bị can
+(`ImportExcelModule`, `ThemVuAnForm`, `ThemBiCanForm`, `SuaBiCanForm`, `tachVuAn`, `NhapVuModal`) —
+không thêm read/write nào. `BackfillTomTatBiCanTool` (Cài đặt → Import Excel, cạnh
+`BackfillLoaiKhoiToTool`) điền cho dữ liệu cũ, idempotent.
+`DanhSachPanel` bỏ hẳn listener `bican` luôn bật — cột mặc định đọc thẳng `v.soBiCan`/
+`v.biCanDaiDien` (0 đọc thêm); "mở rộng xem hết bị can" tải 1 lần theo yêu cầu đúng lúc bấm (cache
+phiên theo id vụ); tìm theo tên bị can debounce 350ms rồi tải 1 lần cho các vụ đang hiển thị CHƯA
+có trong cache (không còn `onSnapshot`) — trong lúc chờ, vẫn khớp ngay theo `biCanDaiDien` để không
+có cảm giác "0 kết quả".
+
+**Cursor pagination thật cho tab "Tất cả"** — nút "Tải thêm 500" trước đây chỉ tăng `.limit()` rồi
+mở lại `onSnapshot` từ đầu, khiến Firestore tính lại lượt đọc cho TOÀN BỘ số dòng đã đọc trước đó
+mỗi lần bấm. Thiết kế mới: trang đầu (`dsCoBan`) vẫn LIVE y hệt trước, CHỈ khi chưa bấm "Tải thêm"
+lần nào; bấm lần đầu sẽ huỷ subscribe live đó (đóng băng trang đầu — chấp nhận tab "Tất cả" hết
+live từ lúc đó, đúng tinh thần "chấp nhận cũ, tự mới khi remount" đã dùng cho Đang giải quyết/cache
+lạnh), rồi mọi trang sau tải 1 lần bằng `.startAfter(cursor)` — CHỈ đọc đúng phần MỚI. Cần tie-break
+`orderBy(FieldPath.documentId())` cạnh `orderBy("ngayTao")` vì nhiều vụ import cùng lúc chia sẻ
+ĐÚNG 1 giá trị `ngayTao` (tính 1 lần ngoài vòng lặp) — không có tie-break sẽ bỏ sót/trùng dòng đúng
+tại ranh giới các nhóm đó.
+**Bug tự phát hiện + tự sửa lúc test (không phải giả thuyết suông)**: callback `onSnapshot` của
+trang đầu có thể "bắn muộn" (Firestore bắn lại cache-rồi-server hoặc 1 thay đổi thật) ĐÚNG lúc
+React chưa kịp dọn effect live sau khi bấm "Tải thêm" — nếu không chặn, sẽ ghi đè `cursorRef` về
+lại ranh giới trang 1. Sửa bằng 1 `useRef` cờ (`dangPhanTrangRef`) đặt `true` NGAY LÚC BẤM (đồng bộ,
+không chờ re-render) để callback live tự bỏ qua nếu cờ đã bật.
+
+**Đã kiểm chứng bằng Playwright thật, đăng nhập thật vào `qlva-dev.html` (project `qlahs-test`,
+tài khoản `admintest@local.com`, 1386 vụ án thật)** — không phải mock: chạy `BackfillTomTatBiCanTool`
+thật (cập nhật đúng 1386 vụ, 0 lỗi); cột "Bị can" hiện đúng tên đại diện/số lượng ngay từ `vuan`;
+bấm "Tải thêm" liên tiếp tải đúng 500 → 1000 → 1386 (đúng tổng thật), xác nhận **0 ID trùng** qua
+toàn bộ 1386 dòng; mở rộng 1 vụ 14 bị can hiện đúng đủ 14 tên; tìm theo tên bị can ("Thông") lọc
+đúng còn 1 kết quả khớp; 0 lỗi console xuyên suốt. Cũng test cô lập bằng mock Node (trích nguyên
+văn `tomTatBiCan` từ chính `qlva.html`, mock Firestore mô phỏng đúng ngữ nghĩa `orderBy`/
+`startAfter`/tie-break) — xác nhận không trùng/sót dòng kể cả khi có nhóm doc chia sẻ đúng 1 giá
+trị `ngayTao` (mô phỏng import hàng loạt).
+**Ngoài phạm vi**: `toiDanhChinh` (tội danh chính, dùng trong thống kê `KyBaoCaoModule` qua
+`_biCanCache`/`layBiCanInfo`/`batchLayBiCanList`) KHÔNG được denormalize trong đợt này — chỉ đúng
+phạm vi đã bàn với Dũng (cột "Bị can" ở Danh sách vụ án), không mở rộng sang thống kê báo cáo.
+
 ## Port 2 bug fix từ nhánh `bang-excel-cai-dat` vào `main` (2026-07-18)
 
 Nhánh `bang-excel-cai-dat` (tính năng Cài đặt → "Bảng dữ liệu" kiểu Excel, xem mục riêng ở "Tiến độ
@@ -33,6 +173,10 @@ PASS trên cả `qlva.html` VÀ `qlva-dev.html`, 0 lỗi console.
 rồi `./deploy.sh prod`, cộng thêm `firebase deploy --only firestore:indexes` cho cả 2 project (index
 `lichsuChuyenGiaiDoan: kyThongKe+loaiSuKien+tuGiaiDoan` mới từ `b976726`). Smoke test bằng Playwright
 sau deploy (không đăng nhập) trên cả 2 URL — trang tải đúng, 0 lỗi console.
+**Lưu ý quan trọng (phát hiện ở phiên sau)**: bản deploy này SAU ĐÓ đã bị 1 phiên làm việc song song
+khác deploy đè mất (từ nhánh `toi-uu-firestore-read` trước khi nó merge với `bang-excel-cai-dat`) —
+xem mục "Sự cố 'deploy đè mất fix' + merge `toi-uu-firestore-read` vào `main`" ở đầu file để biết
+cách đã khôi phục.
 
 ## Tối ưu Firestore ĐÃ LÊN PRODUCTION (2026-07-18)
 
@@ -350,6 +494,41 @@ tiết đầy đủ nằm trong đúng các mục tương ứng bên dưới (t�
    người dùng muốn làm lại phần này, chưa nói rõ phạm vi cụ thể (sửa tiếp bug còn tồn đọng ở B10 hay
    thiết kế lại toàn bộ UI/luồng) — **hỏi lại người dùng để làm rõ phạm vi trước khi bắt tay code**,
    đừng tự suy đoán quy mô thay đổi.
+
+## Giao nhận hồ sơ — tự động lưu khi chuyển dòng + đổi nhãn/style Mức án (2026-07-17)
+
+**Tự động lưu khi chuyển sang sửa dòng khác** — trước đây mỗi dòng (`DongGiaoNhan`) tự quản trạng
+thái `dangSua` cục bộ, có thể mở sửa nhiều dòng cùng lúc không kiểm soát; người dùng bấm nhầm sang
+dòng khác mà quên bấm "Lưu" ở dòng trước là mất trắng dữ liệu vừa nhập (đặc biệt khó chịu khi kiểm
+kê nhiều hồ sơ lưu trữ liên tục, thao tác nhanh). Đổi thiết kế: `GiaoNhanHoSoModule` giữ 1 state
+duy nhất `dangSuaId` (id dòng đang sửa, CHỈ 1 dòng được sửa cùng lúc trong toàn phiên) + 1 ref
+`luuHandlersRef` (map id → hàm `luu()` MỚI NHẤT của đúng dòng đó, mỗi `DongGiaoNhan` tự đăng ký lại
+qua `onDangKyLuu` mỗi lần render). Bấm sang dòng khác gọi `yeuCauSuaDong(id)`: nếu đang có dòng
+KHÁC dở dang, tự gọi `luuHandlersRef.current[dangSuaId]()` trước — **lưu thất bại (VD mất mạng) thì
+GIỮ NGUYÊN dòng cũ, không chuyển sang dòng mới**, để người dùng thấy toast lỗi và có cơ hội sửa lại
+thay vì mất dữ liệu trong im lặng. `luu()` giờ trả về `true`/`false` để `yeuCauSuaDong` biết kết
+quả. Riêng "Huỷ" KHÔNG tự lưu (đúng ý nghĩa huỷ bỏ) — chỉ gọi thẳng `ketThucSuaDong()`.
+`dangSua` ở `DongGiaoNhan` từ state cục bộ chuyển thành PROP do cha điều khiển; nạp lại giá trị
+hiện tại của dòng khi `dangSua` chuyển `false → true` chuyển từ logic trong `batDauSua` sang 1
+`useEffect` theo dõi prop này (áp dụng đúng dù chuyển vào edit mode do người dùng bấm dòng này hay
+do dòng khác vừa tự lưu xong rồi nhường sang). Nút "Lưu phiên" vẫn khoá khi `dangSuaId !== null`
+(trường hợp bấm thẳng "Lưu phiên" mà không qua thao tác chuyển dòng — safeguard cũ ở
+[[toi-uu-he-thong]] vẫn cần, không thay thế được bởi auto-save này).
+**Đã kiểm chứng bằng Playwright + mock Firestore** (không chỉ đọc code): chuyển dòng A sang dòng B
+mà không bấm "Lưu" → xác nhận dòng A tự lưu đúng giá trị vào Firestore rồi thoát sửa, dòng B vào
+chế độ sửa; giả lập lỗi ghi Firestore cho dòng A rồi thử chuyển sang B → xác nhận dòng A VẪN ở chế
+độ sửa (không mất dữ liệu, không chuyển "trót lọt"), dòng B không bị ảnh hưởng.
+
+**Cột "Mức án" đổi tên thành "Mức án cao nhất"** (rõ nghĩa hơn — 1 vụ có thể nhiều bị can/nhiều
+mức án khác nhau, field `mucAnLoai/mucAnNam/mucAnThang` trên `vuan` chỉ lưu ĐÚNG 1 mức, hiểu ngầm
+là mức cao nhất dùng để tính thời hạn bảo quản) — đổi ở cả 4 chỗ: header bảng trên màn hình, header
+cột Excel "Tải toàn bộ lịch sử", dòng gợi ý dưới công tắc "Nộp hồ sơ lưu trữ", và header bảng Biên
+bản in A4.
+
+**"Thời hạn bảo quản" hiện đỏ + in đậm + cỡ chữ to hơn** ở cả bảng trên màn hình
+(`text-red-600 font-bold`, cỡ `text-sm` thay vì `text-xs`) lẫn Biên bản in A4 (thêm `text-base`,
+cỡ to nhất so với các cột khác trong bảng in) — dễ nhận ra ngay khi liếc mắt, đúng vai trò là con
+số quan trọng nhất của cả phiên nộp lưu trữ.
 
 ## Audit "tối ưu hệ thống" (nhánh `toi-uu-he-thong`, 2026-07-16)
 
@@ -912,6 +1091,17 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       ĐTV, xác nhận tên phiên tự điền đúng "Giao hồ sơ cho <ĐTV>" ngay sau khi quét; thử tiếp 1 vụ
       chỉ có KSV không có ĐTV, xác nhận rơi xuống dùng KSV; bấm sửa tên tại dòng "Tên phiên" dưới
       header, lưu lại, xác nhận cập nhật đúng cả trên UI lẫn khi mở lại từ "Phiên gần đây".
+      **Bug đã sửa (2026-07-16) — bấm nhầm "Lưu phiên" (khoá cả phiên) trong lúc còn
+      đang sửa dở 1 dòng làm mất trắng dữ liệu vừa nhập, không cách nào lưu lại.** Phát hiện qua
+      Playwright tái hiện thực tế (không chỉ đọc code): nút "Lưu phiên" (to, luôn hiện góc trên) và
+      nút "Lưu" của từng dòng (nhỏ, chỉ hiện khi đang sửa) tên gần giống nhau — bấm nhầm "Lưu phiên"
+      giữa lúc sửa Mức án sẽ khoá phiên ngay lập tức, dòng đó kẹt lại ở chế độ sửa dở mà KHÔNG CÒN
+      nút Lưu/Huỷ để bấm nữa (cột đó chỉ hiện khi phiên chưa khoá). Đã sửa: `GiaoNhanHoSoModule`
+      đếm số dòng đang sửa (`soDongDangSua`, `DongGiaoNhan` tự báo qua `onBatDauSua`/`onKetThucSua`)
+      và khoá nút "Lưu phiên" trong lúc đó, kèm dòng cảnh báo hướng dẫn. Sau đó tiếp tục nâng cấp lên
+      hẳn thành **tự động lưu khi chuyển dòng** (xem mục "Giao nhận hồ sơ — tự động lưu khi chuyển
+      dòng..." phía trên, 2026-07-17) — cơ chế khoá này vẫn giữ lại làm safeguard cho trường hợp bấm
+      thẳng "Lưu phiên" mà không qua thao tác chuyển dòng.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
@@ -1365,6 +1555,111 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       trong cùng 1 dòng (không cần DS sheet mới), nhưng chưa làm vì cần rà soát cẩn thận việc ánh
       xạ từng thành phần C3 sang đúng cột vals[] khác trong cùng hàng, quy mô tương đương lần sửa
       B10 gốc — nếu cần, hỏi lại rõ trước khi làm để tránh sai sót trên báo cáo chính thức.
+- [x] **Cài đặt → "Bảng dữ liệu" (2026-07-17, `BangExcelModule`, nhánh `bang-excel-cai-dat`)** —
+      công cụ sửa nhanh hàng loạt kiểu bảng tính Excel cho người dùng thành thạo, thêm 1 tab mới
+      trong `CaiDatModule` (5 tab: Nhật ký/Cán bộ/Danh mục/Import/**Bảng dữ liệu**). Mỗi vụ án 1
+      dòng, bấm nút mở rộng (▸) hiện bảng con bị can lồng bên dưới (giống Excel outline/group) —
+      component `BangBiCanCon` tự query/`onSnapshot` riêng theo `maVuAn`, chỉ tải khi dòng vụ được
+      mở rộng, không tải trước toàn bộ `bican`. **Mọi ô LUÔN ở trạng thái sửa** (không có bước bấm
+      "Sửa" riêng như mọi form khác trong app — đúng cảm giác 1 bảng tính, click vào ô là gõ được
+      ngay, blur/onChange mới commit Firestore tuỳ loại ô: `OCellText`/`OCellDate` commit lúc blur/
+      onChange hợp lệ, `OSelectExcelEnum` commit ngay lúc chọn). **Kéo fill kiểu Excel** (hook dùng
+      chung `useKeoFillNgang`, 1 phạm vi riêng cho bảng vụ và bảng con bị can của từng vụ — không
+      trộn giữa 2 phạm vi) — giữ chuột ở tay cầm góc dưới-phải 1 ô (`TayKeoFill`, hiện khi hover
+      qua `group-hover`) rồi kéo qua các dòng khác, thả chuột ghi hàng loạt qua 1 `batch.commit()`
+      duy nhất cho toàn bộ đoạn kéo.
+      **2 loại combobox KHÔNG lẫn lộn** (theo đúng yêu cầu người dùng): enum CỐ ĐỊNH (Nguồn/Giai
+      đoạn/Trạng thái/Mức độ nghiêm trọng/Giới tính/Đảng viên/Biện pháp ngăn chặn) dùng `<select>`
+      qua `OSelectExcelEnum`, KHÔNG cho gõ giá trị lạ (các giá trị này có ý nghĩa cố định trong
+      logic thống kê ở khắp nơi trong app); danh sách tham chiếu MỞ (KSV chính/ĐTV/Dân tộc — dùng
+      `<input list>` + `<datalist>` qua `OCellCombo`, 3 datalist `ds-ksv-excel`/`ds-dtv-excel`/
+      `ds-dantoc-excel`) cho CHỌN có sẵn HOẶC GÕ MỚI tự do, vì đây là tên người/tên dân tộc, KSV/
+      ĐTV mới vẫn hợp lệ dù chưa có trong danh mục Cán bộ.
+      **Quyết định thiết kế đã hỏi rõ người dùng trước khi làm (KHÔNG tự suy đoán)**: (1) phạm vi
+      Vụ án + Bị can lồng nhau (không phải chỉ 1 trong 2 — người dùng chọn đúng lựa chọn khuyến
+      nghị); (2) **cho sửa CẢ Giai đoạn/Trạng thái ngay trên bảng — NGƯỢC với khuyến nghị ban đầu**
+      của Claude (2 field này điều khiển số liệu báo cáo kỳ, đúng nguyên tắc thiết kế cốt lõi #1/#3
+      thì phải qua đúng luồng nghiệp vụ có hỏi kỳ + ghi log vào `lichsuChuyenGiaiDoan`) — người
+      dùng xác nhận muốn sửa trực tiếp để dọn dữ liệu cũ hàng loạt nhanh hơn. Vì vậy: sửa 2 field
+      này ở `BangExcelModule` **KHÔNG ghi log sự kiện**, số liệu Kỳ báo cáo/Dashboard/Biểu B10 (đều
+      tính từ log, không phải từ field hiện tại của `vuan`) **SẼ KHÔNG phản ánh thay đổi này** —
+      đã thêm banner cảnh báo màu vàng cố định đầu bảng (`CANH_BAO_GIAI_DOAN_TRANG_THAI`) nhắc rõ
+      điều này, chỉ nên dùng để sửa dữ liệu lịch sử/lỗi nhập liệu cũ, KHÔNG dùng thay cho nút
+      "Chuyển giai đoạn"/"Hoàn thành vụ án" ở Danh sách vụ án cho nghiệp vụ đang diễn ra.
+      Sửa bị can qua bảng này vẫn gọi `capNhatDieuLuatVaLoaiKhoiTo` (helper transaction dùng chung,
+      xem mục "tối ưu hệ thống" trên) khi field ảnh hưởng `dieuLuat`/`loaiKhoiTo` (`ngayKhoiTo`,
+      `toiDanhChinh`) bị đổi — kể cả khi đổi hàng loạt qua kéo fill, không chỉ khi sửa từng ô.
+      Cột **KSV hỗ trợ** (`ksvHoTro`, field mảng trên `vuan`) hiển thị/sửa dạng chuỗi nối bằng dấu
+      phẩy, nhưng thao tác **kéo fill** phải tự parse lại thành mảng trước khi ghi (bug thật gặp
+      phải lúc viết tính năng: kéo fill ban đầu ghi thẳng chuỗi nguồn vào field mảng, làm hỏng
+      field — phát hiện qua Playwright test dựng `TypeError: (vuAn.ksvHoTro || []).join is not a
+      function` ở nơi khác trong app đọc field này — đã sửa `apDungGiaTriVu` đặc cách riêng field
+      `ksvHoTro`: parse `String(giaTri).split(",").map(s => s.trim()).filter(Boolean)` trước khi
+      đưa vào batch, giống hệt cách ô đơn `OCellCombo` của cột này đã tự làm đúng từ đầu). Nếu
+      thêm cột mảng mới vào bảng vụ/bị can sau này, nhớ áp dụng cùng cách xử lý này ở hàm
+      `apDungGiaTri`/`apDungGiaTriVu` tương ứng, đừng để lặp lại lỗi này.
+      Bảng vụ tải `orderBy("ngayTao", "desc").limit(gioiHan)` (mặc định 500, nút "Tải thêm 500" ở
+      cuối bảng khi còn có thể còn dữ liệu) — không tải toàn bộ `vuan` cùng lúc để tránh chậm với
+      dữ liệu lớn, có ô tìm kiếm tự do (`tuKhoa`, khớp mã vụ/tên vụ/KSV chính/số QĐ KTVA) lọc trên
+      `list` đã tải. Đã kiểm chứng đầy đủ bằng Playwright thật (không chỉ đọc code): sửa ô text/
+      select/combobox, mở/thu gọn bị can, kéo fill cả ở bảng vụ (KSV hỗ trợ, xuyên qua dòng ở giữa
+      không bị kéo) lẫn bảng con bị can (Dân tộc dạng chuỗi, Tội danh chính dạng object `{ten,
+      dieuLuat}`) — không còn lỗi console sau khi sửa bug `ksvHoTro` ở trên.
+      **Mở rộng đầy đủ mọi trường + nhóm cột + filter theo cột (2026-07-18, theo yêu cầu người
+      dùng: "bảng phải gồm tất cả trường có trong hệ thống, chia thành các nhóm... thêm filter ở
+      từng cột")** — bảng vụ án từ 15 cột phẳng lên **33 cột chia 9 nhóm** (Định danh/Nguồn & khởi
+      tố/Cán bộ - đơn vị thụ lý/Giai đoạn & trạng thái/Phân loại/Điều luật/Kết quả giải quyết/Mức
+      án & lưu trữ/Khác), bảng bị can từ 8 cột lên **17 cột chia 4 nhóm** (Nhân thân/Đảng viên &
+      trình độ/Loại bị can-pháp nhân/Địa chỉ & ngăn chặn/Khởi tố & tội danh — gộp cả tội danh vào
+      nhóm cuối). Cột mới thêm cho vụ án: Mã ngành cấp, Uỷ quyền xét xử, Nơi chuyển đến (chỉ hiện
+      khi Chuyển đi), Án điểm/Phiên toà rút KN (checkbox), Điều luật (readonly, tự tính), Ngày giải
+      quyết/Số QĐ giải quyết (field ẢO — tên field Firestore thật đổi theo `trangThai` từng dòng
+      qua `fieldSoQuyetDinhTrenVuAn`)/Số kết luận ĐT/Số cáo trạng, Mức án loại-năm-tháng + Thời hạn
+      bảo quản (readonly, tự tính qua `tinhThoiHanBaoQuanVu`), Ngày/người tạo + Ngày/người cập nhật
+      cuối (readonly). Cột mới cho bị can: Quốc tịch, Giữ chức vụ QL (chỉ hiện khi Đảng viên=Có),
+      Trình độ, Tái phạm, Loại bị can + Tên pháp nhân/Mã số thuế (chỉ hiện khi Pháp nhân), Địa chỉ,
+      Hạn tạm giam (chỉ hiện khi Tạm giam), Số QĐ khởi tố BC, Loại khởi tố (readonly, tự tính).
+      **CỐ Ý bỏ qua các field nội bộ/quan hệ** do luồng nghiệp vụ riêng quản lý (`vuGoc`/
+      `nhapVaoVu`/`soDemTach`/`daXoa`+field kèm theo, `maNoiSinh` riêng — đã gộp vào cột "Mã vụ" qua
+      `hienThiMa`) — sửa tay trực tiếp các field này trong bảng Excel dễ phá vỡ bất biến do Tách
+      vụ/Nhập vụ/Thùng rác quản lý, phải sửa qua đúng luồng hành động chuyên trách.
+      **Kiến trúc metadata dùng chung** (`NHOM_COT_VU`/`NHOM_COT_BICAN`, đặt trước
+      `DongBiCanBangExcel`) — 1 mảng `{nhom, cols:[{id, label, filter, options?, getValue}]}` mô tả
+      MỌI cột, dùng để tự sinh cả 3 việc: (1) `TheadNhomCot` — `<thead>` 3 tầng (hàng nhóm colSpan +
+      hàng nhãn + hàng ô filter), (2) `apDungLocCot` — hàm lọc dùng chung cho cả 2 bảng, (3) hiển
+      thị số cột/số filter đang dùng. **CỐ Ý KHÔNG gộp phần RENDER/GHI của từng ô vào metadata** —
+      `DongVuBangExcel`/`DongBiCanBangExcel` vẫn viết JSX tường minh từng field như thiết kế gốc, vì
+      mỗi field có logic ghi khác nhau (field mảng `ksvHoTro`, field cần tính lại `dieuLuat` sau khi
+      đổi, field theo cặp bật/tắt như `dangVien`→`dangVienGiuChucVu`) — chỉ metadata hoá đúng phần
+      THUẦN HIỂN THỊ/LỌC, không đụng cách ghi dữ liệu đã kiểm chứng từ trước.
+      **3 kiểu filter theo đúng kiểu dữ liệu cột**: `text` (chứa, không phân biệt hoa/thường, commit
+      lúc blur/Enter — không lọc lại mỗi phím gõ để tránh giật với bảng nhiều dòng), `enum` (dropdown
+      khớp tuyệt đối, tái dùng đúng `options` đã có ở ô sửa cùng cột), `bool` (dropdown 3 trạng thái
+      Tất cả/Có/Không), `date` (khoảng từ-đến, so `getTime()`). `apDungGiaTriVu` (kéo fill) xử lý
+      thêm 3 trường hợp đặc biệt khi field kéo qua là field ẢO/cần biến đổi: `soQuyetDinhGQ` (map
+      sang đúng field Firestore theo `trangThai` TỪNG DÒNG bị kéo qua, bỏ qua dòng không áp dụng
+      được — VD kéo qua cả dòng "Đang giải quyết" thì dòng đó không ghi gì), `mucAnLoai` (chuỗi rỗng
+      → `null`), `ngayQuyetDinh` (kèm xoá cờ `ngayQuyetDinhUocTinh`, đúng hành vi `SuaVuAnForm` đã
+      có). Header nhóm cột dùng chung (`TheadNhomCot`) có prop `dinhTren` (mặc định `true`, sticky
+      top) — bảng con bị can lồng bên trong đặt `dinhTren={false}` vì `sticky top-0` của nó tính
+      theo cùng 1 scroll-ancestor với bảng vụ án cha, 2 header sticky cùng lúc sẽ đè nhau.
+      Bảng con bị can cũng có bộ lọc riêng độc lập với bảng vụ án cha (dùng chung code
+      `apDungLocCot`/`useColumnFilters` nhưng state tách biệt theo từng instance `BangBiCanCon`).
+      **Đã kiểm chứng bằng Playwright thật qua UI** (không chỉ đọc code) — 26/26 assertion: đủ 9
+      nhóm cột vụ án + 4 nhóm cột bị can hiện đúng, cột mới (Uỷ quyền xét xử/Thời hạn bảo quản/Ngày
+      tạo/Quốc tịch...) hiện đúng, filter text lọc đúng theo KSV chính, filter enum lọc đúng theo
+      Trạng thái, "Bỏ toàn bộ lọc cột" khôi phục đúng, sửa 1 ô mới ghi đúng field Firestore, mở rộng
+      bị can hiện đúng nhóm cột + dữ liệu — 0 lỗi console. **Riêng kéo fill (autofill) được test lại
+      độc lập bằng thao tác chuột thật** (`page.mouse.move/down/up`, không giả lập sự kiện) — kéo từ
+      ô "Đơn vị thụ lý" dòng 1 xuyên qua dòng 2 tới dòng 3, xác nhận CẢ 2 dòng bị kéo qua đều được
+      ghi đúng giá trị — xác nhận việc viết lại toàn bộ 2 component không làm hỏng tính năng
+      autofill đã có từ trước. Cả 2 bộ test PASS giống hệt trên `qlva.html` VÀ `qlva-dev.html`.
+      **CHƯA kiểm chứng bằng dữ liệu Firestore thật** (chỉ mock trong bộ nhớ) — nên mở thử
+      `qlva-dev.html` thật (project `qlahs-test`) trước khi merge tính năng "Bảng dữ liệu" (toàn bộ,
+      không riêng phần mở rộng hôm nay) vào `main`. **Ngoài phạm vi (chưa làm)**: cột đóng băng/ghim
+      (pin) mấy cột đầu khi cuộn ngang — bảng 33+1 cột khá rộng, cần cuộn ngang nhiều; chưa làm vì
+      không nằm trong yêu cầu ban đầu, cân nhắc thêm nếu người dùng phản hồi khó thao tác vì phải
+      cuộn ngang quá nhiều.
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
