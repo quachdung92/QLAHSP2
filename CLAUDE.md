@@ -666,24 +666,32 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       toàn bộ lịch sử mọi phiên, không riêng phiên đang mở).
       **Nguồn tính**: file **`thoi han bao quan.xlsx`** (thư mục gốc dự án, sheet "Bang doi
       chieu") — chép nguyên văn thành 2 hằng số `BANG_THOI_HAN_BAO_QUAN_THEO_NAM` (mức án theo
-      năm, key là số năm đã cộng sẵn phần 6 tháng nếu có — VD `7.5` cho "7 năm 6 tháng") và
-      `THOI_HAN_BAO_QUAN_DAC_BIET` (tử hình/chung thân/án treo/phạt tiền). Hàm
-      `tinhThoiHanBaoQuanTheoMucAn`/`tinhThoiHanBaoQuanVu` **CỐ Ý trả về `null` cho mức án KHÔNG
-      có trong bảng gốc** (VD 2 năm, 9 năm 6 tháng, 12 năm 6 tháng...) — bảng gốc có nhiều "lỗ
-      hổng" không phủ hết mọi mức án có thể có (không liên tục, có bước nhảy lớn giữa các mốc, VD
-      10 năm → 47 năm nhưng 9 năm → 34 năm), KHÔNG suy đoán/nội suy công thức vì đây là hồ sơ pháp
-      lý thật, đoán sai thời hạn bảo quản là sai thật — UI hiện rõ "chưa có trong bảng hướng dẫn"
-      thay vì âm thầm đưa ra số sai. Đình chỉ/Tạm đình chỉ luôn "Vĩnh viễn" theo bảng (không cần
-      mức án). Đang giải quyết/Chuyển đi/Án huỷ/Đã nhập vụ khác KHÔNG có dòng tương ứng trong bảng
-      gốc, trả `null` (không tính).
+      năm, key là số năm đã cộng sẵn phần tháng lẻ dạng thập phân — VD `7.5` cho "7 năm 6 tháng")
+      và `THOI_HAN_BAO_QUAN_DAC_BIET` (tử hình/chung thân/án treo/phạt tiền).
+      **Bug đã sửa (2026-07-16, cùng ngày, phát hiện qua người dùng phản hồi trực tiếp) — bảng gốc
+      là HÀM BẬC THANG (mốc → áp dụng cho tới trước mốc kế tiếp), KHÔNG PHẢI danh sách giá trị khớp
+      tuyệt đối.** Bản đầu tiên hiểu sai: coi mỗi key trong bảng là 1 giá trị mức án CỐ ĐỊNH duy
+      nhất được công nhận (VD chỉ đúng "3 năm" hoặc đúng "3 năm 6 tháng" mới tra được, "3 năm 5
+      tháng" hay "4 năm" thì trả `null` vì không khớp key nào) — SAI với ý nghĩa thật của bảng: mốc
+      "3" (19 năm) áp dụng cho MỌI mức án từ "3 năm 0 tháng" đến hết "3 năm 5 tháng"; đúng từ "3 năm
+      6 tháng" mới chuyển sang mốc "3.5" (23 năm), áp dụng tới hết "4 năm 5 tháng" (mốc kế tiếp là
+      "4.5", không phải "4" — bảng gốc không có mốc "4" riêng vì không cần, dùng mốc "3.5" cho cả
+      dải đó). Đã sửa `tinhThoiHanBaoQuanTheoMucAn` sang tra theo **mốc LỚN NHẤT không vượt quá
+      mức án** (floor lookup qua mảng `MOC_THOI_HAN_BAO_QUAN_NAM` các mốc tăng dần), không còn tra
+      khớp tuyệt đối (`BANG[...][n]`). Chỉ trả `null` khi mức án THẤP HƠN mốc nhỏ nhất trong bảng
+      (hiện là "3 năm") — bảng gốc không phủ mức án dưới 3 năm, KHÔNG suy đoán/nội suy công thức vì
+      đây là hồ sơ pháp lý thật, đoán sai thời hạn bảo quản là sai thật. Đình chỉ/Tạm đình chỉ luôn
+      "Vĩnh viễn" theo bảng (không cần mức án). Đang giải quyết/Chuyển đi/Án huỷ/Đã nhập vụ khác
+      KHÔNG có dòng tương ứng trong bảng gốc, trả `null` (không tính).
       **⚠ Lưu ý khi mirror/deploy**: lúc đọc file này thấy có `~$thoi han bao quan.xlsx` (file khoá
       tạm của Excel) tồn tại cùng thư mục — dấu hiệu file gốc **đang được mở** trên máy Dũng, có
       thể đang sửa dở. Nếu bảng đối chiếu trong code sai khác với file thật sau này, kiểm tra lại
       file gốc đã lưu (Ctrl+S) chưa trước khi kết luận code sai.
-      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnCoSauThang` trên `vuan`.
-      `ghiNhanVuVaoPhien` snapshot kết quả tính (`thoiHanBaoQuan`) VÀ chính 3 field mức án này vào
-      sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách `trangThaiVu`/`soQdGiaiQuyet` đã
-      làm, KHÔNG tính lại lúc hiển thị/in.
+      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnThang` trên `vuan` (`mucAnThang` là
+      số THÁNG LẺ 0-11, KHÔNG PHẢI cờ nhị phân +6 tháng — đã đổi thiết kế cùng đợt sửa bug ở trên,
+      xem ngay dưới). `ghiNhanVuVaoPhien` snapshot kết quả tính (`thoiHanBaoQuan`) VÀ chính 3 field
+      mức án này vào sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách
+      `trangThaiVu`/`soQdGiaiQuyet` đã làm, KHÔNG tính lại lúc hiển thị/in.
       **Sửa lại (2026-07-16, cùng ngày) — chuyển hẳn việc nhập mức án ra khỏi `SuaVuAnForm`, vào
       thẳng dòng giao nhận** (`DongGiaoNhan`) cho tiện nhập liệu đúng lúc cần (nộp lưu trữ), thay
       vì phải mở riêng modal "Sửa thông tin vụ án" — mức án chỉ thật sự cần biết vào đúng thời điểm
@@ -692,16 +700,34 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       Sửa dùng chung nút Sửa/Lưu của cả dòng (cùng `dangSua` với KSV/ĐTV/Số bút lục) nhưng khác
       hẳn ở chỗ **ghi vào 2 nơi khi Lưu**: (1) `db.collection("vuan").doc(dong.maVuAn).update(...)`
       — vì mức án là thuộc tính của VỤ ÁN, không phải chỉ của dòng log như KSV/ĐTV/số bút lục; (2)
-      `onSua` như cũ để cập nhật lại `mucAnLoai/mucAnNam/mucAnCoSauThang` VÀ tính lại
-      `thoiHanBaoQuan` ngay trên chính dòng log đang xem — để cột Thời hạn bảo quản đổi ngay tại
-      chỗ, không cần quét lại vụ mới thấy số mới. Nếu ghi `vuan` thất bại (lỗi mạng...), dừng lại
-      không gọi `onSua` (tránh trạng thái 2 nơi lệch nhau: log nói đã có mức án X nhưng `vuan` thì
-      chưa lưu được).
+      `onSua` như cũ để cập nhật lại `mucAnLoai/mucAnNam/mucAnThang` VÀ tính lại `thoiHanBaoQuan`
+      ngay trên chính dòng log đang xem — để cột Thời hạn bảo quản đổi ngay tại chỗ, không cần quét
+      lại vụ mới thấy số mới. Nếu ghi `vuan` thất bại (lỗi mạng...), dừng lại không gọi `onSua`
+      (tránh trạng thái 2 nơi lệch nhau: log nói đã có mức án X nhưng `vuan` thì chưa lưu được).
+      **Ô Năm + ô Tháng riêng thay vì checkbox "+6 tháng" (2026-07-16, sửa cùng lúc với bug floor-
+      lookup ở trên, theo phản hồi trực tiếp của người dùng)** — bản đầu tiên chỉ cho tick 1
+      checkbox "+6 tháng" (nhị phân, cộng đúng 0.5 năm), không nhập được mức án lẻ tháng khác (VD
+      "3 năm 5 tháng", "4 năm 11 tháng"). Đổi UI: 2 ô số riêng "... năm" + "... tháng" (0-11), lưu
+      thẳng thành field `mucAnThang` (số tháng lẻ), quy đổi sang năm thập phân bằng `+ mucAnThang/12`
+      trước khi tra bảng — kết hợp với floor-lookup ở trên cho phép nhập BẤT KỲ mức án lẻ tháng nào
+      mà vẫn tra đúng thời hạn bảo quản.
       **Toggle "Nộp hồ sơ lưu trữ" đổi từ checkbox sang công tắc (2026-07-16, cùng ngày)** — thêm
       component dùng chung `CongTac` (nút bo tròn kiểu switch, không phải `<input
       type="checkbox">`) cho "hiện đại" hơn theo yêu cầu người dùng; đồng thời gom nút "Bắt đầu
       phiên — Nhận hồ sơ" + công tắc vào chung 1 khung viền riêng (tách khỏi nút "Giao hồ sơ") để
       rõ ràng công tắc này chỉ áp dụng cho việc bắt đầu phiên Nhận, không phải Giao.
+      **Bug đã sửa (2026-07-16, cùng ngày) — bấm nhầm "Lưu phiên" (khoá cả phiên) trong lúc còn
+      đang sửa dở 1 dòng làm mất trắng dữ liệu vừa nhập, không cách nào lưu lại.** Phát hiện qua
+      Playwright tái hiện thực tế (không chỉ đọc code): nút "Lưu phiên" (to, luôn hiện góc trên) và
+      nút "Lưu" của từng dòng (nhỏ, chỉ hiện khi đang sửa) tên gần giống nhau — bấm nhầm "Lưu phiên"
+      giữa lúc sửa Mức án sẽ khoá phiên ngay lập tức, dòng đó kẹt lại ở chế độ sửa dở mà KHÔNG CÒN
+      nút Lưu/Huỷ để bấm nữa (cột đó chỉ hiện khi phiên chưa khoá). Đã sửa: `GiaoNhanHoSoModule`
+      đếm số dòng đang sửa (`soDongDangSua`, `DongGiaoNhan` tự báo qua `onBatDauSua`/`onKetThucSua`)
+      và khoá nút "Lưu phiên" trong lúc đó, kèm dòng cảnh báo hướng dẫn.
+      **Đã kiểm chứng bằng Playwright + mock Firestore trong bộ nhớ** (không chỉ đọc code, cả 2 bug
+      trên đều tái hiện được lỗi TRƯỚC khi sửa và xác nhận hết lỗi SAU khi sửa) — riêng việc chạy
+      thật trên `qlva-dev.html` với dữ liệu Firestore thật thì vẫn **CHƯA làm** (nên thử lại các
+      kịch bản trên qua UI thật ít nhất 1 lần trước khi tin tưởng tuyệt đối trên `qlva.html` production).
       **CHƯA kiểm chứng bằng dữ liệu Firestore thật** — cần thử trên `qlva-dev.html`: bắt đầu phiên
       Nhận bật công tắc lưu trữ, quét/chọn 1 vụ Đã xét xử chưa có mức án, sửa dòng đó nhập mức án
       ngay tại bảng, xem cột Thời hạn bảo quản cập nhật đúng ngay (không cần quét lại), rồi kiểm
