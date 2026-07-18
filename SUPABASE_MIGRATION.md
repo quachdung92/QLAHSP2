@@ -196,13 +196,18 @@ hội nên đánh giá khi đã có shim chạy ổn định.
       dụng.
 - [~] **Phase 1** (đang làm — phần schema đã xong, còn chờ env): đã viết đầy đủ
       `supabase/schema.sql` + `rls.sql` + `functions.sql` (7 bảng + `boDemMaVu`, RLS, 4 hàm RPC),
-      dựa trên khảo sát field-level thật từ code (không suy đoán) — xem mục 4/4b. **CHƯA áp dụng
-      lên Supabase thật, CHƯA kiểm chứng bằng Postgres thật** (chỉ soát tay cú pháp) — cần Dũng
-      tạo 2 project Supabase thật (1 ứng với `qlahs-test`, 1 ứng với `qlahsp2`) rồi cấp connection
-      string/API key mới áp dụng và test được (xem `supabase/README.md` mục "Chưa kiểm chứng").
-- [ ] **Phase 2**: viết lớp shim (mục 3). Tạo 1 file thử nghiệm riêng (không đụng
-      `qlva.html`/`qlva-dev.html` đang chạy thật) để phát triển/kiểm chứng shim độc lập. Đánh giá
-      cơ hội đơn giản hoá ở mục 5.
+      dựa trên khảo sát field-level thật từ code (không suy đoán) — xem mục 4/4b. Đã parse-check
+      cú pháp qua `libpg-query` (bộ phân tích cú pháp Postgres thật) — sạch, nhưng **CHƯA áp dụng
+      lên Supabase thật, CHƯA kiểm chứng bằng Postgres thật** (phần thân 4 hàm RPC chưa được
+      trình biên dịch plpgsql xác nhận) — cần Dũng tạo 2 project Supabase thật (1 ứng với
+      `qlahs-test`, 1 ứng với `qlahsp2`) rồi cấp connection string/API key mới áp dụng và test
+      được (xem `supabase/README.md` mục "Chưa kiểm chứng").
+- [ ] **Phase 2**: viết lớp shim (mục 3), phát triển trên **`qlahs-sup.html`** (đã tạo — copy
+      nguyên văn từ `qlva.html`, đổi Firebase config trỏ sang project TEST `qlahs-test` thay vì
+      production để tránh đụng dữ liệu thật trong lúc còn dùng Firebase song song, có nhãn
+      `[SUP-TEST]` ở `<title>` để không nhầm với `qlva.html`/`qlva-dev.html` khi mở nhiều tab —
+      xem comment đầu file). File này KHÔNG deploy, chỉ dùng cục bộ để phát triển/kiểm chứng shim
+      độc lập, không đụng 2 file đang chạy thật. Đánh giá cơ hội đơn giản hoá ở mục 5.
 - [ ] **Phase 3**: chuyển Auth sang Supabase Auth — tài khoản Firebase Auth hiện có phải tạo lại
       thủ công trên Supabase (không tự động chuyển mật khẩu giữa 2 hệ thống được).
 - [ ] **Phase 4**: export/import dữ liệu thật theo mục 6, `qlahs-test` trước.
