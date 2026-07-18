@@ -9679,9 +9679,19 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const taiLichSuGiaoNhan = async () => {
     setDangTaiLichSu(true);
     try {
-      const snap = await db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "==", "giao_nhan_ho_so").get();
+      const [snap, phienSnap] = await Promise.all([
+        db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "==", "giao_nhan_ho_so").get(),
+        db.collection("phienGiaoNhan").get(),
+      ]);
       const rows = snap.docs.map(d => d.data());
       rows.sort((a, b) => (b.thoiDiemGhi?.toMillis?.() || 0) - (a.thoiDiemGhi?.toMillis?.() || 0));
+      // Tách "Nhận lưu trữ" khỏi "Nhận" thường (2026-07-19, theo yêu cầu người dùng, "chia thành 3
+      // sheet giao nhận và nhận lưu trữ cho dễ quản lý") — `laLuuTru` chỉ lưu trên chính DOC phiên
+      // (`phienGiaoNhan`), KHÔNG snapshot trên từng sự kiện `giao_nhan_ho_so` (không cần thêm field
+      // mới/backfill dữ liệu cũ) nên join qua `phienGiaoNhanId` ngay tại đây. Phiên không tìm thấy
+      // (hiếm — VD dữ liệu cũ trước khi có `phienGiaoNhanId`) mặc định KHÔNG coi là lưu trữ, rơi
+      // vào sheet "Nhận" thường — an toàn hơn là giả định nhầm thành lưu trữ.
+      const laLuuTruTheoPhien = new Map(phienSnap.docs.map(d => [d.id, !!d.data().laLuuTru]));
 
       // Gom theo vụ án, giữ nguyên thứ tự mới nhất → cũ nhất (rows đã sort desc ở trên) — phần tử
       // đầu tiên gặp của mỗi vụ (events[0]) chính là lần gần nhất.
@@ -9709,14 +9719,16 @@ function GiaoNhanHoSoModule({ currentUser }) {
         const ws = wb.addWorksheet(tenSheet);
         ws.views = [{ state: "frozen", ySplit: 1 }];
         const hRow = ws.addRow([
-          "STT", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết", "Tiếp nhận", "Mức án cao nhất",
-          "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV", `Số lần ${nhanCot}`, `Lịch sử ${nhanCot}`,
+          "STT", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết", "Ngày giải quyết", "Tiếp nhận",
+          "Mức án cao nhất", "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV",
+          `Số lần ${nhanCot}`, `Lịch sử ${nhanCot}`,
         ]);
         hRow.font = { bold: true };
         hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
         ws.columns = [
-          { width: 6 }, { width: 13 }, { width: 30 }, { width: 24 }, { width: 22 }, { width: 16 },
-          { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 }, { width: 10 }, { width: 50 },
+          { width: 6 }, { width: 13 }, { width: 30 }, { width: 24 }, { width: 15 }, { width: 22 },
+          { width: 16 }, { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 },
+          { width: 10 }, { width: 50 },
         ];
         nhomTheoVu.forEach((events, i) => {
           const moiNhat = events[0];
@@ -9725,6 +9737,11 @@ function GiaoNhanHoSoModule({ currentUser }) {
             "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
             moiNhat.tenVu || "",
             moTaHinhThucGiaiQuyet(moiNhat),
+            // Cột riêng (2026-07-19, theo yêu cầu người dùng "thêm 1 cột ngày giải quyết... để
+            // filter cho dễ") — tách khỏi phần ngày đã có SẴN trong ngoặc đơn ở cột "Hình thức
+            // giải quyết" (moTaHinhThucGiaiQuyet), vì gộp trong 1 chuỗi text khó lọc/sort trong
+            // Excel. Vụ đang giải quyết (chưa có ngày) hiện "—", khớp cách fmtDate xử lý null.
+            fmtDate(moiNhat.ngayQuyetDinh),
             moTaTiepNhan(moiNhat),
             moTaMucAn(moiNhat),
             moiNhat.thoiHanBaoQuan || "",
@@ -9736,7 +9753,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
             events.map(dongLichSuMotLan).join("\n"),
           ]);
           row.height = Math.max(46, events.length * 15); // pt — đủ cao cho cả ảnh QR lẫn nhiều dòng lịch sử
-          row.getCell(13).alignment = { wrapText: true, vertical: "top" };
+          row.getCell(14).alignment = { wrapText: true, vertical: "top" };
           const dataUrl = taoQrDataUrl(moiNhat.maVuAn, 120);
           if (dataUrl) {
             const imgId = wb.addImage({ base64: dataUrl, extension: "png" });
@@ -9749,8 +9766,17 @@ function GiaoNhanHoSoModule({ currentUser }) {
         return nhomTheoVu.length;
       };
 
+      // Tách 3 sheet (2026-07-19, theo yêu cầu người dùng "chia thành 3 sheet giao nhận và nhận
+      // lưu trữ cho dễ quản lý") — "Nhận lưu trữ" tách riêng khỏi "Nhận" thường qua
+      // `laLuuTruTheoPhien` (join ở trên), vì đây là 2 luồng nghiệp vụ khác hẳn nhau (nộp hồ sơ
+      // lưu trữ vs giao/nhận hồ sơ đang xử lý bình thường).
       const soVuGiao = themSheet("Giao", gomTheoVu(rows.filter(r => r.loaiGiaoDich === "giao")), "giao");
-      const soVuNhan = themSheet("Nhận", gomTheoVu(rows.filter(r => r.loaiGiaoDich === "nhan")), "nhận");
+      const soVuNhan = themSheet("Nhận", gomTheoVu(rows.filter(r =>
+        r.loaiGiaoDich === "nhan" && !laLuuTruTheoPhien.get(r.phienGiaoNhanId)
+      )), "nhận");
+      const soVuNhanLuuTru = themSheet("Nhận lưu trữ", gomTheoVu(rows.filter(r =>
+        r.loaiGiaoDich === "nhan" && laLuuTruTheoPhien.get(r.phienGiaoNhanId)
+      )), "nhận lưu trữ");
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -9762,7 +9788,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      addToast(`Đã tải ${soVuGiao} vụ đã giao, ${soVuNhan} vụ đã nhận (tổng ${rows.length} lượt quét).`);
+      addToast(`Đã tải ${soVuGiao} vụ đã giao, ${soVuNhan} vụ đã nhận, ${soVuNhanLuuTru} vụ nhận lưu trữ (tổng ${rows.length} lượt quét).`);
     } catch (err) {
       console.error(err);
       addToast("Lỗi khi tải lịch sử giao nhận: " + err.message, "error");

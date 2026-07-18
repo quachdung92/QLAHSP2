@@ -2,6 +2,41 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Excel "Tải toàn bộ lịch sử giao nhận": thêm cột Ngày giải quyết riêng + tách 3 sheet (2026-07-19)
+
+Theo phản hồi người dùng — file Excel tải về cần **cột riêng "Ngày giải quyết"** (dễ filter/sort
+trong Excel hơn là gộp chung trong ngoặc đơn ở cột "Hình thức giải quyết" như đã làm cho bảng trên
+màn hình/biên bản in ngày hôm trước) và **tách "Nhận lưu trữ" thành sheet riêng** khỏi "Nhận"
+thường (từ 2 sheet Giao/Nhận thành 3 sheet Giao/Nhận/Nhận lưu trữ) — 2 luồng nghiệp vụ khác hẳn
+nhau (nộp hồ sơ lưu trữ vs giao/nhận hồ sơ đang xử lý bình thường), gộp chung khó quản lý.
+
+**Cột "Ngày giải quyết"** — thêm ngay sau cột "Hình thức giải quyết" (không xoá phần ngày đã có
+sẵn trong ngoặc đơn ở đó — giữ cả 2, cột mới dùng để filter/sort, phần trong ngoặc vẫn tiện đọc
+nhanh khi lướt mắt), giá trị `fmtDate(moiNhat.ngayQuyetDinh)` — cùng field, cùng cách format với
+mọi cột ngày khác trong sheet này (text `dd/mm/yyyy`, không phải native Date cell — nhất quán với
+toàn bộ export này, kể cả sau khi thêm cột cũng lọc/filter dropdown trong Excel bình thường qua
+giá trị text).
+
+**Tách 3 sheet** — `laLuuTru` chỉ lưu trên chính DOC `phienGiaoNhan` (phiên), KHÔNG snapshot trên
+từng sự kiện `giao_nhan_ho_so` (thiết kế cũ không cần biết việc này khi ghi sự kiện) nên KHÔNG cần
+thêm field mới/backfill dữ liệu cũ — chỉ cần JOIN qua `phienGiaoNhanId` ngay lúc tải Excel: tải
+thêm `phienGiaoNhan` (toàn bộ, nhỏ), dựng `Map<phienId, laLuuTru>`, phân loại mỗi dòng: `loaiGiaoDich
+=== "giao"` → sheet "Giao"; `"nhan"` + phiên đó `laLuuTru` → sheet "Nhận lưu trữ"; `"nhan"` + không
+→ sheet "Nhận". Phiên không tìm thấy (hiếm, dữ liệu rất cũ trước khi có `phienGiaoNhanId`) mặc định
+KHÔNG coi là lưu trữ — an toàn hơn giả định nhầm.
+
+**Đã kiểm chứng bằng Playwright thật, TẢI FILE THẬT VỀ RỒI ĐỌC LẠI BẰNG chính package `exceljs`**
+(không chỉ đọc code hay kiểm tra qua `window.__mockStats`) — seed 3 phiên (Giao/Nhận thường/Nhận
+lưu trữ) + 3 vụ + 3 sự kiện tương ứng, bấm "Tải toàn bộ lịch sử", `page.waitForEvent("download")`
+lưu file thật, mở lại bằng `ExcelJS.Workbook().xlsx.readFile()` — xác nhận: đúng 3 sheet tên
+"Giao"/"Nhận"/"Nhận lưu trữ"; header có cột "Ngày giải quyết" đúng vị trí (ngay sau "Hình thức
+giải quyết"); mỗi sheet chỉ chứa đúng vụ thuộc loại giao dịch/lưu trữ tương ứng, không lẫn; vụ
+đang giải quyết hiện "—", vụ đã xét xử hiện đúng ngày; **ảnh QR vẫn neo đúng cột B (Mã vụ)** sau
+khi chèn thêm 1 cột mới ở giữa (xác nhận không bị lệch vị trí — rủi ro dễ gặp nhất khi chèn cột
+vào 1 sheet đã có ảnh nhúng theo toạ độ cứng). 16/16 assertion PASS trên cả `qlva.html`/
+`qlva-dev.html`, 0 lỗi console. Không phá vỡ test hồi quy của tính năng "Ngày giải quyết" ngày
+hôm trước (bảng trên màn hình/biên bản in A4 vẫn đúng).
+
 ## Giao nhận hồ sơ: cột "Hình thức giải quyết" thêm "Ngày giải quyết" (2026-07-18)
 
 Theo yêu cầu người dùng — cột "Hình thức giải quyết" (bảng phiên trên màn hình, Biên bản in A4,
