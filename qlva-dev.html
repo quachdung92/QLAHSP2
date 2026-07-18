@@ -471,6 +471,9 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
     anDiem: vuGoc.anDiem || false, uyQuyenXetXu: vuGoc.uyQuyenXetXu || "", phienToaRutKN: vuGoc.phienToaRutKN || false,
     ghiChu: "", ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
   });
+  // Vụ mới tách ra là 1 vụ "mới" theo đúng ý nghĩa của sentinel — báo ngay để client khác không bỏ
+  // sót (xem dsDangGiaiQuyetRegistry/dongBoDsDangGiaiQuyet).
+  batch.set(db.collection("meta").doc("vuAnMoiNhat"), { capNhatLuc: now }, { merge: true });
   biCanChuyenHan.forEach(bc => batch.update(db.collection("bican").doc(bc.id), {
     maVuAn: maVuMoi, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
   }));
@@ -1231,6 +1234,99 @@ async function fetchWithTtlCache(cacheKey, queryFn, ttlMs = 2 * 60 * 1000) {
   const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   oneTimeCacheRegistry[cacheKey] = { data, fetchedAt: Date.now() };
   return data;
+}
+
+// ====== Danh sách "đang giải quyết" — bỏ onSnapshot sống, dùng sentinel "có vụ mới" (2026-07-18) ==
+// Khác cache lạnh (vụ ĐÃ giải quyết — tập LỚN, tích luỹ vô hạn theo năm): tập "đang giải quyết" tự
+// nhiên NHỎ và bị chặn (vụ giải quyết xong tự rời khỏi tập, xem ghi chú ở DanhSachPanel) — vấn đề
+// không phải "quá nhiều để tải" mà là GIỮ LISTENER SỐNG LIÊN TỤC tốn đọc mỗi khi BẤT KỲ trường nào
+// của BẤT KỲ vụ đang giải quyết nào đổi (tập thay đổi nhiều nhất toàn hệ thống). Quyết định thiết
+// kế (thống nhất với người dùng — hệ thống ít user, chủ yếu dùng để xem/trích xuất, ưu tiên tiết
+// kiệm đọc hơn độ mới tức thời): danh sách tải 1 lần, CHỈ vụ án MỚI TẠO mới cần biết ngay (để không
+// bỏ sót khi vừa có người thêm vụ) — mọi thay đổi KHÁC của vụ đã có sẵn trong danh sách (đổi KSV,
+// chuyển giai đoạn, hoàn thành...) CHẤP NHẬN CŨ, tự làm mới khi component remount tự nhiên (chuyển
+// tab đi rồi quay lại) — đúng triết lý đã áp dụng cho vụ đã giải quyết, mở rộng sang đây.
+// `ChiTietPanel` (đang mở sửa 1 vụ cụ thể) KHÔNG đụng tới — vẫn onSnapshot riêng theo đúng 1 doc,
+// bắt buộc phải live vì đang sửa dữ liệu thật.
+// Cơ chế: 1 document cảm biến bé xíu `meta/vuAnMoiNhat` được TẤT CẢ nơi tạo vụ án mới cập nhật kèm
+// theo (ThemVuAnForm, ImportExcelModule, tachVuAn — xem từng nơi) — mọi client chỉ giữ ĐÚNG 1
+// listener rẻ (1 document) trên sentinel này thay vì theo dõi cả danh sách; hễ đổi thì gọi 1 query
+// nhỏ `where("ngayTao", ">", lầnBiếtGầnNhất)` bổ sung ĐÚNG (các) vụ mới, không tải lại toàn bộ.
+const dsDangGiaiQuyetRegistry = { data: null, newestNgayTaoMs: 0, listeners: new Set(), dangDongBo: false, sentinelDaBatDau: false };
+function _layNgayTaoMs(v) { return v.ngayTao?.toMillis?.() ?? 0; }
+function _baoDsDangGiaiQuyetDoi() {
+  dsDangGiaiQuyetRegistry.listeners.forEach(fn => fn(dsDangGiaiQuyetRegistry.data));
+}
+// Cập nhật CỤC BỘ (không đụng Firestore) cho ĐÚNG thao tác của CHÍNH người dùng này vừa làm (VD tự
+// "Đưa vào thùng rác"/"Khôi phục" 1 vụ đang hiện sẵn trong danh sách) — vì sentinel chỉ báo khi có
+// VỤ MỚI, không báo cho các thay đổi khác trên vụ đã có sẵn (đúng thiết kế đã thống nhất). Không có
+// cập nhật này, người dùng vừa xoá 1 vụ vẫn thấy nó nằm y nguyên trong chính danh sách trước mắt
+// cho tới khi remount — gây khó hiểu dù dữ liệu Firestore đã đúng. CHỈ ảnh hưởng bộ nhớ phía CHÍNH
+// trình duyệt này; người dùng khác vẫn chờ remount tự nhiên như thiết kế ban đầu.
+function capNhatCucBoDsDangGiaiQuyet(vuAnId, vuAnMoiHoacNull) {
+  if (dsDangGiaiQuyetRegistry.data === null) return;
+  const conLai = dsDangGiaiQuyetRegistry.data.filter(v => v.id !== vuAnId);
+  dsDangGiaiQuyetRegistry.data = vuAnMoiHoacNull ? [...conLai, vuAnMoiHoacNull] : conLai;
+  _baoDsDangGiaiQuyetDoi();
+}
+async function dongBoDsDangGiaiQuyet() {
+  if (dsDangGiaiQuyetRegistry.dangDongBo) return;
+  dsDangGiaiQuyetRegistry.dangDongBo = true;
+  try {
+    if (dsDangGiaiQuyetRegistry.data === null) {
+      const snap = await db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").get();
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa);
+      dsDangGiaiQuyetRegistry.data = docs;
+      dsDangGiaiQuyetRegistry.newestNgayTaoMs = docs.reduce((max, v) => Math.max(max, _layNgayTaoMs(v)), 0);
+    } else {
+      const snap = await db.collection("vuan")
+        .where("trangThai", "==", "dang_giai_quyet")
+        .where("ngayTao", ">", new Date(dsDangGiaiQuyetRegistry.newestNgayTaoMs))
+        .get();
+      const moi = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa);
+      if (moi.length > 0) {
+        const idsCu = new Set(dsDangGiaiQuyetRegistry.data.map(v => v.id));
+        const themVao = moi.filter(v => !idsCu.has(v.id));
+        if (themVao.length > 0) dsDangGiaiQuyetRegistry.data = [...dsDangGiaiQuyetRegistry.data, ...themVao];
+        dsDangGiaiQuyetRegistry.newestNgayTaoMs = moi.reduce((max, v) => Math.max(max, _layNgayTaoMs(v)), dsDangGiaiQuyetRegistry.newestNgayTaoMs);
+      }
+    }
+    _baoDsDangGiaiQuyetDoi();
+  } catch (err) {
+    console.error(err);
+  } finally {
+    dsDangGiaiQuyetRegistry.dangDongBo = false;
+  }
+}
+// Sentinel chỉ cần bắt đầu 1 LẦN cho cả vòng đời trang (không unsub — chi phí 1 document gần như
+// bằng 0, không đáng để quản lý vòng đời phức tạp như listener trên cả tập dữ liệu).
+function _damBaoSentinelVuAnMoi() {
+  if (dsDangGiaiQuyetRegistry.sentinelDaBatDau) return;
+  dsDangGiaiQuyetRegistry.sentinelDaBatDau = true;
+  // onSnapshot bắn NGAY LẦN ĐẦU với giá trị hiện có của document (hành vi chuẩn của Firestore, kể
+  // cả khi không có gì thật sự "mới") — bỏ qua đúng lần bắn đầu tiên đó để tránh đồng bộ trùng với
+  // lần gọi dongBoDsDangGiaiQuyet() trực tiếp ở useDanhSachDangGiaiQuyet (nếu không sẽ luôn tốn 2
+  // lượt .get() mỗi lần trang tải thay vì 1, đã phát hiện qua test — không phải giả thuyết suông).
+  let laLanBanDau = true;
+  db.collection("meta").doc("vuAnMoiNhat").onSnapshot(
+    () => {
+      if (laLanBanDau) { laLanBanDau = false; return; }
+      dongBoDsDangGiaiQuyet();
+    },
+    err => console.error(err)
+  );
+}
+function useDanhSachDangGiaiQuyet() {
+  const [ds, setDs] = useState(() => dsDangGiaiQuyetRegistry.data || []);
+  const [dangTai, setDangTai] = useState(() => dsDangGiaiQuyetRegistry.data === null);
+  useEffect(() => {
+    const onUpdate = (data) => { setDs(data || []); setDangTai(false); };
+    dsDangGiaiQuyetRegistry.listeners.add(onUpdate);
+    _damBaoSentinelVuAnMoi();
+    dongBoDsDangGiaiQuyet().finally(() => setDangTai(false));
+    return () => { dsDangGiaiQuyetRegistry.listeners.delete(onUpdate); };
+  }, []);
+  return [ds, dangTai];
 }
 
 // Hook danh mục tội danh — dùng chung trong form BC + tinhBieu10.
@@ -2187,6 +2283,13 @@ function ImportExcelModule() {
       let batch = db.batch();
       let ops = 0;
       const commitNeu = async () => { if (ops >= 400) { await batch.commit(); batch = db.batch(); ops = 0; } };
+
+      // Báo sentinel "có vụ mới" NGAY TỪ ĐẦU (không đợi hết cả đợt import, có thể lâu) — xem
+      // dsDangGiaiQuyetRegistry/dongBoDsDangGiaiQuyet (Tối ưu Firestore 2026-07-18). dsMoi luôn có
+      // ít nhất 1 phần tử ở đây (đã guard ở đầu hàm), nên báo 1 lần duy nhất là đủ, không cần lặp
+      // lại trong vòng lặp bên dưới.
+      batch.set(db.collection("meta").doc("vuAnMoiNhat"), { capNhatLuc: now }, { merge: true });
+      ops++;
 
       for (const v of dsMoi) {
         const maNoiSinh = v._maNoiSinh;
@@ -3356,6 +3459,9 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           [fieldSoQuyetDinhTrenVuAn(trangThaiKetQua)]: soQuyetDinhKQ.trim(),
         } : {}),
       });
+      // Báo sentinel "có vụ mới" — xem dsDangGiaiQuyetRegistry/dongBoDsDangGiaiQuyet (Tối ưu
+      // Firestore 2026-07-18).
+      batch.set(db.collection("meta").doc("vuAnMoiNhat"), { capNhatLuc: now }, { merge: true });
 
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), {
         maVuAn: maNoiSinh, loaiSuKien: "khoi_to_vu", maBiCan: null,
@@ -4402,20 +4508,30 @@ function DanhSachPanel({ selectedId, onSelect }) {
   const [vuotGioiHan, setVuotGioiHan] = useState(false);
   useEffect(() => { setGioiHanTatCa(500); }, [chiDangGiaiQuyet]);
 
+  // "Đang giải quyết" — KHÔNG còn onSnapshot sống trên cả tập (2026-07-18, xem ghi chú đầy đủ ở
+  // useDanhSachDangGiaiQuyet) — tải 1 lần, chỉ có 1 listener rẻ trên document cảm biến "có vụ mới"
+  // để không bỏ sót vụ vừa tạo. Thay đổi KHÁC của vụ đã có sẵn (đổi KSV, hoàn thành...) chấp nhận
+  // cũ, tự làm mới khi remount (chuyển tab đi rồi quay lại).
+  const [dsDangGiaiQuyet, dangTaiDangGiaiQuyet] = useDanhSachDangGiaiQuyet();
   useEffect(() => {
+    if (!chiDangGiaiQuyet) return;
+    setList(dsDangGiaiQuyet);
+    setDangTai(dangTaiDangGiaiQuyet);
+  }, [chiDangGiaiQuyet, dsDangGiaiQuyet, dangTaiDangGiaiQuyet]);
+
+  // "Tất cả" — giữ nguyên onSnapshot có giới hạn như cũ (trộn cả vụ đang + đã giải quyết, chưa áp
+  // dụng cache lạnh/sentinel cho nhánh này — xem "Ngoài phạm vi Đợt 2" trong CLAUDE.md).
+  useEffect(() => {
+    if (chiDangGiaiQuyet) return;
     setDangTai(true);
-    let q = db.collection("vuan");
-    if (chiDangGiaiQuyet) q = q.where("trangThai", "==", "dang_giai_quyet");
-    q = q.orderBy("ngayTao", "desc");
-    if (!chiDangGiaiQuyet) q = q.limit(gioiHanTatCa);
-    const unsub = q.onSnapshot(
+    const unsub = db.collection("vuan").orderBy("ngayTao", "desc").limit(gioiHanTatCa).onSnapshot(
       snap => {
         // Lọc bỏ vụ đã "Đưa vào thùng rác" (daXoa) — lọc phía CLIENT, không dùng Firestore
         // where("daXoa","!=",true), vì query "!=" bỏ qua LUÔN mọi document không có field đó
         // (toàn bộ dữ liệu cũ chưa từng có field `daXoa`), sẽ làm mất trắng danh sách nếu lọc ở
         // tầng Firestore.
         setList(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
-        setVuotGioiHan(!chiDangGiaiQuyet && snap.size >= gioiHanTatCa);
+        setVuotGioiHan(snap.size >= gioiHanTatCa);
         setDangTai(false);
       },
       err => { console.error(err); setDangTai(false); }
@@ -5177,6 +5293,10 @@ function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
         daXoa: true, ngayXoaMem: now, nguoiXoaMem: nguoiThucHien,
         ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
+      // Cập nhật ngay danh sách "đang giải quyết" cục bộ (xem capNhatCucBoDsDangGiaiQuyet) — sentinel
+      // không báo cho thao tác này (không phải vụ MỚI), nên tự tay cập nhật cho đúng thao tác của
+      // chính người dùng, tránh vụ vừa xoá vẫn hiện y nguyên trước mắt cho tới khi remount.
+      capNhatCucBoDsDangGiaiQuyet(vuAn.id, null);
       addToast("Đã đưa vụ án vào thùng rác — vào Cài đặt → Thùng rác nếu cần khôi phục.");
       onXong();
     } catch (err) {
@@ -8912,7 +9032,12 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [dangXuLy, setDangXuLy] = useState(false);
   const [hienBienBan, setHienBienBan] = useState(false);
   const [hienTimThuCong, setHienTimThuCong] = useState(false);
-  const [dsVuDangGQ, setDsVuDangGQ] = useState(null); // null = chưa tải, tải 1 lần khi mở panel tìm
+  // "Tìm thủ công" (2026-07-18) — dùng chung nguồn "đang giải quyết" với DanhSachPanel qua
+  // useDanhSachDangGiaiQuyet thay vì tự fetchWithTtlCache riêng — 2 nơi cùng cần ĐÚNG 1 tập dữ liệu
+  // (where trangThai=="dang_giai_quyet"), gộp lại tránh 2 cơ chế cache khác nhau cùng tồn tại cho
+  // cùng 1 dữ liệu (dễ lệch nhau/khó hiểu về sau). Nếu Danh sách vụ án đã tải sẵn (rất thường gặp,
+  // vì đó là tab mặc định) thì ở đây dùng lại ngay, không tốn đọc thêm.
+  const [dsVuDangGQ, dangTaiVuDangGQ] = useDanhSachDangGiaiQuyet();
   const [tuKhoaTim, setTuKhoaTim] = useState("");
   const [ksvTim, setKsvTim] = useState("tat_ca");
   const [dangTaiLichSu, setDangTaiLichSu] = useState(false);
@@ -9053,21 +9178,12 @@ function GiaoNhanHoSoModule({ currentUser }) {
     }
   };
 
-  // Tìm thủ công — cho trường hợp không có mã QR trong tay: tải 1 lần (không realtime, chỉ để
-  // tra cứu) toàn bộ vụ ĐANG GIẢI QUYẾT (hồ sơ giao nhận thực tế chỉ xoay quanh vụ đang thụ lý,
-  // không cần tìm cả vụ đã xong) rồi lọc phía client theo tên vụ/KSV/tội danh (điều luật)/số QĐ
-  // KTVA — cùng kiểu tìm kiếm tự do đã dùng ở Danh sách vụ án/Án đã giải quyết.
-  const moTimThuCong = () => {
-    setHienTimThuCong(true);
-    if (dsVuDangGQ === null) {
-      // TTL cache (2 phút) — đóng/mở lại "Tìm thủ công" nhanh trong cùng phiên giao nhận không gọi
-      // lại Firestore (xem ghi chú ở fetchWithTtlCache). Không dùng listener sống vì công cụ này chỉ
-      // để tra cứu-chọn 1 lần, không cần realtime.
-      fetchWithTtlCache("vuan:dang_giai_quyet_timthucong", () => db.collection("vuan").where("trangThai", "==", "dang_giai_quyet"))
-        .then(docs => setDsVuDangGQ(docs.filter(v => !v.daXoa)))
-        .catch(err => { console.error(err); setDsVuDangGQ([]); });
-    }
-  };
+  // Tìm thủ công — cho trường hợp không có mã QR trong tay: tra cứu trong đúng tập vụ ĐANG GIẢI
+  // QUYẾT (hồ sơ giao nhận thực tế chỉ xoay quanh vụ đang thụ lý, không cần tìm cả vụ đã xong) rồi
+  // lọc phía client theo tên vụ/KSV/tội danh (điều luật)/số QĐ KTVA — cùng kiểu tìm kiếm tự do đã
+  // dùng ở Danh sách vụ án/Án đã giải quyết. `dsVuDangGQ` đến từ useDanhSachDangGiaiQuyet (dùng
+  // chung với DanhSachPanel) — không cần tự fetch riêng ở đây nữa.
+  const moTimThuCong = () => setHienTimThuCong(true);
 
   const dsKsvTim = useMemo(
     () => dsVuDangGQ ? [...new Set(dsVuDangGQ.map(v => v.ksvChinh).filter(Boolean))].sort() : [],
@@ -9371,8 +9487,8 @@ function GiaoNhanHoSoModule({ currentUser }) {
                   {dsKsvTim.map(k => <option key={k} value={k}>{k}</option>)}
                 </select>
               </div>
-              {dsVuDangGQ === null && <div className="text-xs text-slate-400">Đang tải danh sách vụ đang giải quyết...</div>}
-              {dsVuDangGQ !== null && (tuKhoaTim.trim() || ksvTim !== "tat_ca") && ketQuaTimThuCong.length === 0 && (
+              {dangTaiVuDangGQ && <div className="text-xs text-slate-400">Đang tải danh sách vụ đang giải quyết...</div>}
+              {!dangTaiVuDangGQ && (tuKhoaTim.trim() || ksvTim !== "tat_ca") && ketQuaTimThuCong.length === 0 && (
                 <div className="text-xs text-slate-400">Không tìm thấy vụ nào khớp.</div>
               )}
               {ketQuaTimThuCong.length > 0 && (
@@ -10108,6 +10224,11 @@ function ThungRacModule() {
         daXoa: false, ngayXoaMem: null, nguoiXoaMem: null,
         ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
+      // Nếu vụ khôi phục đang ở trạng thái "đang giải quyết", thêm lại vào danh sách cục bộ ngay
+      // (xem capNhatCucBoDsDangGiaiQuyet) — sentinel không báo cho thao tác này.
+      if (v.trangThai === "dang_giai_quyet") {
+        capNhatCucBoDsDangGiaiQuyet(v.id, { ...v, daXoa: false, ngayXoaMem: null, nguoiXoaMem: null, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      }
       addToast(`Đã khôi phục vụ ${hienThiMa(v) || v.id}`);
     } catch (err) {
       console.error(err);

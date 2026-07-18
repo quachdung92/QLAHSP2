@@ -2,6 +2,76 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tối ưu Firestore — "hot data" (vụ ĐANG giải quyết): bỏ live, dùng sentinel "có vụ mới" (2026-07-18)
+
+Tiếp theo các mục "Tối ưu Firestore" bên dưới (Đợt 1: gộp listener; Đợt 2: Thùng rác + cache lạnh
+cho vụ ĐÃ giải quyết) — mục này xử lý phần còn lại: vụ **ĐANG** giải quyết ("hot data"). Quyết định
+thiết kế đã thống nhất với người dùng (hệ thống ít user, chủ yếu dùng để xem/trích xuất dữ liệu, ưu
+tiên tiết kiệm đọc hơn độ mới tức thời): **danh sách "đang giải quyết" bỏ hẳn `onSnapshot` sống**,
+chỉ tải 1 lần — CHỈ vụ án MỚI TẠO mới cần biết ngay, mọi thay đổi KHÁC của vụ đã có sẵn (đổi KSV,
+chuyển giai đoạn, hoàn thành...) chấp nhận cũ, tự làm mới khi component remount (chuyển tab đi rồi
+quay lại). `ChiTietPanel` (đang sửa 1 vụ cụ thể) KHÔNG đổi — vẫn `onSnapshot` riêng theo đúng 1 doc.
+
+**Cơ chế sentinel** (`dsDangGiaiQuyetRegistry`/`dongBoDsDangGiaiQuyet`/`useDanhSachDangGiaiQuyet`,
+đặt cạnh các cache khác ở đầu file) — 1 document cảm biến bé xíu `meta/vuAnMoiNhat` (field
+`capNhatLuc`) được cập nhật kèm theo trong CÙNG batch ở **đúng 3 nơi tạo `vuan` mới**:
+`ThemVuAnForm`, `ImportExcelModule`, `tachVuAn` (vụ tách ra cũng là 1 vụ "mới"). Mọi client chỉ giữ
+**đúng 1 listener rẻ** trên sentinel này (không unsub — chi phí 1 document gần như bằng 0) thay vì
+theo dõi cả danh sách; hễ đổi thì chạy 1 query nhỏ `where("trangThai","==","dang_giai_quyet")
+.where("ngayTao", ">", lầnBiếtGầnNhất)` bổ sung đúng (các) vụ mới, không tải lại toàn bộ. Lần đầu
+(chưa có cache) tải trọn 1 lần bằng `.where("trangThai","==","dang_giai_quyet")` không kèm điều
+kiện `ngayTao`.
+
+**`DanhSachPanel`** (Danh sách vụ án) tách 2 nhánh rõ ràng: tab "Đang giải quyết" dùng
+`useDanhSachDangGiaiQuyet()` (nguồn mới), tab "Tất cả" GIỮ NGUYÊN `onSnapshot` có giới hạn như cũ
+(trộn hot+cold, chưa áp dụng sentinel — xem "Ngoài phạm vi" ở mục cache lạnh). **`fetchWithTtlCache`
+ban đầu dùng cho "Tìm thủ công" ở `GiaoNhanHoSoModule` đã bị TRIM/thay bằng chính
+`useDanhSachDangGiaiQuyet()`** — 2 nơi cùng cần ĐÚNG 1 tập dữ liệu, gộp lại tránh 2 cơ chế cache
+khác nhau tồn tại song song cho cùng 1 dữ liệu (dễ lệch nhau/khó hiểu về sau, đúng yêu cầu người
+dùng "trim mọi phương án thừa và có khả năng gây conflict"). `fetchWithTtlCache` vẫn giữ lại, dùng
+cho `NhapVuModal` (query khác hẳn — 300 vụ gần nhất theo `ngayTao`, không lọc `trangThai` trước).
+
+**Cập nhật cục bộ cho đúng thao tác của CHÍNH người dùng** (`capNhatCucBoDsDangGiaiQuyet`) — phát
+hiện qua test: "Đưa vào thùng rác"/"Khôi phục" 1 vụ đang có sẵn trong danh sách KHÔNG kích hoạt
+sentinel (không phải vụ mới) — nếu không xử lý riêng, vụ vừa bị chính người dùng xoá vẫn nằm y
+nguyên trước mắt họ cho tới khi remount, gây khó hiểu dù dữ liệu Firestore đã đúng. Đã thêm cập
+nhật trực tiếp vào bộ nhớ (không qua Firestore) ngay sau khi `XoaVuAnModal`/`ThungRacModule.khoiPhuc`
+ghi thành công — chỉ ảnh hưởng đúng trình duyệt của người vừa thao tác, người khác vẫn chờ remount
+tự nhiên như thiết kế ban đầu (không phá vỡ nguyên tắc "hot data không cần live").
+
+**Bug tự phát hiện + tự sửa trong lúc viết test (không phải giả thuyết suông)**: bản đầu tiên của
+sentinel listener bị bắn **2 lần** ngay lúc khởi tạo (1 lần do gọi trực tiếp `dongBoDsDangGiaiQuyet()`
+lúc mount, 1 lần do chính `onSnapshot` của sentinel tự bắn lại giá trị HIỆN CÓ ngay khi vừa subscribe
+— hành vi chuẩn của Firestore, không phải lỗi) → tốn gấp đôi số `.get()` mỗi lần tải trang so với dự
+kiến. Sửa bằng cách bỏ qua đúng lần bắn đầu tiên của sentinel (`laLanBanDau` flag).
+
+**Composite index MỚI cần thiết** (đã thêm vào `firestore.indexes.json`, **đã deploy CẢ HAI**
+`qlahs-test` VÀ `qlahsp2` production — an toàn vì chỉ thêm index, không đụng code/dữ liệu, và
+`qlva.html` production hiện tại chưa có code dùng tới nên không ảnh hưởng gì tới người dùng thật
+đang chạy): `vuan: trangThai ASC + ngayTao ASC` — Firestore yêu cầu vì query delta kết hợp 1 field
+bằng (`trangThai`) với 1 field khoảng/bất đẳng thức khác (`ngayTao`). Phát hiện qua test dữ liệu
+Firestore thật (mock không mô phỏng ràng buộc index nên không phát hiện được) — lúc index đang
+build, sentinel tạm thời "lặng lẽ" không bổ sung được vụ mới (lỗi bị `catch` + `console.error`,
+không crash UI) — tự khỏi khi build xong, không cần can thiệp gì thêm.
+
+**Đã kiểm chứng bằng Playwright thật** (bộ mock: 9/9 assertion pass riêng cho sentinel + 26/26 pass
+hồi quy toàn bộ Đợt 1/2 sau khi tích hợp — không có gì bị phá vỡ) VÀ **dữ liệu Firestore thật trên
+`qlva-dev.html`** (project `qlahs-test`, 55 vụ đang giải quyết thật) — tạo 1 vụ án test thật, xác
+nhận xuất hiện ngay qua sentinel SAU KHI index build xong (đã tự xác nhận lại bằng cách chạy lại
+test — trước khi build xong sentinel bỏ qua vụ mới, không crash; sau khi build xong hoạt động đúng
+100%), dọn dẹp sạch sau test. Trong lúc viết test mock cũng tự bổ sung `mock-firebase.js` (đếm
+listener theo document riêng biệt với theo query, thêm `.add()`) — 2 chỗ mock thiếu, không phải bug
+thật của app. Đã rà thêm các trường hợp biên qua suy luận (không chỉ test tự động): 2 vụ mới tạo sát
+nhau nếu làm "nuốt" 1 tín hiệu sentinel thì lần đồng bộ kế tiếp (remount tự nhiên hoặc tín hiệu sau)
+vẫn tự vét đủ nhờ query delta luôn hỏi "mọi thứ mới hơn mốc đã biết" chứ không phải "đúng 1 sự kiện
+vừa báo" — tự lành, không mất dữ liệu vĩnh viễn.
+
+**Ngoài phạm vi (chưa làm, chấp nhận là giới hạn hiện tại)**: tab "Tất cả" của Danh sách vụ án (trộn
+hot+cold) chưa áp dụng cơ chế này. Khoá tránh xung đột sửa đồng thời ("ấn vào vụ X thì khoá cảnh báo
+tài khoản khác") đã bàn và CHỦ ĐỘNG loại khỏi phạm vi tối ưu Firestore — dự án đã chọn hướng
+transaction optimistic concurrency (xem "Audit tối ưu hệ thống") thay vì khoá thủ công.
+
+
 ## Tối ưu Firestore Đợt 1+2 — đã kiểm chứng bằng dữ liệu Firestore THẬT trên `qlva-dev.html` (2026-07-17)
 
 Tiếp theo 2 mục "Tối ưu Firestore" bên dưới (Đợt 1: gộp listener + `ngayCapNhat`; Đợt 2: Thùng rác +
