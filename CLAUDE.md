@@ -2,6 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Port 2 bug fix từ nhánh `bang-excel-cai-dat` vào `main` (2026-07-18)
+
+Nhánh `bang-excel-cai-dat` (tính năng Cài đặt → "Bảng dữ liệu" kiểu Excel, xem mục riêng ở "Tiến độ
+đã code") có 2 commit sửa bug THẬT không liên quan gì tới tính năng Bảng dữ liệu — **chỉ port đúng 2
+bug fix này vào `main` qua `git cherry-pick`, KHÔNG merge toàn bộ tính năng Bảng dữ liệu** (theo yêu
+cầu người dùng, tính năng đó để merge riêng sau — xem "Cài đặt → 'Bảng dữ liệu' (2026-07-17)" ở dưới,
+hiện chỉ tồn tại trên `bang-excel-cai-dat`, chưa có trên `main`/production):
+- **Thời hạn bảo quản floor-lookup** (commit gốc `1344097`) — xem chi tiết đầy đủ ở mục "Nộp hồ sơ
+  lưu trữ + cột 'Thời hạn bảo quản'" bên dưới, đoạn "Bug đã sửa (2026-07-16...) — bảng gốc là HÀM
+  BẬC THANG".
+- **Race condition lost-update khi sửa bị can** (commit gốc `b976726`) — xem mục "Audit 'tối ưu hệ
+  thống'" bên dưới.
+
+Cherry-pick trên nhánh tạm `fix-race-thoihan` (đã xoá sau khi merge xong), có xung đột thủ công ở
+`DongGiaoNhan`/`ghiNhanVuVaoPhien` (field `mucAnThang` mới va chạm với field `khongTiepNhan`/
+`lyDoKhongTiepNhan` thêm sau trên `main` — đã gộp cả 2, không mất field nào) và ở `SuaBiCanForm`/
+`ThemBiCanForm` (đổi `batch.commit()` cũ sang gọi `capNhatDieuLuatVaLoaiKhoiTo` mới). CLAUDE.md cũng
+xung đột ở 2 chỗ chèn nội dung cùng vị trí — gộp cả 2 phía, không bỏ nội dung nào.
+
+**Đã kiểm chứng lại SAU KHI merge bằng Playwright thật qua UI** (không chỉ tin tưởng merge tự động
+đúng) — kịch bản: (1) bắt đầu phiên Nhận + bật "Nộp hồ sơ lưu trữ", quét 1 vụ Đã xét xử, nhập mức án
+"3 năm 5 tháng" ngay tại dòng, xác nhận cột Thời hạn bảo quản hiện đúng **"19 năm"** (mốc floor "3",
+không phải `null`/không phải chỉ chấp nhận giá trị khớp tuyệt đối); (2) mở 1 vụ có 2 bị can, sửa 1 bị
+can qua nút "Sửa" của đúng dòng bị can, xác nhận ghi cả `bican.update` LẪN `vuan.update` (bằng chứng
+`capNhatDieuLuatVaLoaiKhoiTo` chạy qua transaction, không còn `batch.commit()` cũ) — cả 2 kịch bản
+PASS trên cả `qlva.html` VÀ `qlva-dev.html`, 0 lỗi console.
+
 ## Tối ưu Firestore ĐÃ LÊN PRODUCTION (2026-07-18)
 
 Toàn bộ kế hoạch tối ưu Firestore (Đợt 1 gộp listener, Đợt 2 Thùng rác + cache lạnh IndexedDB, hot
