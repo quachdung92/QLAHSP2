@@ -301,6 +301,15 @@ function tinhTenVu(biCanList) {
   return coTen[0].hoTen.trim() + (coTen.length > 1 ? " và đồng phạm" : "");
 }
 
+// Cache tóm tắt bị can lên vuan (soBiCan/biCanDaiDien) — để Danh sách vụ án không cần đọc riêng
+// collection bican cho cột "Bị can" (Tối ưu Firestore Đợt 3, 2026-07-18). `biCanList` phải là mảng
+// bị can CUỐI CÙNG (đã lọc rỗng, đúng trạng thái SAU khi ghi) — không có quy ước sắp xếp nào có sẵn
+// để noi theo (query bican không orderBy), nên "đại diện" = phần tử ĐẦU MẢNG tại thời điểm ghi, áp
+// dụng nhất quán ở mọi nơi gọi.
+function tomTatBiCan(biCanList) {
+  return { soBiCan: biCanList.length, biCanDaiDien: biCanList[0]?.hoTen || "" };
+}
+
 // loaiKhoiTo: "ban_dau" cho bị can có ngayKhoiTo sớm nhất trong vụ, còn lại "bo_sung".
 // Nhận thẳng mảng Date|null (song song với danh sách bị can) — dùng khi đã có Date sẵn (đọc từ Firestore).
 function tinhLoaiKhoiToTheoNgay(ngayList) {
@@ -470,6 +479,7 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
     noiChuyenDen: "", nhapVaoVu: null, vuGoc: vuGoc.id, soDemTach: 0,
     anDiem: vuGoc.anDiem || false, uyQuyenXetXu: vuGoc.uyQuyenXetXu || "", phienToaRutKN: vuGoc.phienToaRutKN || false,
     ghiChu: "", ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+    ...tomTatBiCan(biCanVuMoi),
   });
   // Vụ mới tách ra là 1 vụ "mới" theo đúng ý nghĩa của sentinel — báo ngay để client khác không bỏ
   // sót (xem dsDangGiaiQuyetRegistry/dongBoDsDangGiaiQuyet).
@@ -490,6 +500,7 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
   batch.update(refGoc, {
     dieuLuat: tinhDieuLuat(biCanConLaiGoc), tenVu: tinhTenVu(biCanConLaiGoc) || vuGoc.tenVu,
     ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+    ...tomTatBiCan(biCanConLaiGoc),
   });
   return { maVuMoi, batch, now };
 }
@@ -1971,6 +1982,72 @@ function BackfillLoaiKhoiToTool() {
   );
 }
 
+// Điền/sửa soBiCan/biCanDaiDien (tomTatBiCan) trên toàn bộ vuan hiện có — cần cho dữ liệu TẠO
+// TRƯỚC khi có tính năng này (Tối ưu Firestore Đợt 3, 2026-07-18); vụ tạo/sửa bị can sau đó đã tự
+// có 2 field này qua chính các form/công cụ ghi bình thường. An toàn chạy lại nhiều lần (idempotent
+// — chỉ ghi các vụ có giá trị khác đang lưu).
+function BackfillTomTatBiCanTool() {
+  const [state, setState] = useState("idle");
+  const [info, setInfo] = useState("");
+
+  const run = async () => {
+    setState("loading"); setInfo("Đang tải dữ liệu...");
+    try {
+      const [bcSnap, vuSnap] = await Promise.all([
+        db.collection("bican").get(),
+        db.collection("vuan").get(),
+      ]);
+      const theoVu = new Map();
+      bcSnap.docs.forEach(doc => {
+        const bc = doc.data();
+        if (!theoVu.has(bc.maVuAn)) theoVu.set(bc.maVuAn, []);
+        theoVu.get(bc.maVuAn).push(bc);
+      });
+
+      let soCapNhat = 0;
+      const BATCH_SIZE = 400;
+      let batch = db.batch(); let batchCount = 0;
+      const commitNeu = async () => { if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; } };
+
+      for (const vuDoc of vuSnap.docs) {
+        const dung = tomTatBiCan(theoVu.get(vuDoc.id) || []);
+        const hienTai = vuDoc.data();
+        if (hienTai.soBiCan !== dung.soBiCan || hienTai.biCanDaiDien !== dung.biCanDaiDien) {
+          batch.update(vuDoc.ref, dung);
+          soCapNhat++; batchCount++;
+        }
+        await commitNeu();
+      }
+      if (batchCount > 0) await batch.commit();
+
+      setState("done");
+      setInfo(soCapNhat === 0
+        ? "Không có vụ nào cần cập nhật — dữ liệu đã đúng."
+        : `Đã cập nhật soBiCan/biCanDaiDien cho ${soCapNhat} vụ án.`);
+    } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Cập nhật số bị can/tên đại diện lên vụ án (soBiCan/biCanDaiDien)</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Điền/sửa 2 field mới trên vụ án để cột "Bị can" ở Danh sách vụ án không cần đọc riêng
+        collection bị can nữa (Tối ưu Firestore Đợt 3, 2026-07-18). Chỉ cần cho dữ liệu cũ — vụ
+        tạo/sửa bị can sau khi có tính năng này đã tự có sẵn 2 field. An toàn khi chạy lại nhiều lần.
+      </p>
+      {info && (
+        <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
+          {info}
+        </div>
+      )}
+      <button onClick={run} disabled={state === "loading"}
+              className="px-3 py-1.5 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
+        {state === "loading" ? "Đang chạy..." : "Chạy cập nhật"}
+      </button>
+    </div>
+  );
+}
+
 // Sửa dữ liệu tonCuoiKyTheoTD/tonCuoiBiCan đã bị ghi sai bởi bug cũ (tinhLaiBaoCaoLuu từng chụp
 // ảnh LIVE hiện tại thay vì lịch sử — đã sửa code 2026-07-13 để không sai THÊM, nhưng dữ liệu đã
 // ghi sai trước đó không tự phục hồi). Chạy 1 lần để tính lại ĐÚNG từ log cho toàn bộ kỳ đã chốt,
@@ -2307,6 +2384,7 @@ function ImportExcelModule() {
           soQuyetDinhChuyenDi: "", soQuyetDinhTamDinhChi: "", soQuyetDinhDinhChi: "", soQuyetDinhAnHuy: "",
           ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
           nguonNhapLieu: "import_excel",
+          ...tomTatBiCan(v.biCanList),
         };
         if (v.trangThai !== "dang_giai_quyet") {
           vuData.ngayQuyetDinh = v.ngayQuyetDinh;
@@ -2554,6 +2632,7 @@ function ImportExcelModule() {
       <SeedDanhMucTool />
       <BackfillDieuLuatBCTool />
       <BackfillLoaiKhoiToTool />
+      <BackfillTomTatBiCanTool />
       <TaiTaoTonTheoTDTool />
     </div>
   );
@@ -3253,6 +3332,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       });
       batch.update(db.collection("vuan").doc(vuAn.id), {
         trangThai: "da_nhap", nhapVaoVu: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        ...tomTatBiCan([]),
       });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "nhap_vu", vuNhapVao: dichId, soQuyetDinh: soQuyetDinh.trim(),
@@ -3273,7 +3353,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       // Điều luật vụ đích cần tính lại sau khi có thêm bị can — đọc lại toàn bộ rồi cập nhật riêng.
       const bcDichSnap = await db.collection("bican").where("maVuAn", "==", dichId).get();
       const bcDichList = bcDichSnap.docs.map(d => d.data());
-      await db.collection("vuan").doc(dichId).update({ dieuLuat: tinhDieuLuat(bcDichList) });
+      await db.collection("vuan").doc(dichId).update({ dieuLuat: tinhDieuLuat(bcDichList), ...tomTatBiCan(bcDichList) });
 
       onXong(dichId);
     });
@@ -3454,6 +3534,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         noiChuyenDen: "", nhapVaoVu: null, vuGoc: null, soDemTach: 0,
         anDiem, uyQuyenXetXu: uyQuyenXetXu.trim(), phienToaRutKN, ghiChu: ghiChu.trim(),
         ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        ...tomTatBiCan(coBiCanHopLe),
         ...(capNhatKetQua ? {
           ngayQuyetDinh: fromInputDate(ngayQuyetDinhKQ), kyHoanThanh: kyId,
           [fieldSoQuyetDinhTrenVuAn(trangThaiKetQua)]: soQuyetDinhKQ.trim(),
@@ -4112,7 +4193,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
       const dieuLuatMoi = tinhDieuLuat(bcList);
       const loaiKhoiToMoi = tinhLoaiKhoiToTheoNgay(bcList.map(bc => bc.ngayKhoiTo ? (bc.ngayKhoiTo.toDate ? bc.ngayKhoiTo.toDate() : new Date(bc.ngayKhoiTo)) : null));
       const batch = db.batch();
-      batch.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi });
+      batch.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi, ...tomTatBiCan(bcList) });
       bcList.forEach((bc, i) => {
         if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch.update(db.collection("bican").doc(bc.id), {
           loaiKhoiTo: loaiKhoiToMoi[i], ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
@@ -4304,7 +4385,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
       const dieuLuatMoi = tinhDieuLuat(bcList);
       const loaiKhoiToMoi = tinhLoaiKhoiToTheoNgay(bcList.map(bc => bc.ngayKhoiTo ? (bc.ngayKhoiTo.toDate ? bc.ngayKhoiTo.toDate() : new Date(bc.ngayKhoiTo)) : null));
       const batch2 = db.batch();
-      batch2.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi });
+      batch2.update(db.collection("vuan").doc(vuAn.id), { dieuLuat: dieuLuatMoi, ...tomTatBiCan(bcList) });
       bcList.forEach((bc, i) => {
         if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) batch2.update(db.collection("bican").doc(bc.id), {
           loaiKhoiTo: loaiKhoiToMoi[i], ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
@@ -4490,7 +4571,6 @@ function chiaNhoDsId(ids, kichThuoc = 30) {
 function DanhSachPanel({ selectedId, onSelect }) {
   const [list, setList] = useState([]);
   const [dangTai, setDangTai] = useState(true);
-  const [biCanAll, setBiCanAll] = useState([]);
   const [giaiDoan, setGiaiDoan] = useState("tat_ca");
   const [ksv, setKsv] = useState("tat_ca");
   const [tuKhoa, setTuKhoa] = useState("");
@@ -4501,12 +4581,29 @@ function DanhSachPanel({ selectedId, onSelect }) {
   const [moRongBiCan, setMoRongBiCan] = useState(new Set());
   const dsCanBo = useDanhSachCanBo();
 
-  // Giới hạn số dòng tải về ở tab "Tất cả" — tránh kéo cả collection vuan (có thể lên hàng chục
-  // nghìn dòng sau nhiều năm) mỗi lần mở màn hình. "Đang giải quyết" KHÔNG giới hạn vì tập đó tự
-  // nhiên bị chặn (vụ giải quyết xong sẽ rời khỏi tập, không tích luỹ vô hạn như tổng số vụ).
-  const [gioiHanTatCa, setGioiHanTatCa] = useState(500);
+  // Cursor pagination thật cho tab "Tất cả" (Tối ưu Firestore Đợt 3, 2026-07-18) — trước đây nút
+  // "Tải thêm 500" chỉ tăng .limit() rồi mở lại listener từ đầu, khiến Firestore tính lại lượt đọc
+  // cho TOÀN BỘ số dòng đã đọc trước đó mỗi lần bấm, không chỉ phần tăng thêm. Thiết kế mới: trang
+  // đầu (dsCoBan) vẫn LIVE y hệt trước — chỉ CHỪNG NÀO chưa bấm "Tải thêm" lần nào (dsThem rỗng).
+  // Bấm "Tải thêm" lần đầu sẽ huỷ subscribe live đó (đóng băng dsCoBan), rồi mọi trang sau đều tải
+  // 1 lần bằng .startAfter(cursor) — CHỈ đọc đúng phần MỚI mỗi lần bấm. Chấp nhận từ đó tab "Tất cả"
+  // hết live (đúng tinh thần "chấp nhận cũ, tự mới khi remount" đã dùng cho Đang giải quyết/cache
+  // lạnh — xem CLAUDE.md) — không đổi tính live của TRANG ĐẦU, đúng phạm vi yêu cầu.
+  const TRANG_KICH_THUOC = 500;
+  const [dsCoBan, setDsCoBan] = useState([]);
+  const [dsThem, setDsThem] = useState([]);
   const [vuotGioiHan, setVuotGioiHan] = useState(false);
-  useEffect(() => { setGioiHanTatCa(500); }, [chiDangGiaiQuyet]);
+  const [dangTaiThem, setDangTaiThem] = useState(false);
+  const cursorRef = useRef(null);
+  // Cờ đánh dấu NGAY LÚC BẤM (không đợi re-render) rằng đã bắt đầu phân trang thủ công — phát hiện
+  // qua test thật: Firestore bắn onSnapshot LẠI (hành vi chuẩn — cache rồi server, hoặc 1 thay đổi
+  // thật ở trang 1) có thể xảy ra ĐÚNG lúc React chưa kịp dọn effect live (dsThem.length > 0 chỉ có
+  // hiệu lực sau khi re-render) — nếu không chặn, callback live "bắn muộn" đó sẽ ghi đè cursorRef về
+  // đúng ranh giới trang 1, khiến lần "Tải thêm" kế tiếp coi như không có gì mới (đã tự kiểm chứng
+  // lỗi này bằng Playwright thật trước khi sửa). useRef (không phải state) vì cần có hiệu lực NGAY,
+  // không chờ qua 1 vòng render.
+  const dangPhanTrangRef = useRef(false);
+  useEffect(() => { setDsThem([]); cursorRef.current = null; dangPhanTrangRef.current = false; }, [chiDangGiaiQuyet]);
 
   // "Đang giải quyết" — KHÔNG còn onSnapshot sống trên cả tập (2026-07-18, xem ghi chú đầy đủ ở
   // useDanhSachDangGiaiQuyet) — tải 1 lần, chỉ có 1 listener rẻ trên document cảm biến "có vụ mới"
@@ -4519,30 +4616,62 @@ function DanhSachPanel({ selectedId, onSelect }) {
     setDangTai(dangTaiDangGiaiQuyet);
   }, [chiDangGiaiQuyet, dsDangGiaiQuyet, dangTaiDangGiaiQuyet]);
 
-  // "Tất cả" — giữ nguyên onSnapshot có giới hạn như cũ (trộn cả vụ đang + đã giải quyết, chưa áp
-  // dụng cache lạnh/sentinel cho nhánh này — xem "Ngoài phạm vi Đợt 2" trong CLAUDE.md).
+  // "Tất cả" — trang đầu LIVE, y hệt hành vi cũ (trộn cả vụ đang + đã giải quyết, chưa áp dụng cache
+  // lạnh/sentinel cho nhánh này — xem "Ngoài phạm vi Đợt 2" trong CLAUDE.md), CHỈ đổi thêm tie-break
+  // documentId() (cursor ổn định — nhiều vụ import cùng lúc có thể trùng ngayTao, xem 3.1 trong plan
+  // đã lưu) và CHỈ chạy khi chưa bấm "Tải thêm" lần nào.
   useEffect(() => {
-    if (chiDangGiaiQuyet) return;
+    if (chiDangGiaiQuyet || dsThem.length > 0) return;
     setDangTai(true);
-    const unsub = db.collection("vuan").orderBy("ngayTao", "desc").limit(gioiHanTatCa).onSnapshot(
-      snap => {
-        // Lọc bỏ vụ đã "Đưa vào thùng rác" (daXoa) — lọc phía CLIENT, không dùng Firestore
-        // where("daXoa","!=",true), vì query "!=" bỏ qua LUÔN mọi document không có field đó
-        // (toàn bộ dữ liệu cũ chưa từng có field `daXoa`), sẽ làm mất trắng danh sách nếu lọc ở
-        // tầng Firestore.
-        setList(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
-        setVuotGioiHan(snap.size >= gioiHanTatCa);
-        setDangTai(false);
-      },
-      err => { console.error(err); setDangTai(false); }
-    );
+    const unsub = db.collection("vuan")
+      .orderBy("ngayTao", "desc").orderBy(firebase.firestore.FieldPath.documentId(), "desc")
+      .limit(TRANG_KICH_THUOC).onSnapshot(
+        snap => {
+          // Nếu đã bắt đầu phân trang thủ công (xem dangPhanTrangRef), bỏ qua callback này dù nó
+          // vẫn lọt qua trước khi effect kịp huỷ subscribe — không được ghi đè cursorRef/vuotGioiHan.
+          // (Đã kiểm chứng bằng Playwright thật + console log tạm thời rằng callback live không hề
+          // bị "bắn muộn" trong thực tế — race chỉ là giả thuyết phòng ngừa lúc code, không quan
+          // sát được thật, nhưng giữ lại guard này vì rẻ và an toàn hơn không có.)
+          if (dangPhanTrangRef.current) return;
+          // Lọc bỏ vụ đã "Đưa vào thùng rác" (daXoa) — lọc phía CLIENT, không dùng Firestore
+          // where("daXoa","!=",true), vì query "!=" bỏ qua LUÔN mọi document không có field đó
+          // (toàn bộ dữ liệu cũ chưa từng có field `daXoa`), sẽ làm mất trắng danh sách nếu lọc ở
+          // tầng Firestore.
+          setDsCoBan(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
+          setVuotGioiHan(snap.size >= TRANG_KICH_THUOC);
+          cursorRef.current = snap.docs[snap.docs.length - 1] || null;
+          setDangTai(false);
+        },
+        err => { console.error(err); setDangTai(false); }
+      );
     return unsub;
-  }, [chiDangGiaiQuyet, gioiHanTatCa]);
+  }, [chiDangGiaiQuyet, dsThem.length > 0]);
+
+  // "Tải thêm" — tải 1 lần (KHÔNG live) đúng batch MỚI theo cursor, nối vào dsThem. Lần bấm ĐẦU
+  // TIÊN sẽ tự huỷ subscribe live ở trên (qua điều kiện dsThem.length > 0 trong dependency array).
+  const taiThemVuAn = async () => {
+    if (!cursorRef.current || dangTaiThem) return;
+    dangPhanTrangRef.current = true; // đánh dấu NGAY (đồng bộ) — chặn callback live "bắn muộn" ở trên
+    setDangTaiThem(true);
+    try {
+      const snap = await db.collection("vuan")
+        .orderBy("ngayTao", "desc").orderBy(firebase.firestore.FieldPath.documentId(), "desc")
+        .startAfter(cursorRef.current).limit(TRANG_KICH_THUOC).get();
+      const trangMoi = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa);
+      setDsThem(ds => [...ds, ...trangMoi]);
+      setVuotGioiHan(snap.size >= TRANG_KICH_THUOC);
+      if (snap.docs.length > 0) cursorRef.current = snap.docs[snap.docs.length - 1];
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDangTaiThem(false);
+    }
+  };
 
   // Khi đang ở tab "Tất cả" và danh sách đã bị cắt bớt (vuotGioiHan) mà người dùng gõ tìm kiếm,
   // phải tải đủ TOÀN BỘ vuan 1 lần (KHÔNG realtime — chỉ 1 lần lúc bắt đầu gõ) để không bỏ sót
-  // các vụ nằm ngoài gioiHanTatCa dòng mới nhất. "Đang giải quyết" không cần vì list ở đó vốn đã
-  // đầy đủ (không bị giới hạn).
+  // các vụ nằm ngoài số dòng đã tải (dsCoBan + dsThem). "Đang giải quyết" không cần vì list ở đó
+  // vốn đã đầy đủ (không bị giới hạn).
   const [dsTimKiemDayDu, setDsTimKiemDayDu] = useState(null);
   const canTimDayDu = !chiDangGiaiQuyet && vuotGioiHan && tuKhoa.trim() !== "";
   useEffect(() => {
@@ -4554,32 +4683,56 @@ function DanhSachPanel({ selectedId, onSelect }) {
     return () => { huy = true; };
   }, [canTimDayDu]);
 
-  // Nguồn danh sách thực sự dùng để lọc/hiển thị: bản tìm kiếm đầy đủ (nếu đang cần) hoặc bản đã
-  // tải theo giới hạn ở trên.
-  const nguonDanhSach = dsTimKiemDayDu || list;
+  // Nguồn danh sách thực sự dùng để lọc/hiển thị: bản tìm kiếm đầy đủ (nếu đang cần), hoặc — ở tab
+  // "Tất cả" — trang đầu (live) nối với các trang "Tải thêm" (dsThem), hoặc "Đang giải quyết".
+  const nguonDanhSach = dsTimKiemDayDu || (chiDangGiaiQuyet ? list : [...dsCoBan, ...dsThem]);
   const dangTaiTimDayDu = canTimDayDu && dsTimKiemDayDu === null;
   const idsHienTaiKey = useMemo(() => nguonDanhSach.map(v => v.id).sort().join(","), [nguonDanhSach]);
 
-  // Thay vì tải nguyên collection bican (có thể rất lớn sau nhiều năm), chỉ hỏi đúng những vụ
-  // đang cần hiển thị — chia theo lô tối đa 30 id rồi gộp kết quả. Chỉ tải lại khi TẬP id thay
-  // đổi (idsHienTaiKey), không phải mỗi khi 1 doc trong tập đó có cập nhật — tránh huỷ/tạo lại
-  // hàng chục listener liên tục.
+  // Cột "Bị can" đọc thẳng v.soBiCan/v.biCanDaiDien đã cache sẵn trên vuan (Tối ưu Firestore Đợt 3,
+  // 2026-07-18, xem tomTatBiCan) — KHÔNG còn listener bican luôn bật cho mọi dòng đang hiển thị như
+  // trước (đây từng là phần tốn đọc nhất của cả màn hình). Chỉ còn 2 nơi tải bican theo YÊU CẦU:
+  // (1) "mở rộng xem hết bị can" 1 dòng cụ thể — tải 1 lần, cache theo phiên (biCanChiTietTheoVu);
+  // (2) tìm theo tên bị can — CHỈ khi đang gõ từ khoá, debounce, tải 1 lần cho các vụ đang hiển thị
+  // CHƯA có trong cache phiên (bicanTimKiemTheoVu) — xem 2 khối bên dưới.
+  const [biCanChiTietTheoVu, setBiCanChiTietTheoVu] = useState({});
+  const moRongBiCanClick = (id) => {
+    const dangMoRong = moRongBiCan.has(id);
+    toggleMoRongBiCan(id);
+    if (!dangMoRong && !biCanChiTietTheoVu[id]) {
+      db.collection("bican").where("maVuAn", "==", id).get().then(snap => {
+        setBiCanChiTietTheoVu(cu => ({ ...cu, [id]: snap.docs.map(d => ({ id: d.id, ...d.data() })) }));
+      }).catch(err => console.error(err));
+    }
+  };
+
+  const [bicanTimKiemTheoVu, setBicanTimKiemTheoVu] = useState({});
+  const [dangTaiTimBiCan, setDangTaiTimBiCan] = useState(false);
   useEffect(() => {
-    const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
-    if (ids.length === 0) { setBiCanAll([]); return; }
-    const nhom = chiaNhoDsId(ids);
-    const ketQuaMoiNhom = nhom.map(() => []);
-    const unsubs = nhom.map((nhomId, idx) =>
-      db.collection("bican").where("maVuAn", "in", nhomId).onSnapshot(
-        snap => {
-          ketQuaMoiNhom[idx] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          setBiCanAll(ketQuaMoiNhom.flat());
-        },
-        err => console.error(err)
-      )
-    );
-    return () => unsubs.forEach(u => u());
-  }, [idsHienTaiKey]);
+    if (!tuKhoa.trim()) return;
+    const timer = setTimeout(() => {
+      const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
+      const idsCanTai = ids.filter(id => !bicanTimKiemTheoVu[id]);
+      if (idsCanTai.length === 0) return;
+      setDangTaiTimBiCan(true);
+      const nhom = chiaNhoDsId(idsCanTai);
+      Promise.all(nhom.map(nhomId => db.collection("bican").where("maVuAn", "in", nhomId).get()))
+        .then(snaps => {
+          setBicanTimKiemTheoVu(cu => {
+            const moi = { ...cu };
+            idsCanTai.forEach(id => { moi[id] = []; });
+            snaps.flatMap(s => s.docs).forEach(d => {
+              const bc = { id: d.id, ...d.data() };
+              (moi[bc.maVuAn] = moi[bc.maVuAn] || []).push(bc);
+            });
+            return moi;
+          });
+        })
+        .catch(err => console.error(err))
+        .finally(() => setDangTaiTimBiCan(false));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [tuKhoa, idsHienTaiKey]);
 
   // Dùng chung cache "kybaocao:desc" với KyBaoCaoModule/AnDaGiaiQuyetModule/NhatKyModule — thứ tự
   // không quan trọng ở đây vì kyBaoCaoListSorted bên dưới đã tự sort lại phía client.
@@ -4637,14 +4790,6 @@ function DanhSachPanel({ selectedId, onSelect }) {
   });
   const soCotHien = 3 + DS_COT_TUY_CHON.length - cotAn.size;
 
-  const biCanTheoVu = useMemo(() => {
-    const map = {};
-    for (const bc of biCanAll) {
-      (map[bc.maVuAn] = map[bc.maVuAn] || []).push(bc);
-    }
-    return map;
-  }, [biCanAll]);
-
   const toggleMoRongBiCan = (id) => setMoRongBiCan(s => {
     const moi = new Set(s);
     moi.has(id) ? moi.delete(id) : moi.add(id);
@@ -4653,8 +4798,8 @@ function DanhSachPanel({ selectedId, onSelect }) {
 
   // Gộp cả roster "Cán bộ" đang công tác (luôn đủ, không phụ thuộc list đang tải bao nhiêu dòng)
   // lẫn các tên KSV thấy được trong dữ liệu đang hiển thị (phòng khi dữ liệu cũ/nhập tay có tên
-  // KSV không có trong danh mục Cán bộ) — tránh việc gioiHanTatCa ở trên làm mất tên KSV nào đó
-  // khỏi ô lọc.
+  // KSV không có trong danh mục Cán bộ) — tránh việc giới hạn số dòng tải ở trên làm mất tên KSV
+  // nào đó khỏi ô lọc.
   const dsKsv = useMemo(() => {
     const tuCanBo = dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen);
     const tuDuLieu = nguonDanhSach.map(v => v.ksvChinh).filter(Boolean);
@@ -4667,23 +4812,27 @@ function DanhSachPanel({ selectedId, onSelect }) {
     if (ksv !== "tat_ca" && v.ksvChinh !== ksv) return false;
     if (tuKhoa.trim()) {
       const k = tuKhoa.trim().toLowerCase();
-      const dsBiCan = biCanTheoVu[v.id] || [];
+      // dsBiCan: tải theo yêu cầu (debounce, xem effect ở trên) — trong lúc chưa tải xong, vẫn
+      // khớp ngay theo biCanDaiDien (đại diện, đã có sẵn trên vuan) để không có cảm giác "0 kết
+      // quả" trong lúc chờ; kết quả khớp bị can KHÁC (không phải đại diện) hiện thêm khi tải xong.
+      const dsBiCan = bicanTimKiemTheoVu[v.id] || [];
       const hit = (hienThiMa(v) || "").toLowerCase().includes(k)
         || (v.tenVu || "").toLowerCase().includes(k)
         || (v.dieuLuat || "").toLowerCase().includes(k)
         || (v.soQdKtva || "").toLowerCase().includes(k)
+        || (v.biCanDaiDien || "").toLowerCase().includes(k)
         || dsBiCan.some(bc => (bc.hoTen || "").toLowerCase().includes(k));
       if (!hit) return false;
     }
     return true;
-  }), [nguonDanhSach, chiDangGiaiQuyet, giaiDoan, ksv, tuKhoa, biCanTheoVu]);
+  }), [nguonDanhSach, chiDangGiaiQuyet, giaiDoan, ksv, tuKhoa, bicanTimKiemTheoVu]);
 
   // Sắp xếp theo cột (bấm tiêu đề) — chỉ áp dụng cho cột có giá trị so sánh rõ ràng
   // (mã vụ/ngày). Không sort theo "Kỳ mới"/"Kỳ giải quyết" vì đó là chuỗi hiển thị dạng
   // "Tháng N/YYYY", sắp xếp theo chuỗi sẽ sai thứ tự thời gian (VD "Tháng 10" < "Tháng 2").
-  // Lưu ý: chỉ sắp xếp lại các dòng ĐANG TẢI (nguonDanhSach) — ở tab "Tất cả" khi đã vượt
-  // gioiHanTatCa, các dòng nằm ngoài giới hạn (chưa tải) sẽ không tham gia sắp xếp cho tới khi
-  // bấm "Tải thêm" hoặc gõ tìm kiếm (khi đó mới tải đủ toàn bộ).
+  // Lưu ý: chỉ sắp xếp lại các dòng ĐANG TẢI (nguonDanhSach) — ở tab "Tất cả" khi đã vượt số dòng
+  // đã tải, các dòng nằm ngoài (chưa tải) sẽ không tham gia sắp xếp cho tới khi bấm "Tải thêm"
+  // hoặc gõ tìm kiếm (khi đó mới tải đủ toàn bộ).
   const layGiaTriSort = (v, cot) => {
     if (cot === "maVu") return hienThiMa(v) || "";
     if (cot === "ngayKtva") return v.ngayQdKtva?.toMillis?.() ?? 0;
@@ -4781,19 +4930,36 @@ function DanhSachPanel({ selectedId, onSelect }) {
                 {!cotAn.has("biCan") && (
                   <td className="px-3 py-2 align-top text-xs w-28 max-w-[7rem]">
                     {(() => {
-                      const dsBiCan = biCanTheoVu[v.id] || [];
-                      if (dsBiCan.length === 0) return <span className="text-slate-300">—</span>;
+                      const soBiCan = v.soBiCan ?? 0;
+                      if (soBiCan === 0) return <span className="text-slate-300">—</span>;
                       const daMoRong = moRongBiCan.has(v.id);
-                      const hienThi = daMoRong ? dsBiCan : dsBiCan.slice(0, 1);
+                      if (!daMoRong) {
+                        return (
+                          <div>
+                            <div className="text-slate-700 break-words">{v.biCanDaiDien}</div>
+                            {soBiCan > 1 && (
+                              <button onClick={e => { e.stopPropagation(); moRongBiCanClick(v.id); }}
+                                      className="text-indigo-600 hover:text-indigo-700 font-medium mt-0.5 whitespace-nowrap">
+                                {`+${soBiCan - 1} bị can khác`}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      }
+                      // Mở rộng: tải đủ tên từng bị can theo yêu cầu (xem moRongBiCanClick) — chỉ
+                      // đúng lúc người dùng thật sự cần xem hết, không tải sẵn cho mọi dòng.
+                      const chiTiet = biCanChiTietTheoVu[v.id];
                       return (
                         <div>
-                          {hienThi.map(bc => <div key={bc.id} className="text-slate-700 break-words">{bc.hoTen}</div>)}
-                          {dsBiCan.length > 1 && (
-                            <button onClick={e => { e.stopPropagation(); toggleMoRongBiCan(v.id); }}
-                                    className="text-indigo-600 hover:text-indigo-700 font-medium mt-0.5 whitespace-nowrap">
-                              {daMoRong ? "Thu gọn" : `+${dsBiCan.length - 1} bị can khác`}
-                            </button>
+                          {!chiTiet ? (
+                            <div className="text-slate-400">Đang tải...</div>
+                          ) : (
+                            chiTiet.map(bc => <div key={bc.id} className="text-slate-700 break-words">{bc.hoTen}</div>)
                           )}
+                          <button onClick={e => { e.stopPropagation(); moRongBiCanClick(v.id); }}
+                                  className="text-indigo-600 hover:text-indigo-700 font-medium mt-0.5 whitespace-nowrap">
+                            Thu gọn
+                          </button>
                         </div>
                       );
                     })()}
@@ -4857,11 +5023,12 @@ function DanhSachPanel({ selectedId, onSelect }) {
         <span>
           {sorted.length} / {nguonDanhSach.length} vụ án
           {dangTaiTimDayDu && " — đang tải toàn bộ dữ liệu để tìm kiếm..."}
+          {dangTaiTimBiCan && " — đang tìm theo tên bị can..."}
         </span>
         {vuotGioiHan && !dsTimKiemDayDu && (
-          <button onClick={() => setGioiHanTatCa(n => n + 500)}
-                  className="text-indigo-600 hover:text-indigo-700 font-medium whitespace-nowrap">
-            Mới nhất {gioiHanTatCa} vụ — Tải thêm 500
+          <button onClick={taiThemVuAn} disabled={dangTaiThem}
+                  className="text-indigo-600 hover:text-indigo-700 font-medium whitespace-nowrap disabled:opacity-50">
+            {dangTaiThem ? "Đang tải..." : `Đã tải ${nguonDanhSach.length} vụ — Tải thêm ${TRANG_KICH_THUOC}`}
           </button>
         )}
       </div>

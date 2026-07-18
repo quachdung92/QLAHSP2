@@ -2,6 +2,57 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tối ưu Firestore Đợt 3: cache tóm tắt bị can lên vụ án + cursor pagination thật (2026-07-18)
+
+Đối chiếu 1 tài liệu hướng dẫn tối ưu chi phí Firestore của Dũng (offline persistence, denormalize,
+tránh offset khi phân trang, debounce ghi liên tục, Firestore Bundles) với code thật — xác nhận 3/5
+điểm đã làm hoặc không áp dụng được (persistence đã bật; không có ghi nào theo từng phím gõ để cần
+debounce; Bundles đụng triết lý "không build step" nên bỏ), còn lại 2 điểm làm trong đợt này.
+
+**Cache `soBiCan`/`biCanDaiDien` lên `vuan`** — cột "Bị can" ở Danh sách vụ án trước đây phải join
+sang collection `bican` qua 1 listener LUÔN BẬT cho mọi dòng đang hiển thị (`biCanAll`, chia lô 30
+id). Phát hiện quan trọng lúc đào sâu: listener đó không chỉ để hiển thị — ô tìm kiếm tự do CŨNG
+dùng chính dữ liệu đó để tìm theo tên bị can, nên chỉ thêm field mà giữ nguyên listener sẽ KHÔNG
+giảm đọc thật. Đã làm đầy đủ (theo yêu cầu Dũng): helper `tomTatBiCan(biCanList)` (đại diện = phần
+tử ĐẦU mảng cuối cùng tại thời điểm ghi — không có quy ước sắp xếp sẵn nào để noi theo) gắn vào
+ĐÚNG 1 object `batch.set`/`batch.update` đã có sẵn ở cả 6 nơi tạo/sửa/xoá/di chuyển bị can
+(`ImportExcelModule`, `ThemVuAnForm`, `ThemBiCanForm`, `SuaBiCanForm`, `tachVuAn`, `NhapVuModal`) —
+không thêm read/write nào. `BackfillTomTatBiCanTool` (Cài đặt → Import Excel, cạnh
+`BackfillLoaiKhoiToTool`) điền cho dữ liệu cũ, idempotent.
+`DanhSachPanel` bỏ hẳn listener `bican` luôn bật — cột mặc định đọc thẳng `v.soBiCan`/
+`v.biCanDaiDien` (0 đọc thêm); "mở rộng xem hết bị can" tải 1 lần theo yêu cầu đúng lúc bấm (cache
+phiên theo id vụ); tìm theo tên bị can debounce 350ms rồi tải 1 lần cho các vụ đang hiển thị CHƯA
+có trong cache (không còn `onSnapshot`) — trong lúc chờ, vẫn khớp ngay theo `biCanDaiDien` để không
+có cảm giác "0 kết quả".
+
+**Cursor pagination thật cho tab "Tất cả"** — nút "Tải thêm 500" trước đây chỉ tăng `.limit()` rồi
+mở lại `onSnapshot` từ đầu, khiến Firestore tính lại lượt đọc cho TOÀN BỘ số dòng đã đọc trước đó
+mỗi lần bấm. Thiết kế mới: trang đầu (`dsCoBan`) vẫn LIVE y hệt trước, CHỈ khi chưa bấm "Tải thêm"
+lần nào; bấm lần đầu sẽ huỷ subscribe live đó (đóng băng trang đầu — chấp nhận tab "Tất cả" hết
+live từ lúc đó, đúng tinh thần "chấp nhận cũ, tự mới khi remount" đã dùng cho Đang giải quyết/cache
+lạnh), rồi mọi trang sau tải 1 lần bằng `.startAfter(cursor)` — CHỈ đọc đúng phần MỚI. Cần tie-break
+`orderBy(FieldPath.documentId())` cạnh `orderBy("ngayTao")` vì nhiều vụ import cùng lúc chia sẻ
+ĐÚNG 1 giá trị `ngayTao` (tính 1 lần ngoài vòng lặp) — không có tie-break sẽ bỏ sót/trùng dòng đúng
+tại ranh giới các nhóm đó.
+**Bug tự phát hiện + tự sửa lúc test (không phải giả thuyết suông)**: callback `onSnapshot` của
+trang đầu có thể "bắn muộn" (Firestore bắn lại cache-rồi-server hoặc 1 thay đổi thật) ĐÚNG lúc
+React chưa kịp dọn effect live sau khi bấm "Tải thêm" — nếu không chặn, sẽ ghi đè `cursorRef` về
+lại ranh giới trang 1. Sửa bằng 1 `useRef` cờ (`dangPhanTrangRef`) đặt `true` NGAY LÚC BẤM (đồng bộ,
+không chờ re-render) để callback live tự bỏ qua nếu cờ đã bật.
+
+**Đã kiểm chứng bằng Playwright thật, đăng nhập thật vào `qlva-dev.html` (project `qlahs-test`,
+tài khoản `admintest@local.com`, 1386 vụ án thật)** — không phải mock: chạy `BackfillTomTatBiCanTool`
+thật (cập nhật đúng 1386 vụ, 0 lỗi); cột "Bị can" hiện đúng tên đại diện/số lượng ngay từ `vuan`;
+bấm "Tải thêm" liên tiếp tải đúng 500 → 1000 → 1386 (đúng tổng thật), xác nhận **0 ID trùng** qua
+toàn bộ 1386 dòng; mở rộng 1 vụ 14 bị can hiện đúng đủ 14 tên; tìm theo tên bị can ("Thông") lọc
+đúng còn 1 kết quả khớp; 0 lỗi console xuyên suốt. Cũng test cô lập bằng mock Node (trích nguyên
+văn `tomTatBiCan` từ chính `qlva.html`, mock Firestore mô phỏng đúng ngữ nghĩa `orderBy`/
+`startAfter`/tie-break) — xác nhận không trùng/sót dòng kể cả khi có nhóm doc chia sẻ đúng 1 giá
+trị `ngayTao` (mô phỏng import hàng loạt).
+**Ngoài phạm vi**: `toiDanhChinh` (tội danh chính, dùng trong thống kê `KyBaoCaoModule` qua
+`_biCanCache`/`layBiCanInfo`/`batchLayBiCanList`) KHÔNG được denormalize trong đợt này — chỉ đúng
+phạm vi đã bàn với Dũng (cột "Bị can" ở Danh sách vụ án), không mở rộng sang thống kê báo cáo.
+
 ## Tối ưu Firestore ĐÃ LÊN PRODUCTION (2026-07-18)
 
 Toàn bộ kế hoạch tối ưu Firestore (Đợt 1 gộp listener, Đợt 2 Thùng rác + cache lạnh IndexedDB, hot
