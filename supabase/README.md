@@ -1,8 +1,8 @@
 # `supabase/` — schema Postgres cho QLVA (nhánh `supabase-migration`)
 
-Xem `SUPABASE_MIGRATION.md` ở gốc repo để biết bối cảnh/lộ trình đầy đủ. Thư mục này chỉ chứa
-DDL/RLS/RPC — **chưa từng được áp dụng lên Supabase thật**, vì chưa có project/env (đang ở Phase
-0/1, chờ Dũng cấp thông tin kết nối).
+Xem `SUPABASE_MIGRATION.md` ở gốc repo để biết bối cảnh/lộ trình đầy đủ. **ĐÃ áp dụng thành công
+lên Supabase thật** (project `eutatszoaseixchvjbtg`, xem `SUPABASE_MIGRATION.md` mục 4c) — không
+còn ở trạng thái "chỉ là bản nháp chờ env" nữa.
 
 ## Nội dung
 
@@ -16,39 +16,41 @@ DDL/RLS/RPC — **chưa từng được áp dụng lên Supabase thật**, vì c
   sinh mã hàng loạt, sinh mã vụ tách, tính lại điều luật/loại khởi tố). Các hàm này sẽ được gọi
   thẳng qua `.rpc(...)` từ JS, KHÔNG đi qua lớp shim giả lập Firestore API.
 
-## Thứ tự áp dụng khi có env (Phase 1)
+## Kết nối Supabase project hiện có (ref `eutatszoaseixchvjbtg`)
 
-```sql
--- Trong Supabase SQL Editor, hoặc qua psql với connection string:
-\i schema.sql
-\i rls.sql
-\i functions.sql
+**Kết nối trực tiếp (`db.eutatszoaseixchvjbtg.supabase.co`) KHÔNG dùng được** từ môi trường thực
+thi lệnh hiện tại — host đó chỉ có bản ghi DNS IPv6 (AAAA), không có IPv4, và môi trường này không
+có route IPv6 ra ngoài (`ENETUNREACH` khi thử thẳng). Luôn dùng **Session pooler** cho mọi việc
+quản trị/import dữ liệu (KHÔNG dùng Transaction pooler — pooler đó tối ưu cho query ngắn hạn của
+ứng dụng runtime, không hợp cho script chạy nhiều câu lệnh/hàm `plpgsql`):
+
+```
+host: aws-0-ap-southeast-1.pooler.supabase.com
+port: 5432
+user: postgres.eutatszoaseixchvjbtg
+database: postgres
 ```
 
-`schema.sql` phải chạy trước (tạo bảng) → `rls.sql` (cần bảng đã tồn tại) → `functions.sql` (cần
-bảng `boDemMaVu`/`vuan`/`bican` đã tồn tại).
+Mật khẩu DB **không được ghi vào file nào trong repo** — chỉ truyền qua biến môi trường lúc chạy
+script tạm trong thư mục scratchpad (ngoài git), hỏi lại Dũng nếu phiên sau cần dùng lại.
 
-## Đã kiểm chứng đến đâu
+## Đã kiểm chứng (2026-07-19 — đầy đủ, không còn khoảng trống)
 
-**Đã làm**: cả 3 file đã parse-check sạch bằng `libpg-query` (Node binding của ĐÚNG bộ phân tích
-cú pháp Postgres thật, chạy qua WASM, không phải regex/đoán) — xác nhận cấu trúc SQL bên ngoài
-(`CREATE TABLE`, `CREATE INDEX`, `DO $$...$$`, `CREATE FUNCTION` wrapper, `GRANT`/`REVOKE`) hợp lệ
-cú pháp. **Chưa làm**: phần THÂN của 4 hàm `plpgsql` trong `functions.sql` (đoạn trong dấu
-`$$...$$`) chỉ được bộ parser trên coi là 1 chuỗi mờ (không phân tích sâu vào bên trong) — nghĩa
-là logic bên trong (vòng lặp, `array_fill`, `unnest`, `string_agg`, gán biến...) mới chỉ được soát
-tay, CHƯA được trình biên dịch `plpgsql` thật xác nhận. Cũng chưa test NGỮ NGHĨA (constraint có
-đúng ý, index có được dùng, RLS có chặn đúng) — tất cả cần Postgres thật.
+1. **Cú pháp**: parse-check sạch qua `libpg-query` (bộ phân tích cú pháp Postgres thật).
+2. **Áp dụng thật**: cả 3 file chạy thành công lên project Supabase thật qua Session pooler, không
+   sửa gì — 8 bảng + 7 RLS policy + 4 hàm RPC đều tạo đúng, xác nhận `CREATE FUNCTION` biên dịch
+   sạch phần thân `plpgsql` (khoảng trống lớn nhất trước đó, giờ đã hết).
+3. **Chức năng RPC** (14 assertion, dữ liệu test tự tạo rồi dọn sạch): `sinhMaVuAnMoi`,
+   `sinhNhieuMaVuAn` (gộp đúng theo nhóm YYMM), `tachVuSinhMa`, `capNhatDieuLuatVaLoaiKhoiTo` (tính
+   đúng `loaiKhoiTo`/`dieuLuat`/cache `soBiCan`+`biCanDaiDien`) — đều PASS.
+4. **RLS qua REST API thật** (không phải qua kết nối Postgres trực tiếp — kết nối đó chạy role
+   `postgres` superuser nên KHÔNG bị RLS chặn): `POST /rest/v1/vuan` bằng `anon key` bị chặn đúng
+   (`HTTP 401`, `42501 - new row violates row-level security policy`).
+5. `pgcrypto` có sẵn trên project (không cần cài thêm — `create extension if not exists pgcrypto`
+   trong `schema.sql` chạy không lỗi).
 
-## Việc cần làm ngay khi có project Supabase thật
+## Việc còn lại (Phase 2 trở đi, xem `SUPABASE_MIGRATION.md`)
 
-1. Áp dụng cả 3 file lên project `qlahs-test`-tương-đương trước (KHÔNG áp dụng lên project ứng
-   với `qlahsp2` cho tới khi đã kiểm chứng kỹ trên test).
-2. Xác nhận `CREATE FUNCTION` không lỗi khi Postgres thật biên dịch phần thân `plpgsql` (bước này
-   parse-check ở trên KHÔNG bao phủ, xem "Đã kiểm chứng đến đâu").
-3. Test thử 4 hàm RPC bằng dữ liệu giả (VD gọi `sinhMaVuAnMoi('2601')` 2 lần liên tiếp, xác nhận
-   ra đúng `..._0001` rồi `..._0002`; gọi `capNhatDieuLuatVaLoaiKhoiTo` sau khi insert vài dòng
-   `bican` giả, xác nhận `vuan.dieuLuat`/`bican.loaiKhoiTo` tính đúng).
-4. Xác nhận RLS hoạt động đúng: request không có JWT (`anon`) bị chặn hoàn toàn; request có JWT
-   hợp lệ đọc/ghi được mọi bảng.
-5. Rà lại xem Supabase project mặc định có sẵn `pgcrypto` chưa (thường có sẵn, nhưng xác nhận lại
-   thay vì giả định).
+Không còn việc gì ở tầng schema/RLS/RPC cần làm thêm trước khi bắt đầu viết lớp shim. Việc tiếp
+theo là ở tầng ứng dụng (`qlahs-sup.html`) — xem `SUPABASE_MIGRATION.md` mục 8 "Trạng thái hiện
+tại" để biết thứ tự việc cần làm.

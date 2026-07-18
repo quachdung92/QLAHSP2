@@ -165,62 +165,168 @@ Qua audit field-level, phát hiện vài điểm KHÔNG khớp giữa tài liệ
   `new Date()` (client time), riêng sự kiện `sua_thong_tin` ghi `serverTimestamp()`/ISO string —
   script transform chuẩn hoá về `timestamptz` đồng nhất, không mang sự khác biệt kiểu này sang.
 
-## 5. Cơ hội đơn giản hoá (cân nhắc ở Phase 2, KHÔNG bắt buộc)
+### 4c. Đã áp dụng lên Supabase THẬT + kiểm chứng chức năng (2026-07-19)
 
-Nhiều cơ chế phức tạp hiện có trong `qlva.html` (sentinel `meta/vuAnMoiNhat`, cache-registry dùng
-chung với grace-period 3 phút, cursor pagination thủ công né tránh đọc lại...) tồn tại **chỉ vì**
-Firestore tính phí theo từng lượt đọc/listener. Supabase không có động cơ chi phí tương tự để né
-tránh subscribe trực tiếp. Khi vào Phase 2, cân nhắc nghiêm túc việc bỏ bớt các lớp né-chi-phí này
-và subscribe thẳng qua Supabase Realtime — đúng tinh thần "đổi hạ tầng để giảm độ phức tạp", không
-phải "giữ nguyên mọi lớp vá cũ trên nền mới". Đây KHÔNG phải việc bắt buộc của migration, chỉ là cơ
-hội nên đánh giá khi đã có shim chạy ổn định.
+Project Supabase thật đã được Dũng tạo: ref `eutatszoaseixchvjbtg` (URL
+`https://eutatszoaseixchvjbtg.supabase.co`). **Quyết định phạm vi**: đây là project DUY NHẤT dùng
+làm môi trường chính (không tách riêng test/prod ở bước này) — sẽ nạp dữ liệu mock kéo từ project
+Firestore thật, và **reset lại khi hoàn thiện** trước khi thật sự lên production. Khác nhẹ so với
+lộ trình gốc ở mục 7 (dự tính 2 project ngay từ Phase 1) — điều chỉnh vì đơn giản hoá thao tác cho
+Dũng, không ảnh hưởng tới thiết kế schema.
 
-## 6. Kế hoạch export/import dữ liệu thật (cả 2 project: `qlahs-test` và `qlahsp2`)
+**Vấn đề hạ tầng phát hiện khi kết nối**: host kết nối trực tiếp
+(`db.eutatszoaseixchvjbtg.supabase.co`) chỉ có bản ghi DNS AAAA (IPv6), không có A (IPv4) — hành vi
+mặc định mới của Supabase (gói IPv4 riêng phải trả thêm). Môi trường thực thi lệnh không có route
+IPv6 ra ngoài (`ENETUNREACH` khi thử kết nối thẳng IPv6, dù DNS AAAA vẫn phân giải được — 2 việc
+khác nhau). **Giải pháp**: dùng **Session pooler** (`aws-0-ap-southeast-1.pooler.supabase.com:5432`,
+username `postgres.eutatszoaseixchvjbtg` — khác hẳn Direct connection cả về host lẫn username) —
+tương thích IPv4, và đúng loại pooler cần cho việc chạy script quản trị nhiều câu lệnh/hàm
+`plpgsql` (Transaction pooler tối ưu cho query ngắn hạn của ứng dụng runtime, KHÔNG hợp cho việc
+này). **Lưu ý cho phiên sau**: khi cần chạy thêm script quản trị/import dữ liệu (Phase 4), dùng lại
+đúng chuỗi Session pooler này, đừng thử Direct connection lại (sẽ lặp lại đúng lỗi IPv6 này).
+
+**Đã áp dụng thành công cả 3 file** (`schema.sql` → `rls.sql` → `functions.sql`, qua script Node
+dùng `pg`, chạy 1 lần không sửa gì) — xác nhận: 8 bảng đúng tên (7 nghiệp vụ + `boDemMaVu`), 7 RLS
+policy đúng 1/bảng nghiệp vụ (không có ở `boDemMaVu`, đúng thiết kế), 4 hàm RPC tồn tại và BIÊN
+DỊCH ĐÚNG (giải quyết dứt điểm phần "chưa kiểm chứng" ghi ở `supabase/README.md` — trước đó chỉ
+parse-check cú pháp ngoài, chưa biết phần thân `plpgsql` có lỗi runtime/biên dịch không).
+
+**Đã kiểm thử CHỨC NĂNG thật (14 assertion, dữ liệu tự tạo rồi dọn sạch ngay sau)**:
+- `sinhMaVuAnMoi('9901')` gọi 2 lần liên tiếp → đúng `..._0001` rồi `..._0002`.
+- `sinhNhieuMaVuAn(['9902','9902','9903','9902','9903'])` → đúng gộp riêng từng nhóm YYMM, số thứ
+  tự liên tục trong CÙNG nhóm bất kể xen kẽ vị trí (`9902` ra `0001/0002/0003`, `9903` ra
+  `0001/0002`) — xác nhận logic nhóm theo tháng hoạt động đúng như file gốc Firestore.
+- `tachVuSinhMa` gọi 2 lần trên cùng 1 vụ giả → đúng hậu tố `_1` rồi `_2`.
+- `capNhatDieuLuatVaLoaiKhoiTo` với 2 bị can giả (1 người khởi tố sớm hơn, tội danh khác nhau) →
+  đúng gán `ban_dau`/`bo_sung` theo ngày khởi tố sớm nhất, `vuan.dieuLuat` gộp đúng cả 2 tội danh
+  (nối `"; "`), cache `soBiCan`/`biCanDaiDien` cập nhật đúng.
+
+**Đã kiểm chứng RLS qua ĐÚNG cổng ứng dụng thật sẽ dùng** (REST API/PostgREST bằng `curl` +
+`anon key`, KHÔNG phải qua kết nối Postgres trực tiếp — kết nối đó chạy role `postgres` (superuser)
+nên KHÔNG bị RLS chặn, test qua đó sẽ cho kết quả giả-đúng): `GET /rest/v1/vuan` bằng anon key trả
+`200` (bảng đang trống); `POST /rest/v1/vuan` (thử ghi) bằng anon key bị chặn rõ ràng — `HTTP 401`,
+lỗi Postgres `42501 "new row violates row-level security policy for table vuan"` — đúng ngữ nghĩa
+"chưa đăng nhập (role anon, chưa phải authenticated) thì không ghi được", khớp hành vi
+`request.auth != null` của Firestore rules cũ.
+
+**Về credential**: mật khẩu DB (Session pooler) chỉ dùng tạm trong script test/áp dụng schema ở
+thư mục scratchpad (ngoài repo), KHÔNG được ghi vào bất kỳ file nào trong git. `anon key` (đã nhận
+từ Dũng) là loại key công khai-an-toàn theo thiết kế của Supabase (được RLS bảo vệ, giống hệt vai
+trò `apiKey` của Firebase đã nhúng thẳng trong `qlva.html` từ trước) — sẽ nhúng vào `qlahs-sup.html`
+khi viết lớp shim ở Phase 2, không cần giữ bí mật ở mức độ như mật khẩu DB.
+
+## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
+
+**Theo yêu cầu rõ ràng của Dũng** (2026-07-19): đây không còn là gợi ý tuỳ chọn — Phase 2 phải
+CHỦ ĐỘNG rà từng cơ chế dưới đây, quyết định giữ/bỏ/đơn giản hoá cho ĐÚNG với mô hình Supabase, chứ
+không lặp lại y nguyên các "tinh chỉnh" vốn sinh ra chỉ để né chi phí đọc/listener của Firestore.
+Toàn bộ danh sách dưới đây lấy từ lịch sử thật đã ghi trong `CLAUDE.md` (các mục "Tối ưu
+Firestore..."), không suy đoán. Với MỖI mục, việc cần làm ở Phase 2 là: đọc lại code hiện tại,
+quyết định 1 trong 3 hướng (**bỏ hẳn** quay về cách đơn giản/trực tiếp nhất; **giữ nguyên** nếu vẫn
+có lý do chính đáng KHÁC ngoài chi phí Firestore, VD trải nghiệm người dùng; **đơn giản hoá** giữ
+lại lợi ích cốt lõi nhưng bỏ phần phức tạp thừa) — rồi TEST LẠI đúng kịch bản Playwright tương ứng
+đã có sẵn cho từng tính năng đó trước khi coi là xong.
+
+- [ ] **`firestoreCacheRegistry`/`useFirestoreCollectionCache`** (listener dùng chung, ref-count +
+      grace-period 3 phút cho `danhMucToiDanh`/`canbo`/`kybaocao`) — dựng ra CHỈ để gộp nhiều
+      component thành 1 listener Firestore duy nhất, né phí nhân theo số component subscribe cùng
+      lúc. Supabase Realtime KHÔNG tính phí theo kiểu này — đánh giá bỏ hẳn lớp registry, mỗi
+      component tự subscribe thẳng qua shim, đơn giản hoá code đáng kể.
+- [ ] **Sentinel `meta/vuAnMoiNhat`** + `dsDangGiaiQuyetRegistry`/`useDanhSachDangGiaiQuyet` (danh
+      sách "đang giải quyết" KHÔNG live, chỉ tự làm mới qua tín hiệu sentinel bé xíu) — dựng ra để
+      né 1 listener sống trên cả trăm vụ án. Đánh giá bỏ sentinel, subscribe Realtime thẳng trên
+      bảng `"vuan"` lọc `trangThai='dang_giai_quyet'` — quay lại đúng UX "live thật" ban đầu mà
+      Firestore không cho phép làm rẻ.
+- [ ] **Cache lạnh IndexedDB cho "Án đã giải quyết"** (`dongBoColdCacheVuAnDaGiaiQuyet`, đồng bộ
+      delta qua `ngayCapNhat > lastSync`, không dùng `onSnapshot`) — cân nhắc RIÊNG với 2 mục trên:
+      lợi ích "cache bền qua lần tải trang" của IndexedDB vẫn có giá trị dưới Supabase (giảm round-
+      trip mạng, không liên quan gì tới tiền), có thể GIỮ nhưng đơn giản hoá phần đồng bộ delta thủ
+      công bằng Realtime subscription thật nếu muốn.
+- [ ] **Cursor pagination "đóng băng trang đầu sau khi bấm Tải thêm"** (tab "Tất cả" của Danh sách
+      vụ án — chủ động BỎ live update sau lần phân trang đầu, đổi lấy việc không phải đọc lại từ
+      đầu) — đây là đánh đổi UX THẬT (mất tính năng) chỉ để né phí, không phải kỹ thuật phân trang
+      hiệu quả (kỹ thuật cursor/keyset pagination bản thân nó vẫn nên giữ, chỉ riêng phần "bỏ live"
+      là do chi phí). Đánh giá khôi phục live qua Realtime, giữ nguyên cách phân trang.
+- [ ] **`fetchWithTtlCache`** (TTL cache 1 lần cho `NhapVuModal` tìm vụ đích) — tương tự cache lạnh
+      ở trên, giữ được nếu có lý do UX riêng (tránh đọc lại khi mở/đóng modal nhanh), không bắt
+      buộc bỏ.
+- [ ] **Loạt quyết định "hot data không cần live" khác** (`BangBiCanCon`, `BangExcelModule`, cột Kỳ
+      của `DanhSachPanel`... đổi từ `onSnapshot` sang `.get()` một lần, chấp nhận dữ liệu cũ tới
+      khi remount) — rà lại TỪNG cái, hỏi "đây có phải công cụ 1-người-thao-tác-tại-1-thời-điểm
+      hay màn hình nhiều người cùng xem" — nếu là loại sau, cân nhắc khôi phục live vì Supabase
+      không phạt việc đó về chi phí như Firestore.
+- [ ] **Kỹ thuật né composite index thủ công** (VD sort phía client thay vì `orderBy` + index cho
+      `phienGiaoNhan`/`lichsuChuyenGiaiDoan`, tránh phải deploy index Firestore mới) — Postgres tạo
+      index rẻ, không cần bước "deploy" riêng như Firestore — cân nhắc bỏ hẳn workaround, dùng
+      thẳng `ORDER BY` + index Postgres đã có sẵn trong `schema.sql`.
+
+**KHÔNG nằm trong checklist này** (giữ nguyên, không phải "tinh chỉnh vì chi phí"):
+`db.enablePersistence` (offline persistence) — đây là tính năng THẬT (chống mất mạng tạm thời),
+không phải né chi phí, xử lý riêng ở Phase 5 (mục 7) như đã ghi; giới hạn 30-item của `where(...,
+"in", ...)` và batch 400-item — đây là RÀNG BUỘC KỸ THUẬT của Firestore tự biến mất khi qua
+Postgres (đã ghi ở mục 3), không phải quyết định thiết kế cần "rà lại", chỉ cần xoá code chia lô
+tương ứng trong lớp shim.
+
+## 6. Kế hoạch export/import dữ liệu thật
+
+**Cập nhật phạm vi (xem mục 4c)**: hiện chỉ có 1 project Supabase (`eutatszoaseixchvjbtg`), dự định
+nạp dữ liệu MOCK kéo từ Firestore `qlahs-test` trước (không phải dữ liệu thật `qlahsp2`) để phát
+triển/kiểm thử shim, rồi **reset lại** project này trước khi thật sự cần dữ liệu production —
+nghĩa là bước import "dữ liệu thật `qlahsp2`" chỉ thực hiện 1 LẦN DUY NHẤT, ngay trước khi cắt hẳn
+sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự tính ban đầu.
 
 1. **Export**: script đọc toàn bộ 7 collection nghiệp vụ (không cần export `boDemMaVu`/`meta`) →
-   dump JSON, 1 file/collection. Làm trên `qlahs-test` trước.
+   dump JSON, 1 file/collection. Làm trên `qlahs-test` trước (làm mock data cho project Supabase
+   hiện có).
 2. **Transform**: chuẩn hoá kiểu dữ liệu (Timestamp → ISO string cho `timestamptz`), cộng các phép
    chuyển đổi cụ thể phát hiện ở mục 4b (gộp `blhsNam`→`namBLHS`, loại bỏ 4 giá trị `loaiSuKien`
    dead nếu gặp, không cần tách mảng `toiDanh`/`dieuLuatBC` vì schema giữ nguyên dạng cột mảng).
-3. **Import**: dùng kết nối Postgres trực tiếp Supabase cấp (nhanh hơn nhiều so với qua REST cho
-   khối lượng ~1400 vụ + ~2250 bị can + hàng nghìn dòng log) — `psql`/COPY hoặc script Node dùng
-   driver `pg`.
+3. **Import**: dùng **Session pooler** (đã xác nhận hoạt động ở mục 4c — Direct connection KHÔNG
+   dùng được từ môi trường thực thi hiện tại do chỉ hỗ trợ IPv6) — `psql`/COPY hoặc script Node
+   dùng driver `pg`, nhanh hơn nhiều so với qua REST cho khối lượng ~1400 vụ + ~2250 bị can + hàng
+   nghìn dòng log.
 4. **Đối chiếu**: so số dòng theo từng bảng, VÀ chạy lại các phép kiểm tra nghiệp vụ đã có (VD
    tổng số liệu Biểu B10 của 1 kỳ đã chốt phải khớp giữa Firestore cũ và Postgres mới).
-5. **Thứ tự bắt buộc**: `qlahs-test` xong xuôi + kiểm chứng kỹ → mới làm `qlahsp2` — đúng văn hoá
-   "test trước, prod sau" đã áp dụng nhất quán trong toàn bộ dự án này.
+5. **Reset trước khi lên thật**: trước khi import dữ liệu `qlahsp2` thật ở Phase 6, xoá sạch dữ
+   liệu mock đã nạp ở bước trên (giữ nguyên schema/RLS/RPC, chỉ xoá rows) — đúng ý định "reset lại
+   khi hoàn thiện" Dũng đã nêu.
 
 ## 7. Lộ trình theo giai đoạn
 
 - [x] **Phase 0**: tạo nhánh `supabase-migration`, viết tài liệu kế hoạch này. Chưa đụng code ứng
       dụng.
-- [~] **Phase 1** (đang làm — phần schema đã xong, còn chờ env): đã viết đầy đủ
-      `supabase/schema.sql` + `rls.sql` + `functions.sql` (7 bảng + `boDemMaVu`, RLS, 4 hàm RPC),
-      dựa trên khảo sát field-level thật từ code (không suy đoán) — xem mục 4/4b. Đã parse-check
-      cú pháp qua `libpg-query` (bộ phân tích cú pháp Postgres thật) — sạch, nhưng **CHƯA áp dụng
-      lên Supabase thật, CHƯA kiểm chứng bằng Postgres thật** (phần thân 4 hàm RPC chưa được
-      trình biên dịch plpgsql xác nhận) — cần Dũng tạo 2 project Supabase thật (1 ứng với
-      `qlahs-test`, 1 ứng với `qlahsp2`) rồi cấp connection string/API key mới áp dụng và test
-      được (xem `supabase/README.md` mục "Chưa kiểm chứng").
-- [ ] **Phase 2**: viết lớp shim (mục 3), phát triển trên **`qlahs-sup.html`** (đã tạo — copy
-      nguyên văn từ `qlva.html`, đổi Firebase config trỏ sang project TEST `qlahs-test` thay vì
-      production để tránh đụng dữ liệu thật trong lúc còn dùng Firebase song song, có nhãn
-      `[SUP-TEST]` ở `<title>` để không nhầm với `qlva.html`/`qlva-dev.html` khi mở nhiều tab —
-      xem comment đầu file). File này KHÔNG deploy, chỉ dùng cục bộ để phát triển/kiểm chứng shim
-      độc lập, không đụng 2 file đang chạy thật. Đánh giá cơ hội đơn giản hoá ở mục 5.
+- [x] **Phase 1**: `supabase/schema.sql` + `rls.sql` + `functions.sql` đã viết, ÁP DỤNG THÀNH CÔNG
+      lên project Supabase thật (`eutatszoaseixchvjbtg`) và KIỂM CHỨNG chức năng đầy đủ (14
+      assertion RPC + RLS xác nhận qua REST API thật) — xem mục 4c. Không còn việc "chưa kiểm
+      chứng" nào ở bước schema nữa.
+- [ ] **Phase 2** (tiếp theo): viết lớp shim (mục 3), phát triển trên **`qlahs-sup.html`** (đã tạo
+      — copy từ `qlva.html`, Firebase config trỏ sang project TEST `qlahs-test` để an toàn trong
+      lúc còn dùng Firebase song song, nhãn `[SUP-TEST]` ở `<title>`). File này KHÔNG deploy, chỉ
+      dùng cục bộ để phát triển/kiểm chứng shim độc lập. **Bắt buộc chạy qua checklist mục 5**
+      trước khi coi Phase 2 xong — không mang nguyên xi các cơ chế né-chi-phí-Firestore sang, phải
+      quyết định rõ giữ/bỏ/đơn giản hoá từng mục kèm test lại.
 - [ ] **Phase 3**: chuyển Auth sang Supabase Auth — tài khoản Firebase Auth hiện có phải tạo lại
       thủ công trên Supabase (không tự động chuyển mật khẩu giữa 2 hệ thống được).
-- [ ] **Phase 4**: export/import dữ liệu thật theo mục 6, `qlahs-test` trước.
-- [ ] **Phase 5**: kiểm thử toàn diện trên project test (đủ bộ Playwright hồi quy hiện có + kịch
-      bản mới cho Realtime/RPC), quyết định hướng xử lý khoảng trống offline persistence.
-- [ ] **Phase 6**: export/import `qlahsp2` (dry-run trước, đối chiếu số liệu kỹ), cắt sang
-      production. Giữ Firestore ở chế độ đọc-only 1 thời gian làm lưới an toàn trước khi ngừng hẳn.
+- [ ] **Phase 4**: export dữ liệu thật từ `qlahs-test` (Firestore) → import làm MOCK DATA vào
+      project Supabase hiện có (xem mục 6, đã cập nhật phạm vi — không phải "cả 2 project" như bản
+      gốc, chỉ 1 project cho tới khi lên thật).
+- [ ] **Phase 5**: kiểm thử toàn diện trên project Supabase hiện có (đủ bộ Playwright hồi quy hiện
+      có + kịch bản mới cho Realtime/RPC), quyết định hướng xử lý khoảng trống offline persistence.
+- [ ] **Phase 6**: **reset project Supabase** (xoá dữ liệu mock, giữ schema/RLS/RPC) → export/import
+      dữ liệu thật `qlahsp2`, đối chiếu số liệu kỹ, cắt sang production. Giữ Firestore ở chế độ
+      đọc-only 1 thời gian làm lưới an toàn trước khi ngừng hẳn.
 
 ## 8. Trạng thái hiện tại
 
-Đang ở **Phase 1** — schema/RLS/RPC đã viết xong (`supabase/*.sql`), commit trên nhánh
-`supabase-migration`. Chưa có project Supabase nào được tạo, chưa áp dụng/test file SQL nào bằng
-Postgres thật. **Việc cần làm tiếp theo**: Dũng tạo project Supabase (khuyến nghị tạo project ứng
-với `qlahs-test` trước), cấp URL + `anon key` (và lý tưởng là cả connection string Postgres trực
-tiếp, dùng cho import dữ liệu ở Phase 4) — phiên sau sẽ áp dụng 3 file SQL lên đó và kiểm chứng
-theo checklist ở `supabase/README.md`.
+Đang ở **đầu Phase 2**. Phase 1 đã xong hoàn toàn và kiểm chứng thật (không còn gì "chưa test" ở
+tầng schema/RLS/RPC — xem mục 4c). Đã có: project Supabase thật (`eutatszoaseixchvjbtg`) với schema
+đầy đủ; file thử nghiệm `qlahs-sup.html` sẵn sàng để bắt đầu viết shim.
+
+**Việc tiếp theo** (thứ tự khuyến nghị):
+1. Viết lớp shim (mục 3) trong `qlahs-sup.html`, nhúng `anon key` (đã có, xem mục 4c) + URL project
+   qua Supabase JS client (CDN).
+2. Chạy checklist mục 5 song song lúc viết shim (quyết định giữ/bỏ từng cơ chế né-chi-phí Firestore
+   — yêu cầu rõ của Dũng, KHÔNG bỏ qua bước này).
+3. Viết script export Firestore `qlahs-test` → import Supabase làm mock data (Phase 4), dùng lại
+   đúng Session pooler đã xác nhận hoạt động (mục 4c).
+4. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đó trước khi tính tới bước reset + dữ liệu thật.
