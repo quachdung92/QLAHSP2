@@ -93,25 +93,77 @@ hàm Postgres function (`plpgsql`) tương ứng, vì bản chất thực thi kh
 là nhiều round-trip từ client; Postgres function chạy atomic trong 1 lần gọi). Quy mô nhỏ (4 hàm),
 rủi ro thấp, làm riêng ở Phase 1-2.
 
-## 4. Thiết kế schema Postgres (bản nháp — chốt chi tiết ở Phase 1)
+## 4. Schema Postgres — ĐÃ VIẾT XONG (`supabase/schema.sql`, `rls.sql`, `functions.sql`)
 
-Nguyên tắc: giữ tên bảng/field tiếng Việt gần nhất có thể với Firestore hiện tại (giảm rủi ro dịch
-sai khi đối chiếu với `CLAUDE.md`/logic nghiệp vụ đã tài liệu hoá rất kỹ qua nhiều phiên).
+**Quyết định thiết kế đã chốt (khác vài chỗ so với bản nháp ban đầu ở đây, xem comment đầu
+`schema.sql` để biết đầy đủ lý do)**:
 
-| Bảng Postgres | Nguồn Firestore | Ghi chú |
+- **Tên bảng/cột giữ NGUYÊN camelCase, trùng khớp 1:1 tên collection/field Firestore** (VD bảng
+  `"vuan"`, cột `"tenVu"`, `"ngayQdKtva"` — identifier có quote kép), KHÔNG đổi sang snake_case
+  như bản nháp ban đầu dự tính (`lichsu_chuyen_giai_doan`, `ky_bao_cao`...). Lý do: lớp shim (mục
+  3) chỉ thật sự "gần như không cần sửa code ứng dụng" nếu PostgREST trả JSON với đúng tên field
+  cũ — đổi tên cột sẽ buộc shim phải có thêm 1 tầng map tên field, đúng thứ rủi ro chiến lược shim
+  muốn tránh.
+- `toiDanh`/`dieuLuatBC` (bican) và `vuanToiDanh`/`vuanDieuLuat` (vuan) **giữ dạng cột mảng
+  `text[]`**, không tách bảng con — đã quyết định dứt điểm (không còn "cân nhắc") sau khi rà lại
+  toàn bộ chỗ đọc/ghi: ứng dụng luôn thao tác như mảng đồng bộ theo index, tách bảng con chỉ thêm
+  JOIN+GROUP BY mà không phục vụ nhu cầu quan hệ nào thật sự đang có.
+- `boDemMaVu` **giữ 1 bảng riêng** (không thay bằng Postgres `sequence` như dự tính ban đầu) —
+  sequence phải tạo trước cho từng YYMM, không tiện tạo động an toàn qua RPC; bảng counter nhỏ +
+  UPSERT nguyên tử (`INSERT ... ON CONFLICT DO UPDATE RETURNING`) đơn giản/an toàn hơn. Bảng này
+  KHÔNG cấp quyền cho role `authenticated` — chỉ được đụng từ bên trong 4 hàm RPC (SECURITY
+  DEFINER), ứng dụng phía client không bao giờ gọi thẳng.
+- `meta/vuAnMoiNhat` **cố ý không có bảng tương ứng** — xem mục 5.
+
+Bảng tổng quan (đầy đủ ở `supabase/schema.sql`, đã đối chiếu TỪNG FIELD với write-site thật trong
+`qlva.html` qua 2 agent Explore, không suy đoán từ tài liệu `schema_csdl_...md` — file đó thừa
+nhận đã lỗi thời cho nhiều field thêm sau):
+
+| Bảng Postgres | Nguồn Firestore | PK |
 |---|---|---|
-| `vuan` | `vuan` | PK `id` TEXT = mã vụ án hiện tại (giữ nguyên business key, không đổi UUID). |
-| `bican` | `bican` | PK UUID tự sinh, FK `ma_vu_an → vuan.id`. Cân nhắc tách `toiDanh[]`/`dieuLuatBC[]` (2 mảng song song theo index) thành bảng con `bican_toi_danh(bican_id, thu_tu, ten_toi_danh, dieu_luat)` — quyết định cụ thể ở Phase 1 sau khi rà lại toàn bộ chỗ đọc/ghi 2 field này (`chuanHoaTenToiDanh`/`layMaDieuLuatBiCan`, xem CLAUDE.md audit "chưa xác định điều luật"). |
-| `lichsu_chuyen_giai_doan` | `lichsuChuyenGiaiDoan` | PK UUID, FK `ma_vu_an`. Append-only — cân nhắc RPC riêng cho "Sửa kỳ" thay vì UPDATE trực tiếp qua RLS, giữ tinh thần append-only chặt hơn hiện tại. |
-| `ky_bao_cao` | `kybaocao` | Map thẳng 1-1. |
-| `can_bo` | `canbo` | Map thẳng 1-1. |
-| `danh_muc_toi_danh` | `danhMucToiDanh` | Map thẳng 1-1. |
-| `phien_giao_nhan` | `phienGiaoNhan` | Map thẳng 1-1. |
-| *(không cần bảng riêng)* | `boDemMaVu` | Thay bằng Postgres `sequence` theo YYMM, hoặc 1 bảng counter tối giản + RPC atomic (`INSERT ... ON CONFLICT DO UPDATE RETURNING`). |
-| *(không cần bảng riêng)* | `meta/vuAnMoiNhat` | Xem mục 5 — cân nhắc bỏ hẳn cơ chế sentinel này. |
+| `"vuan"` | `vuan` | `id` TEXT = `maNoiSinh` (business key, không đổi UUID) |
+| `"bican"` | `bican` | `id` TEXT, default `gen_random_uuid()::text` |
+| `"lichsuChuyenGiaiDoan"` | `lichsuChuyenGiaiDoan` | `id` TEXT, default uuid |
+| `"kybaocao"` | `kybaocao` | `id` TEXT, default uuid |
+| `"canbo"` | `canbo` | `id` TEXT, default uuid |
+| `"danhMucToiDanh"` | `danhMucToiDanh` | `id` TEXT, default uuid |
+| `"phienGiaoNhan"` | `phienGiaoNhan` | `id` TEXT, default uuid |
+| `"boDemMaVu"` (nội bộ, không qua shim) | `boDemMaVu` | `yymm` TEXT |
 
-**RLS**: mirror đúng rule hiện tại — `USING (auth.role() = 'authenticated')` cho mọi bảng, không
-phân quyền field/row (giữ đúng mô hình bảo mật hiện tại, không mở rộng phạm vi).
+**Enum**: dùng CHECK constraint (`CHECK (col IN (...))`), KHÔNG dùng Postgres native ENUM type —
+enum nghiệp vụ ở đây đã đổi/thêm giá trị nhiều lần qua các phiên trước (xem mục 4b), native ENUM
+khó thêm giá trị an toàn hơn CHECK.
+
+**RLS** (`supabase/rls.sql`): mirror đúng rule hiện tại — 1 policy `USING (auth.role() =
+'authenticated')` cho mỗi bảng (trừ `boDemMaVu`, xem trên), không phân quyền field/row.
+
+**4 hàm RPC** (`supabase/functions.sql`, thay 4 `db.runTransaction`): `"sinhMaVuAnMoi"(yymm)`,
+`"sinhNhieuMaVuAn"(yymm[])`, `"tachVuSinhMa"(vuGocId)`, `"capNhatDieuLuatVaLoaiKhoiTo"(maVuAn)` —
+chạy SECURITY DEFINER, quyền EXECUTE giới hạn riêng cho role `authenticated`.
+
+### 4b. Phát hiện lệch dữ liệu thật cần xử lý ở Phase 4 (export/import)
+
+Qua audit field-level, phát hiện vài điểm KHÔNG khớp giữa tài liệu schema cũ và code/dữ liệu thật
+— quan trọng khi viết script transform dữ liệu (mục 6), không phải lỗi cần sửa ngay bây giờ:
+
+- `lichsuChuyenGiaiDoan.loaiSuKien` có giá trị **`sua_thong_tin`** dùng thật trong code (khi bấm
+  "Sửa thông tin" 1 vụ án) nhưng KHÔNG có trong enum tài liệu cũ — đã đưa vào CHECK constraint.
+  Ngược lại, 4 giá trị tài liệu cũ liệt kê (`ket_luan_dieu_tra`, `ket_luan_dieu_tra_bo_sung`,
+  `cao_trang`, `cao_trang_bo_sung`) là **dead — chưa từng được ghi bởi code thật** (thay bằng
+  `chuyen_giai_doan` + field `soKetLuanDieuTra`/`soCaoTrang` trên chính `vuan`) — CỐ Ý KHÔNG đưa
+  vào CHECK constraint mới, nếu dữ liệu thật export ra có dòng nào mang giá trị này (rất khó xảy
+  ra) thì phải map lại trước khi import.
+- `lichsuChuyenGiaiDoan.soQuyetDinh` (free text "số QĐ/kết luận/cáo trạng/bản án") hoàn toàn thiếu
+  trong tài liệu schema cũ dù có trên 7/12 loại sự kiện — đã thêm vào schema mới.
+- `danhMucToiDanh` có **2 field song song chưa từng đồng bộ** cho cùng khái niệm "năm BLHS":
+  `namBLHS` (do công cụ seed ghi, dùng thật trong logic tra cứu `taoDanhMucByTen`) và `blhsNam`
+  (do form sửa tay UI ghi, giá trị mặc định `"2015_sd_2017"` còn không khớp map hiển thị của chính
+  nó). Schema mới CHỈ giữ `"namBLHS"` — script transform (Phase 4) phải chuyển giá trị `blhsNam`
+  cũ (nếu có, chỉ ở dòng nhập tay qua UI) sang đúng `namBLHS` tương ứng trước khi import, không
+  mang cả 2 field song song sang Postgres.
+- `lichsuChuyenGiaiDoan.ngaySuKien`/`thoiDiemGhi` không nhất quán kiểu ở nguồn: đa số ghi
+  `new Date()` (client time), riêng sự kiện `sua_thong_tin` ghi `serverTimestamp()`/ISO string —
+  script transform chuẩn hoá về `timestamptz` đồng nhất, không mang sự khác biệt kiểu này sang.
 
 ## 5. Cơ hội đơn giản hoá (cân nhắc ở Phase 2, KHÔNG bắt buộc)
 
@@ -127,8 +179,9 @@ hội nên đánh giá khi đã có shim chạy ổn định.
 
 1. **Export**: script đọc toàn bộ 7 collection nghiệp vụ (không cần export `boDemMaVu`/`meta`) →
    dump JSON, 1 file/collection. Làm trên `qlahs-test` trước.
-2. **Transform**: chuẩn hoá kiểu dữ liệu (Timestamp → ISO string cho `timestamptz`; nếu chọn tách
-   bảng con `bican_toi_danh` thì chuyển 2 mảng song song thành các hàng con).
+2. **Transform**: chuẩn hoá kiểu dữ liệu (Timestamp → ISO string cho `timestamptz`), cộng các phép
+   chuyển đổi cụ thể phát hiện ở mục 4b (gộp `blhsNam`→`namBLHS`, loại bỏ 4 giá trị `loaiSuKien`
+   dead nếu gặp, không cần tách mảng `toiDanh`/`dieuLuatBC` vì schema giữ nguyên dạng cột mảng).
 3. **Import**: dùng kết nối Postgres trực tiếp Supabase cấp (nhanh hơn nhiều so với qua REST cho
    khối lượng ~1400 vụ + ~2250 bị can + hàng nghìn dòng log) — `psql`/COPY hoặc script Node dùng
    driver `pg`.
@@ -140,10 +193,13 @@ hội nên đánh giá khi đã có shim chạy ổn định.
 ## 7. Lộ trình theo giai đoạn
 
 - [x] **Phase 0**: tạo nhánh `supabase-migration`, viết tài liệu kế hoạch này. Chưa đụng code ứng
-      dụng, chưa tạo file SQL thực thi.
-- [ ] **Phase 1**: Dũng tạo 2 project Supabase thật (1 ứng với `qlahs-test`, 1 ứng với `qlahsp2` —
-      cần tài khoản/thao tác thủ công, Claude không tự tạo được). Viết schema DDL + RLS + 4 hàm
-      RPC (cho 4 transaction ở mục 3), áp dụng lên project test trước.
+      dụng.
+- [~] **Phase 1** (đang làm — phần schema đã xong, còn chờ env): đã viết đầy đủ
+      `supabase/schema.sql` + `rls.sql` + `functions.sql` (7 bảng + `boDemMaVu`, RLS, 4 hàm RPC),
+      dựa trên khảo sát field-level thật từ code (không suy đoán) — xem mục 4/4b. **CHƯA áp dụng
+      lên Supabase thật, CHƯA kiểm chứng bằng Postgres thật** (chỉ soát tay cú pháp) — cần Dũng
+      tạo 2 project Supabase thật (1 ứng với `qlahs-test`, 1 ứng với `qlahsp2`) rồi cấp connection
+      string/API key mới áp dụng và test được (xem `supabase/README.md` mục "Chưa kiểm chứng").
 - [ ] **Phase 2**: viết lớp shim (mục 3). Tạo 1 file thử nghiệm riêng (không đụng
       `qlva.html`/`qlva-dev.html` đang chạy thật) để phát triển/kiểm chứng shim độc lập. Đánh giá
       cơ hội đơn giản hoá ở mục 5.
@@ -157,6 +213,9 @@ hội nên đánh giá khi đã có shim chạy ổn định.
 
 ## 8. Trạng thái hiện tại
 
-Đang ở **Phase 0** — nhánh đã tạo, tài liệu này vừa viết xong. Chưa có project Supabase nào được
-tạo, chưa có dòng code migration nào. Việc tiếp theo (Phase 1) cần Dũng tạo project Supabase trước
-khi có thể viết schema/RLS/RPC thật.
+Đang ở **Phase 1** — schema/RLS/RPC đã viết xong (`supabase/*.sql`), commit trên nhánh
+`supabase-migration`. Chưa có project Supabase nào được tạo, chưa áp dụng/test file SQL nào bằng
+Postgres thật. **Việc cần làm tiếp theo**: Dũng tạo project Supabase (khuyến nghị tạo project ứng
+với `qlahs-test` trước), cấp URL + `anon key` (và lý tưởng là cả connection string Postgres trực
+tiếp, dùng cho import dữ liệu ở Phase 4) — phiên sau sẽ áp dụng 3 file SQL lên đó và kiểm chứng
+theo checklist ở `supabase/README.md`.
