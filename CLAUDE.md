@@ -319,6 +319,69 @@ tiết đầy đủ nằm trong đúng các mục tương ứng bên dưới (t�
    thiết kế lại toàn bộ UI/luồng) — **hỏi lại người dùng để làm rõ phạm vi trước khi bắt tay code**,
    đừng tự suy đoán quy mô thay đổi.
 
+## Audit "tối ưu hệ thống" (nhánh `toi-uu-he-thong`, 2026-07-16)
+
+Rà soát toàn bộ logic hệ thống theo yêu cầu người dùng — tìm vùng dễ xung đột (race condition khi
+nhiều người dùng cùng lúc), rà lại CLAUDE.md/schema doc xem có chỗ nào lỗi thời không còn khớp
+code thật. Dùng agent Explore quét toàn bộ file + tự kiểm chứng lại các claim quan trọng trước khi
+sửa (không tin ngay báo cáo agent, đối chiếu code thật).
+
+**Đã sửa — lost-update race condition thật (không phải lý thuyết) ở 3 nơi cùng 1 pattern:**
+`SuaBiCanForm`, `ThemBiCanForm`, `NhapVuModal` đều đọc TOÀN BỘ bị can của 1 vụ, tính lại
+`dieuLuat`/`loaiKhoiTo` ở phía client, rồi ghi lại bằng `batch.commit()` thường — không có gì đảm
+bảo dữ liệu đọc được còn mới khi ghi, nếu 2 người cùng sửa bị can của CÙNG 1 vụ gần như đồng thời
+thì người ghi sau (dựa trên dữ liệu đã cũ) sẽ ÂM THẦM ĐÈ MẤT kết quả của người ghi trước — không
+báo lỗi, không ai biết. Gộp cả 3 nơi thành 1 hàm dùng chung `capNhatDieuLuatVaLoaiKhoiTo(maVuAn)`
+(định nghĩa cạnh `tinhLoaiKhoiTo`), bọc trong `db.runTransaction` đúng cách: query lấy DANH SÁCH ID
+bị can NGOÀI transaction (SDK compat đang dùng không hỗ trợ query trực tiếp trong transaction), rồi
+đọc lại TỪNG bị can bằng `tx.get()` theo đúng ID đó BÊN TRONG transaction — Firestore tự phát hiện
+nếu có doc nào bị đổi trước khi commit và tự động thử lại toàn bộ callback. Giới hạn còn lại (chấp
+nhận được): bị can MỚI thêm vào đúng lúc giữa 2 bước không được tính vào lần gọi này — không sao vì
+chính thao tác thêm đó cũng gọi lại hàm này ngay sau.
+**Tiện thể sửa luôn 1 bug liên quan phát hiện trong lúc audit**: `NhapVuModal` trước đây CHỈ tính
+lại `dieuLuat` cho vụ đích, bỏ sót `loaiKhoiTo` — bị can nhập vào có ngày khởi tố sớm hơn mọi bị
+can sẵn có của vụ đích thì đúng ra phải đổi lại ai là "ban đầu"/"bổ sung", trước đây không tính.
+Dùng chung `capNhatDieuLuatVaLoaiKhoiTo` nên tự động được sửa luôn.
+**Đã kiểm chứng bằng 2 lớp test thật** (không chỉ đọc code): (1) mock Firestore có `runTransaction`
+thật với version-check + tự động retry khi phát hiện xung đột (đúng ngữ nghĩa Firestore optimistic
+concurrency) — mô phỏng đúng kịch bản race (client B ghi đè bị can B ngay giữa lúc client A đang
+trong transaction), xác nhận transaction TỰ ĐỘNG THỬ LẠI (2 lần) và kết quả cuối cùng KHÔNG mất
+thay đổi của B; (2) test tích hợp qua Playwright chạy thẳng `ThemBiCanForm` thật (component thật
+trong `qlva.html`, không phải bản copy logic) với mock Firestore tương tự — xác nhận thêm 1 bị can
+có ngày khởi tố sớm hơn khiến `loaiKhoiTo` được tính lại đúng cho CẢ HAI bị can (bị can cũ đổi từ
+"ban_dau" sang "bo_sung", bị can mới thành "ban_dau") và `dieuLuat` gộp đúng tội danh cả 2.
+
+**Đã thêm 1 composite index phòng ngừa** vào `firestore.indexes.json`:
+`lichsuChuyenGiaiDoan: kyThongKe+loaiSuKien+tuGiaiDoan` (song song với index đã có
+`kyThongKe+loaiSuKien+denGiaiDoan`) — Firestore có thể không thực sự cần index này cho truy vấn
+chỉ toàn điều kiện bằng nhau (`==`), nhưng thêm vào không có mặt trái, còn nếu thiếu mà thật sự cần
+thì sẽ gây lỗi runtime khi tra cứu ở module Kỳ báo cáo (`tinhBaoCaoKyTuLog`).
+
+**Đã sửa 2 tài liệu lỗi thời:**
+- CLAUDE.md dòng "nay 7 module" (mục Tiến độ đã code) — thực tế mảng `MODULES` chỉ có 5 phần tử,
+  cộng thêm tab "Cài đặt" gắn cứng ngoài mảng (không tính trong `MODULES`) mới ra 6 tab hiển thị.
+- `schema_csdl_he_thong_quan_ly_an_v2.md` — thêm ghi chú đầu file nói rõ đây là khung sườn cốt lõi,
+  không liệt kê đầy đủ mọi field thêm sau này (tra CLAUDE.md để biết field/enum mới nhất); bổ sung
+  field `nhomBiCanId` (mục 2) và 2 `loaiSuKien` còn thiếu là `giao_nhan_ho_so`/`duoc_nhap_vu` (mục
+  3); sửa lại hẳn mục "Index cần tạo trước" (bản cũ liệt kê 2 index KHÔNG hề tồn tại trong
+  `firestore.indexes.json` thật — `bican: maVuAn+ngayKhoiTo` và `vuan: maNganhCap` — cả 2 đều
+  không có query nào trong code cần đến; đồng thời thiếu 3 index mới đã thêm cho tối ưu hiệu năng
+  Danh sách vụ án/Án đã giải quyết/Giao nhận hồ sơ).
+
+**Đã đối chiếu, xác nhận KHÔNG có vấn đề (không cần sửa)**: `qlva.html`/`qlva-dev.html` vẫn đồng bộ
+hoàn toàn (chỉ khác đúng phần cấu hình Firebase + nhãn `[TEST]` cố ý); mọi composite query khác
+trong code đều có index khớp trong `firestore.indexes.json`; không tìm thấy dead code khi lấy mẫu
+ngẫu nhiên nhiều hàm giữa file; các nhánh git khác (`main`, `test-fix`, `bieu-10-audit`,
+`bieu-10-tk`, `feature/hoan-tac-nhat-ky`, `feature/ky-baocao-excel`, `offline-indexeddb`,
+`import-excel-fix`) đều đã nằm trọn trong lịch sử nhánh này qua các lần merge trước đó — không còn
+rủi ro xung đột git giữa các nhánh tính năng. Riêng nhánh `mockdata` lệch xa (thiếu tới ~1600 dòng
+so với hiện tại) — là nhánh thử nghiệm cũ bị bỏ dở, KHÔNG phải nhánh cần merge, cố tình bỏ qua.
+
+**CHƯA kiểm chứng bằng dữ liệu Firestore thật** — mọi thứ ở trên mới kiểm chứng bằng mock trong bộ
+nhớ (dù đã mô phỏng đúng ngữ nghĩa transaction/optimistic-concurrency của Firestore), chưa chạy thử
+trên `qlva-dev.html` với project `qlahs-test` thật. Nên thử tạo 2 tab trình duyệt cùng sửa bị can
+của 1 vụ gần như đồng thời trên `qlva-dev.html` trước khi hoàn toàn yên tâm.
+
 ## Trạng thái Biểu B10 (audit 2026-07-13 → đã sửa xong, để tham khảo lịch sử)
 
 Nhánh `bieu-10-audit` từng audit ra 3 bug ở Biểu B10 (loaiKhoiTo import hardcode sai, thiếu xử lý
@@ -439,7 +502,10 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 
 ## Tiến độ đã code
 
-- [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (nay 7 module, xem `MODULES`) +
+- [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (5 module trong mảng `MODULES`: Danh
+      sách vụ án/Án đã giải quyết/Giao nhận hồ sơ/Kỳ báo cáo/Dashboard — cộng thêm tab "Cài đặt"
+      gắn cứng ngoài mảng này, xem `CaiDatModule`, tổng cộng 6 tab hiển thị; đã sửa lại từ nhãn "7
+      module" cũ không khớp thực tế nữa, audit 2026-07-16) +
       **Import Excel** (đọc sheet "Danh sách án", xem trước, tự nhận diện trùng, ghi Firestore
       bằng batch — xem mục riêng "Import Excel — mẫu 'Danh sách án'" bên dưới, đã thay thế hẳn
       mẫu DSAT/DSBCT cũ) + công cụ dựng lại lịch sử cho dữ liệu import cũ (xem mục riêng bên dưới,
@@ -666,24 +732,32 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       toàn bộ lịch sử mọi phiên, không riêng phiên đang mở).
       **Nguồn tính**: file **`thoi han bao quan.xlsx`** (thư mục gốc dự án, sheet "Bang doi
       chieu") — chép nguyên văn thành 2 hằng số `BANG_THOI_HAN_BAO_QUAN_THEO_NAM` (mức án theo
-      năm, key là số năm đã cộng sẵn phần 6 tháng nếu có — VD `7.5` cho "7 năm 6 tháng") và
-      `THOI_HAN_BAO_QUAN_DAC_BIET` (tử hình/chung thân/án treo/phạt tiền). Hàm
-      `tinhThoiHanBaoQuanTheoMucAn`/`tinhThoiHanBaoQuanVu` **CỐ Ý trả về `null` cho mức án KHÔNG
-      có trong bảng gốc** (VD 2 năm, 9 năm 6 tháng, 12 năm 6 tháng...) — bảng gốc có nhiều "lỗ
-      hổng" không phủ hết mọi mức án có thể có (không liên tục, có bước nhảy lớn giữa các mốc, VD
-      10 năm → 47 năm nhưng 9 năm → 34 năm), KHÔNG suy đoán/nội suy công thức vì đây là hồ sơ pháp
-      lý thật, đoán sai thời hạn bảo quản là sai thật — UI hiện rõ "chưa có trong bảng hướng dẫn"
-      thay vì âm thầm đưa ra số sai. Đình chỉ/Tạm đình chỉ luôn "Vĩnh viễn" theo bảng (không cần
-      mức án). Đang giải quyết/Chuyển đi/Án huỷ/Đã nhập vụ khác KHÔNG có dòng tương ứng trong bảng
-      gốc, trả `null` (không tính).
+      năm, key là số năm đã cộng sẵn phần tháng lẻ dạng thập phân — VD `7.5` cho "7 năm 6 tháng")
+      và `THOI_HAN_BAO_QUAN_DAC_BIET` (tử hình/chung thân/án treo/phạt tiền).
+      **Bug đã sửa (2026-07-16, cùng ngày, phát hiện qua người dùng phản hồi trực tiếp) — bảng gốc
+      là HÀM BẬC THANG (mốc → áp dụng cho tới trước mốc kế tiếp), KHÔNG PHẢI danh sách giá trị khớp
+      tuyệt đối.** Bản đầu tiên hiểu sai: coi mỗi key trong bảng là 1 giá trị mức án CỐ ĐỊNH duy
+      nhất được công nhận (VD chỉ đúng "3 năm" hoặc đúng "3 năm 6 tháng" mới tra được, "3 năm 5
+      tháng" hay "4 năm" thì trả `null` vì không khớp key nào) — SAI với ý nghĩa thật của bảng: mốc
+      "3" (19 năm) áp dụng cho MỌI mức án từ "3 năm 0 tháng" đến hết "3 năm 5 tháng"; đúng từ "3 năm
+      6 tháng" mới chuyển sang mốc "3.5" (23 năm), áp dụng tới hết "4 năm 5 tháng" (mốc kế tiếp là
+      "4.5", không phải "4" — bảng gốc không có mốc "4" riêng vì không cần, dùng mốc "3.5" cho cả
+      dải đó). Đã sửa `tinhThoiHanBaoQuanTheoMucAn` sang tra theo **mốc LỚN NHẤT không vượt quá
+      mức án** (floor lookup qua mảng `MOC_THOI_HAN_BAO_QUAN_NAM` các mốc tăng dần), không còn tra
+      khớp tuyệt đối (`BANG[...][n]`). Chỉ trả `null` khi mức án THẤP HƠN mốc nhỏ nhất trong bảng
+      (hiện là "3 năm") — bảng gốc không phủ mức án dưới 3 năm, KHÔNG suy đoán/nội suy công thức vì
+      đây là hồ sơ pháp lý thật, đoán sai thời hạn bảo quản là sai thật. Đình chỉ/Tạm đình chỉ luôn
+      "Vĩnh viễn" theo bảng (không cần mức án). Đang giải quyết/Chuyển đi/Án huỷ/Đã nhập vụ khác
+      KHÔNG có dòng tương ứng trong bảng gốc, trả `null` (không tính).
       **⚠ Lưu ý khi mirror/deploy**: lúc đọc file này thấy có `~$thoi han bao quan.xlsx` (file khoá
       tạm của Excel) tồn tại cùng thư mục — dấu hiệu file gốc **đang được mở** trên máy Dũng, có
       thể đang sửa dở. Nếu bảng đối chiếu trong code sai khác với file thật sau này, kiểm tra lại
       file gốc đã lưu (Ctrl+S) chưa trước khi kết luận code sai.
-      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnCoSauThang` trên `vuan`.
-      `ghiNhanVuVaoPhien` snapshot kết quả tính (`thoiHanBaoQuan`) VÀ chính 3 field mức án này vào
-      sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách `trangThaiVu`/`soQdGiaiQuyet` đã
-      làm, KHÔNG tính lại lúc hiển thị/in.
+      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnThang` trên `vuan` (`mucAnThang` là
+      số THÁNG LẺ 0-11, KHÔNG PHẢI cờ nhị phân +6 tháng — đã đổi thiết kế cùng đợt sửa bug ở trên,
+      xem ngay dưới). `ghiNhanVuVaoPhien` snapshot kết quả tính (`thoiHanBaoQuan`) VÀ chính 3 field
+      mức án này vào sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách
+      `trangThaiVu`/`soQdGiaiQuyet` đã làm, KHÔNG tính lại lúc hiển thị/in.
       **Sửa lại (2026-07-16, cùng ngày) — chuyển hẳn việc nhập mức án ra khỏi `SuaVuAnForm`, vào
       thẳng dòng giao nhận** (`DongGiaoNhan`) cho tiện nhập liệu đúng lúc cần (nộp lưu trữ), thay
       vì phải mở riêng modal "Sửa thông tin vụ án" — mức án chỉ thật sự cần biết vào đúng thời điểm
@@ -692,16 +766,34 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       Sửa dùng chung nút Sửa/Lưu của cả dòng (cùng `dangSua` với KSV/ĐTV/Số bút lục) nhưng khác
       hẳn ở chỗ **ghi vào 2 nơi khi Lưu**: (1) `db.collection("vuan").doc(dong.maVuAn).update(...)`
       — vì mức án là thuộc tính của VỤ ÁN, không phải chỉ của dòng log như KSV/ĐTV/số bút lục; (2)
-      `onSua` như cũ để cập nhật lại `mucAnLoai/mucAnNam/mucAnCoSauThang` VÀ tính lại
-      `thoiHanBaoQuan` ngay trên chính dòng log đang xem — để cột Thời hạn bảo quản đổi ngay tại
-      chỗ, không cần quét lại vụ mới thấy số mới. Nếu ghi `vuan` thất bại (lỗi mạng...), dừng lại
-      không gọi `onSua` (tránh trạng thái 2 nơi lệch nhau: log nói đã có mức án X nhưng `vuan` thì
-      chưa lưu được).
+      `onSua` như cũ để cập nhật lại `mucAnLoai/mucAnNam/mucAnThang` VÀ tính lại `thoiHanBaoQuan`
+      ngay trên chính dòng log đang xem — để cột Thời hạn bảo quản đổi ngay tại chỗ, không cần quét
+      lại vụ mới thấy số mới. Nếu ghi `vuan` thất bại (lỗi mạng...), dừng lại không gọi `onSua`
+      (tránh trạng thái 2 nơi lệch nhau: log nói đã có mức án X nhưng `vuan` thì chưa lưu được).
+      **Ô Năm + ô Tháng riêng thay vì checkbox "+6 tháng" (2026-07-16, sửa cùng lúc với bug floor-
+      lookup ở trên, theo phản hồi trực tiếp của người dùng)** — bản đầu tiên chỉ cho tick 1
+      checkbox "+6 tháng" (nhị phân, cộng đúng 0.5 năm), không nhập được mức án lẻ tháng khác (VD
+      "3 năm 5 tháng", "4 năm 11 tháng"). Đổi UI: 2 ô số riêng "... năm" + "... tháng" (0-11), lưu
+      thẳng thành field `mucAnThang` (số tháng lẻ), quy đổi sang năm thập phân bằng `+ mucAnThang/12`
+      trước khi tra bảng — kết hợp với floor-lookup ở trên cho phép nhập BẤT KỲ mức án lẻ tháng nào
+      mà vẫn tra đúng thời hạn bảo quản.
       **Toggle "Nộp hồ sơ lưu trữ" đổi từ checkbox sang công tắc (2026-07-16, cùng ngày)** — thêm
       component dùng chung `CongTac` (nút bo tròn kiểu switch, không phải `<input
       type="checkbox">`) cho "hiện đại" hơn theo yêu cầu người dùng; đồng thời gom nút "Bắt đầu
       phiên — Nhận hồ sơ" + công tắc vào chung 1 khung viền riêng (tách khỏi nút "Giao hồ sơ") để
       rõ ràng công tắc này chỉ áp dụng cho việc bắt đầu phiên Nhận, không phải Giao.
+      **Bug đã sửa (2026-07-16, cùng ngày) — bấm nhầm "Lưu phiên" (khoá cả phiên) trong lúc còn
+      đang sửa dở 1 dòng làm mất trắng dữ liệu vừa nhập, không cách nào lưu lại.** Phát hiện qua
+      Playwright tái hiện thực tế (không chỉ đọc code): nút "Lưu phiên" (to, luôn hiện góc trên) và
+      nút "Lưu" của từng dòng (nhỏ, chỉ hiện khi đang sửa) tên gần giống nhau — bấm nhầm "Lưu phiên"
+      giữa lúc sửa Mức án sẽ khoá phiên ngay lập tức, dòng đó kẹt lại ở chế độ sửa dở mà KHÔNG CÒN
+      nút Lưu/Huỷ để bấm nữa (cột đó chỉ hiện khi phiên chưa khoá). Đã sửa: `GiaoNhanHoSoModule`
+      đếm số dòng đang sửa (`soDongDangSua`, `DongGiaoNhan` tự báo qua `onBatDauSua`/`onKetThucSua`)
+      và khoá nút "Lưu phiên" trong lúc đó, kèm dòng cảnh báo hướng dẫn.
+      **Đã kiểm chứng bằng Playwright + mock Firestore trong bộ nhớ** (không chỉ đọc code, cả 2 bug
+      trên đều tái hiện được lỗi TRƯỚC khi sửa và xác nhận hết lỗi SAU khi sửa) — riêng việc chạy
+      thật trên `qlva-dev.html` với dữ liệu Firestore thật thì vẫn **CHƯA làm** (nên thử lại các
+      kịch bản trên qua UI thật ít nhất 1 lần trước khi tin tưởng tuyệt đối trên `qlva.html` production).
       **CHƯA kiểm chứng bằng dữ liệu Firestore thật** — cần thử trên `qlva-dev.html`: bắt đầu phiên
       Nhận bật công tắc lưu trữ, quét/chọn 1 vụ Đã xét xử chưa có mức án, sửa dòng đó nhập mức án
       ngay tại bảng, xem cột Thời hạn bảo quản cập nhật đúng ngay (không cần quét lại), rồi kiểm
