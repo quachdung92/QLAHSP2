@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tối ưu Firestore ĐÃ LÊN PRODUCTION (2026-07-18)
+
+Toàn bộ kế hoạch tối ưu Firestore (Đợt 1 gộp listener, Đợt 2 Thùng rác + cache lạnh IndexedDB, hot
+data sentinel `meta/vuAnMoiNhat`) — xem đầy đủ ở các mục "Tối ưu Firestore..." bên dưới — **đã
+deploy lên CẢ `qlahs-test.web.app` VÀ `qlahsp2.web.app` (production, dữ liệu thật)** qua
+`./deploy.sh test` rồi `./deploy.sh prod`, dựa trên code của nhánh `toi-uu-firestore-read` (bản
+thân nhánh git vẫn CHƯA merge vào `main` — hosting deploy độc lập với việc merge, chỉ copy nguyên
+`qlva.html` hiện có trong thư mục làm việc lúc chạy `deploy.sh`, không quan tâm branch). Đã kiểm tra
+lại production sau deploy bằng Playwright (không đăng nhập, không có tài khoản thật) — trang tải
+đúng, màn hình đăng nhập hiện sạch, 0 lỗi console.
+**Lưu ý cho phiên sau**: nếu merge nhánh `toi-uu-firestore-read` vào `main`, nhớ đối chiếu `main`
+đã khớp đúng nội dung đã lên production hay chưa (deploy trước, merge sau — thứ tự ngược với quy
+trình thông thường merge-rồi-mới-deploy) để tránh `main` và production lệch nhau về sau.
+**Ý tưởng đã cân nhắc rồi CHỦ ĐỘNG bỏ**: timer đồng bộ định kỳ 60s cho cache lạnh "Án đã giải
+quyết" — xem bộ nhớ dài hạn `toi-uu-firestore-effectiveness` (lý do: remount tự nhiên đã đủ cho hệ
+thống ít user, chủ yếu xem/trích xuất).
+
 ## Tối ưu Firestore — "hot data" (vụ ĐANG giải quyết): bỏ live, dùng sentinel "có vụ mới" (2026-07-18)
 
 Tiếp theo các mục "Tối ưu Firestore" bên dưới (Đợt 1: gộp listener; Đợt 2: Thùng rác + cache lạnh
