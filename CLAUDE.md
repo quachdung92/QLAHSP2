@@ -2,6 +2,39 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Import Excel: cho phép "thay thế" vụ trùng bằng cách đưa vụ cũ vào Thùng rác (2026-07-18)
+
+Import Excel trước đây phát hiện vụ trùng (theo mã vụ HOẶC theo cặp Số+Ngày QĐ KTVA) thì LOẠI THẲNG
+dòng đó, không có cách nào ghi đè. Dũng phản ánh: giai đoạn đầu dùng hệ thống, dữ liệu cũ lẫn
+lộn/sai sót là bình thường — cần 1 lựa chọn chủ động "thay thế": đưa vụ cũ vào Thùng rác (soft-delete,
+`daXoa:true`, vẫn khôi phục được), rồi nhập đúng dữ liệu mới từ file vào.
+
+**Thiết kế** (`ImportExcelModule`): mỗi phần tử `ketQuaDoc.trung` giờ có thêm `_idTrung` (ID vụ đã
+có, tách riêng khỏi chuỗi `_lyDoTrung` để dùng được trong code). Ngay sau khi tính `trung`, chạy 1
+lần `where("vuGoc","in",...)` (chia lô 30 qua `chiaNhoDsId` có sẵn) để biết trước vụ trùng nào CÓ
+vụ tách ra từ nó — các vụ đó bị vô hiệu hoá ô tích (không cho thay thế, tránh mồ côi hoá vụ tách,
+đúng nguyên tắc `XoaVuAnModal` đã áp dụng cho xoá thủ công).
+Bảng xem trước "vụ trùng" thêm cột checkbox "Thay vụ cũ" + nút "Chọn/Bỏ chọn tất cả (đủ điều
+kiện)" (state `trungDuocChon`, Set các index). `ghiVaoCoSoDuLieu` gộp các dòng đã tích
+(`dsThayThe`) vào `dsMoi` (xử lý y hệt vụ mới bình thường — sinh mã, ghi log...), thêm 1 vòng
+`batch.update` soft-delete các vụ cũ bị thay thế (ĐÚNG field `XoaVuAnModal` dùng: `daXoa`,
+`ngayXoaMem`, `nguoiXoaMem`, không đụng `bican`/log của vụ cũ) vào CHUNG batch/`commitNeu` đã có,
+gọi `capNhatCucBoDsDangGiaiQuyet(id, null)` sau khi commit cho từng vụ bị thay thế (tránh vụ cũ còn
+hiện sai trên chính máy vừa import cho tới khi remount — đúng cách `XoaVuAnModal` đã làm).
+**Không cần mã xác nhận kiểu gõ lại** — đã xác nhận qua code `XoaVuAnModal`: xác nhận ngẫu nhiên chỉ
+tồn tại ở tầng UI của modal đó, không phải điều kiện bắt buộc ở tầng ghi Firestore, và thao tác vẫn
+hoàn toàn khôi phục được — giữ đúng tinh thần "ít xác nhận hơn xoá vĩnh viễn" khi làm hàng loạt lúc
+import.
+
+**Đã kiểm chứng bằng Playwright thật, đăng nhập thật vào `qlva-dev.html`** (không mock): import 1
+vụ test tạo "vụ cũ" thật qua chính luồng import bình thường → import file thứ 2 trùng đúng Số/Ngày
+QĐ KTVA → hệ thống nhận diện đúng "1 vụ trùng" → tích "Thay vụ cũ" → nút đổi đúng thành "Ghi 1 vụ
+vào hệ thống (gồm 1 vụ thay vụ trùng)" → ghi thành công → xác nhận qua Firestore: vụ cũ có
+`daXoa:true`, vụ mới tồn tại đúng dữ liệu, đúng tổng 2 vụ — dọn sạch dữ liệu test sau đó. Test riêng
+kịch bản "vụ có con tách ra": tạo vụ gốc + 1 vụ con trỏ `vuGoc` về nó qua Firestore, import file
+trùng Số/Ngày QĐ KTVA vụ gốc — xác nhận ô tích bị vô hiệu hoá đúng + hiện rõ "⚠ Có vụ tách ra từ vụ
+này". Cả 2 kịch bản: 0 lỗi console.
+
 ## Tối ưu Firestore Đợt 3: cache tóm tắt bị can lên vụ án + cursor pagination thật (2026-07-18)
 
 Đối chiếu 1 tài liệu hướng dẫn tối ưu chi phí Firestore của Dũng (offline persistence, denormalize,

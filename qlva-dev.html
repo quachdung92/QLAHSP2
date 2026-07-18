@@ -2286,6 +2286,13 @@ function ImportExcelModule() {
   const [hienModalKy, setHienModalKy] = useState(false);
   const [ketQuaGhi, setKetQuaGhi] = useState(null);
 
+  // Set các INDEX trong ketQuaDoc.trung mà người dùng đã tích "Thay vụ cũ" — reset ở onFile mỗi
+  // khi chọn file mới (xem 2026-07-18 "Import Excel: cho phép thay thế vụ trùng").
+  const [trungDuocChon, setTrungDuocChon] = useState(() => new Set());
+  // ID các vụ trùng KHÔNG được phép thay thế vì còn vụ tách ra từ nó (đúng nguyên tắc XoaVuAnModal
+  // đã áp dụng cho xoá thủ công — không mồ côi hoá vụ tách khi soft-delete vụ gốc).
+  const [idsCoVuCon, setIdsCoVuCon] = useState(new Set());
+
   const onFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -2294,6 +2301,8 @@ function ImportExcelModule() {
     setErrorMsg("");
     setKetQuaDoc(null);
     setKetQuaGhi(null);
+    setTrungDuocChon(new Set());
+    setIdsCoVuCon(new Set());
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
@@ -2324,14 +2333,25 @@ function ImportExcelModule() {
           if (v._loi) { loi.push(v); return; }
           if (v.maVu) {
             const idTrungMa = byMa.get(v.maVu.toLowerCase());
-            if (idTrungMa) { trung.push({ ...v, _lyDoTrung: `Trùng mã vụ với vụ đã có (${idTrungMa})` }); return; }
+            if (idTrungMa) { trung.push({ ...v, _lyDoTrung: `Trùng mã vụ với vụ đã có (${idTrungMa})`, _idTrung: idTrungMa }); return; }
           }
           if (v.soQdKtva && v.ngayQdKtva) {
             const idTrungQd = byQdNgay.get(`${v.soQdKtva.trim().toLowerCase()}__${fmtDate(v.ngayQdKtva)}`);
-            if (idTrungQd) { trung.push({ ...v, _lyDoTrung: `Trùng Số/Ngày QĐ KTVA với vụ đã có (${idTrungQd})` }); return; }
+            if (idTrungQd) { trung.push({ ...v, _lyDoTrung: `Trùng Số/Ngày QĐ KTVA với vụ đã có (${idTrungQd})`, _idTrung: idTrungQd }); return; }
           }
           moi.push(v);
         });
+
+        // Kiểm tra sớm vụ trùng nào có vụ TÁCH RA từ nó — không cho thay thế các vụ đó (xem
+        // XoaVuAnModal, cùng nguyên tắc chặn xoá khi còn vụ con để tránh mồ côi hoá vụ tách).
+        if (trung.length > 0) {
+          const idsTrung = [...new Set(trung.map(v => v._idTrung))];
+          const nhom = chiaNhoDsId(idsTrung);
+          const snaps = await Promise.all(nhom.map(nhomId => db.collection("vuan").where("vuGoc", "in", nhomId).get()));
+          const coVuCon = new Set();
+          snaps.forEach(s => s.docs.forEach(d => { const vg = d.data().vuGoc; if (vg) coVuCon.add(vg); }));
+          setIdsCoVuCon(coVuCon);
+        }
 
         setKetQuaDoc({ moi, trung, loi, warnings });
         setStatus("ready");
@@ -2344,12 +2364,27 @@ function ImportExcelModule() {
     reader.readAsArrayBuffer(file);
   };
 
+  const toggleTrungChon = (i) => setTrungDuocChon(s => {
+    const moi = new Set(s);
+    moi.has(i) ? moi.delete(i) : moi.add(i);
+    return moi;
+  });
+  const toggleChonTatCaTrung = () => {
+    if (!ketQuaDoc) return;
+    const idsHopLe = ketQuaDoc.trung.map((v, i) => ({ v, i })).filter(({ v }) => !idsCoVuCon.has(v._idTrung)).map(({ i }) => i);
+    const dangChonHet = idsHopLe.length > 0 && idsHopLe.every(i => trungDuocChon.has(i));
+    setTrungDuocChon(dangChonHet ? new Set() : new Set(idsHopLe));
+  };
+
   const ghiVaoCoSoDuLieu = async (kyId) => {
-    if (!ketQuaDoc || ketQuaDoc.moi.length === 0) return;
+    // Các dòng "vụ trùng" người dùng đã tích "Thay vụ cũ" — xử lý y hệt vụ mới bình thường TỪ ĐÂY
+    // TRỞ ĐI (sinh mã mới, ghi log...), chỉ khác thêm bước đưa vụ CŨ vào thùng rác (xem bên dưới).
+    const dsThayThe = ketQuaDoc ? ketQuaDoc.trung.filter((_, i) => trungDuocChon.has(i)) : [];
+    if (!ketQuaDoc || (ketQuaDoc.moi.length === 0 && dsThayThe.length === 0)) return;
     setStatus("writing");
     setProgress(0);
     try {
-      const dsMoi = ketQuaDoc.moi;
+      const dsMoi = [...ketQuaDoc.moi, ...dsThayThe];
       await sinhNhieuMaVuAn(dsMoi);
 
       const now = new Date();
@@ -2367,6 +2402,17 @@ function ImportExcelModule() {
       // lại trong vòng lặp bên dưới.
       batch.set(db.collection("meta").doc("vuAnMoiNhat"), { capNhatLuc: now }, { merge: true });
       ops++;
+
+      // Đưa các vụ CŨ bị thay thế vào thùng rác — đúng field XoaVuAnModal dùng (soft-delete, chỉ
+      // đặt cờ, không đụng bican/log của vụ cũ — khôi phục được nếu tích nhầm).
+      dsThayThe.forEach(v => {
+        batch.update(db.collection("vuan").doc(v._idTrung), {
+          daXoa: true, ngayXoaMem: now, nguoiXoaMem: nguoiThucHien,
+          ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        });
+        ops++;
+      });
+      await commitNeu();
 
       for (const v of dsMoi) {
         const maNoiSinh = v._maNoiSinh;
@@ -2448,6 +2494,10 @@ function ImportExcelModule() {
         }
       }
       if (ops > 0) await batch.commit();
+      // Cập nhật cục bộ danh sách "đang giải quyết" cho từng vụ vừa bị thay thế — đúng
+      // capNhatCucBoDsDangGiaiQuyet đã dùng ở XoaVuAnModal, tránh vụ cũ còn hiện sai trên chính máy
+      // người vừa import cho tới khi remount.
+      dsThayThe.forEach(v => capNhatCucBoDsDangGiaiQuyet(v._idTrung, null));
 
       setProgress(100);
       setKetQuaGhi({ soVu: dsMoi.length, soBiCan: dsMoi.reduce((s, v) => s + v.biCanList.length, 0) });
@@ -2552,20 +2602,50 @@ function ImportExcelModule() {
           )}
 
           {ketQuaDoc.trung.length > 0 && (
-            <details className="mb-4">
+            <details className="mb-4" open={trungDuocChon.size > 0}>
               <summary className="text-sm font-medium text-slate-600 cursor-pointer">
-                {ketQuaDoc.trung.length} vụ trùng sẽ bị bỏ qua — bấm để xem
+                {ketQuaDoc.trung.length} vụ trùng
+                {trungDuocChon.size > 0
+                  ? ` — đã chọn thay thế ${trungDuocChon.size}, còn lại vẫn bỏ qua — bấm để xem`
+                  : " sẽ bị bỏ qua — bấm để xem"}
               </summary>
+              <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mt-2 mb-2">
+                Tích "Thay vụ cũ" ở dòng nào để đưa vụ ĐÃ CÓ (trùng mã/Số+Ngày QĐ KTVA) vào Thùng rác
+                và nhập đúng dữ liệu MỚI từ file thay vào — vẫn khôi phục lại được vụ cũ qua Cài đặt
+                → Thùng rác nếu tích nhầm. Vụ có ⚠ bên dưới không thay thế được vì còn vụ tách ra từ
+                nó (đưa vào thùng rác sẽ làm vụ tách mất gốc).
+              </div>
+              <div className="flex justify-end mb-1">
+                <button onClick={toggleChonTatCaTrung} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">
+                  Chọn/Bỏ chọn tất cả (đủ điều kiện)
+                </button>
+              </div>
               <div className="border border-slate-200 rounded-xl overflow-hidden mt-2">
                 <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="text-left p-2 w-24">Thay vụ cũ</th>
+                      <th className="text-left p-2">Mã vụ</th>
+                      <th className="text-left p-2">Tên vụ</th>
+                      <th className="text-left p-2">Lý do trùng</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {ketQuaDoc.trung.map((v,i) => (
-                      <tr key={i} className="border-t border-slate-100">
-                        <td className="p-2 text-slate-500 whitespace-nowrap">{v.maVu}</td>
-                        <td className="p-2">{v.tenVu}</td>
-                        <td className="p-2 text-slate-400">{v._lyDoTrung}</td>
-                      </tr>
-                    ))}
+                    {ketQuaDoc.trung.map((v,i) => {
+                      const khongDuThayThe = idsCoVuCon.has(v._idTrung);
+                      return (
+                        <tr key={i} className="border-t border-slate-100">
+                          <td className="p-2">
+                            <input type="checkbox" checked={trungDuocChon.has(i)} disabled={khongDuThayThe}
+                                   onChange={() => toggleTrungChon(i)} />
+                            {khongDuThayThe && <div className="text-red-500 mt-0.5">⚠ Có vụ tách ra từ vụ này</div>}
+                          </td>
+                          <td className="p-2 text-slate-500 whitespace-nowrap">{v.maVu}</td>
+                          <td className="p-2">{v.tenVu}</td>
+                          <td className="p-2 text-slate-400">{v._lyDoTrung}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2600,9 +2680,10 @@ function ImportExcelModule() {
             không cần chạy công cụ "Dựng lại lịch sử" bên dưới cho dữ liệu import bằng mẫu này.
           </div>
 
-          <button onClick={() => setHienModalKy(true)} disabled={ketQuaDoc.moi.length === 0}
+          <button onClick={() => setHienModalKy(true)} disabled={ketQuaDoc.moi.length === 0 && trungDuocChon.size === 0}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
-            Ghi {ketQuaDoc.moi.length} vụ mới vào hệ thống
+            Ghi {ketQuaDoc.moi.length + trungDuocChon.size} vụ vào hệ thống
+            {trungDuocChon.size > 0 ? ` (gồm ${trungDuocChon.size} vụ thay vụ trùng)` : ""}
           </button>
         </div>
       )}
