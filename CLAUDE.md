@@ -319,6 +319,69 @@ tiết đầy đủ nằm trong đúng các mục tương ứng bên dưới (t�
    thiết kế lại toàn bộ UI/luồng) — **hỏi lại người dùng để làm rõ phạm vi trước khi bắt tay code**,
    đừng tự suy đoán quy mô thay đổi.
 
+## Audit "tối ưu hệ thống" (nhánh `toi-uu-he-thong`, 2026-07-16)
+
+Rà soát toàn bộ logic hệ thống theo yêu cầu người dùng — tìm vùng dễ xung đột (race condition khi
+nhiều người dùng cùng lúc), rà lại CLAUDE.md/schema doc xem có chỗ nào lỗi thời không còn khớp
+code thật. Dùng agent Explore quét toàn bộ file + tự kiểm chứng lại các claim quan trọng trước khi
+sửa (không tin ngay báo cáo agent, đối chiếu code thật).
+
+**Đã sửa — lost-update race condition thật (không phải lý thuyết) ở 3 nơi cùng 1 pattern:**
+`SuaBiCanForm`, `ThemBiCanForm`, `NhapVuModal` đều đọc TOÀN BỘ bị can của 1 vụ, tính lại
+`dieuLuat`/`loaiKhoiTo` ở phía client, rồi ghi lại bằng `batch.commit()` thường — không có gì đảm
+bảo dữ liệu đọc được còn mới khi ghi, nếu 2 người cùng sửa bị can của CÙNG 1 vụ gần như đồng thời
+thì người ghi sau (dựa trên dữ liệu đã cũ) sẽ ÂM THẦM ĐÈ MẤT kết quả của người ghi trước — không
+báo lỗi, không ai biết. Gộp cả 3 nơi thành 1 hàm dùng chung `capNhatDieuLuatVaLoaiKhoiTo(maVuAn)`
+(định nghĩa cạnh `tinhLoaiKhoiTo`), bọc trong `db.runTransaction` đúng cách: query lấy DANH SÁCH ID
+bị can NGOÀI transaction (SDK compat đang dùng không hỗ trợ query trực tiếp trong transaction), rồi
+đọc lại TỪNG bị can bằng `tx.get()` theo đúng ID đó BÊN TRONG transaction — Firestore tự phát hiện
+nếu có doc nào bị đổi trước khi commit và tự động thử lại toàn bộ callback. Giới hạn còn lại (chấp
+nhận được): bị can MỚI thêm vào đúng lúc giữa 2 bước không được tính vào lần gọi này — không sao vì
+chính thao tác thêm đó cũng gọi lại hàm này ngay sau.
+**Tiện thể sửa luôn 1 bug liên quan phát hiện trong lúc audit**: `NhapVuModal` trước đây CHỈ tính
+lại `dieuLuat` cho vụ đích, bỏ sót `loaiKhoiTo` — bị can nhập vào có ngày khởi tố sớm hơn mọi bị
+can sẵn có của vụ đích thì đúng ra phải đổi lại ai là "ban đầu"/"bổ sung", trước đây không tính.
+Dùng chung `capNhatDieuLuatVaLoaiKhoiTo` nên tự động được sửa luôn.
+**Đã kiểm chứng bằng 2 lớp test thật** (không chỉ đọc code): (1) mock Firestore có `runTransaction`
+thật với version-check + tự động retry khi phát hiện xung đột (đúng ngữ nghĩa Firestore optimistic
+concurrency) — mô phỏng đúng kịch bản race (client B ghi đè bị can B ngay giữa lúc client A đang
+trong transaction), xác nhận transaction TỰ ĐỘNG THỬ LẠI (2 lần) và kết quả cuối cùng KHÔNG mất
+thay đổi của B; (2) test tích hợp qua Playwright chạy thẳng `ThemBiCanForm` thật (component thật
+trong `qlva.html`, không phải bản copy logic) với mock Firestore tương tự — xác nhận thêm 1 bị can
+có ngày khởi tố sớm hơn khiến `loaiKhoiTo` được tính lại đúng cho CẢ HAI bị can (bị can cũ đổi từ
+"ban_dau" sang "bo_sung", bị can mới thành "ban_dau") và `dieuLuat` gộp đúng tội danh cả 2.
+
+**Đã thêm 1 composite index phòng ngừa** vào `firestore.indexes.json`:
+`lichsuChuyenGiaiDoan: kyThongKe+loaiSuKien+tuGiaiDoan` (song song với index đã có
+`kyThongKe+loaiSuKien+denGiaiDoan`) — Firestore có thể không thực sự cần index này cho truy vấn
+chỉ toàn điều kiện bằng nhau (`==`), nhưng thêm vào không có mặt trái, còn nếu thiếu mà thật sự cần
+thì sẽ gây lỗi runtime khi tra cứu ở module Kỳ báo cáo (`tinhBaoCaoKyTuLog`).
+
+**Đã sửa 2 tài liệu lỗi thời:**
+- CLAUDE.md dòng "nay 7 module" (mục Tiến độ đã code) — thực tế mảng `MODULES` chỉ có 5 phần tử,
+  cộng thêm tab "Cài đặt" gắn cứng ngoài mảng (không tính trong `MODULES`) mới ra 6 tab hiển thị.
+- `schema_csdl_he_thong_quan_ly_an_v2.md` — thêm ghi chú đầu file nói rõ đây là khung sườn cốt lõi,
+  không liệt kê đầy đủ mọi field thêm sau này (tra CLAUDE.md để biết field/enum mới nhất); bổ sung
+  field `nhomBiCanId` (mục 2) và 2 `loaiSuKien` còn thiếu là `giao_nhan_ho_so`/`duoc_nhap_vu` (mục
+  3); sửa lại hẳn mục "Index cần tạo trước" (bản cũ liệt kê 2 index KHÔNG hề tồn tại trong
+  `firestore.indexes.json` thật — `bican: maVuAn+ngayKhoiTo` và `vuan: maNganhCap` — cả 2 đều
+  không có query nào trong code cần đến; đồng thời thiếu 3 index mới đã thêm cho tối ưu hiệu năng
+  Danh sách vụ án/Án đã giải quyết/Giao nhận hồ sơ).
+
+**Đã đối chiếu, xác nhận KHÔNG có vấn đề (không cần sửa)**: `qlva.html`/`qlva-dev.html` vẫn đồng bộ
+hoàn toàn (chỉ khác đúng phần cấu hình Firebase + nhãn `[TEST]` cố ý); mọi composite query khác
+trong code đều có index khớp trong `firestore.indexes.json`; không tìm thấy dead code khi lấy mẫu
+ngẫu nhiên nhiều hàm giữa file; các nhánh git khác (`main`, `test-fix`, `bieu-10-audit`,
+`bieu-10-tk`, `feature/hoan-tac-nhat-ky`, `feature/ky-baocao-excel`, `offline-indexeddb`,
+`import-excel-fix`) đều đã nằm trọn trong lịch sử nhánh này qua các lần merge trước đó — không còn
+rủi ro xung đột git giữa các nhánh tính năng. Riêng nhánh `mockdata` lệch xa (thiếu tới ~1600 dòng
+so với hiện tại) — là nhánh thử nghiệm cũ bị bỏ dở, KHÔNG phải nhánh cần merge, cố tình bỏ qua.
+
+**CHƯA kiểm chứng bằng dữ liệu Firestore thật** — mọi thứ ở trên mới kiểm chứng bằng mock trong bộ
+nhớ (dù đã mô phỏng đúng ngữ nghĩa transaction/optimistic-concurrency của Firestore), chưa chạy thử
+trên `qlva-dev.html` với project `qlahs-test` thật. Nên thử tạo 2 tab trình duyệt cùng sửa bị can
+của 1 vụ gần như đồng thời trên `qlva-dev.html` trước khi hoàn toàn yên tâm.
+
 ## Trạng thái Biểu B10 (audit 2026-07-13 → đã sửa xong, để tham khảo lịch sử)
 
 Nhánh `bieu-10-audit` từng audit ra 3 bug ở Biểu B10 (loaiKhoiTo import hardcode sai, thiếu xử lý
@@ -439,7 +502,10 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 
 ## Tiến độ đã code
 
-- [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (nay 7 module, xem `MODULES`) +
+- [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (5 module trong mảng `MODULES`: Danh
+      sách vụ án/Án đã giải quyết/Giao nhận hồ sơ/Kỳ báo cáo/Dashboard — cộng thêm tab "Cài đặt"
+      gắn cứng ngoài mảng này, xem `CaiDatModule`, tổng cộng 6 tab hiển thị; đã sửa lại từ nhãn "7
+      module" cũ không khớp thực tế nữa, audit 2026-07-16) +
       **Import Excel** (đọc sheet "Danh sách án", xem trước, tự nhận diện trùng, ghi Firestore
       bằng batch — xem mục riêng "Import Excel — mẫu 'Danh sách án'" bên dưới, đã thay thế hẳn
       mẫu DSAT/DSBCT cũ) + công cụ dựng lại lịch sử cho dữ liệu import cũ (xem mục riêng bên dưới,
