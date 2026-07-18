@@ -4926,30 +4926,38 @@ function DanhSachPanel({ selectedId, onSelect }) {
   const kyBaoCaoList = useFirestoreCollectionCache(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
-  const [logKyEvents, setLogKyEvents] = useState([]);
-
-  // Log sự kiện dùng cho cột "Kỳ mới/Kỳ giải quyết/Kỳ vào Truy tố/Kỳ chuyển Xét xử" — cùng cách
-  // chia lô theo id như bican ở trên, thay vì tải nguyên collection lichsuChuyenGiaiDoan (tăng vô
-  // hạn theo thời gian vì mỗi thao tác nghiệp vụ đều ghi 1 dòng log). KHÔNG lọc loaiSuKien ngay
-  // trong query vì Firestore giới hạn tổng số nhánh khi kết hợp 2 mệnh đề "in" cùng lúc (lô 30 id
-  // × 4 loại sự kiện = 120 nhánh, vượt quá giới hạn 30) — lọc loaiSuKien ở phía client
-  // (timSuKienKyTheoVuAn), rẻ vì đã được thu hẹp đúng theo các vụ cần hiển thị.
+  // Log sự kiện dùng cho cột "Kỳ mới/Kỳ giải quyết/Kỳ vào Truy tố/Kỳ chuyển Xét xử" — tải 1 LẦN
+  // (KHÔNG onSnapshot sống) theo yêu cầu vụ đang hiển thị, cache theo `maVuAn` y hệt cách
+  // `bicanTimKiemTheoVu` ở trên đã làm (đọc cache trong effect nhưng KHÔNG đưa vào deps — tránh
+  // vòng lặp vô hạn, chấp nhận đọc closure hơi cũ 1 nhịp, giống hệt pattern đã dùng ở đây rồi).
+  // Trước đây dùng `onSnapshot` chia lô 30 — với danh sách mặc định ~500 vụ tạo tới hàng chục
+  // listener SỐNG cùng lúc trên chính màn hình mặc định mọi người mở đầu tiên (phát hiện qua audit
+  // listener 2026-07-18) dù cột này không cần live — đổi kỳ/chuyển giai đoạn do người khác thao tác
+  // chấp nhận cũ, tự mới khi remount (đổi tab/tải lại), đúng nguyên tắc "hot data không cần live"
+  // đã áp dụng khắp app. KHÔNG lọc loaiSuKien ngay trong query (lý do cũ vẫn đúng: Firestore giới
+  // hạn tổng nhánh khi kết hợp 2 mệnh đề "in" — lô 30 id × 4 loại sự kiện = 120 nhánh, vượt giới
+  // hạn 30) — lọc ở phía client qua `timSuKienKyTheoVuAn`.
+  const [logKyTheoVu, setLogKyTheoVu] = useState({}); // { [vuAnId]: sự_kiện[] }
   useEffect(() => {
     const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
-    if (ids.length === 0) { setLogKyEvents([]); return; }
-    const nhom = chiaNhoDsId(ids);
-    const ketQuaMoiNhom = nhom.map(() => []);
-    const unsubs = nhom.map((nhomId, idx) =>
-      db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "in", nhomId).onSnapshot(
-        snap => {
-          ketQuaMoiNhom[idx] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          setLogKyEvents(ketQuaMoiNhom.flat());
-        },
-        err => console.error(err)
-      )
-    );
-    return () => unsubs.forEach(u => u());
+    const idsCanTai = ids.filter(id => !logKyTheoVu[id]);
+    if (idsCanTai.length === 0) return;
+    const nhom = chiaNhoDsId(idsCanTai);
+    Promise.all(nhom.map(nhomId => db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "in", nhomId).get()))
+      .then(snaps => {
+        setLogKyTheoVu(cu => {
+          const moi = { ...cu };
+          idsCanTai.forEach(id => { moi[id] = []; });
+          snaps.flatMap(s => s.docs).forEach(d => {
+            const ev = { id: d.id, ...d.data() };
+            (moi[ev.maVuAn] = moi[ev.maVuAn] || []).push(ev);
+          });
+          return moi;
+        });
+      })
+      .catch(err => console.error(err));
   }, [idsHienTaiKey]);
+  const logKyEvents = useMemo(() => Object.values(logKyTheoVu).flat(), [logKyTheoVu]);
 
   const kyTenTheoId = useMemo(() => Object.fromEntries(kyBaoCaoList.map(k => [k.id, k.tenKy])), [kyBaoCaoList]);
   const kyBaoCaoListSorted = useMemo(
@@ -11135,7 +11143,7 @@ function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
 }
 
 // Bảng con bị can của 1 vụ — tự query/onSnapshot riêng, chỉ tải khi vụ được mở rộng (expand).
-function BangBiCanCon({ vuAnId, danhMucTD }) {
+function BangBiCanCon({ vuAnId, danhMucTD, onVuAnCoTheDoi }) {
   const [dsBiCan, setDsBiCan] = useState(null); // null = đang tải
 
   // Tải 1 LẦN (không onSnapshot sống) — đúng nguyên tắc "hot data không cần live" đã áp dụng khắp
@@ -11157,7 +11165,13 @@ function BangBiCanCon({ vuAnId, danhMucTD }) {
     try {
       await db.collection("bican").doc(bc.id).update(patch);
       xoaBiCanCache(vuAnId);
-      if (canTinhLaiDieuLuat) await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+      if (canTinhLaiDieuLuat) {
+        await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+        // Báo module cha (BangExcelModule) tải lại ĐÚNG 1 doc vuan này — dieuLuat/tomTatBiCan vừa
+        // đổi qua transaction trên nhưng bảng vụ ở NGOÀI không còn onSnapshot sống để tự bắt được
+        // nữa (cùng lý do bỏ live ở trên); rẻ hơn hẳn tải lại cả danh sách 500 dòng.
+        onVuAnCoTheDoi?.(vuAnId);
+      }
       await taiLai();
     } catch (err) {
       console.error(err);
@@ -11180,7 +11194,10 @@ function BangBiCanCon({ vuAnId, danhMucTD }) {
     });
     await batch.commit();
     xoaBiCanCache(vuAnId);
-    if (CAC_TRUONG_ANH_HUONG_DIEU_LUAT.has(field)) await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+    if (CAC_TRUONG_ANH_HUONG_DIEU_LUAT.has(field)) {
+      await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
+      onVuAnCoTheDoi?.(vuAnId);
+    }
     await taiLai();
   };
 
@@ -11390,18 +11407,29 @@ function BangExcelModule() {
   const [moRong, setMoRong] = useState(() => new Set());
   const [tuKhoa, setTuKhoa] = useState("");
 
-  useEffect(() => {
+  // Tải 1 LẦN (không onSnapshot sống) — đúng nguyên tắc "hot data không cần live" (xem CLAUDE.md
+  // "Tối ưu Firestore"). Trước đây danh sách vụ án (tới 500 doc) giữ 1 listener SỐNG suốt thời
+  // gian mở tab Bảng dữ liệu Excel — công cụ sửa hàng loạt cho 1 người thao tác, không cần realtime
+  // với thay đổi từ người khác (phát hiện qua audit listener toàn hệ thống, 2026-07-18). Ghi trực
+  // tiếp trong CHÍNH module này (suaVu/apDungGiaTriVu) patch cục bộ ngay — biết chắc patch nào vừa
+  // ghi nên không cần đọc lại; ghi gián tiếp qua bảng con bị can (BangBiCanCon đổi dieuLuat/
+  // tomTatBiCan) báo về qua `onVuAnCoTheDoi` — tải lại ĐÚNG 1 doc, rẻ hơn hẳn tải lại cả danh sách.
+  const taiDsVu = useCallback(() => {
     setDangTai(true);
-    const q = db.collection("vuan").orderBy("ngayTao", "desc").limit(gioiHan);
-    return q.onSnapshot(
-      snap => {
-        setList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setVuotGioiHan(snap.size >= gioiHan);
-        setDangTai(false);
-      },
-      err => { console.error(err); setDangTai(false); }
-    );
+    return db.collection("vuan").orderBy("ngayTao", "desc").limit(gioiHan).get().then(snap => {
+      setList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setVuotGioiHan(snap.size >= gioiHan);
+      setDangTai(false);
+    }).catch(err => { console.error(err); setDangTai(false); });
   }, [gioiHan]);
+
+  useEffect(() => { taiDsVu(); }, [taiDsVu]);
+
+  const patchCucBo = (id, patch) => setList(cu => cu.map(v => (v.id === id ? { ...v, ...patch } : v)));
+  const taiLaiMotVu = async (id) => {
+    const doc = await db.collection("vuan").doc(id).get();
+    if (doc.exists) patchCucBo(id, doc.data());
+  };
 
   const dsTimKiem = useMemo(() => {
     const k = tuKhoa.trim().toLowerCase();
@@ -11421,6 +11449,7 @@ function BangExcelModule() {
   const suaVu = async (id, patch) => {
     try {
       await db.collection("vuan").doc(id).update(patch);
+      patchCucBo(id, patch);
     } catch (err) {
       console.error(err);
       addToast("Lỗi khi lưu: " + err.message, "error");
@@ -11437,6 +11466,7 @@ function BangExcelModule() {
   // giải quyết) thì BỎ QUA, không ghi nhầm sang field khác.
   const apDungGiaTriVu = async (dsDong, field, giaTri) => {
     const batch = db.batch();
+    const patches = [];
     dsDong.forEach(v => {
       let patch;
       if (field === "ksvHoTro") {
@@ -11453,8 +11483,13 @@ function BangExcelModule() {
         patch = { [field]: giaTri };
       }
       batch.update(db.collection("vuan").doc(v.id), patch);
+      patches.push({ id: v.id, patch });
     });
     await batch.commit();
+    setList(cu => cu.map(v => {
+      const p = patches.find(p2 => p2.id === v.id);
+      return p ? { ...v, ...p.patch } : v;
+    }));
   };
   const keo = useKeoFillNgang(dsLoc, apDungGiaTriVu);
 
@@ -11520,7 +11555,7 @@ function BangExcelModule() {
                   {moRong.has(v.id) && (
                     <tr>
                       <td colSpan={SO_COT_BANG_EXCEL_VU} className="bg-slate-50 p-2 pl-8">
-                        <BangBiCanCon vuAnId={v.id} danhMucTD={danhMucTD} />
+                        <BangBiCanCon vuAnId={v.id} danhMucTD={danhMucTD} onVuAnCoTheDoi={taiLaiMotVu} />
                       </td>
                     </tr>
                   )}

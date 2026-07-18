@@ -43,6 +43,62 @@ dòng** được cập nhật, đúng giá trị ngày lấy từ vụ án, thô
 thật luôn có `.ref` sẵn trên mọi doc snapshot, mock trước đó thiếu nên không phát hiện ra khi test
 các tool dùng pattern này trước đây.
 
+## Audit toàn hệ thống lần 2: giảm read + listener (2026-07-18, ngay sau bug "121 listener")
+
+Theo yêu cầu người dùng "đánh giá hệ thống xem làm sao để giảm thiểu lượng read/listener hết mức
+có thể" — rà soát lại TOÀN BỘ 17 vị trí `onSnapshot` còn lại trong code (sau khi đã sửa
+`BangBiCanCon` ở mục ngay dưới). Kết luận: phần lớn đã đúng thiết kế (cache dùng chung `canbo`/
+`danhMucToiDanh`/`kybaocao`; sentinel `meta/vuAnMoiNhat`; "Đang giải quyết" không live; cache lạnh
+"Án đã giải quyết"; "Phiên gần đây" giới hạn 30; dòng đang quét trong phiên hiện tại; Thùng rác —
+đều có lý do chính đáng để giữ live hoặc phạm vi đã đủ hẹp). Tìm ra đúng 2 điểm còn sót, đã sửa cả
+2 theo xác nhận của người dùng:
+
+**1. NGHIÊM TRỌNG — `DanhSachPanel` (màn hình mặc định mọi người mở đầu tiên)**: cột "Kỳ mới/Kỳ
+giải quyết/Kỳ vào Truy tố/Kỳ chuyển Xét xử" dùng `onSnapshot` CHIA LÔ 30 trên `lichsuChuyenGiaiDoan`
+— với danh sách mặc định ~500 vụ, tạo tới **17 listener sống cùng lúc** trên chính màn hình mặc
+định, mọi người dùng đều dính (không cần "Mở tất cả" như `BangBiCanCon`, chỉ cần MỞ APP). Đáng chú
+ý: đúng phần `bican` NGAY PHÍA TRÊN nó (cùng logic chia lô, tìm theo tên bị can) đã sửa đúng sang
+`.get()` một lần từ đợt "Tối ưu Firestore Đợt 3" — chỗ `lichsuChuyenGiaiDoan` này bị BỎ SÓT, comment
+cũ còn ghi nhầm "giống bican ở trên" dù code thực tế vẫn dùng `onSnapshot`.
+**Đã sửa**: đổi sang tải 1 lần + cache theo `maVuAn` (`logKyTheoVu`, y hệt pattern
+`bicanTimKiemTheoVu` đã có sẵn ngay cạnh — đọc cache trong effect nhưng KHÔNG đưa vào deps, tránh
+vòng lặp vô hạn, chấp nhận đọc closure hơi cũ 1 nhịp, đúng pattern đã dùng ở đây rồi). Cột Kỳ không
+còn realtime với thay đổi do người khác thao tác (Sửa kỳ ở Nhật ký thao tác, chuyển giai đoạn vụ
+khác...) — chấp nhận được, đúng nguyên tắc "hot data không cần live" áp dụng khắp app, tự mới khi
+đổi tab/tải lại trang.
+
+**2. Vừa phải — `BangExcelModule` (Bảng dữ liệu Excel)**: danh sách vụ án (tới 500 doc) giữ 1
+`onSnapshot` sống suốt thời gian mở tab — công cụ sửa hàng loạt cho 1 người thao tác, không cần
+live, cùng lý do đã sửa `BangBiCanCon`. **Đã sửa**: đổi sang tải 1 lần (`taiDsVu`). Vì đây là công
+cụ SỬA (không chỉ xem), phải xử lý đúng 2 đường ghi để không mất tính đúng đắn UI sau khi bỏ live:
+- Ghi trực tiếp trong CHÍNH module (sửa từng ô `suaVu`/kéo fill `apDungGiaTriVu`) — biết chắc patch
+  nào vừa ghi thành công nên **patch cục bộ ngay vào state `list`** (`patchCucBo`), KHÔNG cần đọc
+  lại Firestore — rẻ hơn cả cách cũ (live listener trước đây vẫn phải chờ round-trip server mới
+  cập nhật UI, patch cục bộ cập nhật NGAY tại chỗ).
+- Ghi GIÁN TIẾP qua bảng con bị can (`BangBiCanCon` sửa `ngayKhoiTo`/tội danh chính →
+  `capNhatDieuLuatVaLoaiKhoiTo` đổi `dieuLuat`/`tomTatBiCan` của vụ CHA) — module cha không còn
+  live để tự bắt được thay đổi này. Thêm prop `onVuAnCoTheDoi(vuAnId)` truyền xuống `BangBiCanCon`,
+  gọi sau khi `capNhatDieuLuatVaLoaiKhoiTo` thành công — cha tải lại **ĐÚNG 1 doc** vuan đó
+  (`taiLaiMotVu`, `.doc(id).get()`), rẻ hơn hẳn tải lại cả danh sách 500 dòng.
+
+**Đã kiểm chứng bằng Playwright thật** (14 assertion mới, cộng 48 assertion hồi quy có sẵn không bị
+phá vỡ): (1) `DanhSachPanel` — 0 listener `onSnapshot` dạng "in" trên `lichsuChuyenGiaiDoan` (seed
+10 vụ, trước fix sẽ ra 1 lô), cột "Kỳ mới" vẫn hiển thị đúng dữ liệu qua `.get()`; (2)
+`BangExcelModule` — 0 listener trên `vuan`, dữ liệu vẫn tải đúng, sửa 1 ô vẫn ghi đúng Firestore
+VÀ **không tạo thêm `.get()` nào** (patch cục bộ), UI phản ánh giá trị mới ngay lập tức; sửa Ngày
+khởi tố của 1 bị can trong bảng con → xác nhận đúng **1 lượt `.get()` duy nhất** trên `vuan` (đọc
+thẳng 1 doc, không phải query toàn danh sách) — chứng minh cơ chế đồng bộ chéo `onVuAnCoTheDoi`
+hoạt động đúng và tiết kiệm. 0 lỗi console. PASS trên cả `qlva.html`/`qlva-dev.html`.
+**Tiện thể bổ sung `.doc().get()` vào tracking của mock test dùng chung** (trước đó mock chỉ track
+`query().get()`, không track `docRef.get()` — cần thiết để viết được assertion #2 ở trên).
+
+**Ngoài phạm vi audit này (chấp nhận giữ nguyên, không sửa)**: `CanBoModule` tự mở listener riêng
+thay vì qua cache dùng chung (dữ liệu nhỏ ~34 doc, chỉ 1 instance có thể mở cùng lúc, ảnh hưởng
+không đáng kể — khác query shape với cache `"canbo:dang_cong_tac"` nên không dùng chung được thẳng,
+cần thêm cacheKey mới nếu muốn gộp); `DashboardModule` cảnh báo hạn điều tra (1 listener, phạm vi
+đã hẹp — chỉ Điều tra + đang giải quyết); trang đầu tab "Tất cả" của Danh sách vụ án (quyết định
+thiết kế cũ, xem "Tối ưu Firestore Đợt 3" — cursor pagination thật).
+
 ## Bug đã sửa: "Mở tất cả" ở Bảng dữ liệu Excel tạo hàng trăm listener sống song song (2026-07-18)
 
 Người dùng báo Firebase Console hiện "3 connections nhưng 121 listeners" — con số quá cao so với 3
