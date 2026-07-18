@@ -964,6 +964,61 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       select/combobox, mở/thu gọn bị can, kéo fill cả ở bảng vụ (KSV hỗ trợ, xuyên qua dòng ở giữa
       không bị kéo) lẫn bảng con bị can (Dân tộc dạng chuỗi, Tội danh chính dạng object `{ten,
       dieuLuat}`) — không còn lỗi console sau khi sửa bug `ksvHoTro` ở trên.
+      **Mở rộng đầy đủ mọi trường + nhóm cột + filter theo cột (2026-07-18, theo yêu cầu người
+      dùng: "bảng phải gồm tất cả trường có trong hệ thống, chia thành các nhóm... thêm filter ở
+      từng cột")** — bảng vụ án từ 15 cột phẳng lên **33 cột chia 9 nhóm** (Định danh/Nguồn & khởi
+      tố/Cán bộ - đơn vị thụ lý/Giai đoạn & trạng thái/Phân loại/Điều luật/Kết quả giải quyết/Mức
+      án & lưu trữ/Khác), bảng bị can từ 8 cột lên **17 cột chia 4 nhóm** (Nhân thân/Đảng viên &
+      trình độ/Loại bị can-pháp nhân/Địa chỉ & ngăn chặn/Khởi tố & tội danh — gộp cả tội danh vào
+      nhóm cuối). Cột mới thêm cho vụ án: Mã ngành cấp, Uỷ quyền xét xử, Nơi chuyển đến (chỉ hiện
+      khi Chuyển đi), Án điểm/Phiên toà rút KN (checkbox), Điều luật (readonly, tự tính), Ngày giải
+      quyết/Số QĐ giải quyết (field ẢO — tên field Firestore thật đổi theo `trangThai` từng dòng
+      qua `fieldSoQuyetDinhTrenVuAn`)/Số kết luận ĐT/Số cáo trạng, Mức án loại-năm-tháng + Thời hạn
+      bảo quản (readonly, tự tính qua `tinhThoiHanBaoQuanVu`), Ngày/người tạo + Ngày/người cập nhật
+      cuối (readonly). Cột mới cho bị can: Quốc tịch, Giữ chức vụ QL (chỉ hiện khi Đảng viên=Có),
+      Trình độ, Tái phạm, Loại bị can + Tên pháp nhân/Mã số thuế (chỉ hiện khi Pháp nhân), Địa chỉ,
+      Hạn tạm giam (chỉ hiện khi Tạm giam), Số QĐ khởi tố BC, Loại khởi tố (readonly, tự tính).
+      **CỐ Ý bỏ qua các field nội bộ/quan hệ** do luồng nghiệp vụ riêng quản lý (`vuGoc`/
+      `nhapVaoVu`/`soDemTach`/`daXoa`+field kèm theo, `maNoiSinh` riêng — đã gộp vào cột "Mã vụ" qua
+      `hienThiMa`) — sửa tay trực tiếp các field này trong bảng Excel dễ phá vỡ bất biến do Tách
+      vụ/Nhập vụ/Thùng rác quản lý, phải sửa qua đúng luồng hành động chuyên trách.
+      **Kiến trúc metadata dùng chung** (`NHOM_COT_VU`/`NHOM_COT_BICAN`, đặt trước
+      `DongBiCanBangExcel`) — 1 mảng `{nhom, cols:[{id, label, filter, options?, getValue}]}` mô tả
+      MỌI cột, dùng để tự sinh cả 3 việc: (1) `TheadNhomCot` — `<thead>` 3 tầng (hàng nhóm colSpan +
+      hàng nhãn + hàng ô filter), (2) `apDungLocCot` — hàm lọc dùng chung cho cả 2 bảng, (3) hiển
+      thị số cột/số filter đang dùng. **CỐ Ý KHÔNG gộp phần RENDER/GHI của từng ô vào metadata** —
+      `DongVuBangExcel`/`DongBiCanBangExcel` vẫn viết JSX tường minh từng field như thiết kế gốc, vì
+      mỗi field có logic ghi khác nhau (field mảng `ksvHoTro`, field cần tính lại `dieuLuat` sau khi
+      đổi, field theo cặp bật/tắt như `dangVien`→`dangVienGiuChucVu`) — chỉ metadata hoá đúng phần
+      THUẦN HIỂN THỊ/LỌC, không đụng cách ghi dữ liệu đã kiểm chứng từ trước.
+      **3 kiểu filter theo đúng kiểu dữ liệu cột**: `text` (chứa, không phân biệt hoa/thường, commit
+      lúc blur/Enter — không lọc lại mỗi phím gõ để tránh giật với bảng nhiều dòng), `enum` (dropdown
+      khớp tuyệt đối, tái dùng đúng `options` đã có ở ô sửa cùng cột), `bool` (dropdown 3 trạng thái
+      Tất cả/Có/Không), `date` (khoảng từ-đến, so `getTime()`). `apDungGiaTriVu` (kéo fill) xử lý
+      thêm 3 trường hợp đặc biệt khi field kéo qua là field ẢO/cần biến đổi: `soQuyetDinhGQ` (map
+      sang đúng field Firestore theo `trangThai` TỪNG DÒNG bị kéo qua, bỏ qua dòng không áp dụng
+      được — VD kéo qua cả dòng "Đang giải quyết" thì dòng đó không ghi gì), `mucAnLoai` (chuỗi rỗng
+      → `null`), `ngayQuyetDinh` (kèm xoá cờ `ngayQuyetDinhUocTinh`, đúng hành vi `SuaVuAnForm` đã
+      có). Header nhóm cột dùng chung (`TheadNhomCot`) có prop `dinhTren` (mặc định `true`, sticky
+      top) — bảng con bị can lồng bên trong đặt `dinhTren={false}` vì `sticky top-0` của nó tính
+      theo cùng 1 scroll-ancestor với bảng vụ án cha, 2 header sticky cùng lúc sẽ đè nhau.
+      Bảng con bị can cũng có bộ lọc riêng độc lập với bảng vụ án cha (dùng chung code
+      `apDungLocCot`/`useColumnFilters` nhưng state tách biệt theo từng instance `BangBiCanCon`).
+      **Đã kiểm chứng bằng Playwright thật qua UI** (không chỉ đọc code) — 26/26 assertion: đủ 9
+      nhóm cột vụ án + 4 nhóm cột bị can hiện đúng, cột mới (Uỷ quyền xét xử/Thời hạn bảo quản/Ngày
+      tạo/Quốc tịch...) hiện đúng, filter text lọc đúng theo KSV chính, filter enum lọc đúng theo
+      Trạng thái, "Bỏ toàn bộ lọc cột" khôi phục đúng, sửa 1 ô mới ghi đúng field Firestore, mở rộng
+      bị can hiện đúng nhóm cột + dữ liệu — 0 lỗi console. **Riêng kéo fill (autofill) được test lại
+      độc lập bằng thao tác chuột thật** (`page.mouse.move/down/up`, không giả lập sự kiện) — kéo từ
+      ô "Đơn vị thụ lý" dòng 1 xuyên qua dòng 2 tới dòng 3, xác nhận CẢ 2 dòng bị kéo qua đều được
+      ghi đúng giá trị — xác nhận việc viết lại toàn bộ 2 component không làm hỏng tính năng
+      autofill đã có từ trước. Cả 2 bộ test PASS giống hệt trên `qlva.html` VÀ `qlva-dev.html`.
+      **CHƯA kiểm chứng bằng dữ liệu Firestore thật** (chỉ mock trong bộ nhớ) — nên mở thử
+      `qlva-dev.html` thật (project `qlahs-test`) trước khi merge tính năng "Bảng dữ liệu" (toàn bộ,
+      không riêng phần mở rộng hôm nay) vào `main`. **Ngoài phạm vi (chưa làm)**: cột đóng băng/ghim
+      (pin) mấy cột đầu khi cuộn ngang — bảng 33+1 cột khá rộng, cần cuộn ngang nhiều; chưa làm vì
+      không nằm trong yêu cầu ban đầu, cân nhắc thêm nếu người dùng phản hồi khó thao tác vì phải
+      cuộn ngang quá nhiều.
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
