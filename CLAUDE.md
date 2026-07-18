@@ -29,6 +29,11 @@ can qua nút "Sửa" của đúng dòng bị can, xác nhận ghi cả `bican.up
 `capNhatDieuLuatVaLoaiKhoiTo` chạy qua transaction, không còn `batch.commit()` cũ) — cả 2 kịch bản
 PASS trên cả `qlva.html` VÀ `qlva-dev.html`, 0 lỗi console.
 
+**Đã deploy lên cả `qlahs-test.web.app` VÀ `qlahsp2.web.app` (production)** qua `./deploy.sh test`
+rồi `./deploy.sh prod`, cộng thêm `firebase deploy --only firestore:indexes` cho cả 2 project (index
+`lichsuChuyenGiaiDoan: kyThongKe+loaiSuKien+tuGiaiDoan` mới từ `b976726`). Smoke test bằng Playwright
+sau deploy (không đăng nhập) trên cả 2 URL — trang tải đúng, 0 lỗi console.
+
 ## Tối ưu Firestore ĐÃ LÊN PRODUCTION (2026-07-18)
 
 Toàn bộ kế hoạch tối ưu Firestore (Đợt 1 gộp listener, Đợt 2 Thùng rác + cache lạnh IndexedDB, hot
