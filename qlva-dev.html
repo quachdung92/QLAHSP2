@@ -1835,10 +1835,13 @@ function BackfillDieuLuatBCTool() {
     try {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
-      const [dmSnap, bcSnap] = await Promise.all([
+      const [dmSnap, bcSnap, vaSnap] = await Promise.all([
         db.collection("danhMucToiDanh").get(),
         db.collection("bican").get(),
+        db.collection("vuan").get(),
       ]);
+      // maVuAn của bican CHÍNH LÀ doc id của vuan (xem db.collection("vuan").doc(maVuAn) ở capNhatDieuLuatVaLoaiKhoiTo).
+      const vuanById = new Map(vaSnap.docs.map(d => [d.id, d.data()]));
 
       // Lookup theo tên tội danh (chuẩn hoá bỏ tiền tố "Tội " — audit 2026-07-19: nguyên nhân
       // CHÍNH gây "chưa xác định điều luật" hàng loạt ở vụ cũ là khớp tên TUYỆT ĐỐI trong khi
@@ -1861,7 +1864,7 @@ function BackfillDieuLuatBCTool() {
         }
       });
 
-      let soCapNhat = 0, soBo = 0, soLoi = 0;
+      let soCapNhat = 0, soBo = 0, soLoi = 0, soSuyTuVu = 0;
       const BATCH_SIZE = 400;
       let batch = db.batch(); let batchCount = 0;
 
@@ -1885,6 +1888,22 @@ function BackfillDieuLuatBCTool() {
             // khớp, xem ghi chú ở dmByTen)
             const hit = dmByTen[chuanHoaTenToiDanh(t)];
             if (hit) { dieuLuatBC[i] = hit.dieuLuat; changed = true; }
+          } else {
+            // toiDanh RỖNG hoàn toàn — audit 2026-07-19 xác nhận đây mới là nguyên nhân CHÍNH gây
+            // "chưa xác định điều luật" hàng loạt (96% bị can của vụ nhập qua Import Excel, không
+            // phải lỗi khớp tên/BLHS như nghi ngờ ban đầu): mẫu "Danh sách án" ghi Điều luật thẳng
+            // vào CẤP VỤ (vuan.dieuLuat, từ cột Excel riêng) nhưng bỏ trống cột Tội danh CẤP BỊ CAN
+            // — nên vụ vẫn hiện đúng "Điều luật" trên Danh sách vụ án, còn B10 (tính theo dieuLuatBC
+            // của TỪNG bị can) thì không có gì để tra. Suy ra từ dieuLuat cấp vụ, áp dụng CHUNG cho
+            // mọi bị can cùng vụ (giả định "cùng vụ = cùng tội danh chính" — đúng với đa số vụ đồng
+            // phạm 1 tội, có thể sai với vụ nhiều tội danh khác nhau theo từng bị can; cán bộ tự sửa
+            // lại qua "Sửa thông tin vụ án" nếu phát hiện sai — vẫn tốt hơn hẳn "chưa xác định").
+            const dieuLuatCapVu = (vuanById.get(bc.maVuAn)?.dieuLuat || "").trim();
+            if (dieuLuatCapVu) {
+              const mDieu = dieuLuatCapVu.match(/Điều\s+(\d+[a-zA-Z]*)/i);
+              const hit = mDieu ? dmByDieu[mDieu[1].toLowerCase()] : dmByTen[chuanHoaTenToiDanh(dieuLuatCapVu)];
+              if (hit) { toiDanh[i] = hit.tenToiDanh; dieuLuatBC[i] = hit.dieuLuat; changed = true; soSuyTuVu++; }
+            }
           }
         }
 
@@ -1896,7 +1915,7 @@ function BackfillDieuLuatBCTool() {
       if (batchCount > 0) await batch.commit();
 
       setState("done");
-      setInfo(`Đã chuẩn hóa ${soCapNhat} bị can. Bỏ qua ${soBo} (đã đầy đủ hoặc không khớp danh mục).`);
+      setInfo(`Đã chuẩn hóa ${soCapNhat} bị can (trong đó ${soSuyTuVu} suy ra từ Điều luật cấp vụ do bị can trống hoàn toàn tội danh). Bỏ qua ${soBo} (đã đầy đủ hoặc không khớp danh mục).`);
     } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
   };
 
@@ -1907,8 +1926,10 @@ function BackfillDieuLuatBCTool() {
         Sửa dữ liệu tội danh nhập sai định dạng: nếu ô tội danh chỉ chứa số điều (VD "173") thì tự tra danh mục
         để điền đúng tên ("Tội trộm cắp tài sản") + điều luật ref ("Điều 173 BLHS 2025"); nếu tên đã đúng
         (kể cả thiếu tiền tố "Tội " — VD gõ "Trộm cắp tài sản" thay vì "Tội trộm cắp tài sản") nhưng chưa có
-        điều luật ref thì điền ref. Cần <strong>seed danh mục BLHS trước</strong>.
-        An toàn khi chạy lại nhiều lần — chỉ đụng vào ô còn thiếu.
+        điều luật ref thì điền ref. <strong>Bị can trống hoàn toàn tội danh</strong> (thường gặp ở vụ cũ nhập
+        qua Import Excel, chỉ ghi Điều luật ở cấp vụ) thì suy ra từ Điều luật của chính vụ đó, áp dụng chung
+        cho mọi bị can cùng vụ — cán bộ tự sửa lại từng người qua "Sửa thông tin vụ án" nếu phát hiện sai. Cần
+        <strong> seed danh mục BLHS trước</strong>. An toàn khi chạy lại nhiều lần — chỉ đụng vào ô còn thiếu.
       </p>
       {info && (
         <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>

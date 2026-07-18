@@ -53,9 +53,69 @@ còn "chưa xác định" dù thiếu tiền tố "Tội "), tự chọn đúng 
 (không nhầm sang 1999), không đụng vào bị can đã đủ dữ liệu, idempotent khi chạy lại lần 2. Không
 phá vỡ 45 assertion hồi quy có sẵn (Bảng dữ liệu Excel, Excel giao nhận, backfill ngày giải
 quyết...). PASS trên cả `qlva.html`/`qlva-dev.html`.
-**Còn lại (theo kế hoạch)**: chạy công cụ "Chạy chuẩn hóa" trên dữ liệu Firestore THẬT (`qlva-dev.html`,
-project `qlahs-test`) để xác nhận số lượng bị can thực sự được sửa, trước khi cân nhắc chạy trên
-production.
+
+**Chạy thử trên dữ liệu Firestore THẬT (`qlva-dev.html`, project `qlahs-test`, 2252 bị can) — kết
+quả bất ngờ: "Đã chuẩn hóa 0 bị can"**, dù nghi ngờ ban đầu là 4 nguyên nhân ở trên. Đào sâu bằng
+Playwright chạy thẳng query Firestore thật (`page.evaluate` gọi `db.collection(...).get()`) phát
+hiện **NGUYÊN NHÂN THỨ 5, LỚN HƠN HẲN 4 nguyên nhân đã sửa — không phải lỗi khớp tên/BLHS mà là dữ
+liệu bị can THẬT SỰ TRỐNG TRƠN**: 2160/2252 bị can (96%) có `toiDanh`/`dieuLuatBC` là `[""]` (chuỗi
+rỗng) ngay từ gốc, không có gì để công cụ tra cứu. Trong số đó, **2155 vụ (99.8%) lại CÓ SẴN
+`vuan.dieuLuat` cấp VỤ đầy đủ** (VD "Điều 168 BLHS 2015") — khớp chính xác với quan sát ban đầu của
+người dùng "cột điều luật vẫn báo cáo có nhưng cột Mã ĐL lại báo chưa xác định". Nguyên nhân gốc:
+`parseWorkbookDanhSachAn` đọc cột "Điều luật" trong file Excel ghi THẲNG vào `vuan.dieuLuat` (cấp
+vụ, độc lập với bị can), nhưng cột "Tội danh" (cấp TỪNG bị can) trong các file gốc đã import từ
+trước **bị bỏ trống hoàn toàn** — B10 tính "Mã ĐL" theo `dieuLuatBC` của từng bị can nên không có gì
+để tra, dù `vuan.dieuLuat` vẫn hiện đúng trên Danh sách vụ án.
+
+**Đã sửa tiếp (theo lựa chọn người dùng "Điền tự động từ Điều luật của vụ")**: thêm 1 nhánh mới vào
+`BackfillDieuLuatBCTool` — bị can nào `toiDanh`/`dieuLuatBC` trống HOÀN TOÀN (không phải thiếu tiền
+tố/chỉ ghi số điều như 4 nguyên nhân trước) thì tra `vuan.dieuLuat` của CHÍNH vụ đó (`bc.maVuAn`
+chính là doc id của `vuan`, tra thẳng qua map dựng từ `db.collection("vuan").get()` thêm vào cùng
+`Promise.all`), thử khớp theo SỐ ĐIỀU trước (regex `/Điều\s+(\d+[a-zA-Z]*)/i`, dùng lại `dmByDieu`
+đã có), fallback theo TÊN nếu không khớp số (dùng lại `dmByTen`+`chuanHoaTenToiDanh`) — áp dụng
+CHUNG kết quả suy ra cho MỌI bị can của cùng 1 vụ. **Đây là 1 giả định nghiệp vụ** ("cùng vụ = cùng
+tội danh chính", đúng với đa số vụ đồng phạm 1 tội — cũng là mô hình thống kê C7-C24 vốn đã dùng
+"tội danh CHÍNH của vụ" chứ không tách theo từng bị can, xem "Trạng thái Biểu B10"), có thể sai với
+vụ thật sự nhiều tội danh khác nhau theo từng bị can — cán bộ tự sửa lại qua "Sửa thông tin vụ án"
+nếu phát hiện sai, vẫn tốt hơn hẳn "chưa xác định" cho toàn bộ báo cáo thống kê. Thông báo kết quả
+tách riêng số lượng suy từ Điều luật cấp vụ (VD "Đã chuẩn hóa 3 bị can (trong đó 3 suy ra từ Điều
+luật cấp vụ...)") để phân biệt với 4 nguyên nhân cũ, dễ đối chiếu khi kiểm tra lại.
+
+**Đã kiểm chứng bằng Playwright + mock (10 assertion mới, `test_dieuluat_suytuvu.js`)**: vụ nhiều
+bị can (2 bị can, `dieuLuat` cấp vụ dạng "Điều 173 BLHS 2015") → CẢ 2 bị can đều được suy đúng "Điều
+173 BLHS 2025" + tên đầy đủ; vụ có `dieuLuat` cấp vụ dạng TÊN không có "Điều N" → khớp đúng qua
+nhánh fallback tên; vụ hoàn toàn không có `dieuLuat` cấp vụ → bị can bị bỏ qua đúng, không crash.
+Không phá 11 assertion cũ của `test_dieuluat_fix.js` (4 nguyên nhân đã sửa trước đó vẫn hoạt động
+đúng). PASS trên cả `qlva.html`/`qlva-dev.html`, biên dịch Babel sạch, 2 file byte-identical phần
+script.
+**Đã chạy trên dữ liệu Firestore THẬT `qlva-dev.html`/project `qlahs-test` — phát hiện thêm 1 mắt
+xích cuối cùng**: lần chạy "Chạy chuẩn hóa" đầu tiên với bản sửa mới vẫn báo **0 bị can**, dù code
+đã đúng — đào tiếp bằng `page.evaluate` query thẳng Firestore phát hiện **collection
+`danhMucToiDanh` HOÀN TOÀN RỖNG (0 document)** trên project `qlahs-test` — công cụ "Seed danh mục
+tội danh" (`SeedDanhMucTool`, cùng khu Cài đặt → Import Excel, ghi 586 tội danh BLHS 2025+1999 từ
+`DANH_MUC_TOI_DANH_MAM` vào Firestore) **chưa từng được chạy trên project này** — nên MỌI cơ chế tra
+cứu theo Firestore (kể cả 4 nguyên nhân đã sửa ở trên) đều vô nghĩa vì không có gì để tra, bất kể
+code đúng hay sai. Đã bấm "Seed ngay" (idempotent, an toàn) rồi chạy lại "Chạy chuẩn hóa" — kết quả
+thật: **555 bị can được chuẩn hoá** (bấm chạy thêm lần 2 vì lần đầu bị cắt ngang do đóng trình duyệt
+Playwright giữa lúc batch đang commit — an toàn vì mỗi batch tự commit độc lập, không mất/hỏng dữ
+liệu, chỉ chưa xong hết; lần 2 dọn nốt phần còn lại, lần 3 xác nhận ổn định 0 thay đổi = idempotent
+đúng). **Kết quả cuối cùng trên `qlahs-test`: 2247/2252 bị can (99.8%) đã có `dieuLuatBC` đầy đủ**,
+chỉ còn ĐÚNG 5 bị can (thuộc 5 vụ) không tự động điền được vì bản thân vụ án đó cũng KHÔNG có
+`dieuLuat` cấp vụ nào để suy ra (thiếu dữ liệu gốc thật sự, không phải lỗi code) — cần cán bộ nhập
+tay qua "Sửa thông tin vụ án" nếu cần dùng cho thống kê.
+
+**⚠ CHƯA kiểm tra được production (`qlahsp2`) có gặp đúng vấn đề `danhMucToiDanh` rỗng này hay
+không** — không có tài khoản thật trên production trong phiên làm việc này (tài khoản test
+`admintest@local.com` chỉ tồn tại trên project `qlahs-test`, thử đăng nhập vào `qlahsp2.web.app` bị
+từ chối đúng như dự kiến, KHÔNG thử đoán mật khẩu khác). Vì `qlahs-test` và `qlahsp2` là 2 project
+Firebase HOÀN TOÀN ĐỘC LẬP (không đồng bộ dữ liệu/collection nào với nhau — xem "Ghi chú hạ tầng"),
+việc `danhMucToiDanh` rỗng trên `qlahs-test` KHÔNG chứng minh production cũng rỗng, nhưng cũng không
+loại trừ khả năng đó (cả 2 project dùng chung code, ai đó có thể đã quên chạy "Seed ngay" trên
+production y hệt). **Việc cần làm ở phiên sau/khi có tài khoản production thật**: đăng nhập
+`qlva.html` production, vào Cài đặt → Import Excel, bấm "Kiểm tra" ở khối "Seed danh mục tội danh"
+— nếu báo "Collection trống" thì bấm "Seed ngay" (an toàn, idempotent, không đụng dữ liệu vụ án/bị
+can nào) rồi chạy "Chạy chuẩn hóa" (`BackfillDieuLuatBCTool`) để chuẩn hoá toàn bộ dữ liệu thật,
+đúng quy trình đã kiểm chứng thành công ở trên.
 
 ## Excel "Tải toàn bộ lịch sử giao nhận": thêm cột Ngày giải quyết riêng + tách 3 sheet (2026-07-19)
 
