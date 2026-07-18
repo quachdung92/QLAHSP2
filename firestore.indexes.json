@@ -13,6 +13,15 @@
       "collectionGroup": "lichsuChuyenGiaiDoan",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "kyThongKe", "order": "ASCENDING" },
+        { "fieldPath": "loaiSuKien", "order": "ASCENDING" },
+        { "fieldPath": "tuGiaiDoan", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lichsuChuyenGiaiDoan",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "maVuAn", "order": "ASCENDING" },
         { "fieldPath": "thoiDiemGhi", "order": "ASCENDING" }
       ]
@@ -39,6 +48,22 @@
       "fields": [
         { "fieldPath": "trangThai", "order": "ASCENDING" },
         { "fieldPath": "ngayTao", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "vuan",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "trangThai", "order": "ASCENDING" },
+        { "fieldPath": "kyHoanThanh", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "vuan",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "trangThai", "order": "ASCENDING" },
+        { "fieldPath": "ksvChinh", "order": "ASCENDING" }
       ]
     }
   ],

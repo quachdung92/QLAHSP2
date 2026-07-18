@@ -2,44 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Giao nhận hồ sơ: tự lưu hộ dòng đang sửa dở khi bấm "Lưu phiên"/"In phiên" (2026-07-18)
-
-Vấn đề thực tế Dũng nêu: mỗi dòng trong bảng "đã quét trong phiên" (`DongGiaoNhan`) tự giữ state
-sửa (KSV/ĐTV/người nhận thực tế/số bút lục/mức án/"Không tiếp nhận") CHỈ TRONG COMPONENT — chỉ ghi
-xuống Firestore khi bấm đúng nút "Lưu" nhỏ của riêng dòng đó (xem `luu()`). Nếu đang gõ dở (VD vừa
-nhập mức án lúc nộp lưu trữ) rồi bấm thẳng "Lưu phiên" hoặc "In phiên" ở đầu trang mà quên bấm
-"Lưu" của dòng, thay đổi đó **biến mất hoàn toàn** — module cha (`GiaoNhanHoSoModule`) trước đây
-không hề biết dòng nào đang dở dang.
-
-**Giải pháp: `DongGiaoNhan` đổi sang `React.forwardRef` + `useImperativeHandle`**, expose 1 hàm
-`luuNeuDangSua()` (dòng đang sửa dở thì tự gọi `luu()` nội bộ và trả kết quả true/false; dòng
-không sửa thì resolve `true` ngay). `luu()` đổi từ trả về `void` sang trả `true`/`false` để phân
-biệt "tự lưu thành công" với "không lưu được vì thiếu dữ liệu bắt buộc" (VD bật "Không tiếp nhận"
-nhưng bỏ trống lý do — validation cũ vẫn giữ nguyên, chỉ thêm phần báo kết quả ra ngoài).
-`GiaoNhanHoSoModule` giữ `dongRefs` (`useRef(new Map())`, key = id dòng, set/xoá qua callback ref
-lúc render `<DongGiaoNhan>`) + helper `luuCacDongDangSua()` (`Promise.all` gọi `luuNeuDangSua()`
-trên mọi dòng đang render, trả về `true` chỉ khi TẤT CẢ đều lưu được). Cả `luuPhien` (nút "Lưu
-phiên") và `moBienBanIn` (nút "In phiên", thay hẳn `() => setHienBienBan(true)` trực tiếp trước
-đây) đều gọi `luuCacDongDangSua()` trước — nếu có dòng lưu thất bại (thiếu lý do bắt buộc) thì
-**dừng lại, hiện toast lỗi, KHÔNG lưu/in phiên** (giữ nguyên state dòng đó đang sửa để người dùng
-tự sửa tiếp), tránh vừa mất dữ liệu vừa lưu/in thiếu.
-
-Không đặt deps cho `useImperativeHandle` (chạy lại mỗi lần render) — object trả về phải luôn đóng
-gói đúng closure mới nhất của `dangSua`/`luu`, tránh gọi nhầm phiên bản `luu` cũ nếu người dùng vừa
-gõ xong trước khi bấm "Lưu phiên"/"In phiên".
-
-**Đã kiểm chứng**: (1) biên dịch cú pháp cả `qlva.html`/`qlva-dev.html` qua `@babel/standalone@7.25.6`
-— sạch, output 2 file giống hệt nhau (xác nhận đã mirror đúng); (2) test độc lập bằng React thật +
-`react-test-renderer` (không mock React) mô phỏng đúng pattern `forwardRef`/`useImperativeHandle`/
-`Map` ref vừa thêm — 7/7 assertion pass: không có dòng nào sửa thì không ghi gì; dòng đang sửa dở
-với giá trị MỚI (chưa bấm "Lưu" riêng) được tự lưu đúng giá trị khi gọi hàm gộp; có 1 dòng validate
-thất bại thì hàm gộp trả `false` (không ghi dòng đó) NHƯNG dòng khác hợp lệ vẫn được lưu song song,
-không bị chặn lây. **Chưa kiểm chứng bằng dữ liệu Firestore thật trên `qlva-dev.html`** — nên thử:
-bắt đầu 1 phiên Nhận (bật "Nộp hồ sơ lưu trữ"), quét 1 vụ Đã xét xử, bấm vào dòng để sửa, gõ số bút
-lục/mức án nhưng KHÔNG bấm "Lưu" của dòng, bấm thẳng "Lưu phiên" (hoặc "In phiên") ở đầu trang, xác
-nhận dữ liệu vừa gõ vẫn được lưu đúng (kiểm tra lại qua Firestore hoặc mở lại phiên từ "Phiên gần
-đây").
-
 ## Import Excel: cho phép "thay thế" vụ trùng bằng cách đưa vụ cũ vào Thùng rác (2026-07-18)
 
 Import Excel trước đây phát hiện vụ trùng (theo mã vụ HOẶC theo cặp Số+Ngày QĐ KTVA) thì LOẠI THẲNG
@@ -441,6 +403,104 @@ tiết đầy đủ nằm trong đúng các mục tương ứng bên dưới (t�
    thiết kế lại toàn bộ UI/luồng) — **hỏi lại người dùng để làm rõ phạm vi trước khi bắt tay code**,
    đừng tự suy đoán quy mô thay đổi.
 
+## Giao nhận hồ sơ — tự động lưu khi chuyển dòng + đổi nhãn/style Mức án (2026-07-17)
+
+**Tự động lưu khi chuyển sang sửa dòng khác** — trước đây mỗi dòng (`DongGiaoNhan`) tự quản trạng
+thái `dangSua` cục bộ, có thể mở sửa nhiều dòng cùng lúc không kiểm soát; người dùng bấm nhầm sang
+dòng khác mà quên bấm "Lưu" ở dòng trước là mất trắng dữ liệu vừa nhập (đặc biệt khó chịu khi kiểm
+kê nhiều hồ sơ lưu trữ liên tục, thao tác nhanh). Đổi thiết kế: `GiaoNhanHoSoModule` giữ 1 state
+duy nhất `dangSuaId` (id dòng đang sửa, CHỈ 1 dòng được sửa cùng lúc trong toàn phiên) + 1 ref
+`luuHandlersRef` (map id → hàm `luu()` MỚI NHẤT của đúng dòng đó, mỗi `DongGiaoNhan` tự đăng ký lại
+qua `onDangKyLuu` mỗi lần render). Bấm sang dòng khác gọi `yeuCauSuaDong(id)`: nếu đang có dòng
+KHÁC dở dang, tự gọi `luuHandlersRef.current[dangSuaId]()` trước — **lưu thất bại (VD mất mạng) thì
+GIỮ NGUYÊN dòng cũ, không chuyển sang dòng mới**, để người dùng thấy toast lỗi và có cơ hội sửa lại
+thay vì mất dữ liệu trong im lặng. `luu()` giờ trả về `true`/`false` để `yeuCauSuaDong` biết kết
+quả. Riêng "Huỷ" KHÔNG tự lưu (đúng ý nghĩa huỷ bỏ) — chỉ gọi thẳng `ketThucSuaDong()`.
+`dangSua` ở `DongGiaoNhan` từ state cục bộ chuyển thành PROP do cha điều khiển; nạp lại giá trị
+hiện tại của dòng khi `dangSua` chuyển `false → true` chuyển từ logic trong `batDauSua` sang 1
+`useEffect` theo dõi prop này (áp dụng đúng dù chuyển vào edit mode do người dùng bấm dòng này hay
+do dòng khác vừa tự lưu xong rồi nhường sang). Nút "Lưu phiên" vẫn khoá khi `dangSuaId !== null`
+(trường hợp bấm thẳng "Lưu phiên" mà không qua thao tác chuyển dòng — safeguard cũ ở
+[[toi-uu-he-thong]] vẫn cần, không thay thế được bởi auto-save này).
+**Đã kiểm chứng bằng Playwright + mock Firestore** (không chỉ đọc code): chuyển dòng A sang dòng B
+mà không bấm "Lưu" → xác nhận dòng A tự lưu đúng giá trị vào Firestore rồi thoát sửa, dòng B vào
+chế độ sửa; giả lập lỗi ghi Firestore cho dòng A rồi thử chuyển sang B → xác nhận dòng A VẪN ở chế
+độ sửa (không mất dữ liệu, không chuyển "trót lọt"), dòng B không bị ảnh hưởng.
+
+**Cột "Mức án" đổi tên thành "Mức án cao nhất"** (rõ nghĩa hơn — 1 vụ có thể nhiều bị can/nhiều
+mức án khác nhau, field `mucAnLoai/mucAnNam/mucAnThang` trên `vuan` chỉ lưu ĐÚNG 1 mức, hiểu ngầm
+là mức cao nhất dùng để tính thời hạn bảo quản) — đổi ở cả 4 chỗ: header bảng trên màn hình, header
+cột Excel "Tải toàn bộ lịch sử", dòng gợi ý dưới công tắc "Nộp hồ sơ lưu trữ", và header bảng Biên
+bản in A4.
+
+**"Thời hạn bảo quản" hiện đỏ + in đậm + cỡ chữ to hơn** ở cả bảng trên màn hình
+(`text-red-600 font-bold`, cỡ `text-sm` thay vì `text-xs`) lẫn Biên bản in A4 (thêm `text-base`,
+cỡ to nhất so với các cột khác trong bảng in) — dễ nhận ra ngay khi liếc mắt, đúng vai trò là con
+số quan trọng nhất của cả phiên nộp lưu trữ.
+
+## Audit "tối ưu hệ thống" (nhánh `toi-uu-he-thong`, 2026-07-16)
+
+Rà soát toàn bộ logic hệ thống theo yêu cầu người dùng — tìm vùng dễ xung đột (race condition khi
+nhiều người dùng cùng lúc), rà lại CLAUDE.md/schema doc xem có chỗ nào lỗi thời không còn khớp
+code thật. Dùng agent Explore quét toàn bộ file + tự kiểm chứng lại các claim quan trọng trước khi
+sửa (không tin ngay báo cáo agent, đối chiếu code thật).
+
+**Đã sửa — lost-update race condition thật (không phải lý thuyết) ở 3 nơi cùng 1 pattern:**
+`SuaBiCanForm`, `ThemBiCanForm`, `NhapVuModal` đều đọc TOÀN BỘ bị can của 1 vụ, tính lại
+`dieuLuat`/`loaiKhoiTo` ở phía client, rồi ghi lại bằng `batch.commit()` thường — không có gì đảm
+bảo dữ liệu đọc được còn mới khi ghi, nếu 2 người cùng sửa bị can của CÙNG 1 vụ gần như đồng thời
+thì người ghi sau (dựa trên dữ liệu đã cũ) sẽ ÂM THẦM ĐÈ MẤT kết quả của người ghi trước — không
+báo lỗi, không ai biết. Gộp cả 3 nơi thành 1 hàm dùng chung `capNhatDieuLuatVaLoaiKhoiTo(maVuAn)`
+(định nghĩa cạnh `tinhLoaiKhoiTo`), bọc trong `db.runTransaction` đúng cách: query lấy DANH SÁCH ID
+bị can NGOÀI transaction (SDK compat đang dùng không hỗ trợ query trực tiếp trong transaction), rồi
+đọc lại TỪNG bị can bằng `tx.get()` theo đúng ID đó BÊN TRONG transaction — Firestore tự phát hiện
+nếu có doc nào bị đổi trước khi commit và tự động thử lại toàn bộ callback. Giới hạn còn lại (chấp
+nhận được): bị can MỚI thêm vào đúng lúc giữa 2 bước không được tính vào lần gọi này — không sao vì
+chính thao tác thêm đó cũng gọi lại hàm này ngay sau.
+**Tiện thể sửa luôn 1 bug liên quan phát hiện trong lúc audit**: `NhapVuModal` trước đây CHỈ tính
+lại `dieuLuat` cho vụ đích, bỏ sót `loaiKhoiTo` — bị can nhập vào có ngày khởi tố sớm hơn mọi bị
+can sẵn có của vụ đích thì đúng ra phải đổi lại ai là "ban đầu"/"bổ sung", trước đây không tính.
+Dùng chung `capNhatDieuLuatVaLoaiKhoiTo` nên tự động được sửa luôn.
+**Đã kiểm chứng bằng 2 lớp test thật** (không chỉ đọc code): (1) mock Firestore có `runTransaction`
+thật với version-check + tự động retry khi phát hiện xung đột (đúng ngữ nghĩa Firestore optimistic
+concurrency) — mô phỏng đúng kịch bản race (client B ghi đè bị can B ngay giữa lúc client A đang
+trong transaction), xác nhận transaction TỰ ĐỘNG THỬ LẠI (2 lần) và kết quả cuối cùng KHÔNG mất
+thay đổi của B; (2) test tích hợp qua Playwright chạy thẳng `ThemBiCanForm` thật (component thật
+trong `qlva.html`, không phải bản copy logic) với mock Firestore tương tự — xác nhận thêm 1 bị can
+có ngày khởi tố sớm hơn khiến `loaiKhoiTo` được tính lại đúng cho CẢ HAI bị can (bị can cũ đổi từ
+"ban_dau" sang "bo_sung", bị can mới thành "ban_dau") và `dieuLuat` gộp đúng tội danh cả 2.
+
+**Đã thêm 1 composite index phòng ngừa** vào `firestore.indexes.json`:
+`lichsuChuyenGiaiDoan: kyThongKe+loaiSuKien+tuGiaiDoan` (song song với index đã có
+`kyThongKe+loaiSuKien+denGiaiDoan`) — Firestore có thể không thực sự cần index này cho truy vấn
+chỉ toàn điều kiện bằng nhau (`==`), nhưng thêm vào không có mặt trái, còn nếu thiếu mà thật sự cần
+thì sẽ gây lỗi runtime khi tra cứu ở module Kỳ báo cáo (`tinhBaoCaoKyTuLog`).
+
+**Đã sửa 2 tài liệu lỗi thời:**
+- CLAUDE.md dòng "nay 7 module" (mục Tiến độ đã code) — thực tế mảng `MODULES` chỉ có 5 phần tử,
+  cộng thêm tab "Cài đặt" gắn cứng ngoài mảng (không tính trong `MODULES`) mới ra 6 tab hiển thị.
+- `schema_csdl_he_thong_quan_ly_an_v2.md` — thêm ghi chú đầu file nói rõ đây là khung sườn cốt lõi,
+  không liệt kê đầy đủ mọi field thêm sau này (tra CLAUDE.md để biết field/enum mới nhất); bổ sung
+  field `nhomBiCanId` (mục 2) và 2 `loaiSuKien` còn thiếu là `giao_nhan_ho_so`/`duoc_nhap_vu` (mục
+  3); sửa lại hẳn mục "Index cần tạo trước" (bản cũ liệt kê 2 index KHÔNG hề tồn tại trong
+  `firestore.indexes.json` thật — `bican: maVuAn+ngayKhoiTo` và `vuan: maNganhCap` — cả 2 đều
+  không có query nào trong code cần đến; đồng thời thiếu 3 index mới đã thêm cho tối ưu hiệu năng
+  Danh sách vụ án/Án đã giải quyết/Giao nhận hồ sơ).
+
+**Đã đối chiếu, xác nhận KHÔNG có vấn đề (không cần sửa)**: `qlva.html`/`qlva-dev.html` vẫn đồng bộ
+hoàn toàn (chỉ khác đúng phần cấu hình Firebase + nhãn `[TEST]` cố ý); mọi composite query khác
+trong code đều có index khớp trong `firestore.indexes.json`; không tìm thấy dead code khi lấy mẫu
+ngẫu nhiên nhiều hàm giữa file; các nhánh git khác (`main`, `test-fix`, `bieu-10-audit`,
+`bieu-10-tk`, `feature/hoan-tac-nhat-ky`, `feature/ky-baocao-excel`, `offline-indexeddb`,
+`import-excel-fix`) đều đã nằm trọn trong lịch sử nhánh này qua các lần merge trước đó — không còn
+rủi ro xung đột git giữa các nhánh tính năng. Riêng nhánh `mockdata` lệch xa (thiếu tới ~1600 dòng
+so với hiện tại) — là nhánh thử nghiệm cũ bị bỏ dở, KHÔNG phải nhánh cần merge, cố tình bỏ qua.
+
+**CHƯA kiểm chứng bằng dữ liệu Firestore thật** — mọi thứ ở trên mới kiểm chứng bằng mock trong bộ
+nhớ (dù đã mô phỏng đúng ngữ nghĩa transaction/optimistic-concurrency của Firestore), chưa chạy thử
+trên `qlva-dev.html` với project `qlahs-test` thật. Nên thử tạo 2 tab trình duyệt cùng sửa bị can
+của 1 vụ gần như đồng thời trên `qlva-dev.html` trước khi hoàn toàn yên tâm.
+
 ## Trạng thái Biểu B10 (audit 2026-07-13 → đã sửa xong, để tham khảo lịch sử)
 
 Nhánh `bieu-10-audit` từng audit ra 3 bug ở Biểu B10 (loaiKhoiTo import hardcode sai, thiếu xử lý
@@ -561,7 +621,10 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
 
 ## Tiến độ đã code
 
-- [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (nay 7 module, xem `MODULES`) +
+- [x] `qlva.html`: đăng nhập Firebase Auth + khung sidebar (5 module trong mảng `MODULES`: Danh
+      sách vụ án/Án đã giải quyết/Giao nhận hồ sơ/Kỳ báo cáo/Dashboard — cộng thêm tab "Cài đặt"
+      gắn cứng ngoài mảng này, xem `CaiDatModule`, tổng cộng 6 tab hiển thị; đã sửa lại từ nhãn "7
+      module" cũ không khớp thực tế nữa, audit 2026-07-16) +
       **Import Excel** (đọc sheet "Danh sách án", xem trước, tự nhận diện trùng, ghi Firestore
       bằng batch — xem mục riêng "Import Excel — mẫu 'Danh sách án'" bên dưới, đã thay thế hẳn
       mẫu DSAT/DSBCT cũ) + công cụ dựng lại lịch sử cho dữ liệu import cũ (xem mục riêng bên dưới,
@@ -788,24 +851,32 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       toàn bộ lịch sử mọi phiên, không riêng phiên đang mở).
       **Nguồn tính**: file **`thoi han bao quan.xlsx`** (thư mục gốc dự án, sheet "Bang doi
       chieu") — chép nguyên văn thành 2 hằng số `BANG_THOI_HAN_BAO_QUAN_THEO_NAM` (mức án theo
-      năm, key là số năm đã cộng sẵn phần 6 tháng nếu có — VD `7.5` cho "7 năm 6 tháng") và
-      `THOI_HAN_BAO_QUAN_DAC_BIET` (tử hình/chung thân/án treo/phạt tiền). Hàm
-      `tinhThoiHanBaoQuanTheoMucAn`/`tinhThoiHanBaoQuanVu` **CỐ Ý trả về `null` cho mức án KHÔNG
-      có trong bảng gốc** (VD 2 năm, 9 năm 6 tháng, 12 năm 6 tháng...) — bảng gốc có nhiều "lỗ
-      hổng" không phủ hết mọi mức án có thể có (không liên tục, có bước nhảy lớn giữa các mốc, VD
-      10 năm → 47 năm nhưng 9 năm → 34 năm), KHÔNG suy đoán/nội suy công thức vì đây là hồ sơ pháp
-      lý thật, đoán sai thời hạn bảo quản là sai thật — UI hiện rõ "chưa có trong bảng hướng dẫn"
-      thay vì âm thầm đưa ra số sai. Đình chỉ/Tạm đình chỉ luôn "Vĩnh viễn" theo bảng (không cần
-      mức án). Đang giải quyết/Chuyển đi/Án huỷ/Đã nhập vụ khác KHÔNG có dòng tương ứng trong bảng
-      gốc, trả `null` (không tính).
+      năm, key là số năm đã cộng sẵn phần tháng lẻ dạng thập phân — VD `7.5` cho "7 năm 6 tháng")
+      và `THOI_HAN_BAO_QUAN_DAC_BIET` (tử hình/chung thân/án treo/phạt tiền).
+      **Bug đã sửa (2026-07-16, cùng ngày, phát hiện qua người dùng phản hồi trực tiếp) — bảng gốc
+      là HÀM BẬC THANG (mốc → áp dụng cho tới trước mốc kế tiếp), KHÔNG PHẢI danh sách giá trị khớp
+      tuyệt đối.** Bản đầu tiên hiểu sai: coi mỗi key trong bảng là 1 giá trị mức án CỐ ĐỊNH duy
+      nhất được công nhận (VD chỉ đúng "3 năm" hoặc đúng "3 năm 6 tháng" mới tra được, "3 năm 5
+      tháng" hay "4 năm" thì trả `null` vì không khớp key nào) — SAI với ý nghĩa thật của bảng: mốc
+      "3" (19 năm) áp dụng cho MỌI mức án từ "3 năm 0 tháng" đến hết "3 năm 5 tháng"; đúng từ "3 năm
+      6 tháng" mới chuyển sang mốc "3.5" (23 năm), áp dụng tới hết "4 năm 5 tháng" (mốc kế tiếp là
+      "4.5", không phải "4" — bảng gốc không có mốc "4" riêng vì không cần, dùng mốc "3.5" cho cả
+      dải đó). Đã sửa `tinhThoiHanBaoQuanTheoMucAn` sang tra theo **mốc LỚN NHẤT không vượt quá
+      mức án** (floor lookup qua mảng `MOC_THOI_HAN_BAO_QUAN_NAM` các mốc tăng dần), không còn tra
+      khớp tuyệt đối (`BANG[...][n]`). Chỉ trả `null` khi mức án THẤP HƠN mốc nhỏ nhất trong bảng
+      (hiện là "3 năm") — bảng gốc không phủ mức án dưới 3 năm, KHÔNG suy đoán/nội suy công thức vì
+      đây là hồ sơ pháp lý thật, đoán sai thời hạn bảo quản là sai thật. Đình chỉ/Tạm đình chỉ luôn
+      "Vĩnh viễn" theo bảng (không cần mức án). Đang giải quyết/Chuyển đi/Án huỷ/Đã nhập vụ khác
+      KHÔNG có dòng tương ứng trong bảng gốc, trả `null` (không tính).
       **⚠ Lưu ý khi mirror/deploy**: lúc đọc file này thấy có `~$thoi han bao quan.xlsx` (file khoá
       tạm của Excel) tồn tại cùng thư mục — dấu hiệu file gốc **đang được mở** trên máy Dũng, có
       thể đang sửa dở. Nếu bảng đối chiếu trong code sai khác với file thật sau này, kiểm tra lại
       file gốc đã lưu (Ctrl+S) chưa trước khi kết luận code sai.
-      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnCoSauThang` trên `vuan`.
-      `ghiNhanVuVaoPhien` snapshot kết quả tính (`thoiHanBaoQuan`) VÀ chính 3 field mức án này vào
-      sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách `trangThaiVu`/`soQdGiaiQuyet` đã
-      làm, KHÔNG tính lại lúc hiển thị/in.
+      **Nhập mức án**: thêm field `mucAnLoai`/`mucAnNam`/`mucAnThang` trên `vuan` (`mucAnThang` là
+      số THÁNG LẺ 0-11, KHÔNG PHẢI cờ nhị phân +6 tháng — đã đổi thiết kế cùng đợt sửa bug ở trên,
+      xem ngay dưới). `ghiNhanVuVaoPhien` snapshot kết quả tính (`thoiHanBaoQuan`) VÀ chính 3 field
+      mức án này vào sự kiện `giao_nhan_ho_so` ngay lúc quét/chọn — giống cách
+      `trangThaiVu`/`soQdGiaiQuyet` đã làm, KHÔNG tính lại lúc hiển thị/in.
       **Sửa lại (2026-07-16, cùng ngày) — chuyển hẳn việc nhập mức án ra khỏi `SuaVuAnForm`, vào
       thẳng dòng giao nhận** (`DongGiaoNhan`) cho tiện nhập liệu đúng lúc cần (nộp lưu trữ), thay
       vì phải mở riêng modal "Sửa thông tin vụ án" — mức án chỉ thật sự cần biết vào đúng thời điểm
@@ -814,11 +885,17 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       Sửa dùng chung nút Sửa/Lưu của cả dòng (cùng `dangSua` với KSV/ĐTV/Số bút lục) nhưng khác
       hẳn ở chỗ **ghi vào 2 nơi khi Lưu**: (1) `db.collection("vuan").doc(dong.maVuAn).update(...)`
       — vì mức án là thuộc tính của VỤ ÁN, không phải chỉ của dòng log như KSV/ĐTV/số bút lục; (2)
-      `onSua` như cũ để cập nhật lại `mucAnLoai/mucAnNam/mucAnCoSauThang` VÀ tính lại
-      `thoiHanBaoQuan` ngay trên chính dòng log đang xem — để cột Thời hạn bảo quản đổi ngay tại
-      chỗ, không cần quét lại vụ mới thấy số mới. Nếu ghi `vuan` thất bại (lỗi mạng...), dừng lại
-      không gọi `onSua` (tránh trạng thái 2 nơi lệch nhau: log nói đã có mức án X nhưng `vuan` thì
-      chưa lưu được).
+      `onSua` như cũ để cập nhật lại `mucAnLoai/mucAnNam/mucAnThang` VÀ tính lại `thoiHanBaoQuan`
+      ngay trên chính dòng log đang xem — để cột Thời hạn bảo quản đổi ngay tại chỗ, không cần quét
+      lại vụ mới thấy số mới. Nếu ghi `vuan` thất bại (lỗi mạng...), dừng lại không gọi `onSua`
+      (tránh trạng thái 2 nơi lệch nhau: log nói đã có mức án X nhưng `vuan` thì chưa lưu được).
+      **Ô Năm + ô Tháng riêng thay vì checkbox "+6 tháng" (2026-07-16, sửa cùng lúc với bug floor-
+      lookup ở trên, theo phản hồi trực tiếp của người dùng)** — bản đầu tiên chỉ cho tick 1
+      checkbox "+6 tháng" (nhị phân, cộng đúng 0.5 năm), không nhập được mức án lẻ tháng khác (VD
+      "3 năm 5 tháng", "4 năm 11 tháng"). Đổi UI: 2 ô số riêng "... năm" + "... tháng" (0-11), lưu
+      thẳng thành field `mucAnThang` (số tháng lẻ), quy đổi sang năm thập phân bằng `+ mucAnThang/12`
+      trước khi tra bảng — kết hợp với floor-lookup ở trên cho phép nhập BẤT KỲ mức án lẻ tháng nào
+      mà vẫn tra đúng thời hạn bảo quản.
       **Toggle "Nộp hồ sơ lưu trữ" đổi từ checkbox sang công tắc (2026-07-16, cùng ngày)** — thêm
       component dùng chung `CongTac` (nút bo tròn kiểu switch, không phải `<input
       type="checkbox">`) cho "hiện đại" hơn theo yêu cầu người dùng; đồng thời gom nút "Bắt đầu
@@ -910,6 +987,17 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       ĐTV, xác nhận tên phiên tự điền đúng "Giao hồ sơ cho <ĐTV>" ngay sau khi quét; thử tiếp 1 vụ
       chỉ có KSV không có ĐTV, xác nhận rơi xuống dùng KSV; bấm sửa tên tại dòng "Tên phiên" dưới
       header, lưu lại, xác nhận cập nhật đúng cả trên UI lẫn khi mở lại từ "Phiên gần đây".
+      **Bug đã sửa (2026-07-16) — bấm nhầm "Lưu phiên" (khoá cả phiên) trong lúc còn
+      đang sửa dở 1 dòng làm mất trắng dữ liệu vừa nhập, không cách nào lưu lại.** Phát hiện qua
+      Playwright tái hiện thực tế (không chỉ đọc code): nút "Lưu phiên" (to, luôn hiện góc trên) và
+      nút "Lưu" của từng dòng (nhỏ, chỉ hiện khi đang sửa) tên gần giống nhau — bấm nhầm "Lưu phiên"
+      giữa lúc sửa Mức án sẽ khoá phiên ngay lập tức, dòng đó kẹt lại ở chế độ sửa dở mà KHÔNG CÒN
+      nút Lưu/Huỷ để bấm nữa (cột đó chỉ hiện khi phiên chưa khoá). Đã sửa: `GiaoNhanHoSoModule`
+      đếm số dòng đang sửa (`soDongDangSua`, `DongGiaoNhan` tự báo qua `onBatDauSua`/`onKetThucSua`)
+      và khoá nút "Lưu phiên" trong lúc đó, kèm dòng cảnh báo hướng dẫn. Sau đó tiếp tục nâng cấp lên
+      hẳn thành **tự động lưu khi chuyển dòng** (xem mục "Giao nhận hồ sơ — tự động lưu khi chuyển
+      dòng..." phía trên, 2026-07-17) — cơ chế khoá này vẫn giữ lại làm safeguard cho trường hợp bấm
+      thẳng "Lưu phiên" mà không qua thao tác chuyển dòng.
 - [x] Dựng lại lịch sử cho dữ liệu import cũ: nút "Dựng lại lịch sử" trong module Import Excel
       (`DungLaiLichSuTool`) — quét `vuan` chưa có dòng `lichsuChuyenGiaiDoan` nào, tự tạo 1 sự
       kiện `khoi_to_vu` + `khoi_to_bican` mỗi bị can theo dữ liệu hiện có. Idempotent (chạy
@@ -1363,6 +1451,111 @@ nguồn sự thật duy nhất để đếm số liệu theo kỳ), `kybaocao`, 
       trong cùng 1 dòng (không cần DS sheet mới), nhưng chưa làm vì cần rà soát cẩn thận việc ánh
       xạ từng thành phần C3 sang đúng cột vals[] khác trong cùng hàng, quy mô tương đương lần sửa
       B10 gốc — nếu cần, hỏi lại rõ trước khi làm để tránh sai sót trên báo cáo chính thức.
+- [x] **Cài đặt → "Bảng dữ liệu" (2026-07-17, `BangExcelModule`, nhánh `bang-excel-cai-dat`)** —
+      công cụ sửa nhanh hàng loạt kiểu bảng tính Excel cho người dùng thành thạo, thêm 1 tab mới
+      trong `CaiDatModule` (5 tab: Nhật ký/Cán bộ/Danh mục/Import/**Bảng dữ liệu**). Mỗi vụ án 1
+      dòng, bấm nút mở rộng (▸) hiện bảng con bị can lồng bên dưới (giống Excel outline/group) —
+      component `BangBiCanCon` tự query/`onSnapshot` riêng theo `maVuAn`, chỉ tải khi dòng vụ được
+      mở rộng, không tải trước toàn bộ `bican`. **Mọi ô LUÔN ở trạng thái sửa** (không có bước bấm
+      "Sửa" riêng như mọi form khác trong app — đúng cảm giác 1 bảng tính, click vào ô là gõ được
+      ngay, blur/onChange mới commit Firestore tuỳ loại ô: `OCellText`/`OCellDate` commit lúc blur/
+      onChange hợp lệ, `OSelectExcelEnum` commit ngay lúc chọn). **Kéo fill kiểu Excel** (hook dùng
+      chung `useKeoFillNgang`, 1 phạm vi riêng cho bảng vụ và bảng con bị can của từng vụ — không
+      trộn giữa 2 phạm vi) — giữ chuột ở tay cầm góc dưới-phải 1 ô (`TayKeoFill`, hiện khi hover
+      qua `group-hover`) rồi kéo qua các dòng khác, thả chuột ghi hàng loạt qua 1 `batch.commit()`
+      duy nhất cho toàn bộ đoạn kéo.
+      **2 loại combobox KHÔNG lẫn lộn** (theo đúng yêu cầu người dùng): enum CỐ ĐỊNH (Nguồn/Giai
+      đoạn/Trạng thái/Mức độ nghiêm trọng/Giới tính/Đảng viên/Biện pháp ngăn chặn) dùng `<select>`
+      qua `OSelectExcelEnum`, KHÔNG cho gõ giá trị lạ (các giá trị này có ý nghĩa cố định trong
+      logic thống kê ở khắp nơi trong app); danh sách tham chiếu MỞ (KSV chính/ĐTV/Dân tộc — dùng
+      `<input list>` + `<datalist>` qua `OCellCombo`, 3 datalist `ds-ksv-excel`/`ds-dtv-excel`/
+      `ds-dantoc-excel`) cho CHỌN có sẵn HOẶC GÕ MỚI tự do, vì đây là tên người/tên dân tộc, KSV/
+      ĐTV mới vẫn hợp lệ dù chưa có trong danh mục Cán bộ.
+      **Quyết định thiết kế đã hỏi rõ người dùng trước khi làm (KHÔNG tự suy đoán)**: (1) phạm vi
+      Vụ án + Bị can lồng nhau (không phải chỉ 1 trong 2 — người dùng chọn đúng lựa chọn khuyến
+      nghị); (2) **cho sửa CẢ Giai đoạn/Trạng thái ngay trên bảng — NGƯỢC với khuyến nghị ban đầu**
+      của Claude (2 field này điều khiển số liệu báo cáo kỳ, đúng nguyên tắc thiết kế cốt lõi #1/#3
+      thì phải qua đúng luồng nghiệp vụ có hỏi kỳ + ghi log vào `lichsuChuyenGiaiDoan`) — người
+      dùng xác nhận muốn sửa trực tiếp để dọn dữ liệu cũ hàng loạt nhanh hơn. Vì vậy: sửa 2 field
+      này ở `BangExcelModule` **KHÔNG ghi log sự kiện**, số liệu Kỳ báo cáo/Dashboard/Biểu B10 (đều
+      tính từ log, không phải từ field hiện tại của `vuan`) **SẼ KHÔNG phản ánh thay đổi này** —
+      đã thêm banner cảnh báo màu vàng cố định đầu bảng (`CANH_BAO_GIAI_DOAN_TRANG_THAI`) nhắc rõ
+      điều này, chỉ nên dùng để sửa dữ liệu lịch sử/lỗi nhập liệu cũ, KHÔNG dùng thay cho nút
+      "Chuyển giai đoạn"/"Hoàn thành vụ án" ở Danh sách vụ án cho nghiệp vụ đang diễn ra.
+      Sửa bị can qua bảng này vẫn gọi `capNhatDieuLuatVaLoaiKhoiTo` (helper transaction dùng chung,
+      xem mục "tối ưu hệ thống" trên) khi field ảnh hưởng `dieuLuat`/`loaiKhoiTo` (`ngayKhoiTo`,
+      `toiDanhChinh`) bị đổi — kể cả khi đổi hàng loạt qua kéo fill, không chỉ khi sửa từng ô.
+      Cột **KSV hỗ trợ** (`ksvHoTro`, field mảng trên `vuan`) hiển thị/sửa dạng chuỗi nối bằng dấu
+      phẩy, nhưng thao tác **kéo fill** phải tự parse lại thành mảng trước khi ghi (bug thật gặp
+      phải lúc viết tính năng: kéo fill ban đầu ghi thẳng chuỗi nguồn vào field mảng, làm hỏng
+      field — phát hiện qua Playwright test dựng `TypeError: (vuAn.ksvHoTro || []).join is not a
+      function` ở nơi khác trong app đọc field này — đã sửa `apDungGiaTriVu` đặc cách riêng field
+      `ksvHoTro`: parse `String(giaTri).split(",").map(s => s.trim()).filter(Boolean)` trước khi
+      đưa vào batch, giống hệt cách ô đơn `OCellCombo` của cột này đã tự làm đúng từ đầu). Nếu
+      thêm cột mảng mới vào bảng vụ/bị can sau này, nhớ áp dụng cùng cách xử lý này ở hàm
+      `apDungGiaTri`/`apDungGiaTriVu` tương ứng, đừng để lặp lại lỗi này.
+      Bảng vụ tải `orderBy("ngayTao", "desc").limit(gioiHan)` (mặc định 500, nút "Tải thêm 500" ở
+      cuối bảng khi còn có thể còn dữ liệu) — không tải toàn bộ `vuan` cùng lúc để tránh chậm với
+      dữ liệu lớn, có ô tìm kiếm tự do (`tuKhoa`, khớp mã vụ/tên vụ/KSV chính/số QĐ KTVA) lọc trên
+      `list` đã tải. Đã kiểm chứng đầy đủ bằng Playwright thật (không chỉ đọc code): sửa ô text/
+      select/combobox, mở/thu gọn bị can, kéo fill cả ở bảng vụ (KSV hỗ trợ, xuyên qua dòng ở giữa
+      không bị kéo) lẫn bảng con bị can (Dân tộc dạng chuỗi, Tội danh chính dạng object `{ten,
+      dieuLuat}`) — không còn lỗi console sau khi sửa bug `ksvHoTro` ở trên.
+      **Mở rộng đầy đủ mọi trường + nhóm cột + filter theo cột (2026-07-18, theo yêu cầu người
+      dùng: "bảng phải gồm tất cả trường có trong hệ thống, chia thành các nhóm... thêm filter ở
+      từng cột")** — bảng vụ án từ 15 cột phẳng lên **33 cột chia 9 nhóm** (Định danh/Nguồn & khởi
+      tố/Cán bộ - đơn vị thụ lý/Giai đoạn & trạng thái/Phân loại/Điều luật/Kết quả giải quyết/Mức
+      án & lưu trữ/Khác), bảng bị can từ 8 cột lên **17 cột chia 4 nhóm** (Nhân thân/Đảng viên &
+      trình độ/Loại bị can-pháp nhân/Địa chỉ & ngăn chặn/Khởi tố & tội danh — gộp cả tội danh vào
+      nhóm cuối). Cột mới thêm cho vụ án: Mã ngành cấp, Uỷ quyền xét xử, Nơi chuyển đến (chỉ hiện
+      khi Chuyển đi), Án điểm/Phiên toà rút KN (checkbox), Điều luật (readonly, tự tính), Ngày giải
+      quyết/Số QĐ giải quyết (field ẢO — tên field Firestore thật đổi theo `trangThai` từng dòng
+      qua `fieldSoQuyetDinhTrenVuAn`)/Số kết luận ĐT/Số cáo trạng, Mức án loại-năm-tháng + Thời hạn
+      bảo quản (readonly, tự tính qua `tinhThoiHanBaoQuanVu`), Ngày/người tạo + Ngày/người cập nhật
+      cuối (readonly). Cột mới cho bị can: Quốc tịch, Giữ chức vụ QL (chỉ hiện khi Đảng viên=Có),
+      Trình độ, Tái phạm, Loại bị can + Tên pháp nhân/Mã số thuế (chỉ hiện khi Pháp nhân), Địa chỉ,
+      Hạn tạm giam (chỉ hiện khi Tạm giam), Số QĐ khởi tố BC, Loại khởi tố (readonly, tự tính).
+      **CỐ Ý bỏ qua các field nội bộ/quan hệ** do luồng nghiệp vụ riêng quản lý (`vuGoc`/
+      `nhapVaoVu`/`soDemTach`/`daXoa`+field kèm theo, `maNoiSinh` riêng — đã gộp vào cột "Mã vụ" qua
+      `hienThiMa`) — sửa tay trực tiếp các field này trong bảng Excel dễ phá vỡ bất biến do Tách
+      vụ/Nhập vụ/Thùng rác quản lý, phải sửa qua đúng luồng hành động chuyên trách.
+      **Kiến trúc metadata dùng chung** (`NHOM_COT_VU`/`NHOM_COT_BICAN`, đặt trước
+      `DongBiCanBangExcel`) — 1 mảng `{nhom, cols:[{id, label, filter, options?, getValue}]}` mô tả
+      MỌI cột, dùng để tự sinh cả 3 việc: (1) `TheadNhomCot` — `<thead>` 3 tầng (hàng nhóm colSpan +
+      hàng nhãn + hàng ô filter), (2) `apDungLocCot` — hàm lọc dùng chung cho cả 2 bảng, (3) hiển
+      thị số cột/số filter đang dùng. **CỐ Ý KHÔNG gộp phần RENDER/GHI của từng ô vào metadata** —
+      `DongVuBangExcel`/`DongBiCanBangExcel` vẫn viết JSX tường minh từng field như thiết kế gốc, vì
+      mỗi field có logic ghi khác nhau (field mảng `ksvHoTro`, field cần tính lại `dieuLuat` sau khi
+      đổi, field theo cặp bật/tắt như `dangVien`→`dangVienGiuChucVu`) — chỉ metadata hoá đúng phần
+      THUẦN HIỂN THỊ/LỌC, không đụng cách ghi dữ liệu đã kiểm chứng từ trước.
+      **3 kiểu filter theo đúng kiểu dữ liệu cột**: `text` (chứa, không phân biệt hoa/thường, commit
+      lúc blur/Enter — không lọc lại mỗi phím gõ để tránh giật với bảng nhiều dòng), `enum` (dropdown
+      khớp tuyệt đối, tái dùng đúng `options` đã có ở ô sửa cùng cột), `bool` (dropdown 3 trạng thái
+      Tất cả/Có/Không), `date` (khoảng từ-đến, so `getTime()`). `apDungGiaTriVu` (kéo fill) xử lý
+      thêm 3 trường hợp đặc biệt khi field kéo qua là field ẢO/cần biến đổi: `soQuyetDinhGQ` (map
+      sang đúng field Firestore theo `trangThai` TỪNG DÒNG bị kéo qua, bỏ qua dòng không áp dụng
+      được — VD kéo qua cả dòng "Đang giải quyết" thì dòng đó không ghi gì), `mucAnLoai` (chuỗi rỗng
+      → `null`), `ngayQuyetDinh` (kèm xoá cờ `ngayQuyetDinhUocTinh`, đúng hành vi `SuaVuAnForm` đã
+      có). Header nhóm cột dùng chung (`TheadNhomCot`) có prop `dinhTren` (mặc định `true`, sticky
+      top) — bảng con bị can lồng bên trong đặt `dinhTren={false}` vì `sticky top-0` của nó tính
+      theo cùng 1 scroll-ancestor với bảng vụ án cha, 2 header sticky cùng lúc sẽ đè nhau.
+      Bảng con bị can cũng có bộ lọc riêng độc lập với bảng vụ án cha (dùng chung code
+      `apDungLocCot`/`useColumnFilters` nhưng state tách biệt theo từng instance `BangBiCanCon`).
+      **Đã kiểm chứng bằng Playwright thật qua UI** (không chỉ đọc code) — 26/26 assertion: đủ 9
+      nhóm cột vụ án + 4 nhóm cột bị can hiện đúng, cột mới (Uỷ quyền xét xử/Thời hạn bảo quản/Ngày
+      tạo/Quốc tịch...) hiện đúng, filter text lọc đúng theo KSV chính, filter enum lọc đúng theo
+      Trạng thái, "Bỏ toàn bộ lọc cột" khôi phục đúng, sửa 1 ô mới ghi đúng field Firestore, mở rộng
+      bị can hiện đúng nhóm cột + dữ liệu — 0 lỗi console. **Riêng kéo fill (autofill) được test lại
+      độc lập bằng thao tác chuột thật** (`page.mouse.move/down/up`, không giả lập sự kiện) — kéo từ
+      ô "Đơn vị thụ lý" dòng 1 xuyên qua dòng 2 tới dòng 3, xác nhận CẢ 2 dòng bị kéo qua đều được
+      ghi đúng giá trị — xác nhận việc viết lại toàn bộ 2 component không làm hỏng tính năng
+      autofill đã có từ trước. Cả 2 bộ test PASS giống hệt trên `qlva.html` VÀ `qlva-dev.html`.
+      **CHƯA kiểm chứng bằng dữ liệu Firestore thật** (chỉ mock trong bộ nhớ) — nên mở thử
+      `qlva-dev.html` thật (project `qlahs-test`) trước khi merge tính năng "Bảng dữ liệu" (toàn bộ,
+      không riêng phần mở rộng hôm nay) vào `main`. **Ngoài phạm vi (chưa làm)**: cột đóng băng/ghim
+      (pin) mấy cột đầu khi cuộn ngang — bảng 33+1 cột khá rộng, cần cuộn ngang nhiều; chưa làm vì
+      không nằm trong yêu cầu ban đầu, cân nhắc thêm nếu người dùng phản hồi khó thao tác vì phải
+      cuộn ngang quá nhiều.
 - [x] Module Dashboard (thẻ số liệu tồn hiện tại, bảng cảnh báo sắp hết hạn, biểu đồ cột chồng
       xu hướng theo kỳ dùng Chart.js — script CDN đã thêm vào `<head>`).
 - [x] Module Nhật ký thao tác (feed toàn hệ thống, lọc theo loại sự kiện, giới hạn 300 dòng
