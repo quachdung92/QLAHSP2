@@ -22,6 +22,27 @@ quyết, quét cả 2 vào phiên Nhận, xác nhận đúng chuỗi `"Đã xét
 ở bảng phiên VÀ Biên bản in A4; vụ đang giải quyết vẫn hiện "Đang giải quyết" không đổi. 0 lỗi
 console. PASS trên cả `qlva.html`/`qlva-dev.html`.
 
+**Công cụ backfill cho dữ liệu cũ (2026-07-18, cùng ngày, theo yêu cầu người dùng ngay sau đó)** —
+các sự kiện `giao_nhan_ho_so` tạo TRƯỚC khi có tính năng này không có sẵn field `ngayQuyetDinh`
+(chỉ dòng quét MỚI mới tự snapshot). Thêm `BackfillNgayQuyetDinhGiaoNhanTool` (Cài đặt → Import
+Excel, cạnh `BackfillTomTatBiCanTool`) — quét mọi sự kiện `loaiSuKien == "giao_nhan_ho_so"`, với
+mỗi dòng CHƯA có `ngayQuyetDinh` VÀ đã có hình thức giải quyết cụ thể (`trangThaiVu` khác
+`"dang_giai_quyet"`/rỗng), lấy `ngayQuyetDinh` HIỆN TẠI của `vuan` tương ứng để bổ sung — không có
+cách khôi phục đúng giá trị tại thời điểm quét cho dữ liệu cũ, chấp nhận vì ngày giải quyết hiếm
+khi đổi sau khi đã chốt. Idempotent (bỏ qua dòng đã có sẵn), an toàn chạy lại nhiều lần.
+
+**Đã kiểm chứng bằng Playwright thật** (8 assertion): seed 1 vụ Đã xét xử + 1 dòng `giao_nhan_ho_so`
+cũ thiếu `ngayQuyetDinh` của vụ đó, cộng 1 vụ Đang giải quyết + dòng tương ứng (không nên đụng vào),
+cộng 1 dòng đã có sẵn `ngayQuyetDinh` (không nên bị ghi đè) — chạy công cụ, xác nhận **chỉ đúng 1
+dòng** được cập nhật, đúng giá trị ngày lấy từ vụ án, thông báo kết quả đúng số lượng; chạy lại lần
+2 xác nhận idempotent (0 ghi thêm, đúng thông báo "không có gì cần cập nhật"). 0 lỗi console.
+**Phát hiện + tự sửa 1 lỗ hổng của bộ mock test dùng chung** (không phải bug app): docs trả về từ
+`.get()`/`.onSnapshot()` trong `mock-firebase.js` thiếu hẳn `.ref` — cần cho pattern
+`batch.update(doc.ref, ...)` mà `BackfillTomTatBiCanTool` (đã có từ trước) cũng dùng y hệt. Đã sửa
+`snapFromDocs` nhận thêm tham số `collectionName` để tự gắn `.ref` qua `makeDocRef` — Firestore SDK
+thật luôn có `.ref` sẵn trên mọi doc snapshot, mock trước đó thiếu nên không phát hiện ra khi test
+các tool dùng pattern này trước đây.
+
 ## Bug đã sửa: "Mở tất cả" ở Bảng dữ liệu Excel tạo hàng trăm listener sống song song (2026-07-18)
 
 Người dùng báo Firebase Console hiện "3 connections nhưng 121 listeners" — con số quá cao so với 3

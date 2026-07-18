@@ -2085,6 +2085,76 @@ function BackfillTomTatBiCanTool() {
   );
 }
 
+// Bổ sung ngayQuyetDinh cho các sự kiện giao_nhan_ho_so CŨ (quét trước ngày thêm hiển thị "Ngày
+// giải quyết" ở cột Hình thức giải quyết, 2026-07-18) — các sự kiện tạo SAU đã tự có sẵn field này
+// qua ghiNhanVuVaoPhien, không cần tool này. Lấy "current" ngayQuyetDinh của vuan tương ứng làm
+// giá trị bổ sung (không có cách khôi phục đúng giá trị TẠI THỜI ĐIỂM quét cho dữ liệu cũ — chấp
+// nhận vì hầu hết trường hợp ngày giải quyết không đổi sau khi đã chốt). Chỉ áp dụng cho dòng đã
+// có hình thức giải quyết cụ thể (trangThaiVu khác "dang_giai_quyet"/rỗng) — dòng "Đang giải
+// quyết" không hiện ngày nên không cần bổ sung. Idempotent — bỏ qua dòng đã có sẵn ngayQuyetDinh.
+function BackfillNgayQuyetDinhGiaoNhanTool() {
+  const [state, setState] = useState("idle");
+  const [info, setInfo] = useState("");
+
+  const run = async () => {
+    setState("loading"); setInfo("Đang tải dữ liệu...");
+    try {
+      const [gnhSnap, vuSnap] = await Promise.all([
+        db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "==", "giao_nhan_ho_so").get(),
+        db.collection("vuan").get(),
+      ]);
+      const ngayTheoVu = new Map();
+      vuSnap.docs.forEach(doc => {
+        const v = doc.data();
+        if (v.ngayQuyetDinh) ngayTheoVu.set(doc.id, v.ngayQuyetDinh);
+      });
+
+      let soCapNhat = 0;
+      const BATCH_SIZE = 400;
+      let batch = db.batch(); let batchCount = 0;
+      const commitNeu = async () => { if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; } };
+
+      for (const doc of gnhSnap.docs) {
+        const d = doc.data();
+        if (d.ngayQuyetDinh) continue;
+        if (!d.trangThaiVu || d.trangThaiVu === "dang_giai_quyet") continue;
+        const ngay = ngayTheoVu.get(d.maVuAn);
+        if (!ngay) continue;
+        batch.update(doc.ref, { ngayQuyetDinh: ngay });
+        soCapNhat++; batchCount++;
+        await commitNeu();
+      }
+      if (batchCount > 0) await batch.commit();
+
+      setState("done");
+      setInfo(soCapNhat === 0
+        ? "Không có dòng nào cần cập nhật — dữ liệu đã đủ."
+        : `Đã bổ sung Ngày giải quyết cho ${soCapNhat} dòng giao nhận hồ sơ.`);
+    } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Bổ sung "Ngày giải quyết" cho lịch sử Giao nhận hồ sơ cũ</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Cột "Hình thức giải quyết" ở Giao nhận hồ sơ vừa thêm hiển thị ngày giải quyết (2026-07-18)
+        — chỉ các lượt quét MỚI mới tự có sẵn field này. Chạy 1 lần để bổ sung cho các dòng đã quét
+        trước đó, lấy đúng ngày giải quyết HIỆN TẠI của vụ án tương ứng. An toàn khi chạy lại nhiều
+        lần (tự bỏ qua dòng đã có sẵn).
+      </p>
+      {info && (
+        <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
+          {info}
+        </div>
+      )}
+      <button onClick={run} disabled={state === "loading"}
+              className="px-3 py-1.5 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
+        {state === "loading" ? "Đang chạy..." : "Chạy cập nhật"}
+      </button>
+    </div>
+  );
+}
+
 // Sửa dữ liệu tonCuoiKyTheoTD/tonCuoiBiCan đã bị ghi sai bởi bug cũ (tinhLaiBaoCaoLuu từng chụp
 // ảnh LIVE hiện tại thay vì lịch sử — đã sửa code 2026-07-13 để không sai THÊM, nhưng dữ liệu đã
 // ghi sai trước đó không tự phục hồi). Chạy 1 lần để tính lại ĐÚNG từ log cho toàn bộ kỳ đã chốt,
@@ -2751,6 +2821,7 @@ function ImportExcelModule() {
       <BackfillDieuLuatBCTool />
       <BackfillLoaiKhoiToTool />
       <BackfillTomTatBiCanTool />
+      <BackfillNgayQuyetDinhGiaoNhanTool />
       <TaiTaoTonTheoTDTool />
     </div>
   );
