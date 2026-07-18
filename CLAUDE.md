@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Giao nhận hồ sơ: cột "Hình thức giải quyết" thêm "Ngày giải quyết" (2026-07-18)
+
+Theo yêu cầu người dùng — cột "Hình thức giải quyết" (bảng phiên trên màn hình, Biên bản in A4,
+Excel "Tải toàn bộ lịch sử") trước đây chỉ hiện `"<Nhãn> — <Số QĐ>"` (VD "Đã xét xử — 5/2026"),
+giờ thêm ngày giải quyết trong ngoặc đơn ngay sau số QĐ: `"Đã xét xử — 5/2026 (15/06/2026)"`. Vụ
+đang giải quyết (chưa có kết quả) vẫn hiện "Đang giải quyết" như cũ, không đổi gì.
+
+**Không phải field mới** — dùng lại `ngayQuyetDinh` đã có sẵn trên `vuan` (field "Ngày giải quyết"
+ở "Sửa thông tin vụ án"/module Án đã giải quyết). Chỉ cần: (1) thêm `ngayQuyetDinh:
+vuAn.ngayQuyetDinh || null` vào snapshot lúc quét/chọn vụ (`ghiNhanVuVaoPhien`, cùng nhóm với
+`trangThaiVu`/`soQdGiaiQuyet` đã snapshot từ trước — snapshot TẠI THỜI ĐIỂM quét, không tính lại
+sau); (2) sửa đúng 1 hàm dùng chung `moTaHinhThucGiaiQuyet(dong)` thêm phần `(${fmtDate(ngày)})`
+— cả 3 nơi hiển thị (bảng phiên/biên bản in/Excel lịch sử) đều gọi hàm này nên tự động lan ra cả
+3, không cần sửa từng nơi riêng.
+
+**Đã kiểm chứng bằng Playwright thật**: seed 1 vụ Đã xét xử có `ngayQuyetDinh` + 1 vụ đang giải
+quyết, quét cả 2 vào phiên Nhận, xác nhận đúng chuỗi `"Đã xét xử — 5/2026 (15/06/2026)"` xuất hiện
+ở bảng phiên VÀ Biên bản in A4; vụ đang giải quyết vẫn hiện "Đang giải quyết" không đổi. 0 lỗi
+console. PASS trên cả `qlva.html`/`qlva-dev.html`.
+
 ## Bug đã sửa: "Mở tất cả" ở Bảng dữ liệu Excel tạo hàng trăm listener sống song song (2026-07-18)
 
 Người dùng báo Firebase Console hiện "3 connections nhưng 121 listeners" — con số quá cao so với 3

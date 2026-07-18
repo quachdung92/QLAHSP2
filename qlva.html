@@ -8957,13 +8957,18 @@ function fmtNgayGio(d) {
   return `${date} ${time}`;
 }
 
-// Hiển thị hình thức giải quyết + số QĐ (nếu có) từ snapshot đã lưu trên chính sự kiện
-// giao_nhan_ho_so (trangThaiVu/soQdGiaiQuyet) — KHÔNG query lại vuan, dùng đúng cách các field
-// tenVu/soQdKtva khác đã snapshot sẵn trên sự kiện này. Vụ còn đang giải quyết chưa có số QĐ.
+// Hiển thị hình thức giải quyết + số QĐ + ngày giải quyết (nếu có) từ snapshot đã lưu trên chính
+// sự kiện giao_nhan_ho_so (trangThaiVu/soQdGiaiQuyet/ngayQuyetDinh) — KHÔNG query lại vuan, dùng
+// đúng cách các field tenVu/soQdKtva khác đã snapshot sẵn trên sự kiện này. Vụ còn đang giải quyết
+// chưa có số QĐ/ngày. Ngày giải quyết (2026-07-18, theo yêu cầu người dùng) đặt trong ngoặc đơn
+// sau số QĐ — dùng chung field `ngayQuyetDinh` đã có sẵn trên `vuan` (Ngày giải quyết ở "Sửa thông
+// tin vụ án"/Án đã giải quyết), không phải field mới.
 function moTaHinhThucGiaiQuyet(dong) {
   if (!dong.trangThaiVu || dong.trangThaiVu === "dang_giai_quyet") return "Đang giải quyết";
   const nhan = NHAN_TRANG_THAI[dong.trangThaiVu] || dong.trangThaiVu;
-  return dong.soQdGiaiQuyet ? `${nhan} — ${dong.soQdGiaiQuyet}` : nhan;
+  const phanQd = dong.soQdGiaiQuyet ? ` — ${dong.soQdGiaiQuyet}` : "";
+  const phanNgay = dong.ngayQuyetDinh ? ` (${fmtDate(dong.ngayQuyetDinh)})` : "";
+  return `${nhan}${phanQd}${phanNgay}`;
 }
 
 // Hiển thị mức án đã nhập (snapshot mucAnLoai/mucAnNam/mucAnThang trên sự kiện, giống cách
@@ -9463,6 +9468,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
       nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "", soButLuc: "",
       trangThaiVu: vuAn.trangThai || "dang_giai_quyet",
       soQdGiaiQuyet: fieldSoQd ? (vuAn[fieldSoQd] || "") : "",
+      ngayQuyetDinh: vuAn.ngayQuyetDinh || null,
       thoiHanBaoQuan: tinhThoiHanBaoQuanVu(vuAn) || "",
       // Mức án cũng snapshot vào đây (giống trangThaiVu) để "Sửa" ngay tại dòng giao nhận (xem
       // DongGiaoNhan) có sẵn giá trị hiện tại mà không cần đọc lại vuan.
