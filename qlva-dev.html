@@ -295,6 +295,51 @@ function tinhDieuLuat(biCanRows) {
   return [...new Set(all)].join("; ");
 }
 
+// ====================================================================
+// CHUẨN HOÁ ĐIỀU LUẬT / TỘI DANH — dùng CHUNG cho mọi nơi cần gộp số liệu theo điều luật (Biểu
+// B10, TK tội danh, Kỳ báo cáo, công cụ chuẩn hoá tội danh bị can). Trước đây bị viết lặp lại y hệt
+// ở 5 nơi khác nhau (tinhSnapTonTheoTD, tinhBieu10, taiTaoTonCuoiKyTheoTDTatCa,
+// tinhBaoCaoKyTuLog, BackfillDieuLuatBCTool) — gộp về đây để tránh sửa 1 nơi quên 4 nơi kia.
+// Audit 2026-07-19 (theo yêu cầu người dùng, nghi ngờ ban đầu là xung đột BLHS 2015/2025): danh
+// mục hiện tại (DANH_MUC_TOI_DANH_MAM) CHỈ còn đúng 2 bộ luật thật — BLHS 1999 (đánh số HOÀN TOÀN
+// khác, VD Điều 173 BLHS 1999 = "Vi phạm sử dụng đất đai" ≠ Điều 173 BLHS 2025 = "Trộm cắp tài
+// sản") và BLHS 2025 (đại diện luôn cho "2015" — số điều giữ nguyên qua các lần sửa đổi 2015/2017/
+// 2025, chỉ đổi tên gọi phiên bản, xem useBlhsMacDinh) — KHÔNG còn entry nào gắn nhãn "2015" nữa.
+// normDL bên dưới xử lý ĐÚNG phần này. NGUYÊN NHÂN THẬT gây "chưa xác định điều luật" hàng loạt ở
+// "vụ cũ": (1) Import Excel luôn ghi dieuLuatBC RỖNG, phụ thuộc hoàn toàn vào khớp TÊN tội danh
+// CHÍNH XÁC 100% (kể cả hoa/thường) với danh mục; (2) danh mục luôn ghi đủ tiền tố "Tội " (VD "Tội
+// trộm cắp tài sản") nhưng dữ liệu nhập tay/import cũ rất hay ghi tắt thiếu tiền tố này ("Trộm cắp
+// tài sản") — khớp tuyệt đối bỏ sót toàn bộ các trường hợp này. `chuanHoaTenToiDanh` nới lỏng đúng
+// điểm này (bỏ tiền tố "Tội " khi so khớp, không đổi cách hiển thị tên gốc).
+function chuanHoaMaDieuLuat(dl) {
+  return (dl || "").replace(/\bblhs\s+2015\b/gi, "BLHS 2025");
+}
+function chuanHoaTenToiDanh(ten) {
+  return (ten || "").trim().toLowerCase().replace(/\s+/g, " ").replace(/^tội\s+/, "");
+}
+// Dựng map tra cứu "tên tội danh chuẩn hoá" → mã điều luật chuẩn, ưu tiên BLHS 2025 khi trùng tên
+// giữa 2 bộ luật (bản cũ ưu tiên "namBLHS === '2015'" — dead code từ khi danh mục đổi hết nhãn
+// sang "2025", đã sửa đúng thành ưu tiên "2025", tránh chọn nhầm sang BLHS 1999 khi trùng tên/số).
+function taoDanhMucByTen(danhMuc) {
+  const map = new Map();
+  for (const d of danhMuc) {
+    const key = chuanHoaTenToiDanh(d.tenToiDanh);
+    if (!map.has(key) || d.namBLHS === "2025") map.set(key, d.dieuLuat);
+  }
+  return map;
+}
+// Mã điều luật của 1 bị can: ưu tiên dieuLuatBC[0] đã có sẵn (code chuẩn), rồi tra ngược tên tội
+// danh qua danhMucByTen (đã chuẩn hoá bỏ tiền tố "Tội "), cuối cùng fallback dùng thẳng tên tội
+// danh làm khoá (garbage nhưng không mất trắng, ít nhất còn nhóm được với chính nó nếu lặp lại).
+function layMaDieuLuatBiCan(bc, danhMucByTen) {
+  return chuanHoaMaDieuLuat(
+    bc.dieuLuatBC?.[0] ||
+    danhMucByTen.get(chuanHoaTenToiDanh(bc.toiDanh?.[0])) ||
+    bc.toiDanh?.[0] ||
+    ""
+  );
+}
+
 function tinhTenVu(biCanList) {
   const coTen = biCanList.filter(bc => bc.hoTen && bc.hoTen.trim());
   if (coTen.length === 0) return "";
@@ -1457,7 +1502,10 @@ function ToiDanhInput({ ten, dieuLuat, onChange, danhMuc }) {
         return m && m[1].toLowerCase() === s.toLowerCase();
       });
     } else {
-      matches = danhMuc.filter(d => d.tenToiDanh.toLowerCase() === s.toLowerCase());
+      // Chuẩn hoá bỏ tiền tố "Tội " khi so khớp (audit 2026-07-19) — gõ tắt "Trộm cắp tài sản"
+      // (thiếu "Tội ") vẫn tự nhận đúng "Tội trộm cắp tài sản" thay vì bị bỏ trống dieuLuat, tránh
+      // lặp lại đúng nguyên nhân gây "chưa xác định điều luật" hàng loạt ở dữ liệu cũ.
+      matches = danhMuc.filter(d => chuanHoaTenToiDanh(d.tenToiDanh) === chuanHoaTenToiDanh(s));
     }
     if (matches.length >= 1) {
       const hit = matches.find(d => d.namBLHS === blhsMacDinh) || matches[0];
@@ -1792,18 +1840,24 @@ function BackfillDieuLuatBCTool() {
         db.collection("bican").get(),
       ]);
 
-      // Lookup theo tên tội danh (lowercase), ưu tiên BLHS 2015
+      // Lookup theo tên tội danh (chuẩn hoá bỏ tiền tố "Tội " — audit 2026-07-19: nguyên nhân
+      // CHÍNH gây "chưa xác định điều luật" hàng loạt ở vụ cũ là khớp tên TUYỆT ĐỐI trong khi
+      // danh mục luôn ghi đủ "Tội ..." còn dữ liệu cũ/import hay ghi tắt thiếu tiền tố này), ưu
+      // tiên BLHS 2025 khi trùng (trước đây ưu tiên "namBLHS === '2015'" — dead code từ khi danh
+      // mục đổi hết nhãn sang "2025", không còn entry nào gắn nhãn "2015" nữa).
       const dmByTen = {};
-      // Lookup theo số điều (lowercase, VD "173", "134a"), ưu tiên BLHS 2015
+      // Lookup theo số điều (lowercase, VD "173", "134a") — ưu tiên BLHS 2025 khi trùng (VD Điều
+      // 173 tồn tại ở CẢ BLHS 1999 lẫn 2025 nhưng là 2 tội hoàn toàn khác nhau — ưu tiên 2025 vì
+      // áp dụng cho phần lớn vụ án hiện hành).
       const dmByDieu = {};
       dmSnap.docs.forEach(d => {
         const data = d.data();
-        const keyTen = (data.tenToiDanh || "").toLowerCase();
-        if (!dmByTen[keyTen] || data.namBLHS === "2015") dmByTen[keyTen] = data;
+        const keyTen = chuanHoaTenToiDanh(data.tenToiDanh);
+        if (!dmByTen[keyTen] || data.namBLHS === "2025") dmByTen[keyTen] = data;
         const mDieu = (data.dieuLuat || "").match(/Điều\s+(\d+[a-zA-Z]*)/i);
         if (mDieu) {
           const keyDieu = mDieu[1].toLowerCase();
-          if (!dmByDieu[keyDieu] || data.namBLHS === "2015") dmByDieu[keyDieu] = data;
+          if (!dmByDieu[keyDieu] || data.namBLHS === "2025") dmByDieu[keyDieu] = data;
         }
       });
 
@@ -1827,8 +1881,9 @@ function BackfillDieuLuatBCTool() {
             const hit = dmByDieu[t.toLowerCase()];
             if (hit) { toiDanh[i] = hit.tenToiDanh; dieuLuatBC[i] = hit.dieuLuat; changed = true; }
           } else if (t) {
-            // Tên tội danh nhưng thiếu dieuLuatBC → điền ref
-            const hit = dmByTen[t.toLowerCase()];
+            // Tên tội danh nhưng thiếu dieuLuatBC → điền ref (chuẩn hoá bỏ tiền tố "Tội " khi so
+            // khớp, xem ghi chú ở dmByTen)
+            const hit = dmByTen[chuanHoaTenToiDanh(t)];
             if (hit) { dieuLuatBC[i] = hit.dieuLuat; changed = true; }
           }
         }
@@ -1850,8 +1905,9 @@ function BackfillDieuLuatBCTool() {
       <h3 className="font-semibold text-slate-800 mb-1">Chuẩn hóa tội danh / điều luật bị can</h3>
       <p className="text-xs text-slate-500 mb-3">
         Sửa dữ liệu tội danh nhập sai định dạng: nếu ô tội danh chỉ chứa số điều (VD "173") thì tự tra danh mục
-        để điền đúng tên ("Tội trộm cắp tài sản") + điều luật ref ("Điều 173 BLHS 2015"); nếu tên đã đúng nhưng
-        chưa có điều luật ref thì điền ref. Cần <strong>seed danh mục BLHS trước</strong>.
+        để điền đúng tên ("Tội trộm cắp tài sản") + điều luật ref ("Điều 173 BLHS 2025"); nếu tên đã đúng
+        (kể cả thiếu tiền tố "Tội " — VD gõ "Trộm cắp tài sản" thay vì "Tội trộm cắp tài sản") nhưng chưa có
+        điều luật ref thì điền ref. Cần <strong>seed danh mục BLHS trước</strong>.
         An toàn khi chạy lại nhiều lần — chỉ đụng vào ô còn thiếu.
       </p>
       {info && (
@@ -6022,17 +6078,8 @@ async function tinhSnapTonTheoTD() {
   const tonCuoiBiCan = {};
   THU_TU_GIAI_DOAN.forEach((gd, i) => { tonCuoiKy[gd] = demsDocs[i].length; tonCuoiBiCan[gd] = 0; });
 
-  const dmByTenChot = new Map();
-  dmSnap.docs.forEach(d => {
-    const data = d.data();
-    const key = (data.tenToiDanh || "").toLowerCase();
-    if (!dmByTenChot.has(key) || data.namBLHS === "2015") dmByTenChot.set(key, data.dieuLuat);
-  });
-  const normDK = (bc) =>
-    bc.dieuLuatBC?.[0] ||
-    dmByTenChot.get((bc.toiDanh?.[0] || "").toLowerCase()) ||
-    bc.toiDanh?.[0] ||
-    "(chưa xác định)";
+  const dmByTenChot = taoDanhMucByTen(dmSnap.docs.map(d => d.data()));
+  const normDK = (bc) => layMaDieuLuatBiCan(bc, dmByTenChot) || "(chưa xác định)";
 
   // Batch-load toàn bộ bị can 1 lần — thay thế sequential await trong vòng lặp lồng nhau
   const allVuIds = demsDocs.flatMap(docs => docs.map(d => d.id));
@@ -7062,18 +7109,16 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     ? new Date(ky.ngayBatDau.seconds ? ky.ngayBatDau.seconds * 1000 : ky.ngayBatDau).getFullYear()
     : new Date().getFullYear();
 
-  // Lookup ngược: tên tội danh (lowercase) → mã điều luật — dùng khi bc.dieuLuatBC chưa điền
-  const danhMucByTen = new Map(danhMuc.map(d => [d.tenToiDanh.toLowerCase(), d.dieuLuat]));
-
-  // Chuẩn hóa key điều luật: alias "BLHS 2015" → "BLHS 2025" (cùng 1 bộ luật, chỉ đổi phiên bản hợp nhất)
-  // để dữ liệu cũ (dieuLuatBC = "Điều 173 BLHS 2015") và dữ liệu mới ("...BLHS 2025") cùng nhóm B10.
-  const normDL = (dl) => (dl || "").replace(/\bBLHS\s+2015\b/g, "BLHS 2025");
+  // Lookup ngược: tên tội danh (chuẩn hoá) → mã điều luật — dùng khi bc.dieuLuatBC chưa điền. Dùng
+  // hàm dùng chung (taoDanhMucByTen/chuanHoaMaDieuLuat/layMaDieuLuatBiCan, xem định nghĩa đầu file)
+  // thay vì tự viết lại — trước đây bị lặp lại y hệt ở 5 nơi, dễ sửa 1 nơi quên nơi kia.
+  const danhMucByTen = taoDanhMucByTen(danhMuc);
 
   // Normalize tonCuoiKyTheoTD của kỳ trước: key cũ có thể là tên tội danh thay vì code chuẩn
   const tonTD_truocRaw = kyTruoc?.tonCuoiKyTheoTD || {};
   const tonTD_truoc = {};
   for (const [k, v] of Object.entries(tonTD_truocRaw)) {
-    const normKey = normDL(danhMucByTen.get(k.toLowerCase()) || k);
+    const normKey = chuanHoaMaDieuLuat(danhMucByTen.get(chuanHoaTenToiDanh(k)) || k);
     tonTD_truoc[normKey] = v;
   }
 
@@ -7083,24 +7128,16 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   const kyTonTD = kyTonTD_raw ? {} : null;
   if (kyTonTD_raw) {
     for (const [k, v] of Object.entries(kyTonTD_raw)) {
-      const normKey = normDL(danhMucByTen.get(k.toLowerCase()) || k);
+      const normKey = chuanHoaMaDieuLuat(danhMucByTen.get(chuanHoaTenToiDanh(k)) || k);
       kyTonTD[normKey] = v;
     }
   }
 
-  // Lấy key điều luật của bị can:
-  //   1. dieuLuatBC[0] nếu có (code chuẩn, VD "Điều 173 BLHS 2025" hoặc legacy "...BLHS 2015")
-  //   2. Tra ngược tên tội danh trong catalog → lấy code chuẩn
-  //   3. Fallback: dùng thẳng toiDanh[0] làm key (tên tội danh)
-  const getDL = (bc) => normDL(
-    bc.dieuLuatBC?.[0] ||
-    danhMucByTen.get((bc.toiDanh?.[0] || "").toLowerCase()) ||
-    bc.toiDanh?.[0] ||
-    ""
-  );
+  // Lấy key điều luật của bị can — xem layMaDieuLuatBiCan (dùng chung).
+  const getDL = (bc) => layMaDieuLuatBiCan(bc, danhMucByTen);
 
   // Chuẩn hoá 1 tên/code từ vuan.dieuLuat sang key chuẩn (giống getDL nhưng cho chuỗi tên)
-  const normTen = (nm) => normDL(danhMucByTen.get(nm.toLowerCase()) || nm);
+  const normTen = (nm) => chuanHoaMaDieuLuat(danhMucByTen.get(chuanHoaTenToiDanh(nm)) || nm);
 
   // Điều luật CHÍNH của vụ: BC ban_dau (hoặc BC đầu tiên nếu không có), vụ 0 BC lấy dieuLuat[0].
   // Mỗi vụ chỉ đếm 1 lần duy nhất dưới đúng tội danh chính → tổng cột B10 = đúng tổng danh sách.
@@ -7158,7 +7195,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // Cũng normalize các key từ tonTD_truoc — cũ có thể lưu tên thay vì code
   const tatCaDieuLuatChuan = new Set();
   for (const k of tatCaDieuLuat) {
-    tatCaDieuLuatChuan.add(danhMucByTen.get(k.toLowerCase()) || k);
+    tatCaDieuLuatChuan.add(danhMucByTen.get(chuanHoaTenToiDanh(k)) || k);
   }
 
   const danhMucMap = Object.fromEntries(danhMuc.map(d => [d.dieuLuat, d]));
@@ -7384,12 +7421,9 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
 
   const danhMucSnap = await db.collection("danhMucToiDanh").get();
   const danhMuc = danhMucSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  const danhMucByTen = new Map(danhMuc.map(d => [d.tenToiDanh.toLowerCase(), d.dieuLuat]));
-  const normDL = (dl) => (dl || "").replace(/\bBLHS\s+2015\b/g, "BLHS 2025");
-  const getDL = (bc) => normDL(
-    bc.dieuLuatBC?.[0] || danhMucByTen.get((bc.toiDanh?.[0] || "").toLowerCase()) || bc.toiDanh?.[0] || ""
-  );
-  const normTen = (nm) => normDL(danhMucByTen.get(nm.toLowerCase()) || nm);
+  const danhMucByTen = taoDanhMucByTen(danhMuc);
+  const getDL = (bc) => layMaDieuLuatBiCan(bc, danhMucByTen);
+  const normTen = (nm) => chuanHoaMaDieuLuat(danhMucByTen.get(chuanHoaTenToiDanh(nm)) || nm);
   const KEY_CHUA_XD = "(chưa xác định — chênh lệch dữ liệu cũ)";
 
   const themVao = (map, D, gd, vuId, soBiCan) => {
@@ -7667,18 +7701,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   }
 
   // ---- Thống kê tội danh trong kỳ (pivot: tội chính → vụ/BC mới/tồn/GQ) ----
-  // Chuẩn hoá điều luật y hệt tinhBieu10 để TK tội danh và B10 nhóm giống nhau
-  const _tkDMByTen = new Map(danhMuc.map(d => [d.tenToiDanh.toLowerCase(), d.dieuLuat]));
-  const _tkNormDL = (dl) => (dl || "").replace(/\bBLHS\s+2015\b/g, "BLHS 2025");
-  const _tkGetDL = (bc) => _tkNormDL(
-    bc.dieuLuatBC?.[0] ||
-    _tkDMByTen.get((bc.toiDanh?.[0] || "").toLowerCase()) ||
-    bc.toiDanh?.[0] ||
-    ""
-  ) || "(Chưa xác định)";
+  // Chuẩn hoá điều luật y hệt tinhBieu10 để TK tội danh và B10 nhóm giống nhau — dùng hàm dùng
+  // chung (xem đầu file), giữ tên biến _tk* cũ vì được dùng lại ở nhiều chỗ khác trong hàm này.
+  const _tkDMByTen = taoDanhMucByTen(danhMuc);
+  const _tkGetDL = (bc) => layMaDieuLuatBiCan(bc, _tkDMByTen) || "(Chưa xác định)";
   const _tkGetDLVu = (vu) => {
     const parts = (vu.dieuLuat || "").split(";").map(s => s.trim()).filter(Boolean);
-    return parts.length > 0 ? (_tkNormDL(_tkDMByTen.get(parts[0].toLowerCase()) || parts[0])) : "(Chưa xác định)";
+    return parts.length > 0
+      ? (chuanHoaMaDieuLuat(_tkDMByTen.get(chuanHoaTenToiDanh(parts[0])) || parts[0]))
+      : "(Chưa xác định)";
   };
 
   function tkTD_add(stats, vuMap, cat, gdField) {

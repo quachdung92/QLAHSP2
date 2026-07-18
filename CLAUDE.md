@@ -2,6 +2,61 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Audit "chưa xác định điều luật" ở Biểu B10 — không phải xung đột BLHS 2015/2025 (2026-07-19)
+
+Theo yêu cầu người dùng: nhiều vụ án cũ bị Biểu B10/TK tội danh báo "chưa xác định điều luật" dù
+cột "Điều luật" ở màn hình vẫn hiện có giá trị. Nghi ngờ ban đầu là xung đột BLHS 2015 vs 2025 —
+**audit sâu xác nhận KHÔNG PHẢI** (danh mục `DANH_MUC_TOI_DANH_MAM` hiện chỉ còn đúng 2 bộ luật:
+BLHS 1999 — 272 điều, đánh số HOÀN TOÀN khác BLHS 2025, VD Điều 173 BLHS 1999 = "Vi phạm sử dụng
+đất đai" ≠ Điều 173 BLHS 2025 = "Trộm cắp tài sản"; và BLHS 2025 — 314 điều, đại diện luôn cho cả
+"2015" vì số điều giữ nguyên qua các lần sửa đổi 2015/2017/2025, KHÔNG còn entry nào gắn nhãn
+"2015" nữa — đúng như người dùng khẳng định "BLHS 2015 = BLHS 2025, bản 2025 chỉ là bản update").
+
+**4 nguyên nhân THẬT tìm được** (dùng agent + đọc code trực tiếp, không suy đoán):
+1. **Chính**: `ImportExcelModule` luôn ghi `dieuLuatBC` RỖNG cho mọi bị can nhập từ file Excel —
+   phụ thuộc hoàn toàn vào việc khớp CHÍNH XÁC 100% tên tội danh (kể cả hoa/thường) với danh mục.
+   Đây là lý do "vụ cũ" (nhập qua Excel) hay lỗi trong khi dữ liệu mới (nhập tay qua form có ô
+   chọn tội danh — `ToiDanhInput`) thì sạch, đúng như người dùng quan sát.
+2. **Công cụ "Chuẩn hóa tội danh / điều luật bị can" đã có sẵn** (Cài đặt → Import Excel,
+   `BackfillDieuLuatBCTool`) để chữa mục 1 — nhưng CŨNG chỉ khớp tên CHÍNH XÁC 100%. Danh mục luôn
+   ghi đủ tiền tố "Tội " (VD "Tội trộm cắp tài sản"), còn dữ liệu cũ/gõ tắt thường thiếu tiền tố
+   này ("Trộm cắp tài sản") → vẫn không khớp dù đã chạy công cụ.
+3. **Lỗi tiềm ẩn trong chính công cụ đó**: logic ưu tiên chọn `namBLHS === "2015"` khi trùng tên/số
+   điều giữa 2 bộ luật — dead code từ khi danh mục đổi hết nhãn sang "2025" (không còn entry "2015"
+   nào để so khớp), rủi ro chọn nhầm sang BLHS 1999 khi trùng số điều (VD "173").
+4. **Trùng lặp code**: logic "chuẩn hoá điều luật" (normDL/getDL/danhMucByTen) bị viết lặp lại y
+   hệt ở **5 nơi khác nhau** (`tinhSnapTonTheoTD`, `tinhBieu10`, `taiTaoTonCuoiKyTheoTDTatCa`,
+   `tinhBaoCaoKyTuLog`, `BackfillDieuLuatBCTool`) — dễ sửa 1 nơi quên 4 nơi kia, đã từng bị đúng
+   sự cố này (mục 3 chỉ được phát hiện ở 1-2 nơi khi audit tay, không phải cả 5).
+
+**Kết luận về việc có cần giữ "Mã ĐL" không** (người dùng hỏi thẳng): CÓ, cơ chế resolve tên tội
+danh → mã điều luật chuẩn là bắt buộc — Biểu B10 theo đúng mẫu ngành gộp số liệu theo **điều
+luật**, không phải theo tên tội danh gõ tay (2 cách viết khác nhau của cùng 1 tội phải gộp về
+đúng 1 dòng). Vấn đề không phải cơ chế thừa, mà là ĐỘ TIN CẬY của bước tra cứu — đã sửa đúng chỗ
+đó, không bỏ cơ chế.
+
+**Đã sửa (theo yêu cầu người dùng "sửa toàn bộ")**:
+- Gộp 5 nơi trùng lặp thành 3 hàm dùng chung đặt đầu file (cạnh `tinhDieuLuat`):
+  `chuanHoaMaDieuLuat` (alias BLHS 2015→2025), `chuanHoaTenToiDanh` (khoá tra cứu: hạ chữ thường,
+  gộp khoảng trắng, **bỏ tiền tố "Tội "**), `taoDanhMucByTen`/`layMaDieuLuatBiCan` (dựng map +
+  tra cứu, ưu tiên BLHS 2025 khi trùng — sửa đúng lỗi mục 3 ở trên).
+- Áp dụng nới lỏng "bỏ tiền tố Tội " ở CẢ 5 nơi tính toán VÀ ở `ToiDanhInput.handleBlur` (form nhập
+  liệu trực tiếp) — để dữ liệu MỚI cũng không rơi vào đúng bẫy tương tự nếu người dùng gõ tắt.
+- `BackfillDieuLuatBCTool` (công cụ chuẩn hoá có sẵn) tự động hưởng lợi từ fix này — không cần viết
+  công cụ mới, chỉ cần CHẠY LẠI công cụ cũ trên dữ liệu thật để chuẩn hoá các "vụ cũ" còn sót.
+
+**Đã kiểm chứng bằng Playwright thật** (11 assertion mới): seed 1 bị can ghi tắt "Trộm cắp tài sản"
+(thiếu "Tội ", `dieuLuatBC` rỗng — mô phỏng đúng thực trạng Import Excel) + 1 bị can chỉ ghi số điều
+thuần "173" (trùng cả BLHS 1999 lẫn 2025) + 1 bị can đã có sẵn dieuLuatBC (không được đụng) — chạy
+"Chạy chuẩn hóa": xác nhận cả 2 bị can thiếu dữ liệu đều được điền ĐÚNG "Điều 173 BLHS 2025" (không
+còn "chưa xác định" dù thiếu tiền tố "Tội "), tự chọn đúng BLHS 2025 khi số điều trùng cả 2 bộ luật
+(không nhầm sang 1999), không đụng vào bị can đã đủ dữ liệu, idempotent khi chạy lại lần 2. Không
+phá vỡ 45 assertion hồi quy có sẵn (Bảng dữ liệu Excel, Excel giao nhận, backfill ngày giải
+quyết...). PASS trên cả `qlva.html`/`qlva-dev.html`.
+**Còn lại (theo kế hoạch)**: chạy công cụ "Chạy chuẩn hóa" trên dữ liệu Firestore THẬT (`qlva-dev.html`,
+project `qlahs-test`) để xác nhận số lượng bị can thực sự được sửa, trước khi cân nhắc chạy trên
+production.
+
 ## Excel "Tải toàn bộ lịch sử giao nhận": thêm cột Ngày giải quyết riêng + tách 3 sheet (2026-07-19)
 
 Theo phản hồi người dùng — file Excel tải về cần **cột riêng "Ngày giải quyết"** (dễ filter/sort
