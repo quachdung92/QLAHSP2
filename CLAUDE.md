@@ -2,6 +2,44 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Giao nhận hồ sơ: tự lưu hộ dòng đang sửa dở khi bấm "Lưu phiên"/"In phiên" (2026-07-18)
+
+Vấn đề thực tế Dũng nêu: mỗi dòng trong bảng "đã quét trong phiên" (`DongGiaoNhan`) tự giữ state
+sửa (KSV/ĐTV/người nhận thực tế/số bút lục/mức án/"Không tiếp nhận") CHỈ TRONG COMPONENT — chỉ ghi
+xuống Firestore khi bấm đúng nút "Lưu" nhỏ của riêng dòng đó (xem `luu()`). Nếu đang gõ dở (VD vừa
+nhập mức án lúc nộp lưu trữ) rồi bấm thẳng "Lưu phiên" hoặc "In phiên" ở đầu trang mà quên bấm
+"Lưu" của dòng, thay đổi đó **biến mất hoàn toàn** — module cha (`GiaoNhanHoSoModule`) trước đây
+không hề biết dòng nào đang dở dang.
+
+**Giải pháp: `DongGiaoNhan` đổi sang `React.forwardRef` + `useImperativeHandle`**, expose 1 hàm
+`luuNeuDangSua()` (dòng đang sửa dở thì tự gọi `luu()` nội bộ và trả kết quả true/false; dòng
+không sửa thì resolve `true` ngay). `luu()` đổi từ trả về `void` sang trả `true`/`false` để phân
+biệt "tự lưu thành công" với "không lưu được vì thiếu dữ liệu bắt buộc" (VD bật "Không tiếp nhận"
+nhưng bỏ trống lý do — validation cũ vẫn giữ nguyên, chỉ thêm phần báo kết quả ra ngoài).
+`GiaoNhanHoSoModule` giữ `dongRefs` (`useRef(new Map())`, key = id dòng, set/xoá qua callback ref
+lúc render `<DongGiaoNhan>`) + helper `luuCacDongDangSua()` (`Promise.all` gọi `luuNeuDangSua()`
+trên mọi dòng đang render, trả về `true` chỉ khi TẤT CẢ đều lưu được). Cả `luuPhien` (nút "Lưu
+phiên") và `moBienBanIn` (nút "In phiên", thay hẳn `() => setHienBienBan(true)` trực tiếp trước
+đây) đều gọi `luuCacDongDangSua()` trước — nếu có dòng lưu thất bại (thiếu lý do bắt buộc) thì
+**dừng lại, hiện toast lỗi, KHÔNG lưu/in phiên** (giữ nguyên state dòng đó đang sửa để người dùng
+tự sửa tiếp), tránh vừa mất dữ liệu vừa lưu/in thiếu.
+
+Không đặt deps cho `useImperativeHandle` (chạy lại mỗi lần render) — object trả về phải luôn đóng
+gói đúng closure mới nhất của `dangSua`/`luu`, tránh gọi nhầm phiên bản `luu` cũ nếu người dùng vừa
+gõ xong trước khi bấm "Lưu phiên"/"In phiên".
+
+**Đã kiểm chứng**: (1) biên dịch cú pháp cả `qlva.html`/`qlva-dev.html` qua `@babel/standalone@7.25.6`
+— sạch, output 2 file giống hệt nhau (xác nhận đã mirror đúng); (2) test độc lập bằng React thật +
+`react-test-renderer` (không mock React) mô phỏng đúng pattern `forwardRef`/`useImperativeHandle`/
+`Map` ref vừa thêm — 7/7 assertion pass: không có dòng nào sửa thì không ghi gì; dòng đang sửa dở
+với giá trị MỚI (chưa bấm "Lưu" riêng) được tự lưu đúng giá trị khi gọi hàm gộp; có 1 dòng validate
+thất bại thì hàm gộp trả `false` (không ghi dòng đó) NHƯNG dòng khác hợp lệ vẫn được lưu song song,
+không bị chặn lây. **Chưa kiểm chứng bằng dữ liệu Firestore thật trên `qlva-dev.html`** — nên thử:
+bắt đầu 1 phiên Nhận (bật "Nộp hồ sơ lưu trữ"), quét 1 vụ Đã xét xử, bấm vào dòng để sửa, gõ số bút
+lục/mức án nhưng KHÔNG bấm "Lưu" của dòng, bấm thẳng "Lưu phiên" (hoặc "In phiên") ở đầu trang, xác
+nhận dữ liệu vừa gõ vẫn được lưu đúng (kiểm tra lại qua Firestore hoặc mở lại phiên từ "Phiên gần
+đây").
+
 ## Import Excel: cho phép "thay thế" vụ trùng bằng cách đưa vụ cũ vào Thùng rác (2026-07-18)
 
 Import Excel trước đây phát hiện vụ trùng (theo mã vụ HOẶC theo cặp Số+Ngày QĐ KTVA) thì LOẠI THẲNG

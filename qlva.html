@@ -8963,7 +8963,7 @@ function CongTac({ checked, onChange, nhan, mauBat = "bg-emerald-600" }) {
   );
 }
 
-function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }) {
+const DongGiaoNhan = React.forwardRef(function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }, ref) {
   const [dangSua, setDangSua] = useState(false);
   const [ksv, setKsv] = useState(dong.nguoiGiao || "");
   const [dtv, setDtv] = useState(dong.nguoiNhan || "");
@@ -8984,12 +8984,16 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
   // nên phải ghi vào `vuan`, KHÔNG chỉ ghi vào dòng log — đồng thời cập nhật lại luôn
   // thoiHanBaoQuan trên dòng log để cột "Thời hạn bảo quản" phản ánh đúng ngay, không cần quét
   // lại vụ mới thấy số mới.
+  // Trả về true/false (thay vì void) để "Lưu phiên"/"In phiên" ở module cha (xem
+  // luuNeuDangSua/luuCacDongDangSua) biết được có tự lưu hộ thành công hay không — dòng đang sửa
+  // dở nhưng thiếu lý do "Không tiếp nhận" thì KHÔNG được coi là đã lưu, phải chặn "Lưu phiên"/
+  // "In phiên" lại để người dùng tự xử lý, tránh mất âm thầm.
   const luu = async () => {
     // Bắt buộc gõ lý do khi đánh dấu không tiếp nhận — đánh dấu mà không rõ lý do thì vô nghĩa,
     // khác các trường khác của dòng (KSV/ĐTV/số bút lục) vốn không bắt buộc.
     if (khongTiepNhan && !lyDoKhongTiepNhan.trim()) {
       addToast("Đánh dấu \"Không tiếp nhận\" cần gõ rõ lý do.", "error");
-      return;
+      return false;
     }
     const patch = {
       nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim(),
@@ -9010,12 +9014,23 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
       } catch (err) {
         console.error(err);
         addToast("Lỗi khi lưu mức án vào vụ án: " + err.message, "error");
-        return;
+        return false;
       }
     }
     await onSua(dong.id, patch);
     setDangSua(false);
+    return true;
   };
+
+  // Cho phép module cha (GiaoNhanHoSoModule) tự lưu hộ dòng này trước khi "Lưu phiên"/"In phiên"
+  // (2026-07-18) — trước đây bấm "Lưu phiên"/"In phiên" trong lúc 1 dòng đang sửa dở (VD vừa nhập
+  // mức án/số bút lục nhưng quên bấm "Lưu" của riêng dòng đó) sẽ bỏ sót thay đổi đó, vì state sửa
+  // chỉ nằm trong component này, chưa từng ghi xuống Firestore. Không đặt deps cho
+  // useImperativeHandle (chạy lại mỗi lần render) để object trả về luôn đóng gói đúng closure mới
+  // nhất của `dangSua`/`luu` — tránh gọi nhầm `luu` với state cũ nếu người dùng vừa gõ xong.
+  React.useImperativeHandle(ref, () => ({
+    luuNeuDangSua: () => (dangSua ? luu() : Promise.resolve(true)),
+  }));
 
   // Bấm vào bất kỳ đâu trên dòng (không chỉ đúng chữ "Sửa" nhỏ) là vào chế độ sửa ngay — thao
   // tác giao nhận diễn ra nhanh, đầu đọc QR quét liên tục, không nên bắt rê chuột chính xác vào
@@ -9178,7 +9193,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, onSua, onXoa, hienThoiHan }
       )}
     </>
   );
-}
+});
 
 // Render qua portal vào #qr-print-root (đã dùng chung cho In mã QR) — xem chú thích @media
 // print ở <head>: #root bị ẩn hẳn khi in, #qr-print-root thì không nên nội dung in ở đây luôn
@@ -9294,6 +9309,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [dangSuaTenPhien, setDangSuaTenPhien] = useState(false);
   const [tenPhienDangSua, setTenPhienDangSua] = useState("");
   const inputRef = React.useRef(null);
+  // Map id dòng → imperative handle của DongGiaoNhan tương ứng (xem luuNeuDangSua ở đó) — dùng để
+  // tự lưu hộ dòng đang sửa dở trước khi "Lưu phiên"/"In phiên" (xem luuCacDongDangSua).
+  const dongRefs = React.useRef(new Map());
 
   // Danh sách phiên gần đây (2026-07-17) — trước đây bấm "Phiên mới"/đóng trình duyệt là MẤT hẳn
   // đường vào lại 1 phiên đã có (kể cả phiên đã "Lưu phiên" chỉ còn xem/in được, hay phiên "Đang
@@ -9557,10 +9575,30 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const suaNguoi = (id, patch) => db.collection("lichsuChuyenGiaiDoan").doc(id).update(patch).catch(err => console.error(err));
   const xoaDong = (id) => db.collection("lichsuChuyenGiaiDoan").doc(id).delete().catch(err => console.error(err));
 
+  // Tự lưu hộ mọi dòng đang sửa dở (nếu có) trước khi "Lưu phiên"/"In phiên" (2026-07-18) — trả về
+  // false nếu có dòng không tự lưu được (VD thiếu lý do "Không tiếp nhận" bắt buộc), để 2 nơi gọi
+  // dừng lại thay vì lưu/in phiên với dữ liệu dở dang.
+  const luuCacDongDangSua = async () => {
+    const ketQua = await Promise.all(Array.from(dongRefs.current.values()).map(r => r.luuNeuDangSua()));
+    return ketQua.every(Boolean);
+  };
+
   const luuPhien = async () => {
+    if (!(await luuCacDongDangSua())) {
+      addToast("Còn 1 dòng đang sửa dở chưa hợp lệ (VD thiếu lý do \"Không tiếp nhận\") — kiểm tra lại trước khi lưu phiên.", "error");
+      return;
+    }
     const now = new Date();
     await db.collection("phienGiaoNhan").doc(phien.id).update({ trangThai: "da_luu", thoiDiemLuu: now });
     setPhien(p => ({ ...p, trangThai: "da_luu", thoiDiemLuu: now }));
+  };
+
+  const moBienBanIn = async () => {
+    if (!(await luuCacDongDangSua())) {
+      addToast("Còn 1 dòng đang sửa dở chưa hợp lệ (VD thiếu lý do \"Không tiếp nhận\") — kiểm tra lại trước khi in phiên.", "error");
+      return;
+    }
+    setHienBienBan(true);
   };
 
   if (!phien) {
@@ -9690,7 +9728,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
               Lưu phiên
             </button>
           )}
-          <button onClick={() => setHienBienBan(true)} disabled={dsQuet.length === 0}
+          <button onClick={moBienBanIn} disabled={dsQuet.length === 0}
                   className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
             In phiên
           </button>
@@ -9782,7 +9820,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
               <tr><td colSpan={9 + (phien.laLuuTru ? 2 : 0) + (phien.loaiGiaoDich === "nhan" ? 1 : 0) + (phien.trangThai === "dang_mo" ? 1 : 0)} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
             )}
             {dsQuet.map((d, i) => (
-              <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}
+              <DongGiaoNhan key={d.id}
+                            ref={el => { if (el) dongRefs.current.set(d.id, el); else dongRefs.current.delete(d.id); }}
+                            stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}
                             hienThoiHan={phien.laLuuTru}
                             khoaSua={phien.trangThai !== "dang_mo"} onSua={suaNguoi} onXoa={xoaDong} />
             ))}
