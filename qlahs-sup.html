@@ -336,10 +336,22 @@ function _batch() {
         const { error } = await sb.from(op.table).update(resolved).eq("id", op.id);
         if (error) throw error;
       }));
-      await Promise.all(deletes.map(async op => {
-        const { error } = await sb.from(op.table).delete().eq("id", op.id);
+      // Delete PHẢI đi theo thứ tự NGƯỢC LẠI thứ tự phụ thuộc insert (xoá con TRƯỚC, cha SAU) —
+      // bug thật tìm được qua Playwright test (script dọn dữ liệu test tự xoá vuan+bican+
+      // lichsuChuyenGiaiDoan trong cùng batch, Promise.all song song giữa các bảng làm delete
+      // "vuan" có thể chạy TRƯỚC khi "bican"/"lichsuChuyenGiaiDoan" xoá xong → lỗi FK 23503, cùng
+      // họ lỗi với insert-ordering đã sửa ở trên). Gộp theo bảng thành 1 lượt `.in('id', ids)` mỗi
+      // bảng (nhanh hơn N request riêng lẻ), xử lý TUẦN TỰ theo thứ tự bảng đảo ngược.
+      const deletesByTable = new Map();
+      for (const op of deletes) {
+        if (!deletesByTable.has(op.table)) deletesByTable.set(op.table, []);
+        deletesByTable.get(op.table).push(op.id);
+      }
+      const thuTuXoa = _sapXepTheoPhuThuoc(deletesByTable).reverse();
+      for (const [table, ids] of thuTuXoa) {
+        const { error } = await sb.from(table).delete().in("id", ids);
         if (error) throw error;
-      }));
+      }
     },
   };
 }
@@ -516,17 +528,14 @@ async function layBiCanInfo(maVuAn) {
   return info;
 }
 
-// Batch-read toàn bộ bị can cho nhiều vụ án — 1 "in" query / 30 vụ thay vì N query riêng lẻ.
-// Trả { maVuAn: [bcData, ...] }. Đồng thời cập nhật _biCanCache cho những vụ chưa có.
+// Batch-read toàn bộ bị can cho nhiều vụ án — 1 "in" query DUY NHẤT (checklist Supabase mục 5:
+// Postgres ANY() không giới hạn 30 item như Firestore, bỏ hẳn chia lô — xem shim, ghi chú đầu
+// khối <script> chính). Trả { maVuAn: [bcData, ...] }. Đồng thời cập nhật _biCanCache cho vụ chưa có.
 async function batchLayBiCanList(maVuAnList) {
   if (!maVuAnList.length) return {};
   const result = {};
-  const chunks = [];
-  for (let i = 0; i < maVuAnList.length; i += 30) chunks.push(maVuAnList.slice(i, i + 30));
-  const snaps = await Promise.all(chunks.map(ids =>
-    db.collection("bican").where("maVuAn", "in", ids).get()
-  ));
-  snaps.flatMap(s => s.docs).forEach(doc => {
+  const snap = await db.collection("bican").where("maVuAn", "in", maVuAnList).get();
+  snap.docs.forEach(doc => {
     const bc = { id: doc.id, ...doc.data() };
     if (!result[bc.maVuAn]) result[bc.maVuAn] = [];
     result[bc.maVuAn].push(bc);
@@ -2704,10 +2713,9 @@ function ImportExcelModule() {
         // XoaVuAnModal, cùng nguyên tắc chặn xoá khi còn vụ con để tránh mồ côi hoá vụ tách).
         if (trung.length > 0) {
           const idsTrung = [...new Set(trung.map(v => v._idTrung))];
-          const nhom = chiaNhoDsId(idsTrung);
-          const snaps = await Promise.all(nhom.map(nhomId => db.collection("vuan").where("vuGoc", "in", nhomId).get()));
+          const snap = await db.collection("vuan").where("vuGoc", "in", idsTrung).get();
           const coVuCon = new Set();
-          snaps.forEach(s => s.docs.forEach(d => { const vg = d.data().vuGoc; if (vg) coVuCon.add(vg); }));
+          snap.docs.forEach(d => { const vg = d.data().vuGoc; if (vg) coVuCon.add(vg); });
           setIdsCoVuCon(coVuCon);
         }
 
@@ -4990,14 +4998,8 @@ function ChonCotHienThi({ cotAn, onDoi }) {
   );
 }
 
-// Chia 1 mảng id thành các lô tối đa 30 phần tử — đúng giới hạn của mệnh đề "in" trong Firestore.
-// Dùng để hỏi bican/lichsuChuyenGiaiDoan ĐÚNG những vụ đang cần hiển thị thay vì tải nguyên
-// collection (có thể tăng vô hạn theo thời gian, đặc biệt là log sự kiện).
-function chiaNhoDsId(ids, kichThuoc = 30) {
-  const out = [];
-  for (let i = 0; i < ids.length; i += kichThuoc) out.push(ids.slice(i, i + kichThuoc));
-  return out;
-}
+// Hàm chiaNhoDsId (chia lô 30 item cho mệnh đề "in") ĐÃ BỎ (checklist Supabase mục 5) — Postgres
+// ANY() không giới hạn 30 item như Firestore, mọi call site giờ gọi thẳng 1 query duy nhất.
 
 function DanhSachPanel({ selectedId, onSelect }) {
   const [list, setList] = useState([]);
@@ -5146,13 +5148,12 @@ function DanhSachPanel({ selectedId, onSelect }) {
       const idsCanTai = ids.filter(id => !bicanTimKiemTheoVu[id]);
       if (idsCanTai.length === 0) return;
       setDangTaiTimBiCan(true);
-      const nhom = chiaNhoDsId(idsCanTai);
-      Promise.all(nhom.map(nhomId => db.collection("bican").where("maVuAn", "in", nhomId).get()))
-        .then(snaps => {
+      db.collection("bican").where("maVuAn", "in", idsCanTai).get()
+        .then(snap => {
           setBicanTimKiemTheoVu(cu => {
             const moi = { ...cu };
             idsCanTai.forEach(id => { moi[id] = []; });
-            snaps.flatMap(s => s.docs).forEach(d => {
+            snap.docs.forEach(d => {
               const bc = { id: d.id, ...d.data() };
               (moi[bc.maVuAn] = moi[bc.maVuAn] || []).push(bc);
             });
@@ -5186,13 +5187,12 @@ function DanhSachPanel({ selectedId, onSelect }) {
     const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
     const idsCanTai = ids.filter(id => !logKyTheoVu[id]);
     if (idsCanTai.length === 0) return;
-    const nhom = chiaNhoDsId(idsCanTai);
-    Promise.all(nhom.map(nhomId => db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "in", nhomId).get()))
-      .then(snaps => {
+    db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "in", idsCanTai).get()
+      .then(snap => {
         setLogKyTheoVu(cu => {
           const moi = { ...cu };
           idsCanTai.forEach(id => { moi[id] = []; });
-          snaps.flatMap(s => s.docs).forEach(d => {
+          snap.docs.forEach(d => {
             const ev = { id: d.id, ...d.data() };
             (moi[ev.maVuAn] = moi[ev.maVuAn] || []).push(ev);
           });
@@ -6429,17 +6429,14 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
 async function vuAnTuLogDocs(logDocs) {
   if (!logDocs.length) return [];
   const maVuAnList = [...new Set(logDocs.map(d => d.data().maVuAn))];
-  // Batch-read vuan + bican song song — ceil(N/30)*2 queries thay vì N*2 queries riêng lẻ
-  const vuanChunks = [];
-  for (let i = 0; i < maVuAnList.length; i += 30) vuanChunks.push(maVuAnList.slice(i, i + 30));
-  const [vuanSnaps, bicanMap] = await Promise.all([
-    Promise.all(vuanChunks.map(ids =>
-      db.collection("vuan").where(firebase.firestore.FieldPath.documentId(), "in", ids).get()
-    )),
+  // Batch-read vuan + bican song song — 1 query "in" duy nhất thay vì chia lô 30 (checklist
+  // Supabase mục 5, Postgres ANY() không giới hạn như Firestore).
+  const [vuanSnap, bicanMap] = await Promise.all([
+    db.collection("vuan").where(firebase.firestore.FieldPath.documentId(), "in", maVuAnList).get(),
     batchLayBiCanInfo(maVuAnList),
   ]);
   const vuanMap = {};
-  vuanSnaps.forEach(snap => snap.docs.forEach(d => { vuanMap[d.id] = { id: d.id, ...d.data() }; }));
+  vuanSnap.docs.forEach(d => { vuanMap[d.id] = { id: d.id, ...d.data() }; });
   return logDocs.map(d => {
     const l = d.data();
     const vu = vuanMap[l.maVuAn];
@@ -7202,35 +7199,33 @@ function collectVuIdsFromBaoCao(baoCao) {
   return [...ids];
 }
 
-// Helper: fetch bị can theo danh sách vụ IDs, chia batch 30 (giới hạn Firestore "in")
+// Helper: fetch bị can theo danh sách vụ IDs — 1 query "in" duy nhất (checklist Supabase mục 5,
+// bỏ chia lô 30 vốn chỉ cần cho giới hạn "in" của Firestore).
 async function fetchBiCanTheoVuIds(vuIds) {
   if (!vuIds.length) return {};
-  const all = [];
-  for (let i = 0; i < vuIds.length; i += 30) {
-    const snap = await db.collection("bican").where("maVuAn", "in", vuIds.slice(i, i + 30)).get();
-    snap.docs.forEach(d => all.push({ id: d.id, ...d.data() }));
-  }
+  const snap = await db.collection("bican").where("maVuAn", "in", vuIds).get();
   const byVu = {};
-  all.forEach(bc => { (byVu[bc.maVuAn] = byVu[bc.maVuAn] || []).push(bc); });
+  snap.docs.forEach(d => {
+    const bc = { id: d.id, ...d.data() };
+    (byVu[bc.maVuAn] = byVu[bc.maVuAn] || []).push(bc);
+  });
   return byVu;
 }
 
 // Helper: fetch kỳ thống kê THẬT của riêng từng bị can (từ sự kiện log khoi_to_bican, KHÔNG
 // phải field loaiKhoiTo — bị can bổ sung thêm sau vào 1 vụ cũ có kỳ khởi tố khác hẳn kỳ của vụ,
 // và log là nguồn sự thật duy nhất, đúng nguyên tắc thiết kế #1). Trả về Map<maBiCan, kyId>.
-// Chia batch 30 giống fetchBiCanTheoVuIds; lọc loaiSuKien phía client để khỏi cần thêm composite
-// index (đã có sẵn index maVuAn + thoiDiemGhi, không có index cho maVuAn + loaiSuKien).
+// 1 query "in" duy nhất (checklist Supabase mục 5, bỏ chia lô 30); lọc loaiSuKien phía client để
+// khỏi cần thêm composite index (đã có sẵn index maVuAn + thoiDiemGhi, không có index cho maVuAn +
+// loaiSuKien — vẫn giữ nguyên lý do này, không liên quan gì tới việc chia lô "in").
 async function fetchKyKhoiToBiCan(vuIds) {
   const map = new Map();
   if (!vuIds.length) return map;
-  for (let i = 0; i < vuIds.length; i += 30) {
-    const snap = await db.collection("lichsuChuyenGiaiDoan")
-      .where("maVuAn", "in", vuIds.slice(i, i + 30)).get();
-    snap.docs.forEach(d => {
-      const e = d.data();
-      if (e.loaiSuKien === "khoi_to_bican" && e.maBiCan) map.set(e.maBiCan, e.kyThongKe || null);
-    });
-  }
+  const snap = await db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "in", vuIds).get();
+  snap.docs.forEach(d => {
+    const e = d.data();
+    if (e.loaiSuKien === "khoi_to_bican" && e.maBiCan) map.set(e.maBiCan, e.kyThongKe || null);
+  });
   return map;
 }
 

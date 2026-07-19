@@ -280,9 +280,15 @@ hơn hoãn lại. Kết quả và bug tìm được ghi ở mục 5 (đã đánh
 
 Lý do gốc (vẫn áp dụng cho 5 mục còn lại `[ ]`): viết shim là "giữ nguyên hành vi ứng dụng, chỉ đổi
 tầng dưới" (rủi ro thấp); checklist mục 5 là "chủ động đổi HÀNH VI ứng dụng" (bỏ live listener đóng
-băng, đổi UX phân trang...) — cần tách bạch để dễ khoanh vùng nếu có lỗi phát sinh. 5 mục còn lại
-(cache lạnh IndexedDB, cursor pagination đóng băng, các quyết định "hot data không cần live" khác,
-`fetchWithTtlCache`, kỹ thuật né composite index) vẫn để dành phiên sau.
+băng, đổi UX phân trang...) — cần tách bạch để dễ khoanh vùng nếu có lỗi phát sinh.
+
+**Cập nhật lần 2 (cùng ngày)**: đã thêm rà mục "cursor pagination đóng băng" — quyết định GIỮ
+NGUYÊN (không phải bỏ sót, xem lý do chi tiết ở đúng mục đó) — và dọn xong phần kỹ thuật "giới hạn
+30-item của `in`" (không phải 1 trong 7 mục checklist chính thức, nhưng cùng tinh thần). Tổng kết
+tới đây: 2 mục bỏ hẳn (`firestoreCacheRegistry`, sentinel), 1 mục rà xong và giữ nguyên (cursor
+pagination). **3 mục còn thật sự chưa rà**: cache lạnh IndexedDB, các quyết định "hot data không
+cần live" khác (`BangBiCanCon`/`BangExcelModule`/cột Kỳ), `fetchWithTtlCache` — cộng 1 mục kỹ thuật
+nhỏ (né composite index thủ công). Để dành phiên sau.
 
 ## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
 
@@ -323,11 +329,19 @@ lại lợi ích cốt lõi nhưng bỏ phần phức tạp thừa) — rồi TE
       lợi ích "cache bền qua lần tải trang" của IndexedDB vẫn có giá trị dưới Supabase (giảm round-
       trip mạng, không liên quan gì tới tiền), có thể GIỮ nhưng đơn giản hoá phần đồng bộ delta thủ
       công bằng Realtime subscription thật nếu muốn.
-- [ ] **Cursor pagination "đóng băng trang đầu sau khi bấm Tải thêm"** (tab "Tất cả" của Danh sách
-      vụ án — chủ động BỎ live update sau lần phân trang đầu, đổi lấy việc không phải đọc lại từ
-      đầu) — đây là đánh đổi UX THẬT (mất tính năng) chỉ để né phí, không phải kỹ thuật phân trang
-      hiệu quả (kỹ thuật cursor/keyset pagination bản thân nó vẫn nên giữ, chỉ riêng phần "bỏ live"
-      là do chi phí). Đánh giá khôi phục live qua Realtime, giữ nguyên cách phân trang.
+- [x] **Cursor pagination "đóng băng trang đầu sau khi bấm Tải thêm"** (tab "Tất cả" của Danh sách
+      vụ án) — **ĐÃ RÀ, QUYẾT ĐỊNH GIỮ NGUYÊN** (không phải bỏ qua — đã đánh giá kỹ, không phải
+      "chưa làm"). Lý do ban đầu ghi trong checklist ("chỉ để né phí") **không chính xác đầy đủ**:
+      đọc lại kỹ code xác nhận việc "đóng băng" tồn tại để tránh 1 vấn đề TÍNH ĐÚNG ĐẮN thật —
+      nếu trang 1 vẫn live TRONG LÚC đã phân trang bằng cursor (`startAfter`), bất kỳ thay đổi nào
+      trên trang 1 sẽ làm listener bắn lại, ghi đè `cursorRef` về đúng ranh giới trang 1, khiến
+      "Tải thêm" kế tiếp coi như không có gì mới (chính code gốc đã phải thêm `dangPhanTrangRef`
+      để phòng ngừa 1 dạng race của đúng vấn đề này). Đây là hệ quả của việc KẾT HỢP live-query với
+      cursor pagination — tồn tại tương tự dưới BẤT KỲ backend nào hỗ trợ Realtime (Supabase không
+      miễn nhiễm), không phải đặc thù chi phí Firestore. Bỏ đóng băng để "khôi phục live" sẽ tái
+      lập đúng lớp race này, không mang lại giá trị tương xứng với rủi ro — tab "Tất cả" cũng không
+      phải màn hình chính (mặc định là "Đang giải quyết", đã live hoàn toàn qua mục ngay trên).
+      **Giữ nguyên hành vi đóng băng**, không sửa gì thêm ở đây.
 - [ ] **`fetchWithTtlCache`** (TTL cache 1 lần cho `NhapVuModal` tìm vụ đích) — tương tự cache lạnh
       ở trên, giữ được nếu có lý do UX riêng (tránh đọc lại khi mở/đóng modal nhanh), không bắt
       buộc bỏ.
@@ -339,14 +353,25 @@ lại lợi ích cốt lõi nhưng bỏ phần phức tạp thừa) — rồi TE
 - [ ] **Kỹ thuật né composite index thủ công** (VD sort phía client thay vì `orderBy` + index cho
       `phienGiaoNhan`/`lichsuChuyenGiaiDoan`, tránh phải deploy index Firestore mới) — Postgres tạo
       index rẻ, không cần bước "deploy" riêng như Firestore — cân nhắc bỏ hẳn workaround, dùng
-      thẳng `ORDER BY` + index Postgres đã có sẵn trong `schema.sql`.
+      thẳng `ORDER BY` + index Postgres đã có sẵn trong `schema.sql`. **Chưa làm** — quy mô nhỏ,
+      để dành phiên sau cùng lúc với việc còn lại.
 
-**KHÔNG nằm trong checklist này** (giữ nguyên, không phải "tinh chỉnh vì chi phí"):
-`db.enablePersistence` (offline persistence) — đây là tính năng THẬT (chống mất mạng tạm thời),
-không phải né chi phí, xử lý riêng ở Phase 5 (mục 7) như đã ghi; giới hạn 30-item của `where(...,
-"in", ...)` và batch 400-item — đây là RÀNG BUỘC KỸ THUẬT của Firestore tự biến mất khi qua
-Postgres (đã ghi ở mục 3), không phải quyết định thiết kế cần "rà lại", chỉ cần xoá code chia lô
-tương ứng trong lớp shim.
+**Đã dọn xong (mục kỹ thuật, không phải "chưa làm")**: giới hạn 30-item của `where(..., "in", ...)`
+— đã xoá hết `chiaNhoDsId`/chia lô 30 trong `qlahs-sup.html` (7 call site: `batchLayBiCanList`,
+`XoaVuAnModal` kiểm tra vụ tách, `DanhSachPanel` (2 nơi: tìm bị can + cột Kỳ), `vuAnTuLogDocs`,
+`fetchBiCanTheoVuIds`, `fetchKyKhoiToBiCan`), đổi thành 1 query `"in"` duy nhất mỗi nơi — Postgres
+`ANY()` không giới hạn 30 như Firestore. **Đã kiểm chứng bằng Playwright thật** (mảng 45 phần tử,
+vượt hẳn giới hạn 30 cũ) xác nhận query trả về đúng đủ 45/45 kết quả. `db.enablePersistence`
+(offline persistence) vẫn để riêng — đây là tính năng THẬT (chống mất mạng tạm thời), không phải
+né chi phí, xử lý ở Phase 5 (mục 7 của tài liệu này) như đã ghi, không thuộc checklist này.
+
+**Bug thật tìm được + sửa qua chính quá trình dọn 30-item chunking**: `batch.delete()` trong shim
+gốc xử lý song song (`Promise.all`) KHÔNG phân biệt bảng nào, trong khi `batch.set()` (insert) đã
+được sửa đúng thứ tự phụ thuộc từ trước (Phase 2) — dẫn tới lỗi FK 23503 CÙNG HỌ khi 1 batch xoá
+nhiều bảng có quan hệ cha-con cùng lúc (VD script dọn dữ liệu test tự xoá `vuan`+`bican`+
+`lichsuChuyenGiaiDoan` trong 1 batch — xoá `vuan` có thể chạy trước khi 2 bảng con xoá xong). Đã
+sửa: `commit()` giờ xoá theo thứ tự NGƯỢC LẠI `_TABLE_INSERT_ORDER` (con trước, cha sau), gộp theo
+bảng thành 1 lượt `.in('id', ids)` mỗi bảng thay vì N request riêng lẻ (nhanh hơn cả bản cũ).
 
 ## 6. Kế hoạch export/import dữ liệu thật
 
