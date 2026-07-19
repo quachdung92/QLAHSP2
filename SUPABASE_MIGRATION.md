@@ -272,12 +272,17 @@ dùng lại đúng code `.get()` đã test PASS ổn định. Nên re-test Realt
 thường (đồng hồ hệ thống đúng giờ thực) trước khi hoàn toàn tin tưởng, dù bằng chứng hiện tại đã
 khá thuyết phục.
 
-**CHƯA làm ở phiên này (cố tình để dành riêng)**: checklist mục 5 (rà lại các cơ chế né-chi-phí-
-Firestore) — quyết định KHÔNG làm chung với việc viết shim, vì đây là 2 loại thay đổi khác hẳn nhau
-về rủi ro: viết shim là "giữ nguyên hành vi ứng dụng, chỉ đổi tầng dưới" (rủi ro thấp, đã kiểm chứng
-kỹ ở trên); còn checklist mục 5 là "chủ động đổi HÀNH VI ứng dụng" (bỏ live listener đóng băng, đổi
-UX phân trang...) — trộn chung 2 việc sẽ khó tách bạch khi có lỗi phát sinh là do đâu. Làm riêng ở
-phiên sau, với đúng bộ test hồi quy tương ứng cho từng mục.
+**Cập nhật (cùng ngày, ngay sau khi viết xong shim)**: đã LÀM 2/7 mục checklist ở mục 5 (mục 1 và
+2) trong CHÍNH phiên này — ban đầu định để dành hẳn "phiên sau" (xem đoạn dưới, còn giữ nguyên vì lý
+do tách bạch rủi ro vẫn đúng cho phần còn lại), nhưng vì `qlahs-sup.html` đã có nền shim chạy ổn
+định + bộ test đã dựng sẵn, làm luôn 2 mục có giá trị rõ nhất trong khi bối cảnh còn "nóng" hợp lý
+hơn hoãn lại. Kết quả và bug tìm được ghi ở mục 5 (đã đánh dấu `[x]`), không lặp lại ở đây.
+
+Lý do gốc (vẫn áp dụng cho 5 mục còn lại `[ ]`): viết shim là "giữ nguyên hành vi ứng dụng, chỉ đổi
+tầng dưới" (rủi ro thấp); checklist mục 5 là "chủ động đổi HÀNH VI ứng dụng" (bỏ live listener đóng
+băng, đổi UX phân trang...) — cần tách bạch để dễ khoanh vùng nếu có lỗi phát sinh. 5 mục còn lại
+(cache lạnh IndexedDB, cursor pagination đóng băng, các quyết định "hot data không cần live" khác,
+`fetchWithTtlCache`, kỹ thuật né composite index) vẫn để dành phiên sau.
 
 ## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
 
@@ -291,16 +296,28 @@ có lý do chính đáng KHÁC ngoài chi phí Firestore, VD trải nghiệm ng�
 lại lợi ích cốt lõi nhưng bỏ phần phức tạp thừa) — rồi TEST LẠI đúng kịch bản Playwright tương ứng
 đã có sẵn cho từng tính năng đó trước khi coi là xong.
 
-- [ ] **`firestoreCacheRegistry`/`useFirestoreCollectionCache`** (listener dùng chung, ref-count +
-      grace-period 3 phút cho `danhMucToiDanh`/`canbo`/`kybaocao`) — dựng ra CHỈ để gộp nhiều
-      component thành 1 listener Firestore duy nhất, né phí nhân theo số component subscribe cùng
-      lúc. Supabase Realtime KHÔNG tính phí theo kiểu này — đánh giá bỏ hẳn lớp registry, mỗi
-      component tự subscribe thẳng qua shim, đơn giản hoá code đáng kể.
-- [ ] **Sentinel `meta/vuAnMoiNhat`** + `dsDangGiaiQuyetRegistry`/`useDanhSachDangGiaiQuyet` (danh
-      sách "đang giải quyết" KHÔNG live, chỉ tự làm mới qua tín hiệu sentinel bé xíu) — dựng ra để
-      né 1 listener sống trên cả trăm vụ án. Đánh giá bỏ sentinel, subscribe Realtime thẳng trên
-      bảng `"vuan"` lọc `trangThai='dang_giai_quyet'` — quay lại đúng UX "live thật" ban đầu mà
-      Firestore không cho phép làm rẻ.
+- [x] **`firestoreCacheRegistry`/`useFirestoreCollectionCache`** — **ĐÃ BỎ HẲN** registry toàn cục
+      (ref-count + grace-period 3 phút). `useFirestoreCollectionCache`/`useFirestoreCacheLoaded`
+      giữ NGUYÊN chữ ký hàm `(cacheKey, queryFn)` → `data`/`loaded` (13 call site KHÔNG cần sửa gì)
+      nhưng bên trong giờ mỗi hook instance tự subscribe `onSnapshot` riêng qua shim (Supabase
+      Realtime) thay vì tra registry chia sẻ. Đánh đổi CHẤP NHẬN ĐƯỢC: vài nơi 2 hook cùng cacheKey
+      (VD `ModalXacNhanKy`'s `danhSachKy`+`dataDaVe`) giờ mở 2 kết nối Realtime thay vì chia sẻ 1 —
+      không còn đáng lo dưới mô hình giá Supabase.
+- [x] **Sentinel `meta/vuAnMoiNhat`** + `dsDangGiaiQuyetRegistry`/`useDanhSachDangGiaiQuyet` — **ĐÃ
+      BỎ HẲN** toàn bộ cơ chế (registry, sentinel document, patch cục bộ tay ở 3 nơi). Bảng `meta`
+      **đã XOÁ khỏi schema** (không còn code nào đọc/ghi — xem `schema.sql` ghi chú 5, lịch sử đủ
+      3 giai đoạn: dự tính không tạo → tạo tạm lúc viết shim → xoá hẳn ở đây). `useDanhSachDangGiaiQuyet()`
+      giữ NGUYÊN chữ ký `[ds, dangTai]` (2 call site không cần sửa) nhưng subscribe Realtime THẲNG
+      trên `"vuan"` lọc `trangThai='dang_giai_quyet'`. **Lợi ích PHỤ vượt quá kỳ vọng ban đầu**: bản
+      sentinel cũ CHỈ báo được vụ MỚI TẠO (mọi thay đổi khác — xoá mềm, khôi phục, hoàn thành... —
+      phải patch tay riêng từng nơi, dễ sót); bản Realtime mới tự phản ánh MỌI thay đổi từ BẤT KỲ
+      nguồn nào (không chỉ thao tác của chính người dùng đang xem) mà không cần patch tay ở đâu cả.
+      **Đã kiểm chứng riêng bằng Playwright thật** (3 assertion mới, `test_sup_realtime_list.js`):
+      tạo 1 vụ THẲNG qua `db.collection("vuan").doc().set()` (không qua nút "Thêm vụ án") → UI đang
+      mở sẵn (không remount) tự hiện vụ đó; đánh dấu `daXoa=true` THẲNG qua DB (mô phỏng "nguồn
+      khác") → UI tự ẩn vụ đó ngay — đúng chứng minh lợi ích PHỤ nêu trên là có thật, không phải suy
+      đoán. Chạy lại toàn bộ 17+4 assertion cũ (`test_sup_shim.js`/`test_sup_ui_flow.js`) sau khi
+      xoá 2 cơ chế này — vẫn PASS 100%, không có gì bị phá vỡ.
 - [ ] **Cache lạnh IndexedDB cho "Án đã giải quyết"** (`dongBoColdCacheVuAnDaGiaiQuyet`, đồng bộ
       delta qua `ngayCapNhat > lastSync`, không dùng `onSnapshot`) — cân nhắc RIÊNG với 2 mục trên:
       lợi ích "cache bền qua lần tải trang" của IndexedDB vẫn có giá trị dưới Supabase (giảm round-

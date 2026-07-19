@@ -284,7 +284,7 @@ function _collection(name) {
 // tự "bảng nào gặp trước trong ops[]" như bản đầu (gây lỗi 23503 FK violation thật, phát hiện qua
 // Playwright test ThemVuAnForm — xem SUPABASE_MIGRATION.md). Bảng không có trong danh sách này
 // (không nên xảy ra với 8 bảng hiện có) rơi xuống cuối, insert sau cùng.
-const _TABLE_INSERT_ORDER = ["kybaocao", "canbo", "danhMucToiDanh", "meta", "vuan", "bican", "phienGiaoNhan", "lichsuChuyenGiaiDoan"];
+const _TABLE_INSERT_ORDER = ["kybaocao", "canbo", "danhMucToiDanh", "vuan", "bican", "phienGiaoNhan", "lichsuChuyenGiaiDoan"];
 function _sapXepTheoPhuThuoc(mapBangRows) {
   return [...mapBangRows.entries()].sort((a, b) => {
     const ia = _TABLE_INSERT_ORDER.indexOf(a[0]);
@@ -849,9 +849,8 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
     ghiChu: "", ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
     ...tomTatBiCan(biCanVuMoi),
   });
-  // Vụ mới tách ra là 1 vụ "mới" theo đúng ý nghĩa của sentinel — báo ngay để client khác không bỏ
-  // sót (xem dsDangGiaiQuyetRegistry/dongBoDsDangGiaiQuyet).
-  batch.set(db.collection("meta").doc("vuAnMoiNhat"), { capNhatLuc: now }, { merge: true });
+  // Ghi sentinel "meta/vuAnMoiNhat" ĐÃ BỎ (checklist Supabase mục 5) — useDanhSachDangGiaiQuyet
+  // giờ subscribe Realtime thẳng trên "vuan", tự thấy vụ mới tách ra mà không cần báo riêng.
   biCanChuyenHan.forEach(bc => batch.update(db.collection("bican").doc(bc.id), {
     maVuAn: maVuMoi, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
   }));
@@ -1525,74 +1524,37 @@ function tinhNhomTuoi(namSinh, namKTVA) {
 // rồi dựng lại từ đầu — chỉ huỷ hẳn khi hết grace period mà không có ai subscribe lại.
 // LƯU Ý: cacheKey phải đại diện ĐÚNG 1 query duy nhất (kể cả where/orderBy) — dùng chung cacheKey
 // cho 2 query khác nhau sẽ trộn lẫn dữ liệu sai.
-const FIRESTORE_CACHE_GRACE_MS = 3 * 60 * 1000; // 3 phút
-const firestoreCacheRegistry = {}; // { [cacheKey]: { data, loaded, listeners, loadedListeners, unsub, huyTimer } }
-function ensureFirestoreCacheEntry(cacheKey, queryFn) {
-  let entry = firestoreCacheRegistry[cacheKey];
-  if (!entry) {
-    entry = { data: [], loaded: false, listeners: new Set(), loadedListeners: new Set(), unsub: null, huyTimer: null };
-    firestoreCacheRegistry[cacheKey] = entry;
-  }
-  if (entry.huyTimer) { clearTimeout(entry.huyTimer); entry.huyTimer = null; }
-  if (!entry.unsub) {
-    entry.unsub = queryFn().onSnapshot(
-      snap => {
-        entry.data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        entry.loaded = true;
-        entry.listeners.forEach(fn => fn(entry.data));
-        entry.loadedListeners.forEach(fn => fn());
-      },
+// Checklist Supabase mục 5 (SUPABASE_MIGRATION.md) — bản Firestore gộp nhiều component subscribe
+// CÙNG cacheKey qua 1 registry toàn cục + grace period 3 phút, dựng ra CHỈ để né chi phí Firestore
+// tính theo listener/read (1 listener chung thay vì N listener trùng lặp). Supabase không tính phí
+// theo lượt đọc/listener tương tự — bỏ hẳn lớp registry, mỗi hook instance tự subscribe onSnapshot
+// RIÊNG qua shim (Supabase Realtime phía dưới). Đánh đổi CHẤP NHẬN ĐƯỢC: vài nơi 2 hook cùng
+// cacheKey (VD `danhSachKy`+`dataDaVe`) giờ mở 2 kết nối Realtime thay vì chia sẻ 1 — đơn giản hoá
+// code (bỏ ~70 dòng registry/grace-period/leak-prevention) đổi lấy vài kết nối dư, không còn đáng
+// lo dưới mô hình giá Supabase. GIỮ NGUYÊN chữ ký hàm (cacheKey, queryFn) — ~13 call site dùng 2
+// hook này KHÔNG cần sửa gì, cacheKey giờ chỉ còn vai trò dependency của useEffect (đổi cacheKey =
+// subscribe lại), không còn dùng để tra registry chia sẻ.
+function useFirestoreCollectionCache(cacheKey, queryFn) {
+  const [data, setData] = useState([]);
+  useEffect(() => {
+    setData([]);
+    return queryFn().onSnapshot(
+      snap => setData(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.error(err)
     );
-  }
-  return entry;
-}
-// Gọi ở cuối cleanup của MỌI hook dùng entry này (dữ liệu lẫn "loaded") — không đặt logic này chỉ
-// trong 1 hook, vì thứ tự chạy cleanup giữa nhiều hook trong cùng 1 component lúc unmount không
-// đảm bảo cố định, nếu chỉ 1 nơi tự kiểm tra "còn ai dùng không" thì có thể kiểm tra SỚM hơn lúc
-// hook kia đã dọn xong, dẫn tới bỏ sót lịch huỷ (rò rỉ listener sống mãi dù 0 người dùng).
-function lichHuyNeuKhongAiDung(cacheKey, entry) {
-  if (entry.listeners.size === 0 && entry.loadedListeners.size === 0) {
-    entry.huyTimer = setTimeout(() => {
-      if (firestoreCacheRegistry[cacheKey] === entry && entry.listeners.size === 0 && entry.loadedListeners.size === 0) {
-        entry.unsub && entry.unsub();
-        delete firestoreCacheRegistry[cacheKey];
-      }
-    }, FIRESTORE_CACHE_GRACE_MS);
-  }
-}
-function useFirestoreCollectionCache(cacheKey, queryFn) {
-  const [data, setData] = useState(() => firestoreCacheRegistry[cacheKey]?.data ?? []);
-
-  useEffect(() => {
-    const entry = ensureFirestoreCacheEntry(cacheKey, queryFn);
-    const onUpdate = (arr) => setData(arr);
-    entry.listeners.add(onUpdate);
-    setData(entry.data); // đồng bộ ngay với dữ liệu cache hiện có, không chờ snapshot mới
-
-    return () => {
-      entry.listeners.delete(onUpdate);
-      lichHuyNeuKhongAiDung(cacheKey, entry);
-    };
   }, [cacheKey]);
-
   return data;
 }
 // Đi kèm useFirestoreCollectionCache khi cần biết "đã có kết quả lần đầu chưa" (VD hiện spinner
-// "Đang tải...") — tách riêng vì phần lớn nơi dùng cache không cần cờ này. Tự gọi
-// ensureFirestoreCacheEntry riêng (không phụ thuộc thứ tự gọi trước/sau hook dữ liệu).
+// "Đang tải..."). Subscribe riêng (không dùng chung entry với hook dữ liệu nữa — xem ghi chú trên).
 function useFirestoreCacheLoaded(cacheKey, queryFn) {
-  const [loaded, setLoaded] = useState(() => !!firestoreCacheRegistry[cacheKey]?.loaded);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    const entry = ensureFirestoreCacheEntry(cacheKey, queryFn);
-    if (entry.loaded) setLoaded(true);
-    const onLoaded = () => setLoaded(true);
-    entry.loadedListeners.add(onLoaded);
-
-    return () => {
-      entry.loadedListeners.delete(onLoaded);
-      lichHuyNeuKhongAiDung(cacheKey, entry);
-    };
+    setLoaded(false);
+    return queryFn().onSnapshot(
+      () => setLoaded(true),
+      err => console.error(err)
+    );
   }, [cacheKey]);
   return loaded;
 }
@@ -1615,95 +1577,30 @@ async function fetchWithTtlCache(cacheKey, queryFn, ttlMs = 2 * 60 * 1000) {
   return data;
 }
 
-// ====== Danh sách "đang giải quyết" — bỏ onSnapshot sống, dùng sentinel "có vụ mới" (2026-07-18) ==
-// Khác cache lạnh (vụ ĐÃ giải quyết — tập LỚN, tích luỹ vô hạn theo năm): tập "đang giải quyết" tự
-// nhiên NHỎ và bị chặn (vụ giải quyết xong tự rời khỏi tập, xem ghi chú ở DanhSachPanel) — vấn đề
-// không phải "quá nhiều để tải" mà là GIỮ LISTENER SỐNG LIÊN TỤC tốn đọc mỗi khi BẤT KỲ trường nào
-// của BẤT KỲ vụ đang giải quyết nào đổi (tập thay đổi nhiều nhất toàn hệ thống). Quyết định thiết
-// kế (thống nhất với người dùng — hệ thống ít user, chủ yếu dùng để xem/trích xuất, ưu tiên tiết
-// kiệm đọc hơn độ mới tức thời): danh sách tải 1 lần, CHỈ vụ án MỚI TẠO mới cần biết ngay (để không
-// bỏ sót khi vừa có người thêm vụ) — mọi thay đổi KHÁC của vụ đã có sẵn trong danh sách (đổi KSV,
-// chuyển giai đoạn, hoàn thành...) CHẤP NHẬN CŨ, tự làm mới khi component remount tự nhiên (chuyển
-// tab đi rồi quay lại) — đúng triết lý đã áp dụng cho vụ đã giải quyết, mở rộng sang đây.
-// `ChiTietPanel` (đang mở sửa 1 vụ cụ thể) KHÔNG đụng tới — vẫn onSnapshot riêng theo đúng 1 doc,
-// bắt buộc phải live vì đang sửa dữ liệu thật.
-// Cơ chế: 1 document cảm biến bé xíu `meta/vuAnMoiNhat` được TẤT CẢ nơi tạo vụ án mới cập nhật kèm
-// theo (ThemVuAnForm, ImportExcelModule, tachVuAn — xem từng nơi) — mọi client chỉ giữ ĐÚNG 1
-// listener rẻ (1 document) trên sentinel này thay vì theo dõi cả danh sách; hễ đổi thì gọi 1 query
-// nhỏ `where("ngayTao", ">", lầnBiếtGầnNhất)` bổ sung ĐÚNG (các) vụ mới, không tải lại toàn bộ.
-const dsDangGiaiQuyetRegistry = { data: null, newestNgayTaoMs: 0, listeners: new Set(), dangDongBo: false, sentinelDaBatDau: false };
-function _layNgayTaoMs(v) { return v.ngayTao?.toMillis?.() ?? 0; }
-function _baoDsDangGiaiQuyetDoi() {
-  dsDangGiaiQuyetRegistry.listeners.forEach(fn => fn(dsDangGiaiQuyetRegistry.data));
-}
-// Cập nhật CỤC BỘ (không đụng Firestore) cho ĐÚNG thao tác của CHÍNH người dùng này vừa làm (VD tự
-// "Đưa vào thùng rác"/"Khôi phục" 1 vụ đang hiện sẵn trong danh sách) — vì sentinel chỉ báo khi có
-// VỤ MỚI, không báo cho các thay đổi khác trên vụ đã có sẵn (đúng thiết kế đã thống nhất). Không có
-// cập nhật này, người dùng vừa xoá 1 vụ vẫn thấy nó nằm y nguyên trong chính danh sách trước mắt
-// cho tới khi remount — gây khó hiểu dù dữ liệu Firestore đã đúng. CHỈ ảnh hưởng bộ nhớ phía CHÍNH
-// trình duyệt này; người dùng khác vẫn chờ remount tự nhiên như thiết kế ban đầu.
-function capNhatCucBoDsDangGiaiQuyet(vuAnId, vuAnMoiHoacNull) {
-  if (dsDangGiaiQuyetRegistry.data === null) return;
-  const conLai = dsDangGiaiQuyetRegistry.data.filter(v => v.id !== vuAnId);
-  dsDangGiaiQuyetRegistry.data = vuAnMoiHoacNull ? [...conLai, vuAnMoiHoacNull] : conLai;
-  _baoDsDangGiaiQuyetDoi();
-}
-async function dongBoDsDangGiaiQuyet() {
-  if (dsDangGiaiQuyetRegistry.dangDongBo) return;
-  dsDangGiaiQuyetRegistry.dangDongBo = true;
-  try {
-    if (dsDangGiaiQuyetRegistry.data === null) {
-      const snap = await db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").get();
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa);
-      dsDangGiaiQuyetRegistry.data = docs;
-      dsDangGiaiQuyetRegistry.newestNgayTaoMs = docs.reduce((max, v) => Math.max(max, _layNgayTaoMs(v)), 0);
-    } else {
-      const snap = await db.collection("vuan")
-        .where("trangThai", "==", "dang_giai_quyet")
-        .where("ngayTao", ">", new Date(dsDangGiaiQuyetRegistry.newestNgayTaoMs))
-        .get();
-      const moi = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa);
-      if (moi.length > 0) {
-        const idsCu = new Set(dsDangGiaiQuyetRegistry.data.map(v => v.id));
-        const themVao = moi.filter(v => !idsCu.has(v.id));
-        if (themVao.length > 0) dsDangGiaiQuyetRegistry.data = [...dsDangGiaiQuyetRegistry.data, ...themVao];
-        dsDangGiaiQuyetRegistry.newestNgayTaoMs = moi.reduce((max, v) => Math.max(max, _layNgayTaoMs(v)), dsDangGiaiQuyetRegistry.newestNgayTaoMs);
-      }
-    }
-    _baoDsDangGiaiQuyetDoi();
-  } catch (err) {
-    console.error(err);
-  } finally {
-    dsDangGiaiQuyetRegistry.dangDongBo = false;
-  }
-}
-// Sentinel chỉ cần bắt đầu 1 LẦN cho cả vòng đời trang (không unsub — chi phí 1 document gần như
-// bằng 0, không đáng để quản lý vòng đời phức tạp như listener trên cả tập dữ liệu).
-function _damBaoSentinelVuAnMoi() {
-  if (dsDangGiaiQuyetRegistry.sentinelDaBatDau) return;
-  dsDangGiaiQuyetRegistry.sentinelDaBatDau = true;
-  // onSnapshot bắn NGAY LẦN ĐẦU với giá trị hiện có của document (hành vi chuẩn của Firestore, kể
-  // cả khi không có gì thật sự "mới") — bỏ qua đúng lần bắn đầu tiên đó để tránh đồng bộ trùng với
-  // lần gọi dongBoDsDangGiaiQuyet() trực tiếp ở useDanhSachDangGiaiQuyet (nếu không sẽ luôn tốn 2
-  // lượt .get() mỗi lần trang tải thay vì 1, đã phát hiện qua test — không phải giả thuyết suông).
-  let laLanBanDau = true;
-  db.collection("meta").doc("vuAnMoiNhat").onSnapshot(
-    () => {
-      if (laLanBanDau) { laLanBanDau = false; return; }
-      dongBoDsDangGiaiQuyet();
-    },
-    err => console.error(err)
-  );
-}
+// ====== Danh sách "đang giải quyết" — Realtime trực tiếp (Checklist Supabase mục 5, thay bản
+// sentinel "có vụ mới" 2026-07-18) ======
+// Bản Firestore CHỦ ĐỘNG bỏ onSnapshot sống trên cả danh sách, chỉ dùng 1 sentinel document
+// (`meta/vuAnMoiNhat`) + patch cục bộ tay (`capNhatCucBoDsDangGiaiQuyet`) cho đúng thao tác của
+// CHÍNH người dùng — toàn bộ độ phức tạp đó (registry, sentinel, patch cục bộ) tồn tại CHỈ để né
+// chi phí Firestore tính theo listener sống trên tập thay đổi nhiều nhất hệ thống. Dưới Supabase,
+// subscribe Realtime trực tiếp trên bảng "vuan" (lọc trangThai) không có chi phí tương tự — bỏ hẳn
+// sentinel + registry + patch cục bộ, subscribe thẳng qua shim. Lợi ích PHỤ quan trọng: thay đổi
+// của BẤT KỲ ai (không chỉ chính mình) trên vụ đã có sẵn (đổi KSV, xoá mềm, khôi phục, hoàn
+// thành...) giờ cũng tự cập nhật ngay — bản sentinel cũ CHỈ báo được vụ MỚI TẠO, mọi thay đổi khác
+// (kể cả của chính mình, phải patch tay qua capNhatCucBoDsDangGiaiQuyet ở 3 nơi) đều bị bỏ sót cho
+// tới khi remount. Giữ NGUYÊN chữ ký `[ds, dangTai]` — 2 call site dùng hook này KHÔNG cần sửa.
 function useDanhSachDangGiaiQuyet() {
-  const [ds, setDs] = useState(() => dsDangGiaiQuyetRegistry.data || []);
-  const [dangTai, setDangTai] = useState(() => dsDangGiaiQuyetRegistry.data === null);
+  const [ds, setDs] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
   useEffect(() => {
-    const onUpdate = (data) => { setDs(data || []); setDangTai(false); };
-    dsDangGiaiQuyetRegistry.listeners.add(onUpdate);
-    _damBaoSentinelVuAnMoi();
-    dongBoDsDangGiaiQuyet().finally(() => setDangTai(false));
-    return () => { dsDangGiaiQuyetRegistry.listeners.delete(onUpdate); };
+    setDangTai(true);
+    return db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").onSnapshot(
+      snap => {
+        setDs(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
+        setDangTai(false);
+      },
+      err => { console.error(err); setDangTai(false); }
+    );
   }, []);
   return [ds, dangTai];
 }
@@ -2857,12 +2754,8 @@ function ImportExcelModule() {
       let ops = 0;
       const commitNeu = async () => { if (ops >= 400) { await batch.commit(); batch = db.batch(); ops = 0; } };
 
-      // Báo sentinel "có vụ mới" NGAY TỪ ĐẦU (không đợi hết cả đợt import, có thể lâu) — xem
-      // dsDangGiaiQuyetRegistry/dongBoDsDangGiaiQuyet (Tối ưu Firestore 2026-07-18). dsMoi luôn có
-      // ít nhất 1 phần tử ở đây (đã guard ở đầu hàm), nên báo 1 lần duy nhất là đủ, không cần lặp
-      // lại trong vòng lặp bên dưới.
-      batch.set(db.collection("meta").doc("vuAnMoiNhat"), { capNhatLuc: now }, { merge: true });
-      ops++;
+      // Ghi sentinel "meta/vuAnMoiNhat" ĐÃ BỎ (checklist Supabase mục 5) — Danh sách vụ án giờ
+      // subscribe Realtime thẳng trên "vuan", tự thấy các vụ vừa import không cần báo riêng.
 
       // Đưa các vụ CŨ bị thay thế vào thùng rác — đúng field XoaVuAnModal dùng (soft-delete, chỉ
       // đặt cờ, không đụng bican/log của vụ cũ — khôi phục được nếu tích nhầm).
@@ -2955,10 +2848,8 @@ function ImportExcelModule() {
         }
       }
       if (ops > 0) await batch.commit();
-      // Cập nhật cục bộ danh sách "đang giải quyết" cho từng vụ vừa bị thay thế — đúng
-      // capNhatCucBoDsDangGiaiQuyet đã dùng ở XoaVuAnModal, tránh vụ cũ còn hiện sai trên chính máy
-      // người vừa import cho tới khi remount.
-      dsThayThe.forEach(v => capNhatCucBoDsDangGiaiQuyet(v._idTrung, null));
+      // Patch cục bộ ĐÃ BỎ (checklist Supabase mục 5) — useDanhSachDangGiaiQuyet giờ subscribe
+      // Realtime thẳng trên "vuan", tự thấy các vụ vừa bị thay thế (daXoa=true) không cần patch tay.
 
       setProgress(100);
       setKetQuaGhi({ soVu: dsMoi.length, soBiCan: dsMoi.reduce((s, v) => s + v.biCanList.length, 0) });
@@ -4099,9 +3990,8 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           [fieldSoQuyetDinhTrenVuAn(trangThaiKetQua)]: soQuyetDinhKQ.trim(),
         } : {}),
       });
-      // Báo sentinel "có vụ mới" — xem dsDangGiaiQuyetRegistry/dongBoDsDangGiaiQuyet (Tối ưu
-      // Firestore 2026-07-18).
-      batch.set(db.collection("meta").doc("vuAnMoiNhat"), { capNhatLuc: now }, { merge: true });
+      // Ghi sentinel "meta/vuAnMoiNhat" ĐÃ BỎ (checklist Supabase mục 5) — useDanhSachDangGiaiQuyet
+      // giờ subscribe Realtime thẳng trên "vuan", tự thấy vụ mới không cần báo riêng.
 
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), {
         maVuAn: maNoiSinh, loaiSuKien: "khoi_to_vu", maBiCan: null,
@@ -6009,10 +5899,8 @@ function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
         daXoa: true, ngayXoaMem: now, nguoiXoaMem: nguoiThucHien,
         ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
-      // Cập nhật ngay danh sách "đang giải quyết" cục bộ (xem capNhatCucBoDsDangGiaiQuyet) — sentinel
-      // không báo cho thao tác này (không phải vụ MỚI), nên tự tay cập nhật cho đúng thao tác của
-      // chính người dùng, tránh vụ vừa xoá vẫn hiện y nguyên trước mắt cho tới khi remount.
-      capNhatCucBoDsDangGiaiQuyet(vuAn.id, null);
+      // Patch cục bộ ĐÃ BỎ (checklist Supabase mục 5) — useDanhSachDangGiaiQuyet giờ subscribe
+      // Realtime thẳng trên "vuan", tự cập nhật ngay khi daXoa=true, không cần patch tay.
       addToast("Đã đưa vụ án vào thùng rác — vào Cài đặt → Thùng rác nếu cần khôi phục.");
       onXong();
     } catch (err) {
@@ -11972,11 +11860,8 @@ function ThungRacModule() {
         daXoa: false, ngayXoaMem: null, nguoiXoaMem: null,
         ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
-      // Nếu vụ khôi phục đang ở trạng thái "đang giải quyết", thêm lại vào danh sách cục bộ ngay
-      // (xem capNhatCucBoDsDangGiaiQuyet) — sentinel không báo cho thao tác này.
-      if (v.trangThai === "dang_giai_quyet") {
-        capNhatCucBoDsDangGiaiQuyet(v.id, { ...v, daXoa: false, ngayXoaMem: null, nguoiXoaMem: null, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
-      }
+      // Patch cục bộ ĐÃ BỎ (checklist Supabase mục 5) — useDanhSachDangGiaiQuyet giờ subscribe
+      // Realtime thẳng trên "vuan", tự cập nhật ngay khi daXoa=false, không cần patch tay.
       addToast(`Đã khôi phục vụ ${hienThiMa(v) || v.id}`);
     } catch (err) {
       console.error(err);

@@ -23,15 +23,16 @@
 --    qua RPC; 1 bảng counter nhỏ + UPSERT nguyên tử (`INSERT ... ON CONFLICT DO UPDATE
 --    RETURNING`) đơn giản và an toàn hơn hẳn. Bảng này KHÔNG đi qua lớp shim — chỉ được gọi từ
 --    bên trong các hàm RPC ở functions.sql.
--- 5. `meta/vuAnMoiNhat` (sentinel Firestore) — BAN ĐẦU dự tính KHÔNG tạo bảng tương ứng (sentinel
---    này chỉ tồn tại để né chi phí đọc/listener của Firestore, Supabase không có động cơ chi phí
---    tương tự). Lúc viết lớp shim (Phase 2) phát hiện code hiện tại VẪN ghi vào collection "meta"
---    ở 3 nơi tạo vụ mới (ThemVuAnForm/ImportExcelModule/tachVuAn) — không tạo bảng sẽ làm shim
---    crash ngay khi gặp các write này. Quyết định: TẠO bảng "meta" tối giản (bảng cuối file) để
---    shim hoạt động ĐÚNG ĐẦY ĐỦ trước (tương thích 100% với code hiện tại, không cần sửa 4+ call
---    site cùng lúc với việc viết shim) — việc có nên BỎ HẲN cơ chế sentinel này để subscribe thẳng
---    qua Supabase Realtime vẫn là 1 mục riêng trong checklist Phase 2 (SUPABASE_MIGRATION.md mục
---    5), làm sau như 1 bước đơn giản hoá có kiểm soát, không trộn chung với việc dựng shim.
+-- 5. `meta/vuAnMoiNhat` (sentinel Firestore) — lịch sử 3 giai đoạn, ghi lại đủ để không lặp lại
+--    vòng lặp quyết định này lần nữa: (a) Phase 1 ban đầu dự tính KHÔNG tạo bảng tương ứng (sentinel
+--    chỉ tồn tại để né chi phí đọc/listener của Firestore); (b) lúc viết lớp shim (Phase 2) phát
+--    hiện code hiện tại VẪN ghi vào collection "meta" ở 3 nơi tạo vụ mới — tạm TẠO bảng "meta" tối
+--    giản để shim chạy đúng ngay, không phải sửa 4+ call site cùng lúc với việc dựng shim; (c) khi
+--    chạy checklist "rà lại tinh chỉnh vì Firebase" (SUPABASE_MIGRATION.md mục 5) NGAY SAU ĐÓ, đã
+--    bỏ hẳn toàn bộ cơ chế sentinel/registry, thay bằng subscribe Realtime trực tiếp trên "vuan" —
+--    bảng "meta" từ đó KHÔNG còn được đọc/ghi ở đâu nữa, đã XOÁ HẲN khỏi schema (không giữ lại bảng
+--    chết). Nếu thấy phần này rồi lại thấy `CREATE TABLE "meta"` ở dưới thì có nghĩa ai đó đã revert
+--    checklist mục 5 mà quên dọn — kiểm tra lại `qlahs-sup.html` có còn dùng "meta" thật không.
 -- 6. `danhMucToiDanh`: có 2 field Firestore SONG SONG chưa từng được đồng bộ cho cùng 1 khái
 --    niệm ("namBLHS" — do công cụ seed ghi, dùng thật trong logic tra cứu; "blhsNam" — do form
 --    sửa tay UI ghi, dùng trong hiển thị/lọc badge, giá trị mặc định còn không khớp cả map hiển
@@ -290,10 +291,5 @@ create index "lichsuChuyenGiaiDoan_phienGiaoNhanId_idx"
 create index "lichsuChuyenGiaiDoan_thoiDiemGhi_idx"
   on "lichsuChuyenGiaiDoan" ("thoiDiemGhi" desc);  -- phục vụ "Nhật ký thao tác" limit(300)
 
--- ----------------------------------------------------------------------------
--- meta — sentinel "có vụ mới" (xem ghi chú 5 ở đầu file). Chỉ 1 doc thật sự dùng: id='vuAnMoiNhat'.
--- ----------------------------------------------------------------------------
-create table "meta" (
-  "id"         text primary key,
-  "capNhatLuc" timestamptz
-);
+-- Bảng "meta" (sentinel "có vụ mới") ĐÃ XOÁ — xem ghi chú 5 ở đầu file, không còn code nào đọc/
+-- ghi collection này sau khi chạy checklist "rà lại tinh chỉnh vì Firebase".
