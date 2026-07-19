@@ -164,11 +164,27 @@ $$;
 -- đã đăng nhập đều thao tác được, không phân quyền thêm). SECURITY DEFINER nghĩa là các hàm này
 -- chạy với quyền chủ sở hữu (thường là bỏ qua RLS) — PHẢI revoke khỏi "anon"/"public" tường minh,
 -- nếu không người chưa đăng nhập vẫn gọi được RPC dù không đọc/ghi được bảng trực tiếp.
+--
+-- Bug đã sửa (2026-07-20, phát hiện thật qua kiểm thử `batch_commit`, xem SUPABASE_MIGRATION.md
+-- mục 12): bản gốc CHỈ "revoke ... from public" — comment ngay trên đã ghi đúng ý định "revoke khỏi
+-- anon/public" nhưng code KHÔNG làm đúng như vậy. Supabase tự cấp EXECUTE cho "anon" TRỰC TIẾP (không
+-- qua "public") ngay lúc CREATE FUNCTION (default privileges của project) — "revoke ... from public"
+-- không đụng tới quyền đã cấp thẳng cho "anon", nên người CHƯA ĐĂNG NHẬP vẫn gọi được cả 4 hàm này
+-- (xác nhận qua `information_schema.routine_privileges` trên Supabase thật: "anon" có "EXECUTE").
+-- Vì các hàm này DEFINER (bỏ qua RLS), đây là lỗ hổng thật: "sinhMaVuAnMoi"/"sinhNhieuMaVuAn" tốn
+-- được bộ đếm "boDemMaVu", "tachVuSinhMa" tăng được "soDemTach" của BẤT KỲ "vuan" nào — không cần
+-- đăng nhập. Đã thêm "revoke ... from anon" tường minh cho cả 4 hàm để chặn đúng như comment gốc
+-- đã định làm từ đầu.
 -- ----------------------------------------------------------------------------
 revoke execute on function "sinhMaVuAnMoi"(text) from public;
 revoke execute on function "sinhNhieuMaVuAn"(text[]) from public;
 revoke execute on function "tachVuSinhMa"(text) from public;
 revoke execute on function "capNhatDieuLuatVaLoaiKhoiTo"(text) from public;
+
+revoke execute on function "sinhMaVuAnMoi"(text) from anon;
+revoke execute on function "sinhNhieuMaVuAn"(text[]) from anon;
+revoke execute on function "tachVuSinhMa"(text) from anon;
+revoke execute on function "capNhatDieuLuatVaLoaiKhoiTo"(text) from anon;
 
 grant execute on function "sinhMaVuAnMoi"(text) to authenticated;
 grant execute on function "sinhNhieuMaVuAn"(text[]) to authenticated;
