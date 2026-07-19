@@ -6,10 +6,11 @@ còn ở trạng thái "chỉ là bản nháp chờ env" nữa.
 
 ## Nội dung
 
-- `schema.sql` — `CREATE TABLE`/`CREATE INDEX` cho 7 bảng nghiệp vụ + 1 bảng đếm nội bộ
-  (`boDemMaVu`). Đọc phần comment đầu file trước khi sửa — có 6 quyết định thiết kế quan trọng
-  (tên cột camelCase có quote, enum dùng CHECK không dùng native ENUM, mảng song song giữ nguyên
-  dạng cột `text[]` không tách bảng con...).
+- `schema.sql` — `CREATE TABLE`/`CREATE INDEX` cho 7 bảng nghiệp vụ + `boDemMaVu` (đếm nội bộ) +
+  `meta` (sentinel "vuAnMoiNhat" — ban đầu định không tạo, phải thêm khi viết shim vì code thật
+  vẫn ghi vào đó, xem SUPABASE_MIGRATION.md mục 5 ghi chú 5 và mục 4d). Đọc phần comment đầu file
+  trước khi sửa — có 6 quyết định thiết kế quan trọng (tên cột camelCase có quote, enum dùng CHECK
+  không dùng native ENUM, mảng song song giữ nguyên dạng cột `text[]` không tách bảng con...).
 - `rls.sql` — bật Row Level Security + 1 policy "authenticated đọc/ghi mọi thứ" cho mỗi bảng,
   mirror đúng `firestore.rules` hiện tại (không phân quyền theo role/field).
 - `functions.sql` — 4 hàm RPC thay 4 vị trí `db.runTransaction()` của Firestore (sinh mã vụ án,
@@ -48,9 +49,16 @@ script tạm trong thư mục scratchpad (ngoài git), hỏi lại Dũng nếu p
    (`HTTP 401`, `42501 - new row violates row-level security policy`).
 5. `pgcrypto` có sẵn trên project (không cần cài thêm — `create extension if not exists pgcrypto`
    trong `schema.sql` chạy không lỗi).
+6. **Realtime replication đã bật cho cả 9 bảng** (`ALTER PUBLICATION supabase_realtime ADD TABLE
+   "..."`) — Supabase KHÔNG tự bật cho bảng mới tạo, thiếu bước này thì `onSnapshot()` phía shim
+   chỉ bắn được đúng 1 lần (từ `.get()` ban đầu), không bao giờ nhận cập nhật realtime sau đó. Nếu
+   tạo THÊM bảng mới sau này, nhớ chạy lại lệnh này cho bảng đó.
 
-## Việc còn lại (Phase 2 trở đi, xem `SUPABASE_MIGRATION.md`)
+## Phase 2 (lớp shim) — ĐÃ VIẾT + KIỂM CHỨNG (xem `SUPABASE_MIGRATION.md` mục 4d)
 
-Không còn việc gì ở tầng schema/RLS/RPC cần làm thêm trước khi bắt đầu viết lớp shim. Việc tiếp
-theo là ở tầng ứng dụng (`qlahs-sup.html`) — xem `SUPABASE_MIGRATION.md` mục 8 "Trạng thái hiện
-tại" để biết thứ tự việc cần làm.
+`qlahs-sup.html` đã có lớp shim đầy đủ chạy trên nền project này, kiểm chứng bằng Playwright thật
+qua 3 kịch bản (đăng nhập, thao tác nguyên thuỷ của shim, luồng UI "Thêm vụ án" trọn vẹn) — 17
+assertion, PASS. 1 bug FK-ordering thật đã tìm và sửa trong lúc test (xem `_TABLE_INSERT_ORDER`
+trong chính file `qlahs-sup.html`). Việc còn lại: checklist "rà lại tinh chỉnh vì Firebase"
+(`SUPABASE_MIGRATION.md` mục 5) CHƯA làm — xem mục 8 "Trạng thái hiện tại" của file đó để biết thứ
+tự việc tiếp theo.

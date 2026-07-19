@@ -23,10 +23,15 @@
 --    qua RPC; 1 bảng counter nhỏ + UPSERT nguyên tử (`INSERT ... ON CONFLICT DO UPDATE
 --    RETURNING`) đơn giản và an toàn hơn hẳn. Bảng này KHÔNG đi qua lớp shim — chỉ được gọi từ
 --    bên trong các hàm RPC ở functions.sql.
--- 5. `meta/vuAnMoiNhat` (sentinel Firestore) CỐ Ý KHÔNG có bảng tương ứng — sentinel này chỉ tồn
---    tại để né chi phí đọc/listener của Firestore, Supabase không có động cơ chi phí tương tự.
---    Cân nhắc bỏ hẳn cơ chế này ở Phase 2 (xem SUPABASE_MIGRATION.md mục 5), subscribe thẳng qua
---    Supabase Realtime trên bảng "vuan".
+-- 5. `meta/vuAnMoiNhat` (sentinel Firestore) — BAN ĐẦU dự tính KHÔNG tạo bảng tương ứng (sentinel
+--    này chỉ tồn tại để né chi phí đọc/listener của Firestore, Supabase không có động cơ chi phí
+--    tương tự). Lúc viết lớp shim (Phase 2) phát hiện code hiện tại VẪN ghi vào collection "meta"
+--    ở 3 nơi tạo vụ mới (ThemVuAnForm/ImportExcelModule/tachVuAn) — không tạo bảng sẽ làm shim
+--    crash ngay khi gặp các write này. Quyết định: TẠO bảng "meta" tối giản (bảng cuối file) để
+--    shim hoạt động ĐÚNG ĐẦY ĐỦ trước (tương thích 100% với code hiện tại, không cần sửa 4+ call
+--    site cùng lúc với việc viết shim) — việc có nên BỎ HẲN cơ chế sentinel này để subscribe thẳng
+--    qua Supabase Realtime vẫn là 1 mục riêng trong checklist Phase 2 (SUPABASE_MIGRATION.md mục
+--    5), làm sau như 1 bước đơn giản hoá có kiểm soát, không trộn chung với việc dựng shim.
 -- 6. `danhMucToiDanh`: có 2 field Firestore SONG SONG chưa từng được đồng bộ cho cùng 1 khái
 --    niệm ("namBLHS" — do công cụ seed ghi, dùng thật trong logic tra cứu; "blhsNam" — do form
 --    sửa tay UI ghi, dùng trong hiển thị/lọc badge, giá trị mặc định còn không khớp cả map hiển
@@ -284,3 +289,11 @@ create index "lichsuChuyenGiaiDoan_phienGiaoNhanId_idx"
   on "lichsuChuyenGiaiDoan" ("phienGiaoNhanId") where "phienGiaoNhanId" is not null;
 create index "lichsuChuyenGiaiDoan_thoiDiemGhi_idx"
   on "lichsuChuyenGiaiDoan" ("thoiDiemGhi" desc);  -- phục vụ "Nhật ký thao tác" limit(300)
+
+-- ----------------------------------------------------------------------------
+-- meta — sentinel "có vụ mới" (xem ghi chú 5 ở đầu file). Chỉ 1 doc thật sự dùng: id='vuAnMoiNhat'.
+-- ----------------------------------------------------------------------------
+create table "meta" (
+  "id"         text primary key,
+  "capNhatLuc" timestamptz
+);

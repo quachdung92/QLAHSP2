@@ -215,6 +215,70 @@ từ Dũng) là loại key công khai-an-toàn theo thiết kế của Supabase 
 trò `apiKey` của Firebase đã nhúng thẳng trong `qlva.html` từ trước) — sẽ nhúng vào `qlahs-sup.html`
 khi viết lớp shim ở Phase 2, không cần giữ bí mật ở mức độ như mật khẩu DB.
 
+### 4d. Lớp shim (Phase 2) — ĐÃ VIẾT + KIỂM CHỨNG ĐẦY ĐỦ bằng dữ liệu thật (2026-07-19)
+
+Viết trong `qlahs-sup.html`: bỏ hẳn 3 script CDN Firebase, thay bằng 1 script
+`@supabase/supabase-js@2` (UMD). Khối cấu hình cũ (`firebase.initializeApp`, `db.enablePersistence`)
+thay bằng lớp shim đầy đủ — chi tiết kỹ thuật đã ghi trong comment đầu khối `<script>` của chính
+file đó (không lặp lại ở đây), tóm tắt:
+- `db.collection(name).where/orderBy/limit/startAfter().get()/.onSnapshot()`, `.doc(id?)`, `.add()`.
+- `db.batch()` → `set/update/delete` → `commit()`.
+- `firebase.firestore.FieldValue.{serverTimestamp,arrayUnion}`/`FieldPath.documentId()` giữ nguyên
+  API cũ (shim tự định nghĩa lại, không phải SDK Firebase thật) — ~35 chỗ gọi trong code KHÔNG cần
+  sửa gì.
+- 4 vị trí `db.runTransaction` (sinh mã vụ án, sinh mã hàng loạt, sinh mã tách vụ, tính lại điều
+  luật/loại khởi tố) sửa tay gọi thẳng `sb.rpc(...)` — đúng thiết kế mục 3, không đi qua shim chung.
+
+**Bug thật tìm được + đã sửa qua Playwright test** (không phải giả thuyết): `batch.commit()` bản
+đầu gộp insert theo BẢNG NÀO GẶP TRƯỚC trong danh sách thao tác — đúng với Firestore (không có FK,
+thứ tự không quan trọng) nhưng **SAI với Postgres có FK thật**: `ThemVuAnForm` ghi log
+`khoi_to_bican` (tham chiếu `bican.id`) XEN GIỮA các lần `batch.set()` tạo bị can, không phải tạo
+hết bị can rồi mới ghi log — batch cũ chèn `lichsuChuyenGiaiDoan` TRƯỚC KHI `bican` tồn tại, lỗi
+`23503 FK violation`. Đã sửa: thêm `_TABLE_INSERT_ORDER` (thứ tự phụ thuộc cố định: kybaocao/canbo/
+danhMucToiDanh/meta → vuan → bican → phienGiaoNhan → lichsuChuyenGiaiDoan), `commit()` LUÔN insert
+theo đúng thứ tự này bất kể thứ tự gọi `.set()` trong code ứng dụng.
+
+**Phát hiện hạ tầng khác**: Supabase Realtime **KHÔNG tự bật cho bảng mới** — phải
+`ALTER PUBLICATION supabase_realtime ADD TABLE "..."` cho từng bảng (đã làm cho cả 8 bảng), nếu
+không `onSnapshot()` chỉ bắn được lần đầu (từ `.get()`), không bao giờ bắn lại khi có thay đổi.
+
+**Đã kiểm chứng bằng Playwright thật, dữ liệu thật trên project `eutatszoaseixchvjbtg`** (17
+assertion qua 3 kịch bản độc lập, không phải mock):
+1. Đăng nhập qua shim Auth (Supabase Auth thật, user `admintest@local.com` đã tạo ở Phase 1) → vào
+   được màn hình chính.
+2. Test trực tiếp các thao tác nguyên thuỷ của shim qua `page.evaluate()` (13 assertion): doc
+   set/get/delete; where nhiều điều kiện lọc đúng không lẫn; batch set+update+delete cùng lúc;
+   **onSnapshot bắn ngay lần đầu + bắn lại đúng qua Realtime thật sau khi có thay đổi** (xác nhận
+   cơ chế "refetch khi có bất kỳ thay đổi nào" hoạt động đúng); RPC `sinhMaVuAnMoi` sinh mã tăng
+   dần đúng qua 2 lần gọi liên tiếp với YYMM ngẫu nhiên (tránh đụng dữ liệu cũ giữa các lần chạy
+   test).
+3. **Luồng UI THẬT đầy đủ** (4 assertion): mở form "Thêm vụ án" → điền Ngày QĐ KTVA + họ tên bị can
+   → bấm "Lưu vụ án" → xác nhận modal "Tính vào kỳ báo cáo nào?" → form tự đóng đúng (không kẹt do
+   lỗi) → vụ án xuất hiện lại trên Danh sách vụ án. Đối chiếu trực tiếp qua Postgres xác nhận ĐÚNG
+   toàn bộ chuỗi dữ liệu: `vuan` (mã đúng định dạng `QLVA_E01.53_2601_0001`, `soBiCan`/
+   `biCanDaiDien` cache tính đúng), `bican` (FK đúng), `lichsuChuyenGiaiDoan` (2 sự kiện
+   `khoi_to_vu`+`khoi_to_bican`, đúng liên kết), `meta` sentinel (`capNhatLuc` cập nhật đúng qua
+   `.set(..., {merge:true})`/upsert).
+0 lỗi console thật xuyên suốt cả 3 kịch bản (đã lọc riêng 1 lỗi lệch giờ JWT do đồng hồ hệ thống
+sandbox test — xem đoạn dưới — không phải bug code). Toàn bộ dữ liệu test đã dọn sạch sau khi xong
+(cả 8 bảng về lại 0 dòng), project sẵn sàng cho bước nạp mock data thật (Phase 4).
+
+**Giới hạn môi trường test đã ghi nhận (không phải bug)**: sandbox chạy Playwright có đồng hồ hệ
+thống khớp ngày kịch bản phiên làm việc (`2026-07-19`), sớm/lệch so với giờ thực server Supabase —
+occasionally khiến Realtime từ chối JWT với lỗi `PGRST303 "JWT issued at future"` (khắt khe hơn hẳn
+REST API/Auth — những API đó không gặp vấn đề này suốt cả phiên). Chạy lại nhiều lần xác nhận đây
+là vấn đề BIÊN/không nhất quán (có lần fail có lần pass), không phải lỗi logic — cơ chế refetch
+dùng lại đúng code `.get()` đã test PASS ổn định. Nên re-test Realtime 1 lần nữa trên trình duyệt
+thường (đồng hồ hệ thống đúng giờ thực) trước khi hoàn toàn tin tưởng, dù bằng chứng hiện tại đã
+khá thuyết phục.
+
+**CHƯA làm ở phiên này (cố tình để dành riêng)**: checklist mục 5 (rà lại các cơ chế né-chi-phí-
+Firestore) — quyết định KHÔNG làm chung với việc viết shim, vì đây là 2 loại thay đổi khác hẳn nhau
+về rủi ro: viết shim là "giữ nguyên hành vi ứng dụng, chỉ đổi tầng dưới" (rủi ro thấp, đã kiểm chứng
+kỹ ở trên); còn checklist mục 5 là "chủ động đổi HÀNH VI ứng dụng" (bỏ live listener đóng băng, đổi
+UX phân trang...) — trộn chung 2 việc sẽ khó tách bạch khi có lỗi phát sinh là do đâu. Làm riêng ở
+phiên sau, với đúng bộ test hồi quy tương ứng cho từng mục.
+
 ## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
 
 **Theo yêu cầu rõ ràng của Dũng** (2026-07-19): đây không còn là gợi ý tuỳ chọn — Phase 2 phải
@@ -299,12 +363,14 @@ sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự 
       lên project Supabase thật (`eutatszoaseixchvjbtg`) và KIỂM CHỨNG chức năng đầy đủ (14
       assertion RPC + RLS xác nhận qua REST API thật) — xem mục 4c. Không còn việc "chưa kiểm
       chứng" nào ở bước schema nữa.
-- [ ] **Phase 2** (tiếp theo): viết lớp shim (mục 3), phát triển trên **`qlahs-sup.html`** (đã tạo
-      — copy từ `qlva.html`, Firebase config trỏ sang project TEST `qlahs-test` để an toàn trong
-      lúc còn dùng Firebase song song, nhãn `[SUP-TEST]` ở `<title>`). File này KHÔNG deploy, chỉ
-      dùng cục bộ để phát triển/kiểm chứng shim độc lập. **Bắt buộc chạy qua checklist mục 5**
-      trước khi coi Phase 2 xong — không mang nguyên xi các cơ chế né-chi-phí-Firestore sang, phải
-      quyết định rõ giữ/bỏ/đơn giản hoá từng mục kèm test lại.
+- [~] **Phase 2** (lớp shim ĐÃ VIẾT + KIỂM CHỨNG ĐẦY ĐỦ bằng dữ liệu thật, checklist mục 5 CHƯA
+      làm — xem mục 4d bên dưới) — viết trong `qlahs-sup.html`: CDN Firebase (3 script) đổi sang
+      1 script `@supabase/supabase-js`, khối cấu hình cũ thay bằng lớp shim đầy đủ (`db`/`auth`
+      giả lập, `firebase.firestore.FieldValue/FieldPath` giữ nguyên API cho ~35 chỗ gọi cũ không
+      cần sửa), 4 vị trí `db.runTransaction` sửa tay gọi `.rpc(...)`. **Còn thiếu**: checklist mục
+      5 (rà lại các cơ chế né-chi-phí-Firestore — sentinel/cache-registry/cursor-pagination-đóng-
+      băng...) CHƯA làm ở phiên này, cố tình để dành làm riêng (xem lý do ở mục 4d) — Phase 2 CHƯA
+      được coi là xong hoàn toàn cho tới khi checklist đó cũng xong.
 - [ ] **Phase 3**: chuyển Auth sang Supabase Auth — tài khoản Firebase Auth hiện có phải tạo lại
       thủ công trên Supabase (không tự động chuyển mật khẩu giữa 2 hệ thống được).
 - [ ] **Phase 4**: export dữ liệu thật từ `qlahs-test` (Firestore) → import làm MOCK DATA vào
@@ -318,15 +384,24 @@ sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự 
 
 ## 8. Trạng thái hiện tại
 
-Đang ở **đầu Phase 2**. Phase 1 đã xong hoàn toàn và kiểm chứng thật (không còn gì "chưa test" ở
-tầng schema/RLS/RPC — xem mục 4c). Đã có: project Supabase thật (`eutatszoaseixchvjbtg`) với schema
-đầy đủ; file thử nghiệm `qlahs-sup.html` sẵn sàng để bắt đầu viết shim.
+**Phase 1 xong hoàn toàn** (schema/RLS/RPC áp dụng + kiểm chứng thật, mục 4c). **Phase 2 (lớp shim)
+đã viết xong + kiểm chứng đầy đủ bằng dữ liệu thật** (17 assertion, gồm 1 luồng UI thật trọn vẹn
+"Thêm vụ án" → RPC sinh mã → batch ghi đúng thứ tự phụ thuộc → đọc lại đúng, xem mục 4d) — 1 bug
+FK-ordering thật đã tìm ra và sửa qua chính quá trình test này. `qlahs-sup.html` hiện chạy được
+đầy đủ trên nền Supabase (KHÔNG còn phụ thuộc Firebase gì, kể cả CDN script). Toàn bộ dữ liệu test
+đã dọn sạch — project Supabase đang ở trạng thái sạch (0 dòng mọi bảng), sẵn sàng nạp mock data.
+
+**Còn thiếu để coi Phase 2 xong HOÀN TOÀN**: checklist mục 5 (rà lại các cơ chế né-chi-phí-Firestore
+— sentinel/cache-registry/cursor-pagination-đóng-băng...) CHƯA làm, cố tình để riêng (xem lý do ở
+cuối mục 4d).
 
 **Việc tiếp theo** (thứ tự khuyến nghị):
-1. Viết lớp shim (mục 3) trong `qlahs-sup.html`, nhúng `anon key` (đã có, xem mục 4c) + URL project
-   qua Supabase JS client (CDN).
-2. Chạy checklist mục 5 song song lúc viết shim (quyết định giữ/bỏ từng cơ chế né-chi-phí Firestore
-   — yêu cầu rõ của Dũng, KHÔNG bỏ qua bước này).
-3. Viết script export Firestore `qlahs-test` → import Supabase làm mock data (Phase 4), dùng lại
-   đúng Session pooler đã xác nhận hoạt động (mục 4c).
-4. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đó trước khi tính tới bước reset + dữ liệu thật.
+1. Chạy checklist mục 5 — rà từng mục, quyết định giữ/bỏ/đơn giản hoá, test lại đúng kịch bản
+   tương ứng. Nên làm trên `qlahs-sup.html` (đã có nền shim hoạt động đúng) trước khi coi Phase 2
+   xong hẳn.
+2. Viết script export Firestore `qlahs-test` → import Supabase làm mock data (Phase 4), dùng lại
+   đúng Session pooler đã xác nhận hoạt động (mục 4c) — nhớ `ALTER PUBLICATION supabase_realtime
+   ADD TABLE` KHÔNG cần chạy lại (đã bật sẵn cho cả 8 bảng, xem mục 4d).
+3. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đó trước khi tính tới bước reset + dữ liệu thật.
+4. Chuyển Auth sang Supabase Auth thật cho toàn bộ tài khoản cán bộ (Phase 3 — hiện chỉ có đúng 1
+   tài khoản test `admintest@local.com` phục vụ phát triển/kiểm thử, chưa phải danh sách thật).

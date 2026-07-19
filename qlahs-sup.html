@@ -21,9 +21,7 @@
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   body { font-family: 'Inter', system-ui, sans-serif; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -42,40 +40,350 @@
 <div id="qr-print-root"></div>
 
 <script>
-// ====== CẤU HÌNH FIREBASE ======
-// CỐ Ý trỏ vào project TEST (qlahs-test), KHÔNG phải qlahsp2 production — file này copy từ
-// qlva.html (vốn trỏ production) lúc tạo, nhưng qlahs-sup.html chỉ dùng để thử nghiệm migrate
-// sang Supabase (xem SUPABASE_MIGRATION.md). Cho tới khi lớp shim Supabase thay thế hoàn toàn
-// biến `db` bên dưới, file này vẫn gọi Firestore thật qua config này — trỏ nhầm vào production
-// sẽ khiến mọi thử nghiệm giữa chừng (trước khi có shim) vô tình đụng dữ liệu án thật.
-const firebaseConfig = {
-  apiKey: "AIzaSyDW5jCKNr--YvqUHHVBwkOGeyJMNc6YWGQ",
-  authDomain: "qlahs-test.firebaseapp.com",
-  projectId: "qlahs-test",
-  storageBucket: "qlahs-test.firebasestorage.app",
-  messagingSenderId: "102141956066",
-  appId: "1:102141956066:web:fa31f37992a9b64a5cf3bb",
-};
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
+// ====== LỚP SHIM: GIẢ LẬP FIRESTORE API TRÊN NỀN SUPABASE ======
+// Xem SUPABASE_MIGRATION.md mục 3. Mục tiêu: ~90% vị trí gọi `db.collection(...)`/`auth...` trong
+// khối Babel bên dưới KHÔNG cần sửa cú pháp — chỉ đổi PHẦN THÂN của `db`/`auth`. Chỉ 4 vị trí
+// `db.runTransaction(...)` được sửa tay riêng để gọi thẳng `.rpc(...)` (xem cuối khối Babel, đã
+// wire theo mục 3 — KHÔNG đi qua shim này).
+//
+// PHẠM VI đã hỗ trợ (khớp đúng những gì code thật đang dùng, khảo sát bằng grep toàn bộ file —
+// KHÔNG cố giả lập toàn bộ Firestore SDK, chỉ đúng subset thật cần):
+//   - collection(name).where(f,op,v)…orderBy(f,dir)…limit(n).get() / .onSnapshot(cb, errCb)
+//   - collection(name).doc(id?).get()/.set(data,{merge})/.update(data)/.delete()/.onSnapshot(cb,errCb)
+//   - collection(name).add(data)
+//   - db.batch() → set/update/delete(ref, data, opts) → commit()
+//   - where(...,"in",[...]) — KHÔNG còn giới hạn 30 item như Firestore (Postgres ANY() không giới hạn)
+//   - orderBy(FieldPath.documentId(), dir) — map thẳng sang cột "id"
+//   - .startAfter(cursorSnapshot) — CHỈ hỗ trợ đúng hình dạng (1 cột DESC, "id" DESC) đang dùng
+//     thật ở DanhSachPanel; ném lỗi rõ ràng nếu gặp hình dạng khác chưa hỗ trợ (fail loud, không
+//     âm thầm sai) — xem hàm _applyStartAfter.
+// KHÔNG hỗ trợ: where "<"/"<="/">=" (code thật không dùng — xác nhận qua grep, chỉ có "==","!=",
+// ">","in"), nhiều startAfter() chồng nhau, orderBy sau khi đã limit()...
+const SUPABASE_URL = "https://eutatszoaseixchvjbtg.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1dGF0c3pvYXNlaXhjaHZqYnRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTI0OTEsImV4cCI6MjA5OTk2ODQ5MX0.LIAg6AItnoZak5tt9enw9kAuA-xCxXPOGcOJFs2E0a8";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Bật cache offline (Firestore SDK tự dùng IndexedDB nội bộ) — cho phép app tiếp tục đọc dữ
-// liệu đã tải trước đó và xếp hàng các thay đổi (set/update/delete) khi mất mạng giữa chừng,
-// tự đồng bộ lại khi có mạng trở lại. `synchronizeTabs: true` để nhiều tab cùng trình duyệt
-// dùng chung 1 cache thay vì chỉ tab mở đầu tiên có persistence. Đây KHÔNG phải chế độ hoạt động
-// hoàn toàn không cần Internet — lần mở đầu tiên (và mỗi lần tải lại trang) vẫn cần mạng để tải
-// các thư viện CDN (React/Babel/Firebase SDK...) và đăng nhập; chỉ giúp app không "đứng hình"/mất
-// dữ liệu khi mạng chập chờn TRONG lúc đang dùng.
-db.enablePersistence({ synchronizeTabs: true }).catch(err => {
-  if (err.code === "failed-precondition") {
-    console.warn("Offline persistence: không bật được (hiếm gặp với synchronizeTabs:true).", err);
-  } else if (err.code === "unimplemented") {
-    console.warn("Trình duyệt này không hỗ trợ lưu cache offline (IndexedDB) — app vẫn chạy bình thường khi có mạng.");
-  } else {
-    console.error("Lỗi bật offline persistence:", err);
+// ---- firebase.firestore.{FieldValue,FieldPath} — giữ nguyên API cũ cho ~35 chỗ gọi trong code,
+// không đụng vào chúng. Chỉ là object sentinel do CHÍNH shim này định nghĩa (không phải SDK Firebase
+// thật — CDN Firebase đã bỏ hẳn, xem <head>), shim nhận diện qua field `__fsOp`/`__fieldPath`.
+const firebase = {
+  firestore: Object.assign(
+    function firestoreNamespaceStub() { throw new Error("firebase.firestore() không dùng được trong bản shim — dùng biến `db` toàn cục."); },
+    {
+      FieldValue: {
+        serverTimestamp() { return { __fsOp: "serverTimestamp" }; },
+        arrayUnion(...items) { return { __fsOp: "arrayUnion", items }; },
+      },
+      FieldPath: {
+        documentId() { return { __fieldPath: "documentId" }; },
+      },
+    }
+  ),
+};
+
+function _isFieldPathDocId(f) { return f && typeof f === "object" && f.__fieldPath === "documentId"; }
+function _colName(f) { return _isFieldPathDocId(f) ? "id" : f; }
+
+// Sinh ID mới cho .doc()/.add() (không truyền id) — dùng crypto.randomUUID() (có sẵn ở mọi secure
+// context: HTTPS hoặc localhost, khớp đúng cách dự án này chạy dev — xem README "python -m
+// http.server" + mở qua localhost). Fallback Math.random cho môi trường hiếm gặp không có crypto.
+function _genId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return String(Date.now()) + Math.random().toString(36).slice(2);
+}
+
+// Chuẩn hoá 1 giá trị dùng trong ĐIỀU KIỆN LỌC (where/startAfter) — Date → ISO string cho
+// PostgREST so sánh đúng cột timestamptz. Giá trị dùng để GHI (insert/update) KHÔNG cần qua đây —
+// JSON.stringify tự gọi Date.prototype.toJSON() đúng rồi (supabase-js stringify body sẵn).
+function _serializeFilterVal(v) {
+  if (v instanceof Date) return v.toISOString();
+  return v;
+}
+
+// Giải quyết các sentinel FieldValue TRƯỚC khi ghi thật — serverTimestamp() → giờ client hiện tại
+// (KHÔNG dùng giờ server Postgres thật, xem SUPABASE_MIGRATION.md mục 4b — chấp nhận sai lệch vài
+// trăm ms, không ảnh hưởng logic nghiệp vụ nào đang tính theo ngày/kỳ). arrayUnion(...) cần đọc
+// giá trị mảng HIỆN TẠI của đúng dòng trước khi có thể tính mảng mới — merge KHÔNG atomic 100%
+// như Firestore (đọc-rồi-ghi, có khe hở lý thuyết) nhưng đủ an toàn cho nơi DUY NHẤT đang dùng
+// (SuaKyModal, sửa kỳ 1 sự kiện — thao tác hiếm, rủi ro tranh chấp gần như bằng 0).
+async function _resolveFieldValues(table, id, data) {
+  const out = { ...data };
+  const arrayUnionKeys = Object.keys(out).filter(k => out[k] && out[k].__fsOp === "arrayUnion");
+  if (arrayUnionKeys.length > 0) {
+    const { data: rows, error } = await sb.from(table).select(arrayUnionKeys.join(",")).eq("id", id).limit(1);
+    if (error) throw error;
+    const cur = rows && rows[0] ? rows[0] : {};
+    for (const k of arrayUnionKeys) {
+      const existing = Array.isArray(cur[k]) ? cur[k] : [];
+      out[k] = [...existing, ...out[k].items];
+    }
   }
+  for (const k of Object.keys(out)) {
+    if (out[k] && out[k].__fsOp === "serverTimestamp") out[k] = new Date().toISOString();
+  }
+  return out;
+}
+
+function _makeDocSnapshot(table, id, row) {
+  return {
+    id, exists: row != null,
+    data: () => (row == null ? undefined : row),
+    ref: _makeDocRef(table, id),
+  };
+}
+function _makeQuerySnapshot(table, rows) {
+  const docs = rows.map(r => _makeDocSnapshot(table, r.id, r));
+  return { docs, size: docs.length, empty: docs.length === 0 };
+}
+
+function _makeDocRef(table, id) {
+  return {
+    id, _table: table,
+    async get() {
+      const { data, error } = await sb.from(table).select("*").eq("id", id).limit(1);
+      if (error) throw error;
+      return _makeDocSnapshot(table, id, data && data[0] ? data[0] : null);
+    },
+    async set(data, opts) {
+      const resolved = await _resolveFieldValues(table, id, data);
+      if (opts && opts.merge) {
+        const { error } = await sb.from(table).upsert({ ...resolved, id }, { onConflict: "id" });
+        if (error) throw error;
+      } else {
+        // set() KHÔNG merge = tạo mới nguyên vẹn, đúng cách toàn bộ code hiện tại dùng .set() (luôn
+        // cho vụ/bị can/log MỚI với đầy đủ field, chưa từng gặp .set() ghi đè 1 doc đã tồn tại mà kỳ
+        // vọng các field không nhắc tới bị XOÁ — nếu phát sinh nhu cầu đó sau này, cần sửa lại đây).
+        const { error } = await sb.from(table).insert({ ...resolved, id });
+        if (error) throw error;
+      }
+    },
+    async update(data) {
+      const resolved = await _resolveFieldValues(table, id, data);
+      const { error } = await sb.from(table).update(resolved).eq("id", id);
+      if (error) throw error;
+    },
+    async delete() {
+      const { error } = await sb.from(table).delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSnapshot(onNext, onError) {
+      return _subscribe(table, { docId: id }, async () => {
+        const snap = await this.get();
+        onNext(snap);
+      }, onError);
+    },
+  };
+}
+
+// Theo dõi mọi thay đổi (INSERT/UPDATE/DELETE) trên 1 bảng qua Supabase Realtime rồi TẢI LẠI toàn
+// bộ kết quả truy vấn hiện tại — không cố dịch riêng từng sự kiện thay đổi thành cập nhật cục bộ
+// (đơn giản + luôn đúng, đổi lấy vài lượt đọc thừa mỗi khi CÓ BẤT KỲ thay đổi nào trên bảng dù
+// không liên quan filter đang xem — chấp nhận được vì Supabase không tính phí theo lượt đọc như
+// Firestore, xem SUPABASE_MIGRATION.md mục 5 "Checklist rà lại tinh chỉnh vì Firebase"). Với
+// subscribe theo 1 doc cụ thể (`opts.docId`), lọc realtime filter `id=eq.<docId>` để đỡ ồn hơn.
+let _shimChannelSeq = 0;
+function _subscribe(table, opts, refetch, onError) {
+  let cancelled = false;
+  refetch().catch(err => { if (!cancelled && onError) onError(err); });
+  const channelName = "shim_" + table + "_" + (++_shimChannelSeq);
+  const pgChangeOpts = { event: "*", schema: "public", table };
+  if (opts && opts.docId) pgChangeOpts.filter = "id=eq." + opts.docId;
+  const channel = sb.channel(channelName)
+    .on("postgres_changes", pgChangeOpts, () => { if (!cancelled) refetch().catch(err => { if (onError) onError(err); }); })
+    .subscribe();
+  return () => { cancelled = true; sb.removeChannel(channel); };
+}
+
+function _makeQuery(table, state) {
+  state = state || { filters: [], orders: [], limitN: null, startAfterCursor: null };
+  const self = {
+    where(field, op, value) {
+      return _makeQuery(table, { ...state, filters: [...state.filters, { field: _colName(field), op, value }] });
+    },
+    orderBy(field, dir) {
+      return _makeQuery(table, { ...state, orders: [...state.orders, { field: _colName(field), dir: dir || "asc" }] });
+    },
+    limit(n) {
+      return _makeQuery(table, { ...state, limitN: n });
+    },
+    startAfter(cursor) {
+      return _makeQuery(table, { ...state, startAfterCursor: cursor });
+    },
+    async get() {
+      const { data, error } = await self._pg();
+      if (error) throw error;
+      return _makeQuerySnapshot(table, data);
+    },
+    onSnapshot(onNext, onError) {
+      return _subscribe(table, {}, async () => onNext(await self.get()), onError);
+    },
+    _pg() {
+      let q = sb.from(table).select("*");
+      for (const f of state.filters) {
+        const v = Array.isArray(f.value) ? f.value.map(_serializeFilterVal) : _serializeFilterVal(f.value);
+        if (f.op === "==") q = q.eq(f.field, v);
+        else if (f.op === "!=") q = q.neq(f.field, v);
+        else if (f.op === ">") q = q.gt(f.field, v);
+        else if (f.op === "<") q = q.lt(f.field, v);
+        else if (f.op === ">=") q = q.gte(f.field, v);
+        else if (f.op === "<=") q = q.lte(f.field, v);
+        else if (f.op === "in") q = q.in(f.field, v);
+        else throw new Error("Shim: toán tử where chưa hỗ trợ: " + f.op);
+      }
+      for (const o of state.orders) q = q.order(o.field, { ascending: o.dir !== "desc" });
+      if (state.startAfterCursor) q = _applyStartAfter(q, table, state);
+      if (state.limitN != null) q = q.limit(state.limitN);
+      return q;
+    },
+  };
+  return self;
+}
+
+// Hỗ trợ ĐÚNG hình dạng cursor pagination đang dùng thật: orderBy(colA,"desc").orderBy(id,"desc")
+// rồi startAfter(1 DocumentSnapshot của trang trước) — build điều kiện keyset chuẩn:
+//   colA < cursorA  OR  (colA = cursorA AND id < cursorId)
+// KHÔNG cố tổng quát hoá cho mọi chiều/mọi số cột — nếu gặp hình dạng khác sẽ ném lỗi rõ ràng
+// thay vì âm thầm trả sai trang.
+function _applyStartAfter(q, table, state) {
+  if (state.orders.length !== 2 || state.orders[0].dir !== "desc" || state.orders[1].dir !== "desc" || state.orders[1].field !== "id") {
+    throw new Error("Shim: startAfter() chỉ hỗ trợ orderBy(colA,'desc').orderBy(id,'desc') — hình dạng khác chưa viết.");
+  }
+  const colA = state.orders[0].field;
+  const cursor = state.startAfterCursor;
+  const cursorRow = typeof cursor.data === "function" ? cursor.data() : cursor; // chấp nhận DocumentSnapshot hoặc object thường
+  const cursorId = cursor.id || cursorRow.id;
+  const valA = _serializeFilterVal(cursorRow[colA]);
+  return q.or(`${colA}.lt.${valA},and(${colA}.eq.${valA},id.lt.${cursorId})`);
+}
+
+function _collection(name) {
+  return {
+    doc(id) {
+      return _makeDocRef(name, id || _genId());
+    },
+    async add(data) {
+      const id = _genId();
+      const resolved = await _resolveFieldValues(name, id, data);
+      const { error } = await sb.from(name).insert({ ...resolved, id });
+      if (error) throw error;
+      return _makeDocRef(name, id);
+    },
+    where(field, op, value) { return _makeQuery(name).where(field, op, value); },
+    orderBy(field, dir) { return _makeQuery(name).orderBy(field, dir); },
+    limit(n) { return _makeQuery(name).limit(n); },
+    get() { return _makeQuery(name).get(); },
+    onSnapshot(onNext, onError) { return _makeQuery(name).onSnapshot(onNext, onError); },
+  };
+}
+
+// Thứ tự BẮT BUỘC khi insert nhiều bảng trong 1 batch — Firestore không có khái niệm FK nên code
+// gốc tự do xen kẽ .set() giữa các collection theo bất kỳ thứ tự nào (VD ghi log "khoi_to_bican"
+// XEN GIỮA 2 lần tạo bị can, không phải tạo hết bị can rồi mới ghi log). Postgres CÓ ràng buộc FK
+// thật (schema.sql) — "lichsuChuyenGiaiDoan" tham chiếu "bican"/"vuan"/"phienGiaoNhan"/"kybaocao",
+// "bican" tham chiếu "vuan"/"kybaocao" — phải insert đúng thứ tự PHỤ THUỘC TRƯỚC, không phải thứ
+// tự "bảng nào gặp trước trong ops[]" như bản đầu (gây lỗi 23503 FK violation thật, phát hiện qua
+// Playwright test ThemVuAnForm — xem SUPABASE_MIGRATION.md). Bảng không có trong danh sách này
+// (không nên xảy ra với 8 bảng hiện có) rơi xuống cuối, insert sau cùng.
+const _TABLE_INSERT_ORDER = ["kybaocao", "canbo", "danhMucToiDanh", "meta", "vuan", "bican", "phienGiaoNhan", "lichsuChuyenGiaiDoan"];
+function _sapXepTheoPhuThuoc(mapBangRows) {
+  return [...mapBangRows.entries()].sort((a, b) => {
+    const ia = _TABLE_INSERT_ORDER.indexOf(a[0]);
+    const ib = _TABLE_INSERT_ORDER.indexOf(b[0]);
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+  });
+}
+
+function _batch() {
+  const ops = []; // { type: 'set'|'update'|'delete', table, id, data, merge }
+  return {
+    set(ref, data, opts) { ops.push({ type: "set", table: ref._table, id: ref.id, data, merge: opts && opts.merge }); return this; },
+    update(ref, data) { ops.push({ type: "update", table: ref._table, id: ref.id, data }); return this; },
+    delete(ref) { ops.push({ type: "delete", table: ref._table, id: ref.id }); return this; },
+    async commit() {
+      // Gộp insert/upsert cùng bảng thành 1 lượt gọi (nhanh hơn nhiều so với tuần tự từng dòng);
+      // update/delete xử lý song song qua Promise.all (PostgREST không hỗ trợ "mỗi dòng 1 patch
+      // khác nhau" trong 1 request REST đơn, không đáng phải viết RPC riêng cho việc này ở quy mô
+      // vài trăm dòng/batch hiện tại).
+      const setsNoMerge = new Map(); // table -> rows[]
+      const setsMerge = new Map();
+      const updates = [];
+      const deletes = [];
+      for (const op of ops) {
+        if (op.type === "set") {
+          const resolved = await _resolveFieldValues(op.table, op.id, op.data);
+          const row = { ...resolved, id: op.id };
+          const bucket = op.merge ? setsMerge : setsNoMerge;
+          if (!bucket.has(op.table)) bucket.set(op.table, []);
+          bucket.get(op.table).push(row);
+        } else if (op.type === "update") {
+          updates.push(op);
+        } else if (op.type === "delete") {
+          deletes.push(op);
+        }
+      }
+      // ĐÚNG THỨ TỰ phụ thuộc (xem _TABLE_INSERT_ORDER) — KHÔNG được đổi thành Promise.all song
+      // song giữa các bảng khác nhau ở đây, dù có vẻ nhanh hơn — sẽ tái phạm đúng lỗi FK 23503.
+      for (const [table, rows] of _sapXepTheoPhuThuoc(setsNoMerge)) {
+        const { error } = await sb.from(table).insert(rows);
+        if (error) throw error;
+      }
+      for (const [table, rows] of _sapXepTheoPhuThuoc(setsMerge)) {
+        const { error } = await sb.from(table).upsert(rows, { onConflict: "id" });
+        if (error) throw error;
+      }
+      await Promise.all(updates.map(async op => {
+        const resolved = await _resolveFieldValues(op.table, op.id, op.data);
+        const { error } = await sb.from(op.table).update(resolved).eq("id", op.id);
+        if (error) throw error;
+      }));
+      await Promise.all(deletes.map(async op => {
+        const { error } = await sb.from(op.table).delete().eq("id", op.id);
+        if (error) throw error;
+      }));
+    },
+  };
+}
+
+const db = {
+  collection: _collection,
+  batch: _batch,
+  // db.runTransaction KHÔNG có ở đây theo chủ đích — 4 vị trí gọi thật đã sửa tay sang .rpc()
+  // (xem SUPABASE_MIGRATION.md mục 3). Gọi nhầm sẽ báo lỗi rõ ràng ngay thay vì âm thầm không làm gì.
+};
+
+// ---- Shim Auth: giả lập subset firebase.auth() đang dùng thật (currentUser.email đọc ~20 chỗ,
+// onAuthStateChanged 1 chỗ ở App(), signInWithEmailAndPassword 1 chỗ ở LoginScreen,
+// signOut 1 chỗ ở AppShell) — backed bởi Supabase Auth thật (JWT cần khớp để RLS công nhận
+// 'authenticated', xem SUPABASE_MIGRATION.md mục 4c).
+let _authCurrentUser = null;
+const _authListeners = new Set();
+function _authNotify() { _authListeners.forEach(cb => cb(_authCurrentUser)); }
+sb.auth.onAuthStateChange((event, session) => {
+  _authCurrentUser = session && session.user ? { email: session.user.email, uid: session.user.id } : null;
+  _authNotify();
 });
+const auth = {
+  get currentUser() { return _authCurrentUser; },
+  onAuthStateChanged(cb) {
+    _authListeners.add(cb);
+    cb(_authCurrentUser); // bắn ngay giá trị đã biết — đúng hành vi Firebase onAuthStateChanged
+    return () => _authListeners.delete(cb);
+  },
+  async signInWithEmailAndPassword(email, password) {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    return { user: data.user };
+  },
+  async signOut() {
+    const { error } = await sb.auth.signOut();
+    if (error) throw error;
+  },
+};
+
+// ---- Offline persistence: KHÔNG CÓ tương đương Supabase sẵn có (xem SUPABASE_MIGRATION.md mục 2
+// "Offline persistence" — khoảng trống thật, quyết định xử lý ở Phase 5). Cố tình bỏ hẳn khối
+// db.enablePersistence(...) cũ ở đây thay vì để lại code chết — Supabase JS client không có API
+// này, giữ lại sẽ gây lỗi tham chiếu.
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -286,19 +594,15 @@ function pad4(n) {
   return String(n).padStart(4, "0");
 }
 
-// Sinh mã vụ án mới qua transaction trên boDemMaVu/{YYMM} (theo ngày QĐ KTVA) —
-// tránh trùng số khi nhiều người tạo vụ án cùng lúc.
+// Sinh mã vụ án mới — bản Supabase gọi thẳng RPC "sinhMaVuAnMoi" (Postgres function, xem
+// supabase/functions.sql) thay cho db.runTransaction trên boDemMaVu/{YYMM}. RPC đã tự tính atomic
+// theo YYMM (UPSERT nguyên tử), chỉ cần truyền yymm tính từ ngayQdKtva.
 async function sinhMaVuAnMoi(ngayQdKtva) {
   const d = ngayQdKtva instanceof Date && !isNaN(ngayQdKtva) ? ngayQdKtva : new Date();
   const yymm = String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, "0");
-  const counterRef = db.collection("boDemMaVu").doc(yymm);
-  const seq = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(counterRef);
-    const next = (snap.exists ? (snap.data().soHienTai || 0) : 0) + 1;
-    tx.set(counterRef, { soHienTai: next }, { merge: true });
-    return next;
-  });
-  return `QLVA_E01.53_${yymm}_${pad4(seq)}`;
+  const { data, error } = await sb.rpc("sinhMaVuAnMoi", { p_yymm: yymm });
+  if (error) throw error;
+  return data;
 }
 
 function tinhDieuLuat(biCanRows) {
@@ -379,42 +683,14 @@ function tinhLoaiKhoiTo(biCanRows) {
   return tinhLoaiKhoiToTheoNgay(biCanRows.map(bc => bc.ngayKhoiTo ? fromInputDate(bc.ngayKhoiTo) : null));
 }
 
-// Tính lại dieuLuat (vụ) + loaiKhoiTo (từng bị can) sau khi bị can của 1 vụ thay đổi (thêm/sửa/
-// nhập vụ vào vụ này) — dùng chung cho SuaBiCanForm/ThemBiCanForm/NhapVuModal thay vì mỗi nơi tự
-// đọc-tính-ghi riêng. Bọc trong transaction để tránh lost-update: nếu 2 người cùng sửa bị can của
-// CÙNG 1 vụ gần như đồng thời, đọc-tính-ghi không transaction thì người ghi sau có thể đè mất kết
-// quả người ghi trước dựa trên dữ liệu đã cũ (2026-07-16, phát hiện qua audit "tối ưu hệ thống").
-// Firestore transaction (bản SDK compat đang dùng) không hỗ trợ chạy thẳng 1 query bên trong, nên
-// query lấy DANH SÁCH ID bị can của vụ NGOÀI transaction trước, rồi đọc lại TỪNG bị can theo đúng
-// ID đó BẰNG `tx.get` BÊN TRONG transaction — transaction tự phát hiện nếu 1 trong các doc đã đọc
-// bị đổi trước khi commit và tự động thử lại. Giới hạn còn lại (chấp nhận được): nếu có 1 bị can
-// MỚI được thêm vào vụ đúng lúc giữa bước lấy danh sách ID và lúc transaction đọc xong, bị can đó
-// sẽ không được tính vào lần gọi này — không sao vì thao tác thêm bị can đó tự nó cũng gọi lại
-// đúng hàm này ngay sau khi ghi xong.
+// Tính lại dieuLuat (vụ) + loaiKhoiTo (từng bị can) sau khi bị can của 1 vụ thay đổi — bản Supabase
+// gọi thẳng RPC "capNhatDieuLuatVaLoaiKhoiTo" (Postgres function, xem supabase/functions.sql).
+// RPC làm TOÀN BỘ việc đọc-tính-ghi trong 1 lần gọi hàm server-side (atomic tự nhiên, không cần
+// giả lập optimistic-retry như bản Firestore cũ — không có "khe hở round-trip" nào giữa đọc và
+// ghi vì cả 2 chạy trong cùng 1 lần thực thi trên server).
 async function capNhatDieuLuatVaLoaiKhoiTo(maVuAn) {
-  const idsSnap = await db.collection("bican").where("maVuAn", "==", maVuAn).get();
-  const bcIds = idsSnap.docs.map(d => d.id);
-  await db.runTransaction(async (tx) => {
-    const bcList = [];
-    for (const id of bcIds) {
-      const doc = await tx.get(db.collection("bican").doc(id));
-      if (doc.exists) bcList.push({ id: doc.id, ...doc.data() });
-    }
-    const dieuLuatMoi = tinhDieuLuat(bcList);
-    const loaiKhoiToMoi = tinhLoaiKhoiToTheoNgay(bcList.map(bc => bc.ngayKhoiTo ? (bc.ngayKhoiTo.toDate ? bc.ngayKhoiTo.toDate() : new Date(bc.ngayKhoiTo)) : null));
-    // ...tomTatBiCan(bcList) (Tối ưu Firestore Đợt 3) gộp vào ĐÚNG update này — bcList vừa đọc
-    // trong transaction đã là danh sách bị can CUỐI CÙNG của vụ, đúng yêu cầu của tomTatBiCan.
-    tx.update(db.collection("vuan").doc(maVuAn), { dieuLuat: dieuLuatMoi, ...tomTatBiCan(bcList) });
-    // ngayCapNhat/nguoiCapNhatCuoi (Tối ưu Firestore Đợt 1 — mọi nơi ghi bican đều cần field này)
-    // giữ nguyên ngay cả khi tính lại loaiKhoiTo qua hàm dùng chung này.
-    const nowTx = new Date();
-    const nguoiTx = auth.currentUser?.email || "";
-    bcList.forEach((bc, i) => {
-      if (bc.loaiKhoiTo !== loaiKhoiToMoi[i]) tx.update(db.collection("bican").doc(bc.id), {
-        loaiKhoiTo: loaiKhoiToMoi[i], ngayCapNhat: nowTx, nguoiCapNhatCuoi: nguoiTx,
-      });
-    });
-  });
+  const { error } = await sb.rpc("capNhatDieuLuatVaLoaiKhoiTo", { p_ma_vu_an: maVuAn });
+  if (error) throw error;
 }
 
 const NHAN_GIAI_DOAN = { dieu_tra: "Điều tra", truy_to: "Truy tố", xet_xu: "Xét xử" };
@@ -548,12 +824,10 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
   const idsSaoChep = biCanSaoChepIds || new Set();
 
   const refGoc = db.collection("vuan").doc(vuGoc.id);
-  const maVuMoi = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(refGoc);
-    const soMoi = (snap.data().soDemTach || 0) + 1;
-    tx.update(refGoc, { soDemTach: soMoi });
-    return `${vuGoc.id}_${soMoi}`;
-  });
+  // Bản Supabase gọi thẳng RPC "tachVuSinhMa" thay cho transaction tăng soDemTach (xem
+  // supabase/functions.sql) — atomic tự nhiên, không cần round-trip đọc-rồi-ghi qua client.
+  const { data: maVuMoi, error: loiSinhMa } = await sb.rpc("tachVuSinhMa", { p_vu_goc_id: vuGoc.id });
+  if (loiSinhMa) throw loiSinhMa;
 
   const biCanChuyenHan = biCanList.filter(bc => idsChuyenHan.has(bc.id));
   const biCanSaoChep = biCanList.filter(bc => idsSaoChep.has(bc.id));
@@ -2450,27 +2724,18 @@ function parseWorkbookDanhSachAn(wb) {
   return { vuAnList: Array.from(vuMap.values()), warnings };
 }
 
-// Sinh hàng loạt mã vụ án hệ thống (maNoiSinh) cho các vụ mới, gom theo tháng QĐ KTVA để chỉ
-// cần 1 transaction/tháng thay vì 1 transaction/vụ như sinhMaVuAnMoi — tránh chậm khi import
-// nhiều vụ cùng lúc. Mutate thẳng từng vụ trong dsVu, gắn field _maNoiSinh.
+// Sinh hàng loạt mã vụ án hệ thống (maNoiSinh) cho các vụ mới — bản Supabase gọi thẳng RPC
+// "sinhNhieuMaVuAn" (xem supabase/functions.sql), truyền mảng YYMM song song theo ĐÚNG thứ tự
+// dsVu — RPC tự gom nhóm theo tháng bên trong (1 UPSERT nguyên tử/nhóm, không cần JS tự gom nhóm
+// như bản Firestore cũ). Mutate thẳng từng vụ trong dsVu, gắn field _maNoiSinh.
 async function sinhNhieuMaVuAn(dsVu) {
-  const nhom = new Map();
-  dsVu.forEach(v => {
+  const yymmList = dsVu.map(v => {
     const d = v.ngayQdKtva instanceof Date && !isNaN(v.ngayQdKtva) ? v.ngayQdKtva : new Date();
-    const yymm = String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, "0");
-    if (!nhom.has(yymm)) nhom.set(yymm, []);
-    nhom.get(yymm).push(v);
+    return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, "0");
   });
-  for (const [yymm, list] of nhom) {
-    const counterRef = db.collection("boDemMaVu").doc(yymm);
-    const soBatDau = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(counterRef);
-      const hienTai = snap.exists ? (snap.data().soHienTai || 0) : 0;
-      tx.set(counterRef, { soHienTai: hienTai + list.length }, { merge: true });
-      return hienTai;
-    });
-    list.forEach((v, i) => { v._maNoiSinh = `QLVA_E01.53_${yymm}_${pad4(soBatDau + i + 1)}`; });
-  }
+  const { data, error } = await sb.rpc("sinhNhieuMaVuAn", { p_yymm_list: yymmList });
+  if (error) throw error;
+  dsVu.forEach((v, i) => { v._maNoiSinh = data[i]; });
 }
 
 function ImportExcelModule() {

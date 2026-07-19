@@ -19,6 +19,7 @@ alter table "kybaocao" enable row level security;
 alter table "canbo" enable row level security;
 alter table "danhMucToiDanh" enable row level security;
 alter table "phienGiaoNhan" enable row level security;
+alter table "meta" enable row level security;
 
 -- boDemMaVu KHÔNG bật RLS ở đây theo kiểu "authenticated đọc/ghi được" — bảng này chỉ được đụng
 -- vào từ BÊN TRONG các hàm RPC (functions.sql, chạy với quyền SECURITY DEFINER), ứng dụng phía
@@ -31,7 +32,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['vuan','bican','lichsuChuyenGiaiDoan','kybaocao','canbo','danhMucToiDanh','phienGiaoNhan']
+  foreach t in array array['vuan','bican','lichsuChuyenGiaiDoan','kybaocao','canbo','danhMucToiDanh','phienGiaoNhan','meta']
   loop
     execute format(
       'create policy "authenticated_read_write" on %I for all using (auth.role() = ''authenticated'') with check (auth.role() = ''authenticated'')',
