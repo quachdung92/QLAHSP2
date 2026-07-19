@@ -210,6 +210,32 @@ function _makeQuery(table, state) {
       return _makeQuery(table, { ...state, startAfterCursor: cursor });
     },
     async get() {
+      // KHÔNG có .limit() tường minh — PostgREST/Supabase có cấu hình "Max Rows" cấp PROJECT (mặc
+      // định 1000 trên project này, đã xác nhận qua test thật: query 1331 dòng chỉ trả về 1000 dù
+      // .range()/.limit() yêu cầu nhiều hơn — server tự cắt bớt, KHÔNG phải giới hạn phía client có
+      // thể vượt qua bằng cách gọi API khác) — khác hẳn Firestore, nơi `.get()` không `.limit()`
+      // luôn trả về TOÀN BỘ document khớp điều kiện. Nếu không xử lý, mọi nơi trong app đang dựa
+      // vào hành vi Firestore này (VD AnDaGiaiQuyetModule không giới hạn số vụ đã giải quyết) sẽ bị
+      // ÂM THẦM CẮT DỮ LIỆU ngay khi vượt 1000 dòng — đã xảy ra thật với dữ liệu mock vừa nạp (1331
+      // vụ đã giải quyết). Tự phân trang qua nhiều lần `.range()` (mỗi trang dưới ngưỡng cắt của
+      // server) rồi nối lại — không phụ thuộc con số "Max Rows" cụ thể của project (an toàn dù cấu
+      // hình server đổi khác sau này). Cần thứ tự ổn định để phân trang đúng (tránh lặp/bỏ sót dòng
+      // giữa các trang) — nếu code gọi không tự orderBy, ngầm thêm orderBy("id") chỉ cho việc phân
+      // trang này, không đổi field lọc/kết quả trả về nào khác.
+      if (state.limitN == null) {
+        const PAGE_SIZE = 500; // dưới ngưỡng cắt 1000 đã xác nhận thật, chừa biên an toàn
+        const stateOrdered = state.orders.length > 0 ? state : { ...state, orders: [{ field: "id", dir: "asc" }] };
+        let all = [];
+        let offset = 0;
+        while (true) {
+          const { data, error } = await _buildPgQuery(table, stateOrdered).range(offset, offset + PAGE_SIZE - 1);
+          if (error) throw error;
+          all = all.concat(data);
+          if (data.length < PAGE_SIZE) break;
+          offset += PAGE_SIZE;
+        }
+        return _makeQuerySnapshot(table, all);
+      }
       const { data, error } = await self._pg();
       if (error) throw error;
       return _makeQuerySnapshot(table, data);
@@ -218,25 +244,33 @@ function _makeQuery(table, state) {
       return _subscribe(table, {}, async () => onNext(await self.get()), onError);
     },
     _pg() {
-      let q = sb.from(table).select("*");
-      for (const f of state.filters) {
-        const v = Array.isArray(f.value) ? f.value.map(_serializeFilterVal) : _serializeFilterVal(f.value);
-        if (f.op === "==") q = q.eq(f.field, v);
-        else if (f.op === "!=") q = q.neq(f.field, v);
-        else if (f.op === ">") q = q.gt(f.field, v);
-        else if (f.op === "<") q = q.lt(f.field, v);
-        else if (f.op === ">=") q = q.gte(f.field, v);
-        else if (f.op === "<=") q = q.lte(f.field, v);
-        else if (f.op === "in") q = q.in(f.field, v);
-        else throw new Error("Shim: toán tử where chưa hỗ trợ: " + f.op);
-      }
-      for (const o of state.orders) q = q.order(o.field, { ascending: o.dir !== "desc" });
-      if (state.startAfterCursor) q = _applyStartAfter(q, table, state);
+      let q = _buildPgQuery(table, state);
       if (state.limitN != null) q = q.limit(state.limitN);
       return q;
     },
   };
   return self;
+}
+
+// Dựng query PostgREST từ state (filters/orders/startAfter), KHÔNG áp .limit() — dùng chung bởi
+// `_pg()` (đường có .limit() tường minh) và vòng lặp phân trang trong `get()` ở trên (mỗi trang tự
+// đặt .range() riêng, không được lẫn thêm .limit() từ state).
+function _buildPgQuery(table, state) {
+  let q = sb.from(table).select("*");
+  for (const f of state.filters) {
+    const v = Array.isArray(f.value) ? f.value.map(_serializeFilterVal) : _serializeFilterVal(f.value);
+    if (f.op === "==") q = q.eq(f.field, v);
+    else if (f.op === "!=") q = q.neq(f.field, v);
+    else if (f.op === ">") q = q.gt(f.field, v);
+    else if (f.op === "<") q = q.lt(f.field, v);
+    else if (f.op === ">=") q = q.gte(f.field, v);
+    else if (f.op === "<=") q = q.lte(f.field, v);
+    else if (f.op === "in") q = q.in(f.field, v);
+    else throw new Error("Shim: toán tử where chưa hỗ trợ: " + f.op);
+  }
+  for (const o of state.orders) q = q.order(o.field, { ascending: o.dir !== "desc" });
+  if (state.startAfterCursor) q = _applyStartAfter(q, table, state);
+  return q;
 }
 
 // Hỗ trợ ĐÚNG hình dạng cursor pagination đang dùng thật: orderBy(colA,"desc").orderBy(id,"desc")

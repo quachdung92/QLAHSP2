@@ -362,6 +362,63 @@ chắn) đều là **quyết định phù hợp cho MOCK DATA**, KHÔNG áp dụ
 `qlahsp2` thật) — Phase 6 phải hỏi lại Dũng ý nghĩa từng giá trị "rác" cụ thể tìm thấy lúc đó trước
 khi quyết định map/backfill/bỏ qua, vì đây là dữ liệu án hình sự thật, không được đoán.
 
+### 4f. Kiểm thử qua UI thật với mock data — phát hiện + sửa 2 bug thật của SHIM (không phải lỗi
+dữ liệu) (2026-07-19)
+
+Sau khi import xong (mục 4e), mở `qlahs-sup.html` qua Playwright (đăng nhập thật, không mock) để
+xác nhận dữ liệu hiển thị đúng qua UI — đúng bước "Việc tiếp theo #1" đã ghi ở mục 8. Phát hiện 2
+lỗi THẬT của lớp shim (Phase 2), cả 2 đều chỉ lộ ra khi test với khối lượng dữ liệu thật đủ lớn
+(mock nhỏ ở Phase 2 không đủ để kích hoạt) — đã sửa cả 2 trực tiếp trong `qlahs-sup.html`:
+
+**Bug 1 — PostgREST "Max Rows" cấp project cắt ÂM THẦM mọi query không có `.limit()` tường minh ở
+1000 dòng.** Phát hiện qua: tab "Đang giải quyết" đúng 55/55 dòng (khớp DB) nhưng module "Án đã
+giải quyết" ban đầu tưởng lỗi (0 dòng) — hoá ra do mặc định lọc theo kỳ hiện tại (đúng thiết kế,
+không phải bug) — nhưng khi đổi kỳ lọc sang "Tất cả", `where(trangThai,"!=","dang_giai_quyet")`
+(1331 dòng thật trong DB) chỉ trả về **1000** dù đã thử ép `.range(0,1999)`/`.limit(2000)` — xác
+nhận qua test trực tiếp: `count` (exact, PostgREST tính đúng) = 1331 nhưng `data.length` luôn dừng
+ở 1000 bất kể tham số client gửi lên → là giới hạn **SERVER-SIDE** (cấu hình "Max Rows" của chính
+project Supabase, không phải giá trị client có thể vượt qua). Khác hẳn Firestore: `.get()` không
+`.limit()` luôn trả về TOÀN BỘ document khớp điều kiện — nhiều nơi trong code gốc (VD
+`AnDaGiaiQuyetModule` không giới hạn số vụ đã giải quyết) dựa đúng vào hành vi này.
+**Đã sửa** (`qlahs-sup.html`, hàm `get()` trong `_makeQuery`): khi KHÔNG có `.limit()` tường minh,
+tự động phân trang qua nhiều lần `.range()` (trang 500 dòng, dưới ngưỡng cắt 1000 đã xác nhận, chừa
+biên an toàn) rồi nối kết quả lại — không phụ thuộc con số "Max Rows" cụ thể (an toàn dù cấu hình
+server đổi khác sau này, không cần biết trước ngưỡng chính xác). Cần thứ tự ổn định để phân trang
+đúng (tránh lặp/bỏ sót dòng giữa các trang) — nếu code gọi không tự `orderBy`, ngầm thêm
+`orderBy("id")` chỉ cho việc phân trang, không đổi field lọc/tập kết quả trả về. Tách logic dựng
+query PostgREST ra hàm dùng chung `_buildPgQuery` (dùng bởi cả đường `.limit()` tường minh lẫn vòng
+lặp phân trang, tránh viết trùng 2 lần).
+**Đã kiểm chứng**: query trực tiếp `where(trangThai,"!=","dang_giai_quyet")` sau sửa trả ĐÚNG 1331
+dòng, không trùng lặp ID (`1331 unique` trên `1331 tổng`); qua UI thật, 5 tab "Án đã giải quyết"
+(kỳ=Tất cả) cộng đúng khớp DB: Đã xét xử=574, Chuyển đi=1, Tạm đình chỉ=752, Đình chỉ=2, Án huỷ=1
+(tổng 1330 + 1 vụ `da_nhap` không thuộc tab nào = 1331). Chạy lại TOÀN BỘ 6 file test hồi quy đã có
+của Phase 2 (`test_sup_shim`/`test_sup_index_avoid`/`test_sup_e2e`/`test_sup_in_over30`/
+`test_sup_realtime_list`/`test_sup_ui_flow`, 32 assertion) — không có gì bị phá vỡ bởi thay đổi này.
+
+**Bug 2 — `boDemMaVu` (bộ đếm sinh mã vụ án mới qua RPC `sinhMaVuAnMoi`) chưa được seed từ dữ liệu
+đã import, gây TRÙNG MÃ VỤ khi tạo vụ án mới qua UI.** Phát hiện qua `test_sup_ui_flow.js` (luồng
+"Thêm vụ án" thật qua UI) fail với lỗi Postgres `23505 duplicate key value violates unique
+constraint "vuan_pkey"`. Nguyên nhân: RPC `sinhMaVuAnMoi(yymm)` sinh SEQ tiếp theo bằng cách
+`INSERT ... ON CONFLICT (yymm) DO UPDATE soHienTai+1` — nếu bảng `boDemMaVu` CHƯA có dòng nào cho
+`yymm` đó thì bắt đầu từ `0001`, dù dữ liệu import đã có sẵn `QLVA_E01.53_2607_0001`...`_0025` (xác
+nhận trực tiếp qua SQL: tháng "2607" có đủ 25 vụ đã import, nhưng `boDemMaVu` chỉ có 2 dòng — leftover
+từ các lần test RPC trước đó dùng YYMM ngẫu nhiên, không liên quan tháng thật nào trong mock data).
+**Đã sửa 2 nơi**: (1) chạy 1 lần script seed trực tiếp lên DB hiện có — quét mọi `vuan.id` khớp
+pattern mã CƠ BẢN (`^QLVA_E01\.53_\d{4}_\d{4}$`, CỐ Ý loại trừ mã có hậu tố tách vụ `_N` — hậu tố đó
+dùng field `soDemTach` trên chính vụ gốc, không tiêu tốn số thứ tự của `boDemMaVu`, xem schema.sql),
+nhóm theo `yymm`, upsert `soHienTai = GREATEST(hiện có, số lớn nhất tìm thấy)` — an toàn chạy lại
+nhiều lần (idempotent, dùng `GREATEST` nên không bao giờ lùi số xuống); (2) thêm CHÍNH logic này vào
+cuối `import_to_supabase.js` (sau bước xác nhận số dòng) để mọi lần import sau này (kể cả Phase 6
+với dữ liệu `qlahsp2` thật) tự động seed đúng, không lặp lại việc quên bước này.
+**Đã kiểm chứng**: seed 1 lần lên DB hiện có (65 tháng có vụ án, VD `2607: soHienTai=25`), chạy lại
+`test_sup_ui_flow.js` → PASS 4/4 (trước đó FAIL 3/4 với đúng lỗi `23505`) — vụ án mới tạo qua UI
+đúng nhận mã `QLVA_E01.53_2607_0026`, không còn trùng.
+
+**Bài học chung cho cả 2 bug**: cả 2 chỉ lộ ra khi test với dữ liệu THẬT ở QUY MÔ THẬT (>1000 dòng
+cho bug 1, tháng đã có sẵn nhiều vụ cho bug 2) — bộ test Phase 2 ban đầu (dữ liệu tự tạo, nhỏ, sạch)
+không đủ để bắt được, đúng đúng lý do Phase 4 (nạp mock data thật) có giá trị độc lập với việc "chỉ
+kiểm dữ liệu đã nạp đúng chưa" như dự tính ban đầu — nó còn lộ ra cả lỗi TẦNG SHIM chưa từng thấy.
+
 ## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
 
 **Theo yêu cầu rõ ràng của Dũng** (2026-07-19): đây không còn là gợi ý tuỳ chọn — Phase 2 phải
@@ -524,8 +581,11 @@ sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự 
       thủ công trên Supabase (không tự động chuyển mật khẩu giữa 2 hệ thống được).
 - [x] **Phase 4**: export dữ liệu thật từ `qlahs-test` (Firestore, 9354 document/7 collection) →
       import làm MOCK DATA vào project Supabase hiện có — THÀNH CÔNG 100%, đúng khớp số dòng, 5
-      lỗi CHECK constraint thật gặp phải + đã sửa (xem mục 4e chi tiết đầy đủ). Chưa kiểm thử qua
-      UI `qlahs-sup.html` với dữ liệu này — việc tiếp theo.
+      lỗi CHECK constraint thật gặp phải + đã sửa (mục 4e). Đã kiểm thử qua UI `qlahs-sup.html`
+      thật với dữ liệu này, phát hiện + sửa thêm 2 bug thật của SHIM (không phải lỗi dữ liệu) chỉ
+      lộ ra ở quy mô dữ liệu thật: PostgREST "Max Rows" cắt query không `.limit()` ở 1000 dòng, và
+      `boDemMaVu` chưa seed gây trùng mã vụ khi tạo vụ mới qua UI — cả 2 đã sửa + kiểm chứng đầy đủ
+      (mục 4f). Phase 4 coi như HOÀN TẤT.
 - [ ] **Phase 5**: kiểm thử toàn diện trên project Supabase hiện có (đủ bộ Playwright hồi quy hiện
       có + kịch bản mới cho Realtime/RPC), quyết định hướng xử lý khoảng trống offline persistence.
 - [ ] **Phase 6**: **reset project Supabase** (xoá dữ liệu mock, giữ schema/RLS/RPC) → export/import
@@ -544,13 +604,17 @@ FK-ordering thật đã tìm ra và sửa qua chính quá trình test này. `qla
 **Phase 2 ĐÃ HOÀN TẤT** (shim + checklist mục 5). Bảng `meta` đã xoá khỏi schema thật (DROP TABLE
 đã chạy trên project Supabase).
 
-**Phase 4 ĐÃ HOÀN TẤT** (export/import mock data từ `qlahs-test`, xem mục 4e) — project Supabase
-hiện có đầy đủ 7 bảng nghiệp vụ với dữ liệu thật (đã transform), sẵn sàng kiểm thử UI.
+**Phase 4 ĐÃ HOÀN TẤT** (export/import mock data từ `qlahs-test` + kiểm thử qua UI thật + 2 bug shim
+đã sửa, xem mục 4e/4f) — project Supabase hiện có đầy đủ 7 bảng nghiệp vụ với dữ liệu thật (đã
+transform), đã xác nhận hiển thị/hoạt động đúng qua `qlahs-sup.html` (Danh sách vụ án, Án đã giải
+quyết, Kỳ báo cáo, Giao nhận hồ sơ, Dashboard, Cài đặt — 0 lỗi console mới, 32/32 assertion hồi quy
+PASS).
 
 **Việc tiếp theo** (thứ tự khuyến nghị):
-1. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đã nạp — đăng nhập, duyệt Danh sách vụ án, mở
-   panel chi tiết vài vụ, thử Kỳ báo cáo/Xuất Excel báo cáo tháng (Biểu B10) trên ít nhất 1 kỳ, thử
-   Giao nhận hồ sơ — trọng tâm là XÁC NHẬN DỮ LIỆU HIỂN THỊ ĐÚNG qua UI thật (không phải "so B10
-   với Firestore" — xem lý do ở mục 6, B10 dùng chung 100% code nên không có chỗ để tính khác đi).
+1. Thử "Xuất Excel báo cáo tháng" (Biểu B10) trên ít nhất 1 kỳ đã chốt với dữ liệu mock — phép thử
+   tổng hợp tốt, chạm gần như mọi field/mọi bảng cùng lúc, dễ lộ lỗi map dữ liệu còn sót (nếu có)
+   hơn test đơn lẻ từng màn hình. Chưa làm ở phiên này.
 2. Chuyển Auth sang Supabase Auth thật cho toàn bộ tài khoản cán bộ (Phase 3 — hiện chỉ có đúng 1
    tài khoản test `admintest@local.com` phục vụ phát triển/kiểm thử, chưa phải danh sách thật).
+3. Phase 5 (kiểm thử toàn diện) — rà lại khoảng trống offline persistence, viết thêm kịch bản
+   Playwright cho các luồng nghiệp vụ chưa test qua Supabase (Tách vụ/Nhập vụ/Xoá vụ.../Thùng rác).
