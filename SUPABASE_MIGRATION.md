@@ -282,15 +282,24 @@ Lý do gốc (vẫn áp dụng cho 5 mục còn lại `[ ]`): viết shim là "g
 tầng dưới" (rủi ro thấp); checklist mục 5 là "chủ động đổi HÀNH VI ứng dụng" (bỏ live listener đóng
 băng, đổi UX phân trang...) — cần tách bạch để dễ khoanh vùng nếu có lỗi phát sinh.
 
-**Cập nhật lần 3 (cùng ngày)**: đã rà xong thêm "cursor pagination đóng băng" (quyết định GIỮ
-NGUYÊN, lý do chi tiết ở đúng mục đó) và "né composite index thủ công" (2 chỗ sửa, xem mục đó) —
-cộng dọn xong phần kỹ thuật "giới hạn 30-item của `in`" (không phải 1 trong 7 mục checklist chính
-thức, nhưng cùng tinh thần). **Tổng kết tới đây (4/7 mục checklist đã rà)**: 2 mục bỏ hẳn
-(`firestoreCacheRegistry`, sentinel), 1 mục rà xong và giữ nguyên (cursor pagination), 1 mục rà
-xong và sửa 2 chỗ (composite index). **3 mục còn thật sự chưa rà**: cache lạnh IndexedDB, các
-quyết định "hot data không cần live" khác (`BangBiCanCon`/`BangExcelModule`/cột Kỳ),
-`fetchWithTtlCache`. Để dành phiên sau — mục "hot data khác" cần rà TỪNG component riêng (không
-phải 1 thay đổi gọn như các mục đã làm), nên tách thành phiên riêng để không vội.
+**Cập nhật lần 4 (cùng ngày) — CHECKLIST MỤC 5 ĐÃ RÀ XONG 7/7 MỤC.** Kết quả cuối:
+- **2 mục bỏ hẳn** (code đơn giản hoá thật sự): `firestoreCacheRegistry`, sentinel
+  `meta/vuAnMoiNhat`.
+- **1 mục sửa 1 phần** (bỏ 30-item chunking + lọc filter server-side): kỹ thuật né composite
+  index.
+- **4 mục rà kỹ rồi QUYẾT ĐỊNH GIỮ NGUYÊN**, mỗi mục có lý do cụ thể độc lập với chi phí Firestore
+  (không phải "chưa làm"/bỏ sót — xem chi tiết từng mục ngay dưới): cursor pagination đóng băng
+  (tránh race tính đúng đắn), cache lạnh IndexedDB (lý do sản phẩm đã thống nhất từ trước, không
+  chỉ chi phí), `fetchWithTtlCache` (hộp thoại tìm-chọn ngắn, không cần realtime),
+  `BangBiCanCon`/`BangExcelModule`/cột Kỳ `DanhSachPanel` (công cụ 1 người + giới hạn filter thật
+  của Supabase Realtime khiến "khôi phục live" phản tác dụng ở đúng màn hình đông người xem nhất).
+
+**Bài học rút ra sau khi rà hết 7 mục**: không phải MỌI cơ chế "tránh live/tránh đọc lại" trong
+code cũ đều thuần tuý vì chi phí Firestore như giả định ban đầu của checklist này — nhiều cơ chế
+có LỚP LÝ DO THỨ 2 (tính đúng đắn, UX công cụ 1-người, giới hạn kỹ thuật của chính Realtime) mà chỉ
+lộ ra khi đọc kỹ code thay vì suy đoán từ tên gọi. Giá trị thật của checklist này không phải "xoá
+càng nhiều càng tốt" mà là XÁC NHẬN LẠI từng quyết định — 2/7 mục xoá được thật, 5/7 còn lại vẫn
+đúng và giờ có lý do ghi rõ ràng hơn bản gốc.
 
 ## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
 
@@ -326,11 +335,16 @@ lại lợi ích cốt lõi nhưng bỏ phần phức tạp thừa) — rồi TE
       khác") → UI tự ẩn vụ đó ngay — đúng chứng minh lợi ích PHỤ nêu trên là có thật, không phải suy
       đoán. Chạy lại toàn bộ 17+4 assertion cũ (`test_sup_shim.js`/`test_sup_ui_flow.js`) sau khi
       xoá 2 cơ chế này — vẫn PASS 100%, không có gì bị phá vỡ.
-- [ ] **Cache lạnh IndexedDB cho "Án đã giải quyết"** (`dongBoColdCacheVuAnDaGiaiQuyet`, đồng bộ
-      delta qua `ngayCapNhat > lastSync`, không dùng `onSnapshot`) — cân nhắc RIÊNG với 2 mục trên:
-      lợi ích "cache bền qua lần tải trang" của IndexedDB vẫn có giá trị dưới Supabase (giảm round-
-      trip mạng, không liên quan gì tới tiền), có thể GIỮ nhưng đơn giản hoá phần đồng bộ delta thủ
-      công bằng Realtime subscription thật nếu muốn.
+- [x] **Cache lạnh IndexedDB cho "Án đã giải quyết"** (`dongBoColdCacheVuAnDaGiaiQuyet`, đồng bộ
+      delta qua `ngayCapNhat > lastSync`, không dùng `onSnapshot`) — **ĐÃ RÀ, QUYẾT ĐỊNH GIỮ
+      NGUYÊN**. Đối chiếu lại với bộ nhớ dài hạn `toi-uu-firestore-effectiveness` (quyết định đã
+      thống nhất TRƯỚC ĐÓ với Dũng, không phải suy đoán mới): lý do chấp nhận dữ liệu cũ ở đây
+      KHÔNG THUẦN vì chi phí Firestore — có cả lý do sản phẩm thật ("hệ thống ít user, chủ yếu dùng
+      để xem/trích xuất, ưu tiên tiết kiệm đọc hơn độ mới tức thời", và ý tưởng thêm timer đồng bộ
+      định kỳ đã CHỦ ĐỘNG bị bác bỏ trước đây cùng lý do này — xem bộ nhớ đó). Phần lý do sản phẩm
+      vẫn đúng bất kể backend nào — vụ đã giải quyết gần như bất biến, không cần realtime cho use
+      case "xem/trích xuất". **Giữ nguyên cơ chế cache lạnh + đồng bộ delta 1 lần lúc mount**,
+      không đổi sang Realtime subscription.
 - [x] **Cursor pagination "đóng băng trang đầu sau khi bấm Tải thêm"** (tab "Tất cả" của Danh sách
       vụ án) — **ĐÃ RÀ, QUYẾT ĐỊNH GIỮ NGUYÊN** (không phải bỏ qua — đã đánh giá kỹ, không phải
       "chưa làm"). Lý do ban đầu ghi trong checklist ("chỉ để né phí") **không chính xác đầy đủ**:
@@ -344,14 +358,27 @@ lại lợi ích cốt lõi nhưng bỏ phần phức tạp thừa) — rồi TE
       lập đúng lớp race này, không mang lại giá trị tương xứng với rủi ro — tab "Tất cả" cũng không
       phải màn hình chính (mặc định là "Đang giải quyết", đã live hoàn toàn qua mục ngay trên).
       **Giữ nguyên hành vi đóng băng**, không sửa gì thêm ở đây.
-- [ ] **`fetchWithTtlCache`** (TTL cache 1 lần cho `NhapVuModal` tìm vụ đích) — tương tự cache lạnh
-      ở trên, giữ được nếu có lý do UX riêng (tránh đọc lại khi mở/đóng modal nhanh), không bắt
-      buộc bỏ.
-- [ ] **Loạt quyết định "hot data không cần live" khác** (`BangBiCanCon`, `BangExcelModule`, cột Kỳ
-      của `DanhSachPanel`... đổi từ `onSnapshot` sang `.get()` một lần, chấp nhận dữ liệu cũ tới
-      khi remount) — rà lại TỪNG cái, hỏi "đây có phải công cụ 1-người-thao-tác-tại-1-thời-điểm
-      hay màn hình nhiều người cùng xem" — nếu là loại sau, cân nhắc khôi phục live vì Supabase
-      không phạt việc đó về chi phí như Firestore.
+- [x] **`fetchWithTtlCache`** (TTL cache 1 lần cho `NhapVuModal` tìm vụ đích) — **ĐÃ RÀ, QUYẾT ĐỊNH
+      GIỮ NGUYÊN**. Đây là hộp thoại "tìm vụ đích để nhập vào" — mở ra, gõ tìm, chọn, đóng lại;
+      không có nhu cầu thấy thay đổi realtime của người khác TRONG lúc đang tìm (phiên thao tác
+      ngắn, việc nhập vụ là hành động 1 người thực hiện tại 1 thời điểm). Giữ nguyên.
+- [x] **Loạt quyết định "hot data không cần live" khác** (`BangBiCanCon`, `BangExcelModule`, cột Kỳ
+      của `DanhSachPanel`) — **ĐÃ RÀ TỪNG CÁI RIÊNG**, quyết định GIỮ NGUYÊN cho cả 3, lý do khác
+      nhau cho từng nhóm:
+      - `BangBiCanCon`/`BangExcelModule` (Cài đặt → Bảng dữ liệu Excel): comment trong chính code
+        đã ghi rõ "công cụ sửa hàng loạt cho 1 người thao tác, không phải màn hình xem chung" —
+        lý do sản phẩm, độc lập chi phí backend. Restore live còn có thể PHẢN TÁC DỤNG: refetch
+        realtime giữa lúc đang gõ vào 1 ô có thể xoá mất input chưa lưu của chính người dùng.
+      - Cột Kỳ của `DanhSachPanel` (màn hình mặc định, nhiều người xem nhất — ứng viên "loại sau"
+        rõ nhất trong gợi ý ban đầu của checklist): rà kỹ hơn phát hiện lý do KHÔNG chỉ chi phí —
+        Supabase Realtime (`postgres_changes`) chỉ hỗ trợ filter dạng `cột=eq.giá_trị` đơn giản,
+        KHÔNG hỗ trợ `in` — nên `onSnapshot` của shim cho query `where("maVuAn","in",[500 id])` sẽ
+        phải subscribe KHÔNG LỌC (mọi thay đổi trên `lichsuChuyenGiaiDoan` — bảng ghi nhiều nhất hệ
+        thống, theo chính mô tả trong code) rồi refetch lại NGUYÊN batch 500 vụ mỗi lần bất kỳ ai
+        trong hệ thống ghi BẤT KỲ sự kiện nào — gây refetch/render nhiễu liên tục trên đúng màn hình
+        đông người xem nhất, phản tác dụng ngược với mục tiêu "cải thiện UX". Đây là giới hạn thật
+        của Supabase Realtime (filter chỉ hỗ trợ đơn giản), không phải lười rà. **Giữ nguyên cả 3**,
+        không sửa code.
 - [x] **Kỹ thuật né composite index thủ công** — rà toàn bộ codebase (grep `composite index`), tìm
       đúng **2 chỗ thật sự cần sửa** (1 chỗ khác ở `XoaHinhThucGiaiQuyetModal` tái dùng dữ liệu ĐÃ
       TẢI SẴN thay vì query riêng — đây là thực hành tốt độc lập với backend, không phải "né index",
@@ -418,14 +445,12 @@ sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự 
       lên project Supabase thật (`eutatszoaseixchvjbtg`) và KIỂM CHỨNG chức năng đầy đủ (14
       assertion RPC + RLS xác nhận qua REST API thật) — xem mục 4c. Không còn việc "chưa kiểm
       chứng" nào ở bước schema nữa.
-- [~] **Phase 2** (lớp shim ĐÃ VIẾT + KIỂM CHỨNG ĐẦY ĐỦ bằng dữ liệu thật, checklist mục 5 CHƯA
-      làm — xem mục 4d bên dưới) — viết trong `qlahs-sup.html`: CDN Firebase (3 script) đổi sang
-      1 script `@supabase/supabase-js`, khối cấu hình cũ thay bằng lớp shim đầy đủ (`db`/`auth`
-      giả lập, `firebase.firestore.FieldValue/FieldPath` giữ nguyên API cho ~35 chỗ gọi cũ không
-      cần sửa), 4 vị trí `db.runTransaction` sửa tay gọi `.rpc(...)`. **Còn thiếu**: checklist mục
-      5 (rà lại các cơ chế né-chi-phí-Firestore — sentinel/cache-registry/cursor-pagination-đóng-
-      băng...) CHƯA làm ở phiên này, cố tình để dành làm riêng (xem lý do ở mục 4d) — Phase 2 CHƯA
-      được coi là xong hoàn toàn cho tới khi checklist đó cũng xong.
+- [x] **Phase 2**: lớp shim ĐÃ VIẾT + KIỂM CHỨNG ĐẦY ĐỦ bằng dữ liệu thật (mục 4d), VÀ checklist
+      mục 5 ĐÃ RÀ XONG 7/7 mục (xem đầu mục 5) — Phase 2 coi như HOÀN TOÀN xong. Tóm tắt: CDN
+      Firebase (3 script) đổi sang 1 script `@supabase/supabase-js`, khối cấu hình cũ thay bằng lớp
+      shim đầy đủ (`db`/`auth` giả lập, `firebase.firestore.FieldValue/FieldPath` giữ nguyên API
+      cho ~35 chỗ gọi cũ không cần sửa), 4 vị trí `db.runTransaction` sửa tay gọi `.rpc(...)`.
+      Checklist mục 5: 2 mục bỏ hẳn, 1 mục sửa 1 phần, 4 mục rà kỹ và giữ nguyên có lý do rõ ràng.
 - [ ] **Phase 3**: chuyển Auth sang Supabase Auth — tài khoản Firebase Auth hiện có phải tạo lại
       thủ công trên Supabase (không tự động chuyển mật khẩu giữa 2 hệ thống được).
 - [ ] **Phase 4**: export dữ liệu thật từ `qlahs-test` (Firestore) → import làm MOCK DATA vào
@@ -446,17 +471,16 @@ FK-ordering thật đã tìm ra và sửa qua chính quá trình test này. `qla
 đầy đủ trên nền Supabase (KHÔNG còn phụ thuộc Firebase gì, kể cả CDN script). Toàn bộ dữ liệu test
 đã dọn sạch — project Supabase đang ở trạng thái sạch (0 dòng mọi bảng), sẵn sàng nạp mock data.
 
-**Còn thiếu để coi Phase 2 xong HOÀN TOÀN**: checklist mục 5 (rà lại các cơ chế né-chi-phí-Firestore
-— sentinel/cache-registry/cursor-pagination-đóng-băng...) CHƯA làm, cố tình để riêng (xem lý do ở
-cuối mục 4d).
+**Phase 2 ĐÃ HOÀN TẤT** (shim + checklist mục 5). Bảng `meta` đã xoá khỏi schema thật (DROP TABLE
+đã chạy trên project Supabase). Project Supabase hiện đang sạch (0 dòng mọi bảng), sẵn sàng bước
+tiếp theo.
 
-**Việc tiếp theo** (thứ tự khuyến nghị):
-1. Chạy checklist mục 5 — rà từng mục, quyết định giữ/bỏ/đơn giản hoá, test lại đúng kịch bản
-   tương ứng. Nên làm trên `qlahs-sup.html` (đã có nền shim hoạt động đúng) trước khi coi Phase 2
-   xong hẳn.
-2. Viết script export Firestore `qlahs-test` → import Supabase làm mock data (Phase 4), dùng lại
+**Việc tiếp theo** (thứ tự khuyến nghị — Phase 2 không còn nằm trong danh sách này nữa):
+1. Viết script export Firestore `qlahs-test` → import Supabase làm mock data (Phase 4), dùng lại
    đúng Session pooler đã xác nhận hoạt động (mục 4c) — nhớ `ALTER PUBLICATION supabase_realtime
    ADD TABLE` KHÔNG cần chạy lại (đã bật sẵn cho cả 8 bảng, xem mục 4d).
-3. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đó trước khi tính tới bước reset + dữ liệu thật.
-4. Chuyển Auth sang Supabase Auth thật cho toàn bộ tài khoản cán bộ (Phase 3 — hiện chỉ có đúng 1
+2. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đó trước khi tính tới bước reset + dữ liệu thật —
+   đặc biệt kiểm chứng Biểu B10/số liệu báo cáo (logic tính toán phức tạp nhất trong app) khớp giữa
+   bản Firestore cũ và bản Postgres mới trên cùng 1 tập dữ liệu.
+3. Chuyển Auth sang Supabase Auth thật cho toàn bộ tài khoản cán bộ (Phase 3 — hiện chỉ có đúng 1
    tài khoản test `admintest@local.com` phục vụ phát triển/kiểm thử, chưa phải danh sách thật).
