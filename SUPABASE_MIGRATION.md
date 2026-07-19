@@ -646,11 +646,403 @@ PASS).
 **Phase 3 ĐÃ HOÀN TẤT** (4 tài khoản cán bộ thật tạo qua Admin Auth API, kiểm chứng đăng nhập thật —
 mục 4g).
 
+### 4h. Xuất Biểu B10 trên mock data — ĐÃ KIỂM CHỨNG, KHÔNG PHÁT HIỆN LỖI MIGRATION (2026-07-19)
+
+Thực hiện đúng việc #1 đã khuyến nghị ở lần cập nhật trước. Tài khoản test `admintest@local.com`
+trên Supabase không có mật khẩu lưu trữ được (đúng nguyên tắc bảo mật mục 4c/4g) và bị chặn reset
+qua Admin API bởi lớp an toàn của harness làm việc (phân loại "đổi cài đặt tài khoản" cần xác nhận
+tường minh) — đã tạo thêm 1 tài khoản test THỨ 2 `b10verify@local.com` (Admin Auth API,
+`email_confirm:true`, cùng cách Phase 3 đã làm) thay vì đụng vào tài khoản cũ, sau khi được Dũng xác
+nhận trực tiếp trong hội thoại.
+
+**Kịch bản**: đăng nhập thật qua `qlahs-sup.html` (Supabase, Playwright, không mock) → mở Kỳ báo
+cáo → chọn kỳ "Tháng 6/2026" (đã chốt, Tồn cuối kỳ 20/9/5) → bấm "Xuất Excel báo cáo tháng" → tải
+file thật (105KB, 42 sheet) → mở lại bằng `exceljs` để kiểm tra dữ liệu (không chỉ xác nhận file
+tải được).
+
+**Kết quả xuất — không có lỗi console, sheet Biểu B10 có đầy đủ dữ liệu thật** (tội danh/điều luật/
+số vụ-số BC theo từng giai đoạn, đúng cấu trúc 2 hàng header + N hàng dữ liệu như thiết kế gốc), đủ
+1138 ô công thức Excel (SUMIF/COUNTIF/SUM tham chiếu chéo sang 38 sheet DS con) + 270 ô số tĩnh
+(snapshot chốt kỳ) — đúng tỉ lệ công thức/tĩnh như thiết kế đã mô tả trong "Xuất Excel báo cáo
+tháng" ở CLAUDE.md.
+
+**Phát hiện ban đầu tưởng là lỗi, đã xác minh KHÔNG PHẢI lỗi migration**: tự tính lại bằng tay công
+thức "Cân đối số liệu" (`Tồn đầu + Σ Vào − Σ Ra` so với `Tồn cuối chốt`, đọc trực tiếp cột "Đếm vụ"
+của từng sheet DS liên quan bằng `exceljs` — không phụ thuộc Excel tự tính công thức, vì file
+`exceljs` xuất ra chỉ ghi CHUỖI công thức, không có kết quả cache sẵn) ra **Chênh lệch ≠ 0 ở cả 3
+giai đoạn** (Điều tra +7, Truy tố +2, Xét xử +2). Trước khi kết luận đây là bug, đối chiếu 2 bước:
+1. Query trực tiếp Postgres (service_role, bỏ qua RLS): xác nhận đúng **30 sự kiện
+   `lichsuChuyenGiaiDoan.kyThongKe IS NULL`** trong toàn bộ 5068 sự kiện — khớp đúng cảnh báo đã in
+   sẵn ngay trên sheet ("Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ") và khớp đặc điểm dữ liệu cũ
+   đã tài liệu hoá nhiều lần trong CLAUDE.md (dữ liệu dựng lại lịch sử từ Import Excel cũ không
+   phải lúc nào cũng gán được `kyThongKe`).
+2. **Đối chứng chéo với chính bản Firestore gốc** (`qlva-dev.html`, cùng dữ liệu nguồn
+   `qlahs-test`, đăng nhập thật `admintest@local.com`): xuất lại ĐÚNG kỳ "Tháng 6/2026" — ra
+   **ĐÚNG Y HỆT Chênh lệch (+7/+2/+2)**, và so khớp TỪNG Ô một giữa 2 file Biểu B10 (2002 ô, Firestore
+   vs Supabase) → **0 ô khác nhau**. Vì `tinhBieu10`/`tinhBaoCaoKyTuLog` là đúng 1 đoạn code JS
+   không đổi gì khi qua shim (chỉ đổi tầng `db`), việc 2 bản ra kết quả giống hệt nhau (bao gồm cả
+   phần "lỗi" Chênh lệch) là bằng chứng trực tiếp: **shim + dữ liệu import không làm sai lệch bất kỳ
+   giá trị nào** — Chênh lệch là thuộc tính CÓ SẴN của dữ liệu mock (30 sự kiện thiếu kỳ), tồn tại
+   TRƯỚC migration, không phải lỗi phát sinh do chuyển sang Supabase.
+
+**Kết luận việc #1 đã khuyến nghị**: hoàn tất, không phát hiện lỗi map dữ liệu nào ở tầng Postgres/
+shim — phép thử tổng hợp (chạm B10, TK tội danh, Tổng hợp báo cáo, Cân đối số liệu, 38 sheet DS
+con) cho kết quả khớp tuyệt đối 100% với bản Firestore gốc.
+
+**Đã dọn dẹp**: 2 file Excel test đã xoá khỏi scratchpad, không commit gì vào repo. Tài khoản
+`b10verify@local.com` **CHƯA xoá** (tạo thêm mới, không đụng dữ liệu nghiệp vụ, có thể giữ lại làm
+tài khoản test phụ cho phiên sau nếu cần — hoặc xoá qua Supabase Dashboard nếu Dũng muốn dọn sạch).
+
+### 4i. Audit toàn hệ thống lần 1 sau migration — 10 phát hiện, CHƯA SỬA (2026-07-19)
+
+Theo yêu cầu Dũng ("kiểm tra lại toàn bộ hệ thống, xem còn vấn đề gì không, có gì cải tiến hiệu
+năng không — note ra"). Rà 4 tầng: lớp shim (`qlahs-sup.html` dòng ~50-430), schema/RLS/RPC
+(`supabase/*.sql`), toàn bộ 19 vị trí `onSnapshot`, các query trên bảng lớn. Đây là danh sách
+GHI NHẬN — chưa sửa gì, chờ quyết định thứ tự ưu tiên.
+
+**Nhóm A — Hiệu năng (2 vấn đề lớn, 2 nhỏ):**
+
+1. **[LỚN — sửa rẻ] `schema.sql` KHÔNG có một CREATE INDEX nào** (đã xác nhận qua grep — chỉ có
+   index ngầm của PRIMARY KEY). Firestore tự đánh index MỌI field; Postgres thì không — kể cả cột
+   FK (`REFERENCES`) cũng KHÔNG tự có index. Hậu quả: mọi query lọc đang quét tuần tự toàn bảng —
+   `bican.maVuAn` (mỗi lần mở chi tiết vụ án), `lichsuChuyenGiaiDoan.maVuAn`/`kyThongKe`/
+   `loaiSuKien`/`phienGiaoNhanId` (bảng lớn nhất, 5068 dòng, TĂNG VÔ HẠN theo năm — mọi báo cáo kỳ
+   đều query bảng này), `vuan.trangThai`/`daXoa`/`ngayTao`. Cascade check khi XÓA vụ án cũng quét
+   tuần tự các bảng con. Hiện tại vài nghìn dòng thì mỗi lần quét chỉ vài ms (chưa ai cảm nhận
+   được), nhưng đây là quả bom nổ chậm — sau vài năm dữ liệu, các màn hình query log sẽ chậm dần
+   đều. **Đề xuất**: viết `supabase/indexes.sql` (~10 index khớp đúng các query đang dùng thật,
+   vai trò tương đương `firestore.indexes.json` cũ), áp 1 lần qua Session pooler.
+2. **[LỚN — sửa rẻ] RLS policy gọi `auth.role()` TỪNG DÒNG** — `rls.sql` dùng
+   `using (auth.role() = 'authenticated')` trực tiếp: Postgres gọi lại hàm này cho MỖI DÒNG quét
+   qua (5068 lần cho 1 lần đọc bảng log). Khuyến nghị chính thức của Supabase ("RLS performance
+   recommendations"): bọc thành `using ((select auth.role()) = 'authenticated')` — Postgres tự
+   nhận ra subquery không phụ thuộc dòng, chỉ tính 1 LẦN/query (chênh lệch đo được hàng chục lần
+   trên bảng lớn); đồng thời thêm `to authenticated` vào policy để request anon bị loại từ sớm
+   không cần chạy policy.
+3. **[VỪA] "Refetch storm" khi ghi hàng loạt** — `_subscribe` của shim refetch NGAY mỗi khi nhận 1
+   event Realtime, không gộp/debounce. Postgres bắn 1 event/DÒNG thay đổi, kể cả khi 760 dòng được
+   insert trong CÙNG 1 câu lệnh (Import Excel) → mỗi client đang mở Danh sách vụ án sẽ refetch
+   toàn bộ danh sách ~760 lần liên tiếp trong vài giây. **Đề xuất**: debounce trailing ~300ms
+   trong `_subscribe` (gộp mọi event trong cửa sổ đó thành 1 lần refetch duy nhất).
+4. **[NHỎ] Batch chunk 400 là di sản Firestore không còn cần** — ~10 chỗ vẫn tự cắt batch thành
+   lô 400 op (`if (opsInBatch >= 400) commit...`) vì giới hạn 500 write/batch của Firestore.
+   Postgres không có giới hạn này; shim đã tự gộp insert cùng bảng thành 1 request — việc cắt lô
+   giờ chỉ làm TĂNG số request (VD seed 586 tội danh thành 2 request thay vì 1) và tăng số khe hở
+   không-atomic (xem mục 5). Dọn được nhưng không gấp.
+
+**Nhóm B — Độ bền / tính đúng đắn (4 vấn đề):**
+
+5. **[ĐÁNG CÂN NHẮC NHẤT] `batch.commit()` của shim KHÔNG atomic như Firestore** — Firestore đảm
+   bảo tất-cả-hoặc-không-gì; shim hiện commit TUẦN TỰ từng bảng (insert theo `_TABLE_INSERT_ORDER`,
+   rồi update, rồi delete) — lỗi mạng/constraint Ở GIỮA chừng để lại dữ liệu nửa vời. Kịch bản
+   thật: "Xóa vĩnh viễn" cascade (xoá bican + log trước, vuan sau) — nếu bước cuối fail, vụ án
+   thành vỏ rỗng không bị can/không lịch sử; "Thêm vụ án" — vuan ghi xong nhưng bican/log fail thì
+   có vụ 0 bị can kèm log thiếu. **Hướng sửa triệt để**: viết 1 RPC `batch_commit(ops jsonb)` chạy
+   toàn bộ ops trong 1 transaction Postgres thật (atomic đúng nghĩa, còn TỐT HƠN mô hình cắt lô
+   400 của Firestore cũ vốn cũng chỉ atomic TRONG từng lô). Shim `commit()` chỉ cần đổi phần thân
+   gọi RPC này — ~185 call site không đổi gì. Cần quyết định trước khi lên production (Phase 6).
+6. **[ĐÁNG SỬA] Kênh Realtime chết ÂM THẦM, không tự hồi phục** — `_subscribe` bỏ qua hoàn toàn
+   callback status của `.subscribe()` (grep `SUBSCRIBED|CHANNEL_ERROR|TIMED_OUT` = 0 kết quả).
+   Máy sleep/đổi mạng wifi/JWT hết hạn giữa chừng → kênh chết → UI đứng im với dữ liệu cũ, KHÔNG
+   lỗi console, không ai biết (đúng lớp bug "sentinel lặng lẽ không bắn" từng gặp thời Firestore).
+   **Đề xuất**: xử lý status — khi `CHANNEL_ERROR`/`TIMED_OUT` thì refetch + resubscribe; khi
+   re-`SUBSCRIBED` sau gián đoạn thì refetch bù.
+7. **[NHỎ nhưng thật] Khe hở lúc mở subscribe** — `_subscribe` refetch NGAY rồi mới `.subscribe()`
+   (kênh cần vài trăm ms mới thực sự SUBSCRIBED) — thay đổi lọt vào đúng khe đó bị MẤT (không có
+   event → không refetch → dữ liệu cũ tới khi có thay đổi kế tiếp). **Đề xuất**: refetch thêm 1
+   lần trong callback status khi nhận `SUBSCRIBED` lần đầu (gộp chung với fix mục 6).
+8. **[NHỎ nhưng thật] Race 2 refetch chồng nhau ghi đè ngược** — 2 event sát nhau → 2 refetch song
+   song; cái CŨ có thể resolve SAU cái mới → kết quả cũ đè kết quả mới, UI hiển thị dữ liệu cũ tới
+   event kế tiếp. **Đề xuất**: seq counter trong `_subscribe`, bỏ kết quả của refetch đã bị vượt
+   ("latest wins" — gộp chung 1 lần sửa với mục 3/6/7, cùng 1 hàm ~25 dòng).
+
+**Nhóm C — Vá nhỏ (2 vấn đề):**
+
+9. **Phân trang ngầm (Max Rows fix, mục 4f) thiếu tiebreak khi query CÓ orderBy tường minh** —
+   hiện chỉ ngầm thêm `orderBy("id")` khi query KHÔNG có orderBy nào; query có orderBy cột
+   KHÔNG-duy-nhất (VD `orderBy("thoiDiemGhi")`) mà vượt 500 dòng thì thứ tự các dòng TRÙNG giá trị
+   tại ranh giới trang không ổn định giữa 2 lần request → có thể lặp/sót dòng. Chưa xảy ra thật
+   (các query dạng này hiện <500 dòng) nhưng sẽ xảy ra khi dữ liệu tăng. **Fix 1 dòng**: LUÔN nối
+   thêm `order("id")` làm tiebreak cuối trong đường phân trang ngầm, kể cả khi đã có orderBy.
+10. **4 hàm RPC SECURITY DEFINER thiếu `set search_path = ''`** — hardening chuẩn (Supabase
+    Security Advisor sẽ cảnh báo "role mutable search_path"). Rủi ro thực tế thấp (chỉ
+    authenticated gọi được, user không tạo được object trong schema nào) nhưng sửa chỉ 1 dòng/hàm,
+    nên làm cùng đợt áp `indexes.sql`.
+
+**Nhóm D — Đã biết từ trước, KHÔNG phải phát hiện mới (liệt kê lại cho đủ bức tranh)**: offline
+persistence chưa có thay thế (quyết định ở Phase 5); `serverTimestamp()` = giờ client;
+`arrayUnion` không atomic (1 chỗ dùng hiếm — SuaKyModal); `biCanDaiDien` chọn theo `ngayTao` khác
+tiêu chí mơ hồ của bản JS (đã ghi chú trong functions.sql, cần xác nhận với Dũng).
+
+**Thứ tự ưu tiên đề xuất**: (1)+(2)+(10) trước — thuần SQL, không đụng code app, lợi ích lớn nhất;
+rồi (3)+(6)+(7)+(8) — cùng 1 hàm `_subscribe` ~25 dòng, sửa 1 lần test 1 lần; rồi (9) — 1 dòng;
+(5) cần quyết định riêng trước Phase 6; (4) dọn lúc nào rảnh.
+
+**⚠ SỬA LẠI finding #1 của chính audit này (2026-07-19, ngay sau khi viết)**: "schema.sql KHÔNG có
+một CREATE INDEX nào" là **KẾT LUẬN SAI** — do dùng `grep "CREATE INDEX"` (viết hoa) trong khi file
+SQL viết thường `create index`, ra kết quả rỗng và kết luận nhầm mà không đối chiếu lại. Thực tế
+`schema.sql` đã có sẵn **16 index**. Đối chiếu lại cẩn thận từng `.where()` thật trong
+`qlahs-sup.html` với 16 index đó, tìm ra đúng **3 chỗ thiếu index thật** (không phải "toàn hệ thống
+thiếu index"): `lichsuChuyenGiaiDoan.loaiSuKien` đứng riêng (dùng ở "Tải toàn bộ lịch sử giao nhận"
++ vài công cụ backfill — 2 composite index sẵn có đều có `kyThongKe` làm cột đầu nên không phục vụ
+được), `vuan.vuGoc` (kiểm tra "vụ có con tách ra"), `vuan.ngayCapNhat` (đồng bộ delta cache lạnh).
+
+### 4j. Đã sửa 9/10 phát hiện của mục 4i (2026-07-19, cùng ngày)
+
+**Nhóm A — SQL** (`supabase/perf_fixes_2026-07-19.sql`, áp qua Session pooler với mật khẩu Dũng
+cung cấp trực tiếp trong chat — KHÔNG ghi vào file nào trong git, cùng nguyên tắc mục 4c):
+- 3 index thật thiếu (đã sửa lại số liệu ở trên) — đã tạo, xác nhận tồn tại qua `pg_indexes`.
+- RLS: bọc `auth.role()` trong subquery + thêm `to authenticated` tường minh cho cả 7 bảng nghiệp
+  vụ — xác nhận qua `pg_policies.qual` đã đổi đúng thành
+  `(( SELECT auth.role() AS role) = 'authenticated'::text)`.
+- 4 hàm RPC: `set search_path = public` — xác nhận qua `pg_proc.proconfig` đã có
+  `["search_path=public"]` cho cả 4 hàm.
+- **#10 (search_path RPC) coi như đã gộp vào bước này** — cùng 1 file SQL.
+
+**Nhóm B — `_subscribe` trong `qlahs-sup.html`** (gộp cả 4 phát hiện #3/#6/#7/#8 vào 1 lần viết
+lại hàm, đúng đề xuất ban đầu): đổi chữ ký `fetchFn` trả về snapshot thay vì tự gọi `onNext` bên
+trong (để `_subscribe` tự quyết định lúc nào áp dụng kết quả) — chỉ cần sửa đúng 2 nơi gọi nội bộ
+(`_makeDocRef.onSnapshot`, `_makeQuery.onSnapshot`), không đụng 19 vị trí `.onSnapshot()` ở tầng
+code ứng dụng. Thêm: debounce trailing 300ms cho event Realtime (lần fetch đầu tiên KHÔNG debounce);
+seq counter "kết quả mới nhất thắng" (bỏ kết quả của lần fetch không còn là lần mới nhất khi nó
+resolve xong); fetch bù ngay khi (re)`SUBSCRIBED` (đóng khe hở đầu + đóng vai trò "refetch khi phục
+hồi" luôn, không cần code riêng cho reconnect); tự `removeChannel` + mở lại kênh sau 2s khi gặp
+`CHANNEL_ERROR`/`TIMED_OUT` (không dựa vào auto-reconnect ngầm của client — chủ động, không đảm bảo
+sai).
+
+**Nhóm C — pagination tiebreak (#9)**: đường phân trang ngầm (fix "Max Rows" ở mục 4f) giờ LUÔN
+đảm bảo có `id` làm cột sort cuối — nếu query đã có `orderBy` khác mà chưa có `id`, tự nối thêm
+`{field:"id", dir:"asc"}` vào cuối danh sách order thay vì chỉ áp dụng khi hoàn toàn không có
+orderBy nào như bản cũ.
+
+**Đã kiểm chứng bằng Playwright thật, dữ liệu thật trên `eutatszoaseixchvjbtg`** (không phải mock,
+3 kịch bản độc lập):
+1. Cú pháp sạch (mở trang, tới màn đăng nhập, 0 lỗi console ngoài cảnh báo Babel đã biết).
+2. **Xuất Biểu B10 lại 1 lần nữa** (đúng kịch bản mục 4h) sau khi viết lại `_subscribe` — kết quả
+   giống hệt lần trước (42 sheet, Biểu B10 đủ dữ liệu, 0 lỗi console) — xác nhận đường `.get()`
+   không bị ảnh hưởng bởi việc viết lại `_subscribe`.
+3. **Test riêng đường Realtime** (trước đây CHƯA test lại sau khi sửa `_subscribe`) — tạo 1 vụ
+   THẲNG qua REST (service_role, mô phỏng "nguồn khác", bỏ qua UI) trong lúc UI đang mở "Danh sách
+   vụ án" (tab mặc định, đang dùng `useDanhSachDangGiaiQuyet` → `onSnapshot` thật) → xác nhận UI tự
+   hiện vụ mới trong vòng 3s (debounce 300ms + độ trễ Realtime); đánh dấu `daXoa=true` THẲNG qua
+   REST → xác nhận UI tự ẩn vụ đó — cả 2 chiều đều đúng, 0 lỗi console.
+4. **Luồng "Thêm vụ án" qua UI thật, đầy đủ** (chạy SAU KHI áp SQL fix — quan trọng nhất vì đây là
+   phép thử RLS + RPC `search_path=public` mới không phá vỡ 2 hàm RPC then chốt nhất hệ thống): mở
+   form, điền Ngày QĐ KTVA + họ tên bị can, bấm Lưu → modal "Tính vào kỳ báo cáo nào?" hiện đúng
+   (bằng chứng RPC `sinhMaVuAnMoi` chạy thành công dưới RLS/search_path mới) → xác nhận vụ mới xuất
+   hiện trên danh sách, 0 lỗi console. Đã dọn sạch dữ liệu test (cascade xoá `lichsuChuyenGiaiDoan`/
+   `bican`/`vuan` qua service_role) sau khi xong.
+
+**Còn lại CHƯA sửa** (theo đúng thứ tự ưu tiên đã đề xuất — cố ý để lại, cần quyết định riêng):
+- **#5 (batch không atomic)** — cần viết RPC `batch_commit(ops jsonb)` chạy trong 1 transaction
+  Postgres thật, đổi phần thân `commit()` của shim gọi RPC này. Quy mô lớn hơn hẳn các mục đã sửa,
+  KHÔNG làm trong phiên này — cần bàn với Dũng trước Phase 6 (dữ liệu thật).
+- **#4 (dọn chunk 400 di sản Firestore)** — dọn lúc rảnh, không gấp, không ảnh hưởng đúng/sai.
+
+### 4k. Dọn sạch tàn dư Firebase trong `qlahs-sup.html` — "Firebase chỉ còn vai trò Hosting" (2026-07-19)
+
+Theo yêu cầu Dũng ("đảm bảo hệ thống đã triệt để hỗ trợ Supabase, bỏ hết những gì Firebase không
+cần thiết đi, Firebase giờ chủ yếu dùng để deploy"). Đã hỏi rõ phạm vi trước khi làm (xác nhận qua
+`AskUserQuestion`): **CHỈ** `qlahs-sup.html` (nhánh migration) — **KHÔNG** đụng `qlva.html`/
+`qlva-dev.html`/`firestore.rules`/`firestore.indexes.json`, vì đó vẫn là production Firestore thật
+đang phục vụ 4 cán bộ, Phase 6 (chuyển dữ liệu thật + cắt hẳn) chưa làm. Cũng xác nhận **chưa
+deploy** `qlahs-sup.html` lên bất kỳ URL Firebase Hosting nào ở phiên này (chỉ dọn code, test bằng
+`http.server` cục bộ như mọi phiên trước).
+
+**Rà toàn bộ file bằng grep (không suy đoán) — tìm 6 chỗ THẬT cần sửa**, 2 trong đó là **bug thật
+hiển thị cho người dùng** (không phải chỉ tồn tại trong comment):
+1. **Bug thật #1** — màn đăng nhập chỉ dẫn "Chưa có tài khoản? Liên hệ quản trị để được tạo trong
+   **Firebase Console** → Authentication → Users" — SAI, 5 tài khoản hiện có (`admintest@local.com`
+   + 4 cán bộ thật, xem mục 4g) đều tạo qua **Supabase** Admin Auth API, không còn Firebase Auth
+   nào để tạo thêm tài khoản qua đường đó nữa. Đã sửa thành "Supabase Dashboard → Authentication →
+   Users" — đúng nơi thật sự cần vào.
+2. **Bug thật #2** — thông báo lỗi khi ghi Excel import thất bại hiện "Lỗi khi ghi vào **Firestore**:
+   ..." — sai tên database, gây khó hiểu khi debug/báo lỗi cho quản trị viên (nhìn vào thông báo sẽ
+   tưởng vẫn còn Firestore). Đã sửa thành "Lỗi khi ghi vào cơ sở dữ liệu: ...".
+3. **3 chỗ dùng nhầm thuật ngữ "collection"** (khái niệm Firestore) trong text hiển thị ở 2 công cụ
+   "Cài đặt" (thông báo kết quả + mô tả "Seed danh mục tội danh", mô tả tool "Cập nhật số bị can lên
+   vụ án") — đổi thành "bảng" (đúng khái niệm Postgres).
+4. **Comment top-of-file lỗi thời** — bản gốc ghi "copy nguyên văn từ qlva.html... sẽ dần đổi db
+   Firestore sang lớp shim... file này vẫn còn nguyên logic Firebase y hệt 2 file kia" — đúng lúc
+   file MỚI TẠO (trước Phase 2), giờ SAI vì shim đã viết xong từ lâu (Phase 2 hoàn tất, xem mục 8).
+   Viết lại phản ánh đúng trạng thái hiện tại: backend hoàn toàn Postgres/Supabase, `<head>` không
+   còn CDN/SDK Firebase nào, Firebase (nếu dùng) chỉ còn vai trò lưu trữ tĩnh cho file HTML.
+5. **1 comment nội bộ nhắc "Firebase" sai ngữ cảnh** (`useDanhMucToiDanh`: "nếu Firebase đã seed thì
+   dùng Firebase") — đổi thành "nếu đã seed vào database thì dùng bản đó".
+6. **Đổi tên 2 hook nội bộ** `useFirestoreCollectionCache`/`useFirestoreCacheLoaded` (12+4 lần gọi)
+   thành `useCollectionCache`/`useCacheLoaded` — tên cũ mang chữ "Firestore" dù hành vi bên trong đã
+   hoàn toàn chạy qua Supabase Realtime từ Phase 2 (không còn đụng gì tới Firestore) — tên cũ là
+   1 "tàn dư Firebase không cần thiết" đúng nghĩa đen theo yêu cầu, dù không gây lỗi chức năng nào.
+   Đổi bằng `sed` (rename thuần, không đổi logic) — an toàn vì 2 tên hàm là chuỗi duy nhất, không
+   trùng với bất kỳ định danh nào khác trong file.
+
+**CHỦ ĐỘNG KHÔNG đụng** (đã rà, xác nhận là hợp lệ — không phải Firebase thật, chỉ đặt tên giống để
+tương thích API): object `firebase.firestore.{FieldValue,FieldPath}` (shim tự định nghĩa, có comment
+rõ ràng ngay cạnh giải thích đây KHÔNG phải SDK Firebase thật, ~35 chỗ gọi trong code dựa vào tên
+này để không phải sửa cú pháp — đổi tên sẽ phá vỡ đúng lợi ích cốt lõi của chiến lược "shim giả lập
+API" đã chốt từ mục 3); comment khối "LỚP SHIM: GIẢ LẬP FIRESTORE API TRÊN NỀN SUPABASE" (giải thích
+ĐÚNG lý do code vẫn gọi `db.collection(...)` — lựa chọn hình dạng API, không phải phụ thuộc thật);
+mọi comment lịch sử nhắc "Firestore"/"Tối ưu Firestore Đợt..." khi đang GIẢI THÍCH bối cảnh 1 quyết
+định thiết kế từ thời còn Firestore (VD tại sao có field cache `soBiCan`) — xoá sẽ mất ngữ cảnh hữu
+ích, không phải tàn dư cần dọn. Xác nhận qua grep: `<head>` không có bất kỳ script CDN Firebase nào
+(chỉ Tailwind/React/Babel/xlsx/exceljs/chart.js/qrcodejs/`@supabase/supabase-js`) — đã đúng từ Phase
+2, không có gì để dọn thêm ở tầng này.
+
+**Đã kiểm chứng bằng Playwright thật, dữ liệu thật** (chạy lại đủ 3 kịch bản đã có từ trước, xác
+nhận đổi tên hook + sửa text không phá vỡ gì): cú pháp sạch (0 lỗi ngoài cảnh báo Babel đã biết);
+xuất Biểu B10 lại — kết quả giống hệt các lần trước (42 sheet, đủ dữ liệu); test Realtime (tạo/xoá
+vụ qua REST, UI tự cập nhật đúng cả 2 chiều); luồng "Thêm vụ án" đầy đủ qua UI (RPC vẫn chạy đúng).
+Đã dọn sạch dữ liệu test sau khi xong.
+
+**Kết luận**: `qlahs-sup.html` giờ không còn bất kỳ tham chiếu Firebase nào gây nhầm lẫn cho người
+dùng/quản trị viên — mọi mention "Firebase" còn lại đều là shim API-compat có ghi chú rõ hoặc
+comment lịch sử hợp lệ. File đã sẵn sàng để Firebase (khi deploy) chỉ đóng vai trò Hosting tĩnh,
+đúng định hướng đã chốt từ đầu dự án migration (mục 2 "Ngoài phạm vi Firestore/Auth (không đổi)").
+**Chưa deploy** — theo đúng phạm vi đã xác nhận với Dũng, việc deploy lên 1 URL Firebase Hosting mới
+(không đụng URL production hiện có) để dành cho phiên sau nếu cần xem thử từ xa.
+
+### 4l. "Tối ưu triệt để cho Supabase" — tận dụng năng lực Postgres thật, không chỉ giả lập Firestore (2026-07-19)
+
+Dũng hỏi thẳng: do cấu trúc lưu trữ Firebase (NoSQL, document) và Supabase (Postgres, quan hệ) khác
+nhau, hệ thống đã thực sự tối ưu cho Supabase chưa, hay chỉ đang "chạy đúng" nhờ lớp shim? Trả lời
+trung thực: **shim là chiến lược GIẢM RỦI RO migration (mục 3), không phải chiến lược TỐI ƯU** —
+2 mục tiêu khác nhau. Đã rà lại code, tìm 3 điểm THẬT chưa tận dụng đúng thế mạnh Postgres, xác nhận
+với Dũng phạm vi/mức độ rủi ro từng điểm trước khi làm (không tự ý làm hết, 1 trong 3 điểm — sửa
+logic B10 — có rủi ro thật với báo cáo chính thức nên đã đổi hướng sau khi hỏi).
+
+**#1 — Trigger tự động đồng bộ `vuan`/`bican` (ĐÃ LÀM, giá trị cao nhất)**: xem
+`supabase/trigger_sync_vuan_2026-07-19.sql` — thêm trigger `bican_sync_vuan_trg` (AFTER INSERT/
+UPDATE/DELETE trên `bican`) tự gọi RPC `capNhatDieuLuatVaLoaiKhoiTo` — thay cho việc code JS phải tự
+NHỚ gọi RPC này sau MỌI thao tác ghi `bican` (5-6 call site rải rác: `SuaBiCanForm`, `ThemBiCanForm`,
+`NhapVuModal`, `BangBiCanCon` x2). Dùng `pg_trigger_depth() > 1` để chặn đệ quy vô hạn (RPC tự
+UPDATE lại `bican`, UPDATE đó lại kích hoạt chính trigger — pattern chuẩn của Postgres cho tình
+huống này). **Lợi ích PHỤ quan trọng hơn cả lợi ích chính**: phát hiện + tự sửa 1 lỗ hổng THẬT đang
+tồn tại — `tachVuAn` (tách vụ) chỉ tự tính `dieuLuat`/`soBiCan`/`biCanDaiDien` ở client
+(`tomTatBiCan`) mà KHÔNG tính lại `loaiKhoiTo` (ban_dau/bo_sung) cho đúng nhóm bị can MỚI sau khi
+tách — trigger tự vá lỗ hổng này cho MỌI lần tách vụ từ nay. Đã xoá hẳn wrapper JS
+`capNhatDieuLuatVaLoaiKhoiTo` (dead code, không còn ai gọi) + đơn giản hoá `BangBiCanCon`: bỏ tham
+số `canTinhLaiDieuLuat`/whitelist `CAC_TRUONG_ANH_HUONG_DIEU_LUAT` (chỉ lọc `ngayKhoiTo`/
+`toiDanhChinh`), `onVuAnCoTheDoi` giờ gọi UNCONDITIONAL sau MỌI lần ghi — sửa đúng 1 gap khác: trước
+đây sửa `hoTen` của bị can đang là `biCanDaiDien` không báo module cha refetch, để UI hiện tên cũ.
+**Đã kiểm chứng 3 lớp**: (1) SQL cách ly (`test_trigger_sql.js`) — insert/update trực tiếp, xác nhận
+không đệ quy vô hạn (dưới 100ms), `loaiKhoiTo` tự đảo đúng khi thêm bị can có ngày khởi tố sớm hơn;
+(2) UI thật (`test_trigger_via_ui.js`) — "Thêm vụ án" qua form thật, đối chiếu DB trực tiếp sau đó,
+JS không gọi RPC thủ công nào; (3) `BangBiCanCon` (Bảng dữ liệu Excel) qua UI thật, sửa 1 ô, 0 lỗi.
+Chạy lại B10/realtime/add-vụ-án — không có gì bị phá vỡ.
+
+**#2 — Gộp query "tải rồi join JS" thành PostgREST embed JOIN (ĐÃ RÀ, QUYẾT ĐỊNH KHÔNG LÀM)**: đếm
+được 18 vị trí `Promise.all([...get(), ...get()])` kiểu tải nguyên 2 bảng rồi tự nối bằng JS (mẫu
+hình gốc từ thời Firestore, nơi không có JOIN). Đối chiếu kỹ từng vị trí: **gần như toàn bộ nằm
+trong công cụ quản trị/hiếm dùng** (`ImportExcelModule` đối chiếu trùng, `BackfillDieuLuatBCTool`,
+`dungLaiLichSu`, `xuatExcel`) — admin bấm 1 lần, chịu thêm vài trăm ms không đáng kể, hoàn toàn khác
+bối cảnh Firestore (nơi mỗi lượt đọc tốn tiền thật). Màn hình DUY NHẤT mở thường xuyên
+(`DanhSachPanel`) **đã tối ưu sẵn từ thời Firestore** (cache `soBiCan`/`biCanDaiDien` ngay trên
+`vuan`, chỉ tải `bican` cho đúng các dòng đang mở rộng qua `in` filter có giới hạn — không phải N+1
+thật) — sửa thêm ở đây sẽ đụng vào cơ chế cursor pagination + Realtime đã tinh chỉnh cẩn thận (xem
+mục 5 checklist, lý do "đóng băng trang đầu"), rủi ro thật KHÔNG tương xứng lợi ích gần như không đo
+được. Đã trình bày rõ với Dũng, **xác nhận bỏ qua** — giữ nguyên 18 vị trí này, không sửa.
+
+**#3 — Chuyển tính báo cáo sang SQL aggregation (ĐÃ THU HẸP PHẠM VI SAU KHI CẢNH BÁO RỦI RO)**: logic
+gốc `tinhBieu10`/`tinhBaoCaoKyTuLog` (báo cáo thống kê CHÍNH THỨC nộp ngành, đã audit qua RẤT NHIỀU
+vòng trong lịch sử dự án — xem "Trạng thái Biểu B10" ở CLAUDE.md, và vừa đối chiếu cell-by-cell 2002
+ô Firestore vs Supabase ở mục 4h) **CỐ TÌNH KHÔNG ĐỤNG TỚI** — đã giải thích rõ rủi ro với Dũng
+(viết lại sang SQL cần audit lại từ đầu với khối lượng tương đương lịch sử đã làm, rủi ro sai 1 con
+số trên báo cáo chính thức), Dũng vẫn xác nhận muốn làm — nhưng đã chọn hướng AN TOÀN HƠN thay vì
+làm y hệt yêu cầu ban đầu: tìm 1 điểm tính tổng THẬT SỰ TÁCH BIỆT khỏi pipeline B10, không phải viết
+lại B10.
+
+Tìm được: **Dashboard** (`DashboardModule`, 3 thẻ số liệu "Đang tồn") trước đây tải NGUYÊN 3 danh
+sách "đang giải quyết" đầy đủ (có thể hàng trăm/nghìn dòng) chỉ để lấy `.length` — vì Firestore SDK
+bản compat 10.12.2 app đang dùng KHÔNG hỗ trợ `.count()` (đã ghi ở CLAUDE.md "Ghi chú hạ tầng" từ
+trước, một hạn chế lịch sử của Firestore, không phải Postgres). Đã thêm `.count()` vào lớp shim
+(`_makeQuery`, dùng `sb.from(table).select("*", {count:"exact", head:true})` — PostgREST trả ĐÚNG
+1 con số, KHÔNG trả rows nào) — năng lực HOÀN TOÀN MỚI so với app gốc, không tồn tại ở bản Firestore.
+`DashboardModule` đổi 3 lần `.get()...length` thành 3 lần `.count()`, lọc `daXoa` NGAY TRONG QUERY
+(an toàn trên Postgres vì cột `NOT NULL DEFAULT false` — khác hẳn lý do Firestore từng né
+`where(daXoa,"!=",true)` vì bỏ sót document thiếu field, ghi chú rõ trong code để không ai hiểu nhầm
+2 tình huống là giống nhau).
+**Đã kiểm chứng bằng Playwright thật + đối chiếu SQL trực tiếp**: mở Dashboard, đọc 3 số trên UI
+(36/12/7) — khớp TUYỆT ĐỐI với `SELECT coQuanThuLy, COUNT(*) FROM vuan WHERE trangThai=... GROUP BY
+...` chạy thẳng qua Postgres; xác nhận qua network request thật — cả 3 request đều có header
+`Prefer: count=exact`, không đường nào tải dữ liệu vụ án đầy đủ nữa (khác 2 request KHÔNG count()
+còn lại của khối "cảnh báo hạn điều tra" — ĐÚNG, vì khối đó cần dữ liệu thật để tính `conLai`, không
+phải ứng viên `.count()`). 0 lỗi console.
+
+**CỐ TÌNH KHÔNG đụng B10/tinhBaoCaoKyTuLog/xuatBaoCaoThangExcel** — logic đó vẫn cần tải TOÀN BỘ
+row-level data (kể cả nếu chuyển "số tổng" sang SQL, các sheet "DS ..." trong Excel vẫn là DANH SÁCH
+liệt kê từng vụ/bị can, không phải chỉ 1 con số — không có cách nào tránh tải dữ liệu chi tiết cho
+mục đích đó), nên "tối ưu SQL" ở đây thực chất không mang lại lợi ích tương xứng với rủi ro audit
+lại. `.count()` mới thêm vào shim CÓ THỂ dùng lại sau này cho các nhu cầu "chỉ cần 1 con số" khác
+(nếu phát sinh), nhưng KHÔNG áp dụng cho pipeline B10.
+
+### 4m. Audit "2 trọng số vụ án + bị can" trên mọi phần thống kê (2026-07-19, cùng ngày)
+
+Dũng yêu cầu rà lại TOÀN BỘ phần thống kê/báo cáo — bất kỳ chỗ nào chỉ hiện "số vụ" mà thiếu "số bị
+can" đi kèm thì phải bổ sung. Đã rà bằng cách đối chiếu từng khối hiển thị số liệu, tìm được **3 chỗ
+thật sự chỉ có 1 trọng số** (những chỗ khác — `KyChiTietModal`/`BangBaoCaoChiTiet` trên màn hình,
+Biểu B10, TK tội danh, Tổng hợp báo cáo — đã có sẵn cả 2 trọng số từ trước, xác nhận qua code, không
+cần sửa):
+
+1. **Dashboard — 3 thẻ "Đang tồn"**: trước chỉ hiện số vụ, đổi sang tải `.get()` (thay vì `.count()`
+   vừa thêm ở mục 4l — vì giờ cần cả field `soBiCan`, không chỉ đếm số dòng) rồi tính CẢ 2 số từ
+   đúng 1 lượt gọi/giai đoạn: `res.docs.length` (vụ) + `sum(soBiCan)` (bị can, dùng lại cache đã
+   được trigger `bican_sync_vuan_trg` giữ đúng liên tục — mục 4l). UI hiện "36 vụ / 47 bị can".
+2. **Dashboard — biểu đồ "Xu hướng tồn theo kỳ"**: trước chỉ vẽ theo vụ (`tonCuoiKy`). Thêm toggle
+   "Theo vụ / Theo bị can" chuyển dữ liệu biểu đồ sang `tonCuoiBiCan` (field đã có sẵn trong
+   `kybaocao`, cùng hình dạng `tonCuoiKy`, chỉ chưa từng được dùng ở đây) — không cần query mới.
+3. **`ThongKeKyHienTai`** (thẻ nhanh trên đầu "Danh sách vụ án", màn hình mặc định): "Mới trong
+   kỳ"/"Đã giải quyết trong kỳ" trước chỉ đếm SỐ SỰ KIỆN log (= số vụ). Thêm "BC mới" = đếm sự kiện
+   `khoi_to_bican` khớp `kyThongKe` — **CỐ Ý dùng ĐÚNG tiêu chí đã audit cho khối C7-C24 của Biểu
+   B10** (xem CLAUDE.md "Thiết kế lại khối C7-C24"), không phát minh tiêu chí đếm mới để tránh 2 con
+   số "mới trong kỳ" ở 2 nơi khác nhau của hệ thống lệch nhau vì khác phương pháp đếm. "BC giải
+   quyết" = tổng `soBiCan` (cache) của các vụ vừa có sự kiện `hoan_thanh` trong kỳ.
+
+**Chỗ RỦI RO NHẤT, xử lý cẩn thận nhất — sheet "Cân đối số liệu" trong Excel báo cáo tháng**: đây là
+phần "gần B10" nhất trong 3 chỗ (cùng hàm `xuatBaoCaoThangExcel`), ban đầu cân nhắc có nên đụng vào
+không (đúng tinh thần thận trọng đã áp dụng cho B10 ở mục 4l), nhưng khác hẳn "viết lại B10" —
+đây là THÊM MỚI thuần tuý (không sửa/xoá bất kỳ công thức/giá trị nào của phần "Vụ" đã có), và tái
+dùng NGUYÊN VẸN 2 thứ đã tồn tại/đã kiểm chứng trước đó: công thức `COUNTIF(sheet!$M:$M,"<>(Chưa có
+BC)")` (đã dùng ở sheet "Tổng hợp báo cáo" từ 2026-07-15) và hàm JS `bcCountVuArr` (cache "result"
+cho công thức, cũng đã có sẵn) — không phát minh logic đếm BC mới nào. Đổi cấu trúc bảng từ "3 dòng
+giai đoạn" sang "6 dòng (mỗi giai đoạn 2 dòng Vụ/Bị can)", thêm cột "Loại" làm khoá phân biệt.
+**Đã kiểm chứng độc lập bằng Node** (không tin công thức Excel, tự đếm lại trực tiếp cột M của từng
+sheet DS): cả 3 giai đoạn hàng "Bị can" ra **Chênh lệch = 0 tuyệt đối** (khớp 100% giữa số tự đếm và
+cache JS) — khác với hàng "Vụ" vẫn giữ nguyên +7/+2/+2 như trước (đúng dự kiến, do 30 sự kiện thiếu
+kỳ đã biết từ mục 4h — không ảnh hưởng gì tới việc thêm hàng Bị can, xác nhận việc thêm mới không
+phá vỡ tính toán "Vụ" đã có).
+
+**Phạm vi**: chỉ áp dụng cho `qlahs-sup.html` (nhánh `supabase-migration`, đúng phạm vi làm việc
+của session này) — KHÔNG mirror sang `qlva.html`/`qlva-dev.html` (production Firestore, ngoài phạm
+vi nhánh này). Nếu Dũng muốn áp dụng cả cho bản Firestore, cần làm riêng ở nhánh `main`.
+
+**Bug thật phát hiện qua ảnh chụp màn hình Dũng gửi (2026-07-19, ngay sau mục 4m)**: modal "Báo cáo
+kỳ" (`KyChiTietModal`/`BangBaoCaoChiTiet`, xem trên UI) — dòng "Tồn đầu kỳ"/"Tồn cuối kỳ" hiện chỉ
+1 số (VD "12"), không có "vụ/BC" như mọi dòng khác. Audit trước đó (mục 4m) đã KẾT LUẬN SAI rằng
+2 dòng này "đã có sẵn cả 2 trọng số" — chỉ grep thấy `layBiCan={b => b.tonDauBiCan}` tồn tại ở lời
+gọi `<H>` mà KHÔNG lần theo hết đường dây prop. Nguyên nhân thật: component `HangBaoCao` (dòng vẽ
+thật) đã hỗ trợ ĐẦY ĐỦ `layBiCan` từ trước (có hẳn comment "dùng cho tồn đầu/cuối kỳ"), nhưng
+wrapper `H` bên trong `BangBaoCaoChiTiet` chỉ destructure `{ nhan, lay, layDs, damNet }` — THIẾU
+`layBiCan` — nên prop bị rớt mất ở tầng trung gian, không bao giờ tới được `HangBaoCao`. Sửa 1 dòng:
+thêm `layBiCan` vào destructure + forward. Tiện thể dọn dòng "— Số bị can" riêng ngay dưới "— Số vụ"
+(giờ đổi tên "— Số tồn hiện tại") — dòng đó vốn TRÙNG LẶP con số với chính dòng "— Số vụ" (vì dòng
+đó đã dùng `layDs` nên `HangBaoCao` tự tính "vụ/BC" từ mảng — xem dòng ~7205), gây rối mắt khi nhìn
+2 dòng cạnh nhau cùng hiện đúng 1 con số BC.
+**Đã kiểm chứng qua UI thật**: mở đúng kỳ "Tháng 6/2026", xác nhận "Tồn đầu kỳ" hiện "12 vụ / 6 BC /
+7 vụ / 5 BC / 4 vụ / 3 BC", "Tồn cuối kỳ" hiện "20 vụ / 28 BC / 9 vụ / 12 BC / 5 vụ / 6 BC" — khớp
+CHÍNH XÁC với số đã tự kiểm chứng độc lập ở sheet "Cân đối số liệu" Excel (mục 4m, script
+`verify_candoi_bican.js`) — 2 nơi cùng đọc `tonDauBiCan`/`tonCuoiBiCanKy`, ra cùng 1 số, xác nhận
+nhất quán. Dòng "— Số bị can" riêng đã biến mất đúng như dự kiến. 0 lỗi console.
+**Bài học cho lần audit sau**: khi xác nhận 1 vùng UI "đã đủ 2 trọng số", phải xác nhận qua ẢNH CHỤP/
+chạy UI thật, không dừng ở việc grep thấy prop có mặt trong code — prop có mặt ở lời gọi không đảm
+bảo nó THỰC SỰ được dùng tới nếu đi qua nhiều tầng component trung gian.
+
 **Việc tiếp theo** (thứ tự khuyến nghị):
-1. Thử "Xuất Excel báo cáo tháng" (Biểu B10) trên ít nhất 1 kỳ đã chốt với dữ liệu mock — phép thử
-   tổng hợp tốt, chạm gần như mọi field/mọi bảng cùng lúc, dễ lộ lỗi map dữ liệu còn sót (nếu có)
-   hơn test đơn lẻ từng màn hình. Chưa làm ở phiên này.
-2. Phase 5 (kiểm thử toàn diện) — rà lại khoảng trống offline persistence, viết thêm kịch bản
+1. ~~Thử "Xuất Excel báo cáo tháng" (Biểu B10) trên ít nhất 1 kỳ đã chốt với dữ liệu mock~~ — **ĐÃ
+   LÀM, xem mục 4h**. Không phát hiện lỗi migration.
+2. ~~Sửa các phát hiện audit mục 4i~~ — **ĐÃ LÀM 9/10, xem mục 4j**. Còn lại #5 (batch không
+   atomic) cần quyết định riêng: viết RPC `batch_commit` chạy atomic thật trong Postgres, hay chấp
+   nhận rủi ro hiện tại (mất mạng giữa chừng có thể để lại dữ liệu nửa vời) tới khi có sự cố thật.
+3. Phase 5 (kiểm thử toàn diện) — rà lại khoảng trống offline persistence, viết thêm kịch bản
    Playwright cho các luồng nghiệp vụ chưa test qua Supabase (Tách vụ/Nhập vụ/Xoá vụ.../Thùng rác).
-3. Cân nhắc thêm UI đổi mật khẩu trong `qlahs-sup.html` trước khi 4 cán bộ thật bắt đầu dùng — hiện
+4. Cân nhắc thêm UI đổi mật khẩu trong `qlahs-sup.html` trước khi 4 cán bộ thật bắt đầu dùng — hiện
    họ đang dùng chung 1 mật khẩu tạm, cần tự đổi lại mật khẩu riêng.

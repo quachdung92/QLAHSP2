@@ -1,10 +1,14 @@
 ﻿<!DOCTYPE html>
 <!--
-  qlahs-sup.html — bản THỬ NGHIỆM riêng cho migration Supabase (nhánh `supabase-migration`).
-  KHÔNG PHẢI qlva.html/qlva-dev.html — không deploy, không dùng cho dữ liệu thật.
-  Điểm khởi đầu: copy nguyên văn từ qlva.html lúc tạo (2026-07-19), sẽ dần đổi db Firestore
-  sang lớp shim Supabase (xem SUPABASE_MIGRATION.md mục 3, Phase 2) — cho tới lúc đó file này
-  vẫn còn nguyên logic Firebase y hệt 2 file kia, đổi dần từng phần khi shim sẵn sàng.
+  qlahs-sup.html — bản Supabase của QLVA (nhánh `supabase-migration`).
+  KHÔNG PHẢI qlva.html/qlva-dev.html (2 file đó vẫn là Firestore, phục vụ production thật —
+  xem CLAUDE.md/SUPABASE_MIGRATION.md, chưa cắt sang Supabase, Phase 6 chưa làm).
+  Backend hoàn toàn Postgres/Supabase (schema+RLS+RPC trong supabase/*.sql) qua 1 lớp shim giả
+  lập API kiểu Firestore (db.collection()... — xem comment "LỚP SHIM" bên dưới, mục đích thuần
+  giữ nguyên cú pháp gọi trong code ứng dụng, KHÔNG phải còn phụ thuộc Firebase) — Phase 1-2 đã
+  xong (SUPABASE_MIGRATION.md mục 8), file này KHÔNG còn nạp bất kỳ CDN/SDK Firebase nào (xem
+  <head>: chỉ còn @supabase/supabase-js). Firebase, nếu dùng, chỉ còn vai trò lưu trữ tĩnh (Hosting)
+  cho chính file HTML này — không liên quan gì tới dữ liệu/đăng nhập.
 -->
 <html lang="vi">
 <head>
@@ -167,10 +171,7 @@ function _makeDocRef(table, id) {
       if (error) throw error;
     },
     onSnapshot(onNext, onError) {
-      return _subscribe(table, { docId: id }, async () => {
-        const snap = await this.get();
-        onNext(snap);
-      }, onError);
+      return _subscribe(table, { docId: id }, () => this.get(), onNext, onError);
     },
   };
 }
@@ -181,17 +182,70 @@ function _makeDocRef(table, id) {
 // không liên quan filter đang xem — chấp nhận được vì Supabase không tính phí theo lượt đọc như
 // Firestore, xem SUPABASE_MIGRATION.md mục 5 "Checklist rà lại tinh chỉnh vì Firebase"). Với
 // subscribe theo 1 doc cụ thể (`opts.docId`), lọc realtime filter `id=eq.<docId>` để đỡ ồn hơn.
+//
+// `fetchFn` CHỈ trả về snapshot (không tự gọi onNext bên trong như bản cũ) — để hàm này tự quyết
+// định LÚC NÀO gọi onNext, cần cho 4 việc dưới đây (audit 2026-07-19, SUPABASE_MIGRATION.md mục 4i):
+// - Debounce 300ms trailing cho event Realtime: ghi hàng loạt (VD Import Excel 760 dòng trong vài
+//   giây) sẽ bắn hàng trăm event postgres_changes liên tiếp — gộp lại thành 1 lần fetch cuối cùng
+//   thay vì "bão" fetch lại toàn bộ danh sách hàng trăm lần. Lần fetch ĐẦU TIÊN (lúc mount) KHÔNG
+//   debounce — người dùng đang chờ thấy dữ liệu ngay.
+// - Seq counter "kết quả mới nhất thắng": 2 lần fetch có thể chồng nhau (VD debounce + fetch bù lúc
+//   SUBSCRIBED) và trả về KHÔNG đúng thứ tự đã gọi (mạng chập chờn) — nếu không chặn, fetch CŨ trả
+//   về SAU fetch MỚI sẽ ghi đè dữ liệu mới bằng dữ liệu cũ. Chỉ áp dụng onNext cho lần fetch nào vẫn
+//   còn là lần MỚI NHẤT đã gọi tại thời điểm nó resolve xong.
+// - Fetch bù ngay khi (re)SUBSCRIBED: có khe hở giữa lúc gọi fetchFn() lần đầu và lúc kênh THỰC SỰ
+//   bắt đầu nhận event — thay đổi lọt đúng khe đó sẽ bị bỏ sót vĩnh viễn nếu không fetch bù 1 lần
+//   ngay khi kênh báo đã SUBSCRIBED (tốn 1 lượt đọc thừa, chấp nhận được).
+// - Tự dọn + mở lại kênh khi CHANNEL_ERROR/TIMED_OUT: kênh chết (mất mạng tạm thời, JWT hết hạn...)
+//   trước đây bị BỎ QUA HOÀN TOÀN — UI đứng im với dữ liệu cũ, không lỗi console, không ai biết.
+//   Không dựa vào auto-reconnect ngầm của Supabase client (không đảm bảo phủ hết mọi trường hợp lỗi
+//   ở tầng channel) — chủ động resubscribe sau 2s, tự lặp lại chu kỳ này nếu vẫn lỗi.
 let _shimChannelSeq = 0;
-function _subscribe(table, opts, refetch, onError) {
+function _subscribe(table, opts, fetchFn, onNext, onError) {
   let cancelled = false;
-  refetch().catch(err => { if (!cancelled && onError) onError(err); });
-  const channelName = "shim_" + table + "_" + (++_shimChannelSeq);
-  const pgChangeOpts = { event: "*", schema: "public", table };
-  if (opts && opts.docId) pgChangeOpts.filter = "id=eq." + opts.docId;
-  const channel = sb.channel(channelName)
-    .on("postgres_changes", pgChangeOpts, () => { if (!cancelled) refetch().catch(err => { if (onError) onError(err); }); })
-    .subscribe();
-  return () => { cancelled = true; sb.removeChannel(channel); };
+  let seq = 0;
+  let debounceTimer = null;
+  let retryTimer = null;
+  let channel = null;
+
+  const runFetch = () => {
+    const mySeq = ++seq;
+    fetchFn().then(snap => {
+      if (cancelled || mySeq !== seq) return; // có lần fetch mới hơn đã bắt đầu — bỏ kết quả lỗi thời
+      onNext(snap);
+    }).catch(err => { if (!cancelled && onError) onError(err); });
+  };
+  const scheduleFetch = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(runFetch, 300);
+  };
+  const openChannel = () => {
+    const channelName = "shim_" + table + "_" + (++_shimChannelSeq);
+    const pgChangeOpts = { event: "*", schema: "public", table };
+    if (opts && opts.docId) pgChangeOpts.filter = "id=eq." + opts.docId;
+    channel = sb.channel(channelName)
+      .on("postgres_changes", pgChangeOpts, () => { if (!cancelled) scheduleFetch(); })
+      .subscribe(status => {
+        if (cancelled) return;
+        if (status === "SUBSCRIBED") {
+          scheduleFetch();
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          sb.removeChannel(channel);
+          if (retryTimer) clearTimeout(retryTimer);
+          retryTimer = setTimeout(() => { if (!cancelled) openChannel(); }, 2000);
+        }
+      });
+  };
+
+  runFetch(); // lần đầu KHÔNG debounce
+  openChannel();
+
+  return () => {
+    cancelled = true;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (retryTimer) clearTimeout(retryTimer);
+    if (channel) sb.removeChannel(channel);
+  };
 }
 
 function _makeQuery(table, state) {
@@ -221,10 +275,16 @@ function _makeQuery(table, state) {
       // server) rồi nối lại — không phụ thuộc con số "Max Rows" cụ thể của project (an toàn dù cấu
       // hình server đổi khác sau này). Cần thứ tự ổn định để phân trang đúng (tránh lặp/bỏ sót dòng
       // giữa các trang) — nếu code gọi không tự orderBy, ngầm thêm orderBy("id") chỉ cho việc phân
-      // trang này, không đổi field lọc/kết quả trả về nào khác.
+      // trang này, không đổi field lọc/kết quả trả về nào khác. QUAN TRỌNG (sửa 2026-07-19, audit
+      // mục 4i #9): orderBy CÓ SẴN nhưng theo cột KHÔNG DUY NHẤT (VD orderBy("thoiDiemGhi")) vẫn cần
+      // "id" làm tiebreak cuối — nếu không, các dòng TRÙNG giá trị cột đó ở đúng ranh giới 2 trang có
+      // thể lặp/bỏ sót (PostgREST không đảm bảo thứ tự ổn định giữa các dòng "hoà" nhau qua nhiều
+      // lần gọi .range() riêng biệt). Chưa gây sự cố thật (các query này hiện <500 dòng, luôn gọn
+      // trong 1 trang) nhưng sẽ lộ ra khi dữ liệu tăng — thêm tiebreak không tốn gì thêm.
       if (state.limitN == null) {
         const PAGE_SIZE = 500; // dưới ngưỡng cắt 1000 đã xác nhận thật, chừa biên an toàn
-        const stateOrdered = state.orders.length > 0 ? state : { ...state, orders: [{ field: "id", dir: "asc" }] };
+        const hasIdOrder = state.orders.some(o => o.field === "id");
+        const stateOrdered = hasIdOrder ? state : { ...state, orders: [...state.orders, { field: "id", dir: "asc" }] };
         let all = [];
         let offset = 0;
         while (true) {
@@ -241,7 +301,21 @@ function _makeQuery(table, state) {
       return _makeQuerySnapshot(table, data);
     },
     onSnapshot(onNext, onError) {
-      return _subscribe(table, {}, async () => onNext(await self.get()), onError);
+      return _subscribe(table, {}, () => self.get(), onNext, onError);
+    },
+    // .count() — ĐẾM số dòng khớp filter mà KHÔNG tải dữ liệu về (PostgREST "Prefer:
+    // count=exact" + "head" — server chỉ trả số, không trả rows). KHÔNG có trong Firestore SDK bản
+    // compat 10.12.2 app đang dùng (đã ghi ở CLAUDE.md "Ghi chú hạ tầng" — lý do lịch sử vì sao
+    // toàn bộ code cũ luôn `.get()` rồi lấy `.length`/`.size`), nhưng Postgres/PostgREST hỗ trợ tốt
+    // — thêm mới hoàn toàn cho phần tối ưu 2026-07-19 (audit "tối ưu triệt để cho Supabase"), CHỈ
+    // dùng ở nơi thật sự chỉ cần 1 con số (VD thẻ đếm Dashboard) — KHÔNG đụng tới bất kỳ chỗ nào
+    // đang dùng `.get()` để lấy DỮ LIỆU THẬT của từng dòng (đặc biệt các sheet danh sách của Biểu
+    // B10 — những chỗ đó cần đúng nguyên bản ghi, không phải chỉ đếm).
+    async count() {
+      const q = _buildPgQuery(table, { ...state, orders: [], startAfterCursor: null }, { count: "exact", head: true });
+      const { count, error } = await q;
+      if (error) throw error;
+      return count;
     },
     _pg() {
       let q = _buildPgQuery(table, state);
@@ -253,10 +327,11 @@ function _makeQuery(table, state) {
 }
 
 // Dựng query PostgREST từ state (filters/orders/startAfter), KHÔNG áp .limit() — dùng chung bởi
-// `_pg()` (đường có .limit() tường minh) và vòng lặp phân trang trong `get()` ở trên (mỗi trang tự
-// đặt .range() riêng, không được lẫn thêm .limit() từ state).
-function _buildPgQuery(table, state) {
-  let q = sb.from(table).select("*");
+// `_pg()` (đường có .limit() tường minh), vòng lặp phân trang trong `get()` ở trên (mỗi trang tự
+// đặt .range() riêng, không được lẫn thêm .limit() từ state), và `.count()` (truyền
+// `selectOpts={count:"exact",head:true}` — không trả rows, chỉ trả số đếm).
+function _buildPgQuery(table, state, selectOpts) {
+  let q = sb.from(table).select("*", selectOpts);
   for (const f of state.filters) {
     const v = Array.isArray(f.value) ? f.value.map(_serializeFilterVal) : _serializeFilterVal(f.value);
     if (f.op === "==") q = q.eq(f.field, v);
@@ -726,15 +801,12 @@ function tinhLoaiKhoiTo(biCanRows) {
   return tinhLoaiKhoiToTheoNgay(biCanRows.map(bc => bc.ngayKhoiTo ? fromInputDate(bc.ngayKhoiTo) : null));
 }
 
-// Tính lại dieuLuat (vụ) + loaiKhoiTo (từng bị can) sau khi bị can của 1 vụ thay đổi — bản Supabase
-// gọi thẳng RPC "capNhatDieuLuatVaLoaiKhoiTo" (Postgres function, xem supabase/functions.sql).
-// RPC làm TOÀN BỘ việc đọc-tính-ghi trong 1 lần gọi hàm server-side (atomic tự nhiên, không cần
-// giả lập optimistic-retry như bản Firestore cũ — không có "khe hở round-trip" nào giữa đọc và
-// ghi vì cả 2 chạy trong cùng 1 lần thực thi trên server).
-async function capNhatDieuLuatVaLoaiKhoiTo(maVuAn) {
-  const { error } = await sb.rpc("capNhatDieuLuatVaLoaiKhoiTo", { p_ma_vu_an: maVuAn });
-  if (error) throw error;
-}
+// Tính lại dieuLuat (vụ) + loaiKhoiTo (từng bị can) sau khi bị can của 1 vụ thay đổi — hàm Postgres
+// "capNhatDieuLuatVaLoaiKhoiTo" (xem supabase/functions.sql) giờ được gọi TỰ ĐỘNG qua trigger
+// "bican_sync_vuan_trg" (supabase/trigger_sync_vuan_2026-07-19.sql) mỗi khi bảng "bican" thay đổi
+// — KHÔNG còn wrapper JS gọi RPC này thủ công nữa (2026-07-19, đã bỏ toàn bộ call site: JS không
+// cần "nhớ" gọi đúng chỗ sau mỗi lần ghi bican như trước, trigger tự lo, kể cả cho các đường ghi
+// KHÔNG qua UI (script/import trực tiếp)).
 
 const NHAN_GIAI_DOAN = { dieu_tra: "Điều tra", truy_to: "Truy tố", xet_xu: "Xét xử" };
 const NHAN_TRANG_THAI = {
@@ -1577,7 +1649,7 @@ function tinhNhomTuoi(namSinh, namKTVA) {
 // lo dưới mô hình giá Supabase. GIỮ NGUYÊN chữ ký hàm (cacheKey, queryFn) — ~13 call site dùng 2
 // hook này KHÔNG cần sửa gì, cacheKey giờ chỉ còn vai trò dependency của useEffect (đổi cacheKey =
 // subscribe lại), không còn dùng để tra registry chia sẻ.
-function useFirestoreCollectionCache(cacheKey, queryFn) {
+function useCollectionCache(cacheKey, queryFn) {
   const [data, setData] = useState([]);
   useEffect(() => {
     setData([]);
@@ -1588,9 +1660,9 @@ function useFirestoreCollectionCache(cacheKey, queryFn) {
   }, [cacheKey]);
   return data;
 }
-// Đi kèm useFirestoreCollectionCache khi cần biết "đã có kết quả lần đầu chưa" (VD hiện spinner
+// Đi kèm useCollectionCache khi cần biết "đã có kết quả lần đầu chưa" (VD hiện spinner
 // "Đang tải..."). Subscribe riêng (không dùng chung entry với hook dữ liệu nữa — xem ghi chú trên).
-function useFirestoreCacheLoaded(cacheKey, queryFn) {
+function useCacheLoaded(cacheKey, queryFn) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     setLoaded(false);
@@ -1604,7 +1676,7 @@ function useFirestoreCacheLoaded(cacheKey, queryFn) {
 
 // Cache "1 lần, hết hạn sau N phút" cho các query MỘT LẦN (.get(), không phải onSnapshot) hay bị
 // gọi lặp lại vô ích khi đóng/mở lại nhanh cùng 1 công cụ tìm kiếm (VD "Tìm thủ công" ở Giao nhận
-// hồ sơ, "Nhập vụ tìm đích") — 2026-07-18. KHÁC HẲN useFirestoreCollectionCache: KHÔNG giữ listener
+// hồ sơ, "Nhập vụ tìm đích") — 2026-07-18. KHÁC HẲN useCollectionCache: KHÔNG giữ listener
 // sống liên tục, vì các công cụ này chỉ dùng để TRA CỨU-CHỌN 1 lần, không cần realtime; giữ 1
 // listener sống trên tập "đang giải quyết" (thay đổi liên tục, đông nhất hệ thống) chỉ để phục vụ 1
 // công cụ tìm kiếm ít dùng sẽ tốn đọc vô ích mỗi khi CÓ NGƯỜI KHÁC sửa BẤT KỲ vụ nào trong lúc công
@@ -1650,9 +1722,9 @@ function useDanhSachDangGiaiQuyet() {
 
 // Hook danh mục tội danh — dùng chung trong form BC + tinhBieu10.
 function useDanhMucToiDanh() {
-  // Mặc định dùng mảng inline; nếu Firebase đã seed thì dùng Firebase (có thể đã chỉnh sửa) —
-  // chỉ dùng bản Firestore khi đã có dữ liệu, tránh đè mảng mặc định bằng [] lúc mới subscribe.
-  const ds = useFirestoreCollectionCache(
+  // Mặc định dùng mảng inline; nếu đã seed vào database thì dùng bản đó (có thể đã chỉnh sửa) —
+  // chỉ dùng bản database khi đã có dữ liệu, tránh đè mảng mặc định bằng [] lúc mới subscribe.
+  const ds = useCollectionCache(
     "danhMucToiDanh:asc",
     () => db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc")
   );
@@ -1801,7 +1873,7 @@ function BlhsSelector() {
 
 // Danh sách cán bộ đang công tác, dùng làm gợi ý (datalist) cho các ô KSV/ĐTV nhập tay.
 function useDanhSachCanBo() {
-  return useFirestoreCollectionCache(
+  return useCollectionCache(
     "canbo:dang_cong_tac",
     () => db.collection("canbo").where("trangThai", "==", "dang_cong_tac")
   );
@@ -1877,7 +1949,7 @@ function LoginScreen() {
           {loading ? "Đang đăng nhập..." : "Đăng nhập"}
         </button>
         <div className="text-xs text-slate-400 mt-4">
-          Chưa có tài khoản? Liên hệ quản trị để được tạo trong Firebase Console → Authentication → Users.
+          Chưa có tài khoản? Liên hệ quản trị để được tạo trong Supabase Dashboard → Authentication → Users.
         </div>
       </form>
     </div>
@@ -2016,7 +2088,7 @@ function SeedDanhMucTool() {
         setThongBao(`Đã ghi ${count}/${DANH_MUC_TOI_DANH_MAM.length}...`);
       }
       setTrangThai("done");
-      setThongBao(`Hoàn thành! Đã seed ${count} tội danh vào collection danhMucToiDanh.`);
+      setThongBao(`Hoàn thành! Đã seed ${count} tội danh vào bảng danhMucToiDanh.`);
     } catch (err) { setThongBao("Lỗi: " + err.message); setTrangThai("error"); }
   };
 
@@ -2024,7 +2096,7 @@ function SeedDanhMucTool() {
     <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
       <h3 className="font-semibold text-slate-800 mb-1">Seed danh mục tội danh (BLHS 2025 + BLHS 1999)</h3>
       <p className="text-xs text-slate-500 mb-3">
-        Ghi {DANH_MUC_TOI_DANH_MAM.length} tội danh vào collection <code>danhMucToiDanh</code> (314 tội BLHS 2025 +
+        Ghi {DANH_MUC_TOI_DANH_MAM.length} tội danh vào bảng <code>danhMucToiDanh</code> (314 tội BLHS 2025 +
         272 tội BLHS 1999). Idempotent — chạy lại chỉ ghi đè, không tạo trùng.
         Mỗi doc có 3 trường chính: <code>soDieu</code>, <code>tenToiDanh</code>, <code>namBLHS</code>.
       </p>
@@ -2065,7 +2137,7 @@ function BackfillDieuLuatBCTool() {
         db.collection("bican").get(),
         db.collection("vuan").get(),
       ]);
-      // maVuAn của bican CHÍNH LÀ doc id của vuan (xem db.collection("vuan").doc(maVuAn) ở capNhatDieuLuatVaLoaiKhoiTo).
+      // maVuAn của bican CHÍNH LÀ id của vuan (cùng bất biến RPC "capNhatDieuLuatVaLoaiKhoiTo" dựa vào, xem supabase/functions.sql).
       const vuanById = new Map(vaSnap.docs.map(d => [d.id, d.data()]));
 
       // Lookup theo tên tội danh (chuẩn hoá bỏ tiền tố "Tội " — audit 2026-07-19: nguyên nhân
@@ -2372,7 +2444,8 @@ function BackfillTomTatBiCanTool() {
       <h3 className="font-semibold text-slate-800 mb-1">Cập nhật số bị can/tên đại diện lên vụ án (soBiCan/biCanDaiDien)</h3>
       <p className="text-xs text-slate-500 mb-3">
         Điền/sửa 2 field mới trên vụ án để cột "Bị can" ở Danh sách vụ án không cần đọc riêng
-        collection bị can nữa (Tối ưu Firestore Đợt 3, 2026-07-18). Chỉ cần cho dữ liệu cũ — vụ
+        bảng bị can nữa (tính năng kế thừa từ "Tối ưu Firestore Đợt 3" thời còn Firestore,
+        2026-07-18). Chỉ cần cho dữ liệu cũ — vụ
         tạo/sửa bị can sau khi có tính năng này đã tự có sẵn 2 field. An toàn khi chạy lại nhiều lần.
       </p>
       {info && (
@@ -2898,7 +2971,7 @@ function ImportExcelModule() {
       setStatus("done");
     } catch (err) {
       console.error(err);
-      setErrorMsg("Lỗi khi ghi vào Firestore: " + err.message);
+      setErrorMsg("Lỗi khi ghi vào cơ sở dữ liệu: " + err.message);
       setStatus("error");
     }
   };
@@ -3125,10 +3198,10 @@ function ModalXacNhanKy({ open, onXacNhan, onHuy }) {
   // thao tác nghiệp vụ (Chuyển giai đoạn/Trả hồ sơ/Hoàn thành...), đây thực chất là điểm tốn quota
   // nhiều nhất trong app dù không lộ ra qua onSnapshot. Đổi sang dùng chung cache "kybaocao:desc"
   // (2026-07-17, cùng cacheKey với DanhSachPanel/KyBaoCaoModule/AnDaGiaiQuyetModule/NhatKyModule).
-  const danhSachKy = useFirestoreCollectionCache(
+  const danhSachKy = useCollectionCache(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
-  const dataDaVe = useFirestoreCacheLoaded(
+  const dataDaVe = useCacheLoaded(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
   const dangTai = open && !dataDaVe;
@@ -3840,13 +3913,10 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       }));
       await batch.commit();
 
-      // Điều luật + loại khởi tố (ban đầu/bổ sung) + cache tóm tắt bị can (tomTatBiCan, Tối ưu
-      // Firestore Đợt 3 — gộp sẵn trong chính capNhatDieuLuatVaLoaiKhoiTo) của vụ đích cần tính lại
-      // sau khi có thêm bị can — dùng hàm dùng chung thay vì chỉ tự tính riêng dieuLuat như trước
-      // đây (bản cũ bỏ sót loaiKhoiTo — bị can nhập vào có ngày khởi tố sớm hơn mọi bị can sẵn có
-      // của vụ đích thì đúng ra phải đổi ai là "ban đầu", trước đây không tính).
-      await capNhatDieuLuatVaLoaiKhoiTo(dichId);
-
+      // Điều luật/loại khởi tố (ban đầu/bổ sung)/cache tóm tắt bị can của vụ đích tự động cập nhật
+      // qua trigger Postgres "bican_sync_vuan_trg" ngay khi batch.commit() ở trên ghi bican xong —
+      // KHÔNG cần gọi lại capNhatDieuLuatVaLoaiKhoiTo ở đây nữa (xem
+      // supabase/trigger_sync_vuan_2026-07-19.sql, 2026-07-19).
       onXong(dichId);
     });
   };
@@ -4678,10 +4748,9 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
 
-      // Tính lại dieuLuat + loaiKhoiTo + cache tomTatBiCan cho cả vụ vì bị can này vừa đổi
-      // (transaction, xem capNhatDieuLuatVaLoaiKhoiTo — tránh lost-update nếu có người khác cùng
-      // sửa bị can khác của vụ này gần như đồng thời).
-      await capNhatDieuLuatVaLoaiKhoiTo(vuAn.id);
+      // dieuLuat/loaiKhoiTo/cache tomTatBiCan của cả vụ tự động cập nhật qua trigger Postgres
+      // "bican_sync_vuan_trg" ngay khi .update() ở trên chạy xong — không cần gọi lại
+      // capNhatDieuLuatVaLoaiKhoiTo ở đây nữa (2026-07-19).
       addToast("Đã lưu thông tin bị can");
       xoaBiCanCache(vuAn.id);
       onXong();
@@ -4861,10 +4930,8 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
       });
       await batch.commit();
 
-      // Tính lại dieuLuat + loaiKhoiTo + cache tomTatBiCan cho cả vụ (transaction, xem
-      // capNhatDieuLuatVaLoaiKhoiTo — tránh lost-update nếu có người khác cùng thêm/sửa bị can
-      // khác của vụ này gần như đồng thời).
-      await capNhatDieuLuatVaLoaiKhoiTo(vuAn.id);
+      // dieuLuat/loaiKhoiTo/cache tomTatBiCan của cả vụ tự động cập nhật qua trigger Postgres
+      // "bican_sync_vuan_trg" ngay khi batch.commit() ở trên ghi bican xong (2026-07-19).
       xoaBiCanCache(vuAn.id);
       onXong();
     } catch (err) {
@@ -5202,7 +5269,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
 
   // Dùng chung cache "kybaocao:desc" với KyBaoCaoModule/AnDaGiaiQuyetModule/NhatKyModule — thứ tự
   // không quan trọng ở đây vì kyBaoCaoListSorted bên dưới đã tự sort lại phía client.
-  const kyBaoCaoList = useFirestoreCollectionCache(
+  const kyBaoCaoList = useCollectionCache(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
   // Log sự kiện dùng cho cột "Kỳ mới/Kỳ giải quyết/Kỳ vào Truy tố/Kỳ chuyển Xét xử" — tải 1 LẦN
@@ -6196,7 +6263,9 @@ function toInputDateNhanh(d) {
 function ThongKeKyHienTai() {
   const [ky, setKy] = useState(undefined); // undefined = đang tải, null = không có kỳ đang mở
   const [soMoi, setSoMoi] = useState(null);
+  const [soMoiBiCan, setSoMoiBiCan] = useState(null);
   const [soGiaiQuyet, setSoGiaiQuyet] = useState(null);
+  const [soGiaiQuyetBiCan, setSoGiaiQuyetBiCan] = useState(null);
 
   useEffect(() => {
     let huy = false;
@@ -6206,13 +6275,27 @@ function ThongKeKyHienTai() {
         if (snap.empty) { setKy(null); return; }
         const kyDoc = { id: snap.docs[0].id, ...snap.docs[0].data() };
         setKy(kyDoc);
-        const [moiSnap, gqSnap] = await Promise.all([
+        // 2026-07-19: thêm "số bị can" bên cạnh "số vụ" (trước chỉ có 1 trọng số). "BC mới" dùng
+        // ĐÚNG cùng tiêu chí đã audit cho khối C7-C24 của Biểu B10 (sự kiện khoi_to_bican khớp
+        // kyThongKe của kỳ này — xem CLAUDE.md "Thiết kế lại khối C7-C24"), không phát minh tiêu
+        // chí mới để tránh lệch với số liệu B10 chính thức. "BC giải quyết" = tổng soBiCan (cache)
+        // của các vụ vừa hoàn thành trong kỳ.
+        const [moiSnap, moiBcSnap, gqSnap] = await Promise.all([
           db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", kyDoc.id).where("loaiSuKien", "==", "khoi_to_vu").get(),
+          db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", kyDoc.id).where("loaiSuKien", "==", "khoi_to_bican").get(),
           db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", kyDoc.id).where("loaiSuKien", "==", "hoan_thanh").get(),
         ]);
         if (huy) return;
         setSoMoi(moiSnap.size);
+        setSoMoiBiCan(moiBcSnap.size);
         setSoGiaiQuyet(gqSnap.size);
+
+        const vuIdsGq = [...new Set(gqSnap.docs.map(d => d.data().maVuAn).filter(Boolean))];
+        if (vuIdsGq.length === 0) { setSoGiaiQuyetBiCan(0); return; }
+        const vuGqSnap = await db.collection("vuan")
+          .where(firebase.firestore.FieldPath.documentId(), "in", vuIdsGq).get();
+        if (huy) return;
+        setSoGiaiQuyetBiCan(vuGqSnap.docs.reduce((s, d) => s + (d.data().soBiCan || 0), 0));
       })
       .catch(err => console.error(err));
     return () => { huy = true; };
@@ -6227,10 +6310,10 @@ function ThongKeKyHienTai() {
     <div className="flex items-center gap-2 text-sm mb-4">
       <span className="text-slate-500">Kỳ hiện tại <span className="font-medium text-slate-700">{ky.tenKy}</span>:</span>
       <span className="bg-indigo-50 text-indigo-700 rounded-lg px-3 py-1 font-medium">
-        Mới trong kỳ: {soMoi === null ? "…" : soMoi}
+        Mới trong kỳ: {soMoi === null ? "…" : soMoi} vụ / {soMoiBiCan === null ? "…" : soMoiBiCan} bị can
       </span>
       <span className="bg-emerald-50 text-emerald-700 rounded-lg px-3 py-1 font-medium">
-        Đã giải quyết trong kỳ: {soGiaiQuyet === null ? "…" : soGiaiQuyet}
+        Đã giải quyết trong kỳ: {soGiaiQuyet === null ? "…" : soGiaiQuyet} vụ / {soGiaiQuyetBiCan === null ? "…" : soGiaiQuyetBiCan} bị can
       </span>
     </div>
   );
@@ -7150,9 +7233,9 @@ function HangBaoCao({ nhan, data, lay, layDs, layBiCan, damNet, onMoChiTiet }) {
 function BangBaoCaoChiTiet({ baoCao }) {
   const [chiTiet, setChiTiet] = useState(null); // { nhan, ds }
 
-  const H = ({ nhan, lay, layDs, damNet }) => (
+  const H = ({ nhan, lay, layDs, layBiCan, damNet }) => (
     <HangBaoCao
-      nhan={nhan} data={baoCao} lay={lay} layDs={layDs} damNet={damNet}
+      nhan={nhan} data={baoCao} lay={lay} layDs={layDs} layBiCan={layBiCan} damNet={damNet}
       onMoChiTiet={layDs ? (nhanGD, ds) => setChiTiet({ nhan: nhanGD, ds }) : null}
     />
   );
@@ -7209,8 +7292,10 @@ function BangBaoCaoChiTiet({ baoCao }) {
             <H nhan="— Nhập vào vụ khác" lay={b => b.soNhapVu} layDs={b => b.ds?.nhapVu} />
             <H nhan="Tồn cuối kỳ" lay={b => b.tonCuoiKy} layBiCan={b => b.tonCuoiBiCanKy} damNet />
             <HangBaoCaoTieuDe nhan="Số tồn hiện tại (tại thời điểm xem)" />
-            <H nhan="— Số vụ" lay={b => b.soVuTon} layDs={b => b.ds?.tonHienTai} />
-            <H nhan="— Số bị can" lay={b => b.soBiCanTon} />
+            {/* 1 dòng duy nhất — layDs đã tự tính đủ "X vụ / Y BC" (xem HangBaoCao dòng ~7205),
+                bỏ dòng "— Số bị can" riêng trước đây (trùng lặp con số soBiCanTon với chính dòng
+                này, 2026-07-19). */}
+            <H nhan="— Số tồn hiện tại" lay={b => b.soVuTon} layDs={b => b.ds?.tonHienTai} />
           </tbody>
         </table>
       </div>
@@ -8468,47 +8553,95 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       xet_xu:   ["DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX"],
     };
     const GD_TEN_DU = { dieu_tra: "Điều tra", truy_to: "Truy tố", xet_xu: "Xét xử" };
+    // Mảng vụ NGUỒN của từng dòng "Vào"/"Ra" — ĐÚNG THỨ TỰ, ĐÚNG ĐIỀU KIỆN gd với VAO_SHEETS_GD/
+    // RA_SHEETS_GD ở trên (từng addSheetVuKy tương ứng, xem vòng lặp addSheetVuKy phía dưới cùng
+    // hàm này) — dùng để tính cache "result" phía BỊ CAN qua bcCountVuArr (đã định nghĩa ở khối
+    // "Tổng hợp báo cáo" phía trên, cùng hàm) — KHÔNG tính lại logic mới, chỉ tái dùng đúng dữ liệu
+    // đã có sẵn cho mục đích khác.
+    const vaoArraysGd = (gd) => {
+      const d = baoCao[gd].ds;
+      const arrs = [
+        (d.khoiToTrucTiep||[]).filter(v => v.nguon !== "phuc_hoi_dieu_tra"),
+        (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
+        d.tachVu||[],
+      ];
+      if (gd !== "dieu_tra") arrs.push(d.chuyenDen||[]);
+      if (gd !== "xet_xu") arrs.push(d.traVe||[]);
+      return arrs;
+    };
+    const raArraysGd = (gd) => {
+      const d = baoCao[gd].ds;
+      const arrs = [];
+      if (gd !== "xet_xu") arrs.push(d.chuyenDi||[]);
+      if (gd !== "dieu_tra") arrs.push(d.traDi||[]);
+      arrs.push(d.hoanThanh?.da_xet_xu||[], d.hoanThanh?.chuyen_di||[], d.hoanThanh?.tam_dinh_chi||[],
+                d.hoanThanh?.dinh_chi||[], d.hoanThanh?.an_huy||[], d.nhapVu||[]);
+      return arrs;
+    };
     const wsCd = wb.addWorksheet("Cân đối số liệu");
-    wsCd.views = [{ state: "frozen", xSplit: 1, ySplit: 2 }];
-    const cdH1 = wsCd.addRow(["Giai đoạn","Tồn đầu kỳ","Vào kỳ","Ra kỳ","Tồn cuối (tính)","Tồn cuối (chốt)","Chênh lệch"]);
+    wsCd.views = [{ state: "frozen", xSplit: 2, ySplit: 2 }];
+    const cdH1 = wsCd.addRow(["Giai đoạn","Loại","Tồn đầu kỳ","Vào kỳ","Ra kỳ","Tồn cuối (tính)","Tồn cuối (chốt)","Chênh lệch"]);
     cdH1.font = { bold: true };
     cdH1.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-    const cdH2 = wsCd.addRow(["","Snapshot kỳ trước","=Σ SUM(DS vào...)","=Σ SUM(DS ra...)","=Đầu+Vào−Ra","Snapshot lúc chốt","=Tính−Chốt (nên=0)"]);
+    const cdH2 = wsCd.addRow(["","","Snapshot kỳ trước","=Σ SUM/COUNTIF(DS vào...)","=Σ SUM/COUNTIF(DS ra...)","=Đầu+Vào−Ra","Snapshot lúc chốt","=Tính−Chốt (nên=0)"]);
     cdH2.font = { size: 9, color: { argb: "FF6B7280" } };
+    // 2026-07-19: thêm hàng "Bị can" song song hàng "Vụ" cho mỗi giai đoạn (trước chỉ có 1 trọng số
+    // vụ án — audit theo yêu cầu Dũng "mọi phần thống kê phải có đủ 2 trọng số vụ án + bị can").
+    // Cột "Vào kỳ"/"Ra kỳ" của hàng Bị can dùng lại ĐÚNG công thức demBcSheetM (COUNTIF cột M =
+    // "Họ tên BC", loại bỏ dòng giả "(Chưa có BC)") đã kiểm chứng ở sheet "Tổng hợp báo cáo" —
+    // không phát minh công thức mới.
     THU_TU_GIAI_DOAN.forEach((gd, idx) => {
-      const rowNum = 3 + idx;
-      const vaoF = VAO_SHEETS_GD[gd].map(s => `SUM('${s}'!$A:$A)`).join("+");
-      const raF  = RA_SHEETS_GD[gd].map(s => `SUM('${s}'!$A:$A)`).join("+");
-      const vaoR = baoCao[gd].soMoi?.tong || 0;
+      const rowVu = 3 + idx * 2;
+      const rowBc = rowVu + 1;
+      const vaoFVu = VAO_SHEETS_GD[gd].map(s => `SUM('${s}'!$A:$A)`).join("+");
+      const raFVu  = RA_SHEETS_GD[gd].map(s => `SUM('${s}'!$A:$A)`).join("+");
+      const vaoRVu = baoCao[gd].soMoi?.tong || 0;
       const raHT = baoCao[gd].hoanThanhTheoGD || {};
-      const raR  = (baoCao[gd].chuyenDi||0) + (baoCao[gd].traDi||0)
+      const raRVu = (baoCao[gd].chuyenDi||0) + (baoCao[gd].traDi||0)
         + (raHT.da_xet_xu||0) + (raHT.chuyen_di||0) + (raHT.tam_dinh_chi||0)
         + (raHT.dinh_chi||0) + (raHT.an_huy||0) + (baoCao[gd].soNhapVu||0);
-      const tonDau  = baoCao[gd].tonDauKy  || 0;
-      const tonChot = baoCao[gd].tonCuoiKy || 0;
-      const chenhLech = tonDau + vaoR - raR - tonChot;
-      const cdRow = wsCd.addRow([
-        GD_TEN_DU[gd],
-        tonDau,
-        { formula: vaoF, result: vaoR },
-        { formula: raF,  result: raR  },
-        { formula: `B${rowNum}+C${rowNum}-D${rowNum}`, result: tonDau + vaoR - raR },
-        tonChot,
-        { formula: `E${rowNum}-F${rowNum}`, result: chenhLech },
-      ]);
-      cdRow.getCell(7).fill = { type: "pattern", pattern: "solid",
-        fgColor: { argb: chenhLech !== 0 ? "FFFECACA" : "FFD1FAE5" } };
-      cdRow.getCell(7).font = { bold: chenhLech !== 0,
-        color: { argb: chenhLech !== 0 ? "FFB91C1C" : "FF065F46" } };
-      for (let c = 2; c <= 7; c++) cdRow.getCell(c).alignment = { horizontal: "center" };
+      const tonDauVu  = baoCao[gd].tonDauKy  || 0;
+      const tonChotVu = baoCao[gd].tonCuoiKy || 0;
+      const chenhLechVu = tonDauVu + vaoRVu - raRVu - tonChotVu;
+
+      const vaoFBc = demBcSheetM(VAO_SHEETS_GD[gd]);
+      const raFBc  = demBcSheetM(RA_SHEETS_GD[gd]);
+      const vaoRBc = vaoArraysGd(gd).reduce((s, arr) => s + bcCountVuArr(arr), 0);
+      const raRBc  = raArraysGd(gd).reduce((s, arr) => s + bcCountVuArr(arr), 0);
+      const tonDauBc  = baoCao[gd].tonDauBiCan    || 0;
+      const tonChotBc = baoCao[gd].tonCuoiBiCanKy || 0;
+      const chenhLechBc = tonDauBc + vaoRBc - raRBc - tonChotBc;
+
+      const rows = [
+        { loai: "Vụ",      rowNum: rowVu, vaoF: vaoFVu, raF: raFVu, vaoR: vaoRVu, raR: raRVu, tonDau: tonDauVu, tonChot: tonChotVu, chenhLech: chenhLechVu },
+        { loai: "Bị can",  rowNum: rowBc, vaoF: vaoFBc, raF: raFBc, vaoR: vaoRBc, raR: raRBc, tonDau: tonDauBc, tonChot: tonChotBc, chenhLech: chenhLechBc },
+      ];
+      rows.forEach(r => {
+        const cdRow = wsCd.addRow([
+          r.loai === "Vụ" ? GD_TEN_DU[gd] : "",
+          r.loai,
+          r.tonDau,
+          { formula: r.vaoF, result: r.vaoR },
+          { formula: r.raF,  result: r.raR  },
+          { formula: `C${r.rowNum}+D${r.rowNum}-E${r.rowNum}`, result: r.tonDau + r.vaoR - r.raR },
+          r.tonChot,
+          { formula: `F${r.rowNum}-G${r.rowNum}`, result: r.chenhLech },
+        ]);
+        cdRow.getCell(8).fill = { type: "pattern", pattern: "solid",
+          fgColor: { argb: r.chenhLech !== 0 ? "FFFECACA" : "FFD1FAE5" } };
+        cdRow.getCell(8).font = { bold: r.chenhLech !== 0,
+          color: { argb: r.chenhLech !== 0 ? "FFB91C1C" : "FF065F46" } };
+        for (let c = 3; c <= 8; c++) cdRow.getCell(c).alignment = { horizontal: "center" };
+      });
     });
-    [24,14,24,32,18,18,20].forEach((w, i) => wsCd.getColumn(i + 1).width = w);
+    [16,10,14,24,32,18,18,20].forEach((w, i) => wsCd.getColumn(i + 1).width = w);
     wsCd.addRow([]);
     [
       ["Ghi chú:"],
       ["• Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ (kyThongKe=null). Xem Nhật ký thao tác → lọc 'Chưa gán kỳ'."],
       ["• 'DS ĐT chuyển TT' = cùng dữ liệu 'DS chuyển đến TT', từ góc nhìn giai đoạn nguồn (để tính đủ RA của ĐT)."],
       ["• 'Tồn cuối (chốt)' = snapshot lúc chốt kỳ; 'Tồn cuối (tính)' = tính từ log kỳ này — hai cột nên bằng nhau."],
+      ["• Hàng 'Bị can' đếm số BỊ CAN (cột 'Họ tên BC' của các sheet DS, loại bỏ dòng giả '(Chưa có BC)' của vụ 0 bị can) — song song hàng 'Vụ' phía trên."],
     ].forEach(r => { const nr = wsCd.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; });
   }
 
@@ -8745,10 +8878,10 @@ function KyBaoCaoModule() {
   // nguyên orderBy("ngayBatDau","desc") do Firestore trả về (không tự sort lại phía client) vì
   // list[0] phải là kỳ MỚI NHẤT thật (timKyTruoc dựa vào thứ tự mảng liền kề, không so sánh lại
   // timestamp — xem comment ở timKyTruoc).
-  const list = useFirestoreCollectionCache(
+  const list = useCollectionCache(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
-  const dangTai = !useFirestoreCacheLoaded(
+  const dangTai = !useCacheLoaded(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
   const [hienMoKy, setHienMoKy] = useState(false);
@@ -9090,7 +9223,7 @@ function AnDaGiaiQuyetModule() {
   // Danh sách kỳ để chọn — gồm cả kỳ lưu trữ án cũ (loai: "luu_tru", vụ án cũ nhập lại qua Import
   // Excel hoặc gán tay vào kỳ lưu trữ vẫn cần xem/lọc được ở đây như mọi kỳ khác). Dùng chung cache
   // "kybaocao:desc" với DanhSachPanel/KyBaoCaoModule/NhatKyModule.
-  const dsKy = useFirestoreCollectionCache(
+  const dsKy = useCollectionCache(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
   // Đặt mặc định = kỳ đang mở (hoặc kỳ gần nhất nếu không có kỳ mở) — chỉ 1 lần lúc chưa có lựa
@@ -10346,23 +10479,35 @@ function ChartCotChong({ labels, datasets }) {
 
 function DashboardModule() {
   const [dem, setDem] = useState(null);
+  const [demBiCan, setDemBiCan] = useState(null);
   const [canhBao, setCanhBao] = useState([]);
   // Riêng chiều "asc" (biểu đồ cần cũ→mới theo trục thời gian) — cacheKey khác "kybaocao:desc" ở
   // các module khác vì server phải trả đúng thứ tự này, không tự sort lại phía client.
-  const kyList = useFirestoreCollectionCache(
+  const kyList = useCollectionCache(
     "kybaocao:asc", () => db.collection("kybaocao").orderBy("ngayBatDau", "asc")
   );
 
   useEffect(() => {
     let huy = false;
+    // Mỗi giai đoạn: đếm SỐ VỤ (docs.length) + tổng SỐ BỊ CAN (sum "soBiCan" — cache đã có sẵn
+    // trên từng vuan, tự động đúng nhờ trigger Postgres "bican_sync_vuan_trg") từ ĐÚNG 1 lượt
+    // .get() — không cần 2 lượt gọi riêng (1 count + 1 fetch số liệu). daXoa lọc thẳng trong query
+    // (an toàn vì cột NOT NULL DEFAULT false trên Postgres — khác Firestore, ở đó
+    // where(daXoa,"!=",true) sẽ bỏ sót document thiếu field; Postgres không có khe hở đó).
+    // 2026-07-19: thêm "số bị can" bên cạnh "số vụ" (trước đây chỉ có 1 trọng số — audit theo yêu
+    // cầu Dũng "mọi phần thống kê phải có đủ 2 trọng số vụ án + bị can").
     Promise.all(THU_TU_GIAI_DOAN.map(gd =>
-      db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get()
+      db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet")
+        .where("daXoa", "==", false).get()
     )).then(res => {
       if (huy) return;
-      const d = {};
-      // Loại vụ đã "Đưa vào thùng rác" khỏi số đếm (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
-      THU_TU_GIAI_DOAN.forEach((gd, i) => { d[gd] = res[i].docs.filter(doc => !doc.data().daXoa).length; });
-      setDem(d);
+      const dVu = {}, dBiCan = {};
+      THU_TU_GIAI_DOAN.forEach((gd, i) => {
+        dVu[gd] = res[i].docs.length;
+        dBiCan[gd] = res[i].docs.reduce((s, d) => s + (d.data().soBiCan || 0), 0);
+      });
+      setDem(dVu);
+      setDemBiCan(dBiCan);
     }).catch(err => console.error(err));
     return () => { huy = true; };
   }, []);
@@ -10379,10 +10524,18 @@ function DashboardModule() {
       }, err => console.error(err));
   }, []);
 
+  // Toggle "Theo vụ / Theo bị can" — trước đây biểu đồ chỉ vẽ theo vụ (tonCuoiKy), thiếu hẳn trọng
+  // số bị can dù dữ liệu (tonCuoiBiCan, cùng hình dạng, đã snapshot sẵn lúc chốt kỳ) đã có sẵn
+  // (2026-07-19, audit "mọi phần thống kê phải có đủ 2 trọng số vụ án + bị can").
+  const [xuHuongTheoBiCan, setXuHuongTheoBiCan] = useState(false);
   const labels = kyList.map(k => k.tenKy);
   const datasets = THU_TU_GIAI_DOAN.map((gd, i) => ({
     label: NHAN_GIAI_DOAN[gd],
-    data: kyList.map(k => k.tonCuoiKy ? (k.tonCuoiKy[gd] ?? 0) : (dem ? dem[gd] : 0)),
+    data: kyList.map(k => {
+      const snap = xuHuongTheoBiCan ? k.tonCuoiBiCan : k.tonCuoiKy;
+      const song = xuHuongTheoBiCan ? demBiCan : dem;
+      return snap ? (snap[gd] ?? 0) : (song ? song[gd] : 0);
+    }),
     backgroundColor: ["#6366f1", "#0ea5e9", "#f59e0b"][i],
   }));
 
@@ -10392,14 +10545,31 @@ function DashboardModule() {
       <div className="grid grid-cols-3 gap-4 mb-6">
         {THU_TU_GIAI_DOAN.map(gd => (
           <div key={gd} className="bg-white border border-slate-200 rounded-xl p-4">
-            <div className="text-2xl font-semibold">{dem ? dem[gd] : "…"}</div>
+            <div className="flex items-baseline gap-2">
+              <div className="text-2xl font-semibold">{dem ? dem[gd] : "…"}</div>
+              <div className="text-sm text-slate-400">vụ</div>
+              <div className="text-lg font-medium text-slate-500">{demBiCan ? demBiCan[gd] : "…"}</div>
+              <div className="text-sm text-slate-400">bị can</div>
+            </div>
             <div className="text-xs text-slate-500">Đang tồn — {NHAN_GIAI_DOAN[gd]}</div>
           </div>
         ))}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6">
-        <div className="text-sm font-medium text-slate-600 mb-3">Xu hướng tồn theo kỳ</div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-medium text-slate-600">Xu hướng tồn theo kỳ</div>
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+            <button onClick={() => setXuHuongTheoBiCan(false)}
+                    className={`px-3 py-1 text-xs rounded-md font-medium ${!xuHuongTheoBiCan ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
+              Theo vụ
+            </button>
+            <button onClick={() => setXuHuongTheoBiCan(true)}
+                    className={`px-3 py-1 text-xs rounded-md font-medium ${xuHuongTheoBiCan ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
+              Theo bị can
+            </button>
+          </div>
+        </div>
         {kyList.length === 0 ? (
           <div className="text-sm text-slate-400">Chưa có kỳ báo cáo nào để vẽ xu hướng.</div>
         ) : (
@@ -10542,7 +10712,7 @@ function NhatKyModule() {
   const [sortChieu, setSortChieu] = useState("asc");
   const [dangSuaKy, setDangSuaKy] = useState(null);
   // Dùng chung cache "kybaocao:desc" với DanhSachPanel/KyBaoCaoModule/AnDaGiaiQuyetModule.
-  const danhSachKy = useFirestoreCollectionCache(
+  const danhSachKy = useCollectionCache(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
 
@@ -10831,10 +11001,10 @@ function DanhMucToiDanhModule() {
   // gộp chung 1 listener) — KHÔNG dùng useDanhMucToiDanh() vì hook đó tự fallback về mảng JS mặc
   // định khi Firestore rỗng; ở màn quản trị này cần thấy ĐÚNG trạng thái thật của Firestore (kể cả
   // rỗng), không phải bản đã fallback.
-  const list = useFirestoreCollectionCache(
+  const list = useCollectionCache(
     "danhMucToiDanh:asc", () => db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc")
   );
-  const dangTai = !useFirestoreCacheLoaded(
+  const dangTai = !useCacheLoaded(
     "danhMucToiDanh:asc", () => db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc")
   );
   const [dangSua, setDangSua] = useState(null); // null | "moi" | object
@@ -11397,7 +11567,7 @@ function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
       </td>
       {/* Khởi tố & tội danh */}
       <td {...oTd("ngayKhoiTo")}>
-        <OCellDate value={bc.ngayKhoiTo} onCommit={v => suaBiCanTruong(bc, { ngayKhoiTo: v }, true)} />
+        <OCellDate value={bc.ngayKhoiTo} onCommit={v => suaBiCanTruong(bc, { ngayKhoiTo: v })} />
         <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ngayKhoiTo", bc.ngayKhoiTo)} />
       </td>
       <td {...oTd("soQdKtBiCan")}>
@@ -11412,7 +11582,7 @@ function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
                       onChange={({ ten, dieuLuat }) => suaBiCanTruong(bc, {
                         toiDanh: [ten, ...(bc.toiDanh || []).slice(1)],
                         dieuLuatBC: [dieuLuat, ...(bc.dieuLuatBC || []).slice(1)],
-                      }, true)} />
+                      })} />
         <TayKeoFill onBatDau={() => keo.batDauKeo(index, "toiDanhChinh", { ten: bc.toiDanh?.[0] || "", dieuLuat: bc.dieuLuatBC?.[0] || "" })} />
       </td>
     </tr>
@@ -11438,17 +11608,19 @@ function BangBiCanCon({ vuAnId, danhMucTD, onVuAnCoTheDoi }) {
 
   useEffect(() => { taiLai(); }, [taiLai]);
 
-  const suaBiCanTruong = async (bc, patch, canTinhLaiDieuLuat) => {
+  // dieuLuat/loaiKhoiTo/cache tomTatBiCan (soBiCan/biCanDaiDien) của vụ tự động cập nhật qua
+  // trigger Postgres "bican_sync_vuan_trg" ngay khi ghi "bican" xong — KHÔNG cần gọi
+  // capNhatDieuLuatVaLoaiKhoiTo ở đây nữa, VÀ không cần lọc riêng "trường nào ảnh hưởng dieuLuat"
+  // như bản cũ (2026-07-19) — trigger chạy trên MỌI thay đổi trường, kể cả trường trước đây bị bỏ
+  // sót (VD sửa "hoTen" của bị can đang là biCanDaiDien cũng cần cập nhật lại tên hiển thị, nhưng
+  // bản cũ chỉ lọc theo ngayKhoiTo/toiDanhChinh nên bỏ sót case này). `onVuAnCoTheDoi` giờ gọi
+  // UNCONDITIONAL sau MỌI lần ghi — module cha (BangExcelModule) không còn onSnapshot sống trên
+  // "vuan" nên vẫn cần được báo để tải lại đúng 1 doc, rẻ hơn hẳn tải lại cả danh sách 500 dòng.
+  const suaBiCanTruong = async (bc, patch) => {
     try {
       await db.collection("bican").doc(bc.id).update(patch);
       xoaBiCanCache(vuAnId);
-      if (canTinhLaiDieuLuat) {
-        await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
-        // Báo module cha (BangExcelModule) tải lại ĐÚNG 1 doc vuan này — dieuLuat/tomTatBiCan vừa
-        // đổi qua transaction trên nhưng bảng vụ ở NGOÀI không còn onSnapshot sống để tự bắt được
-        // nữa (cùng lý do bỏ live ở trên); rẻ hơn hẳn tải lại cả danh sách 500 dòng.
-        onVuAnCoTheDoi?.(vuAnId);
-      }
+      onVuAnCoTheDoi?.(vuAnId);
       await taiLai();
     } catch (err) {
       console.error(err);
@@ -11456,7 +11628,6 @@ function BangBiCanCon({ vuAnId, danhMucTD, onVuAnCoTheDoi }) {
     }
   };
 
-  const CAC_TRUONG_ANH_HUONG_DIEU_LUAT = new Set(["ngayKhoiTo", "toiDanhChinh"]);
   const apDungGiaTri = async (dsDong, field, giaTri) => {
     const batch = db.batch();
     dsDong.forEach(bc => {
@@ -11471,10 +11642,7 @@ function BangBiCanCon({ vuAnId, danhMucTD, onVuAnCoTheDoi }) {
     });
     await batch.commit();
     xoaBiCanCache(vuAnId);
-    if (CAC_TRUONG_ANH_HUONG_DIEU_LUAT.has(field)) {
-      await capNhatDieuLuatVaLoaiKhoiTo(vuAnId);
-      onVuAnCoTheDoi?.(vuAnId);
-    }
+    onVuAnCoTheDoi?.(vuAnId);
     await taiLai();
   };
 
