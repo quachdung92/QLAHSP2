@@ -409,10 +409,14 @@ function _batch() {
     update(ref, data) { ops.push({ type: "update", table: ref._table, id: ref.id, data }); return this; },
     delete(ref) { ops.push({ type: "delete", table: ref._table, id: ref.id }); return this; },
     async commit() {
-      // Gộp insert/upsert cùng bảng thành 1 lượt gọi (nhanh hơn nhiều so với tuần tự từng dòng);
-      // update/delete xử lý song song qua Promise.all (PostgREST không hỗ trợ "mỗi dòng 1 patch
-      // khác nhau" trong 1 request REST đơn, không đáng phải viết RPC riêng cho việc này ở quy mô
-      // vài trăm dòng/batch hiện tại).
+      // (2026-07-20) Ghi ATOMIC thật qua RPC "batch_commit" (supabase/batch_commit_2026-07-20.sql)
+      // — trước đây commit() gọi NHIỀU request REST tuần tự (insert theo bảng → upsert theo bảng →
+      // update song song → delete theo bảng), KHÔNG có đảm bảo tất-cả-hoặc-không-gì như Firestore
+      // batch.commit() thật: mất mạng/lỗi giữa chừng để lại dữ liệu nửa vời (xem
+      // SUPABASE_MIGRATION.md mục 4i #5). Vẫn GIỮ NGUYÊN toàn bộ logic gộp theo bảng + sắp xếp
+      // đúng thứ tự phụ thuộc FK ở phía JS (đã kiểm chứng kỹ, không có lý do đổi) — chỉ đổi phần
+      // THỰC THI từ "N request REST rời rạc" sang "dựng 1 mảng ops đã sắp đúng thứ tự, gửi 1 lần
+      // duy nhất cho Postgres chạy trọn trong 1 transaction".
       const setsNoMerge = new Map(); // table -> rows[]
       const setsMerge = new Map();
       const updates = [];
@@ -430,27 +434,23 @@ function _batch() {
           deletes.push(op);
         }
       }
-      // ĐÚNG THỨ TỰ phụ thuộc (xem _TABLE_INSERT_ORDER) — KHÔNG được đổi thành Promise.all song
-      // song giữa các bảng khác nhau ở đây, dù có vẻ nhanh hơn — sẽ tái phạm đúng lỗi FK 23503.
+      // ĐÚNG THỨ TỰ phụ thuộc (xem _TABLE_INSERT_ORDER) — insert/upsert PHẢI đi theo thứ tự cha
+      // trước con sau, giữ nguyên logic đã kiểm chứng, chỉ đổi từ "gọi REST ngay" sang "đẩy vào
+      // mảng rpcOps theo đúng thứ tự đó" để RPC thực thi tuần tự đúng y hệt.
+      const rpcOps = [];
       for (const [table, rows] of _sapXepTheoPhuThuoc(setsNoMerge)) {
-        const { error } = await sb.from(table).insert(rows);
-        if (error) throw error;
+        for (const row of rows) rpcOps.push({ type: "insert", table, data: row });
       }
       for (const [table, rows] of _sapXepTheoPhuThuoc(setsMerge)) {
-        const { error } = await sb.from(table).upsert(rows, { onConflict: "id" });
-        if (error) throw error;
+        for (const row of rows) rpcOps.push({ type: "upsert", table, data: row });
       }
-      await Promise.all(updates.map(async op => {
+      for (const op of updates) {
         const resolved = await _resolveFieldValues(op.table, op.id, op.data);
-        const { error } = await sb.from(op.table).update(resolved).eq("id", op.id);
-        if (error) throw error;
-      }));
+        rpcOps.push({ type: "update", table: op.table, id: op.id, data: resolved });
+      }
       // Delete PHẢI đi theo thứ tự NGƯỢC LẠI thứ tự phụ thuộc insert (xoá con TRƯỚC, cha SAU) —
-      // bug thật tìm được qua Playwright test (script dọn dữ liệu test tự xoá vuan+bican+
-      // lichsuChuyenGiaiDoan trong cùng batch, Promise.all song song giữa các bảng làm delete
-      // "vuan" có thể chạy TRƯỚC khi "bican"/"lichsuChuyenGiaiDoan" xoá xong → lỗi FK 23503, cùng
-      // họ lỗi với insert-ordering đã sửa ở trên). Gộp theo bảng thành 1 lượt `.in('id', ids)` mỗi
-      // bảng (nhanh hơn N request riêng lẻ), xử lý TUẦN TỰ theo thứ tự bảng đảo ngược.
+      // bug thật tìm được qua Playwright test trước đây (xoá vuan+bican+lichsuChuyenGiaiDoan cùng
+      // lúc, thứ tự sai gây lỗi FK 23503) — giữ nguyên logic gộp theo bảng + đảo ngược thứ tự.
       const deletesByTable = new Map();
       for (const op of deletes) {
         if (!deletesByTable.has(op.table)) deletesByTable.set(op.table, []);
@@ -458,9 +458,11 @@ function _batch() {
       }
       const thuTuXoa = _sapXepTheoPhuThuoc(deletesByTable).reverse();
       for (const [table, ids] of thuTuXoa) {
-        const { error } = await sb.from(table).delete().in("id", ids);
-        if (error) throw error;
+        rpcOps.push({ type: "delete", table, ids });
       }
+      if (rpcOps.length === 0) return;
+      const { error } = await sb.rpc("batch_commit", { p_ops: rpcOps });
+      if (error) throw error;
     },
   };
 }
@@ -7681,7 +7683,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   }
 
   // Cảnh báo: chỉ khi có vụ thực sự thiếu điều luật (lệch âm). Không cảnh báo lệch dương.
-  const IDX_TON_NAY_VU = { dieu_tra: 2, truy_to: 36, xet_xu: 70 };
+  // Bug đã sửa (2026-07-19, phát hiện khi audit lại "Tồn kỳ trước/này" theo yêu cầu người dùng):
+  // xet_xu từng ghi NHẦM 70 — đó là vals[70]=C61 (BC "Tổng thụ lý" XX), không phải xx_tn_vu (Vụ
+  // "tồn hiện tại" XX, thực ra nằm ở vals[67], đếm chính xác bằng cách liệt kê thủ công 88 phần tử
+  // của mảng vals[] — xem comment "= 88 giá trị" ngay trên). Chỉ ảnh hưởng CẢNH BÁO chẩn đoán bên
+  // dưới (so sánh tổng B10 với số tồn thực tế để phát hiện vụ thiếu điều luật), KHÔNG ảnh hưởng số
+  // liệu thật ghi ra Excel — dt/tt vẫn đúng (2, 36), chỉ riêng xét xử bị lệch.
+  const IDX_TON_NAY_VU = { dieu_tra: 2, truy_to: 36, xet_xu: 67 };
   const canhBao = [];
   for (const gd of THU_TU_GIAI_DOAN) {
     const idx = IDX_TON_NAY_VU[gd];
@@ -7702,7 +7710,10 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // Lệch dương (tongTheoTD > tonThucTe): đúng thiết kế, không cảnh báo
   }
 
-  return { rows, canhBao, vuChuaDL };
+  // tonTD_truoc/kyTonTD (đã chuẩn hoá key ở trên) trả kèm ra ngoài để xuatBaoCaoThangExcel dựng
+  // sheet "Tồn theo ĐL (snapshot)" bằng ĐÚNG cùng 1 nguồn dữ liệu đã dùng để tính vals[] — tránh
+  // viết lại logic chuẩn hoá 1 lần nữa ở nơi khác rồi lệch nhau.
+  return { rows, canhBao, vuChuaDL, tonTD_truoc, kyTonTD };
 }
 
 // Tính lại ĐÚNG tonCuoiKyTheoTD/tonCuoiBiCan cho TẤT CẢ kỳ đã chốt, theo thứ tự thời gian, từ
@@ -8047,10 +8058,58 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     .map(([td,s]) => [td, s.vuM, s.bcM, s.tgM, s.bcM-s.tgM, s.vuT, s.bcT, s.tgT, s.bcT-s.tgT, s.vuG, s.bcG]);
 
   // ---- Sheet 1: Biểu B10 (72 cột + phụ, động theo điều luật thực tế trong kỳ) ----
-  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao);
+  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, tonTD_truoc: b10TonTruoc, kyTonTD: b10KyTonTD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao);
   // Dòng Tổng
   const b10Tong = Array(B10_HEADER_CHI_TIET.length - 2).fill(0);
   for (const row of b10Rows) { row.vals.forEach((v, i) => { b10Tong[i] = (b10Tong[i] || 0) + v; }); }
+
+  // ---- Sheet "Tồn theo ĐL (snapshot)": bảng dữ liệu THÔ đứng sau cột "Tồn kỳ trước"/"Tồn kỳ
+  // này" của Biểu B10 (2026-07-19, theo yêu cầu người dùng — trước đây 2 cột này chỉ ghi thẳng số
+  // JS, không có sheet nào backing nên không tra ngược lại được trong Excel; mục 10 của
+  // SUPABASE_MIGRATION.md từng quyết định giữ nguyên số tĩnh vì "không có DS sheet nào để SUM/
+  // COUNTIF" — quyết định đó vẫn đúng theo nghĩa "không có danh sách vụ chi tiết để SUMIF", nhưng
+  // vẫn có thể click-trace được tới ĐÚNG con số gốc qua VLOOKUP nếu materialize số đó ra 1 sheet
+  // riêng, thay vì giấu cứng trong ô — đây là điểm nâng cấp thêm so với quyết định trước). "Tồn kỳ
+  // trước" LUÔN là ảnh chụp (snapshot) đã chốt của KỲ TRƯỚC — hệ thống chỉ lưu ĐÚNG số đếm theo
+  // điều luật tại thời điểm chốt đó (không lưu danh sách vụ cụ thể), nên không thể viết thành
+  // SUMIF/COUNTIFS tham chiếu 1 danh sách vụ như các cột khác — sheet này là cách duy nhất để ít
+  // nhất TRÌNH BÀY rõ số liệu gốc, và B10 tra bằng VLOOKUP thay vì giấu số liệu trực tiếp trong ô.
+  // "Tồn kỳ này" CHỈ giống vậy khi kỳ ĐÃ CHỐT (ky.tonCuoiKyTheoTD có sẵn — số đã cố định vĩnh viễn
+  // từ lúc chốt, xem tinhBieu10); khi kỳ CHƯA chốt, "Tồn kỳ này" là số LIVE tính từ đúng
+  // baoCao[gd].ds.tonHienTai — TRÙNG với dữ liệu sheet "DS tồn ĐT/TT/XX" đã có sẵn, nên
+  // B10_FORMULA dùng thẳng SUMIF/COUNTIFS vào các sheet đó (xem bên dưới), không cần qua sheet
+  // snapshot này.
+  const TEN_SHEET_TON_SNAPSHOT = "Tồn theo ĐL (snapshot)";
+  const wsTonSnap = wb.addWorksheet(TEN_SHEET_TON_SNAPSHOT);
+  wsTonSnap.views = [{ state: "frozen", xSplit: 2, ySplit: 1 }];
+  wsTonSnap.addRow([
+    "Mã ĐL", "Tội danh",
+    "ĐT-Vụ (trước)", "ĐT-BC (trước)", "TT-Vụ (trước)", "TT-BC (trước)", "XX-Vụ (trước)", "XX-BC (trước)",
+    "ĐT-Vụ (này)", "ĐT-BC (này)", "TT-Vụ (này)", "TT-BC (này)", "XX-Vụ (này)", "XX-BC (này)",
+  ]).font = { bold: true };
+  for (const row of b10Rows) {
+    const tp = b10TonTruoc[row.D] || {};
+    const tn = b10KyTonTD ? (b10KyTonTD[row.D] || {}) : null;
+    wsTonSnap.addRow([
+      row.D, row.tenToiDanh,
+      tp.dieu_tra?.vuAn || 0, tp.dieu_tra?.biCan || 0,
+      tp.truy_to?.vuAn || 0, tp.truy_to?.biCan || 0,
+      tp.xet_xu?.vuAn || 0, tp.xet_xu?.biCan || 0,
+      tn ? (tn.dieu_tra?.vuAn || 0) : "", tn ? (tn.dieu_tra?.biCan || 0) : "",
+      tn ? (tn.truy_to?.vuAn || 0) : "", tn ? (tn.truy_to?.biCan || 0) : "",
+      tn ? (tn.xet_xu?.vuAn || 0) : "", tn ? (tn.xet_xu?.biCan || 0) : "",
+    ]);
+  }
+  if (!b10KyTonTD) {
+    wsTonSnap.addRow([]);
+    wsTonSnap.addRow(["Kỳ này CHƯA chốt (hoặc chưa chạy \"Tính lại số liệu\") nên chưa có ảnh chụp "
+      + "riêng — 6 cột \"(này)\" ở trên để trống. Biểu B10 đang lấy \"Tồn kỳ này\" trực tiếp từ sheet "
+      + "\"DS tồn ĐT/TT/XX\" (số LIVE tại thời điểm xuất báo cáo)."]);
+  }
+  wsTonSnap.getColumn(1).width = 26;
+  wsTonSnap.getColumn(2).width = 32;
+  for (let c = 3; c <= 14; c++) wsTonSnap.getColumn(c).width = 12;
+  wsTonSnap.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
 
   const wsB10 = wb.addWorksheet("Biểu B10");
   wsB10.views = [{ state: "frozen", xSplit: 3, ySplit: 2 }];
@@ -8068,6 +8127,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   };
   // B10_FORMULA: mọi cột có công thức, nhận r (số dòng Excel) → trả về chuỗi công thức
   // Helpers: mkSfVu = SUMIF VỤ (cột A×B); mkCfBc = COUNTIFS BC (cột V + extra); mkCfBcM = multi-sheet
+  // mkVlSnap: VLOOKUP sang sheet "Tồn theo ĐL (snapshot)" — dùng cho "Tồn kỳ trước" (LUÔN — ảnh
+  // chụp của kỳ trước, không có danh sách vụ nào để SUMIF) và "Tồn kỳ này" khi kỳ NÀY đã chốt
+  // (cũng là ảnh chụp cố định, xem b10KyTonTD). IFERROR trả 0 nếu điều luật đó không xuất hiện ở
+  // kỳ trước/kỳ này (vụ mới lần đầu xuất hiện tội danh này, hoặc kỳ này chưa chốt để trống cột).
+  function mkVlSnap(col, r) { return `IFERROR(VLOOKUP($A${r},'${TEN_SHEET_TON_SNAPSHOT}'!$A:$N,${col},FALSE),0)`; }
   function mkSfVu(sn, r) { return `SUMIF('${sn}'!$B:$B,$A${r},'${sn}'!$A:$A)`; }
   function mkCfBc(sn, r, ...extra) {
     let f = `COUNTIFS('${sn}'!$V:$V,$A${r}`;
@@ -8127,6 +8191,18 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     "DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX",
   ];
   const B10_FORMULA = {
+    // ── Tồn kỳ trước (LUÔN VLOOKUP sheet snapshot — không có sheet DS nào để SUMIF, xem mkVlSnap) ──
+    0: r => mkVlSnap(3, r),  1: r => mkVlSnap(4, r),   // ĐT tồn trước Vụ/BC
+    34: r => mkVlSnap(5, r), 35: r => mkVlSnap(6, r),  // TT tồn trước Vụ/BC
+    65: r => mkVlSnap(7, r), 66: r => mkVlSnap(8, r),  // XX tồn trước Vụ/BC
+    // ── Tồn kỳ này: kỳ ĐÃ CHỐT → VLOOKUP sheet snapshot (ảnh chụp cố định); kỳ CHƯA chốt → SUMIF/
+    // COUNTIFS thẳng vào "DS tồn ĐT/TT/XX" (số LIVE, đúng cùng nguồn baoCao[gd].ds.tonHienTai) ──
+    2: r => b10KyTonTD ? mkVlSnap(9, r) : mkSfVu("DS tồn ĐT", r),
+    3: r => b10KyTonTD ? mkVlSnap(10, r) : mkCfBcM(["DS tồn ĐT"], r),
+    36: r => b10KyTonTD ? mkVlSnap(11, r) : mkSfVu("DS tồn TT", r),
+    37: r => b10KyTonTD ? mkVlSnap(12, r) : mkCfBcM(["DS tồn TT"], r),
+    67: r => b10KyTonTD ? mkVlSnap(13, r) : mkSfVu("DS tồn XX", r),
+    68: r => b10KyTonTD ? mkVlSnap(14, r) : mkCfBcM(["DS tồn XX"], r),
     // ── "Tổng thụ lý" (C3/C4, C33/C34, C60/C61) — xem mkThuLyVu/mkThuLyBc + bieu_B10_mo_ta.md 3.2 ──
     4:  r => mkThuLyVu("dieu_tra", r),  // C3 Tổng thụ lý ĐT — Vụ
     5:  r => mkThuLyBc("dieu_tra", r),  // C4 Tổng thụ lý ĐT — Bị can
@@ -8244,10 +8320,17 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   wsB10.getColumn(1).eachCell((cell, ri) => {
     if (ri > 2) cell.font = { color: { argb: "FF9CA3AF" }, size: 8 };
   });
-  // Màu xanh nhạt: cột tồn kỳ trước/kỳ này (+1 cột so với trước vì thêm cột Mã ĐL)
+  // Màu xanh nhạt: cột "Tồn kỳ trước/kỳ này" (+1 cột so với trước vì thêm cột Mã ĐL) — nay ĐÃ có
+  // công thức (VLOOKUP sheet "Tồn theo ĐL (snapshot)" khi là ảnh chụp cố định, hoặc SUMIF/COUNTIFS
+  // thẳng "DS tồn ĐT/TT/XX" khi kỳ chưa chốt/số live — xem B10_FORMULA phía trên) — vẫn tô riêng
+  // màu này (khác vàng SUMIF thường) để phân biệt rõ đây là nhóm "tồn", không phải nhóm sự kiện
+  // vào/ra trong kỳ, dù cả 2 nhóm giờ đều là công thức có thể click-trace.
   const phuCols = [4,5,6,7, 4+34, 5+34, 6+34, 7+34, 4+34+31, 5+34+31, 6+34+31, 7+34+31];
-  // Màu vàng nhạt: cột SUMIF (công thức tham chiếu sheet khác — có thể click-trace trong Excel)
-  const sumifCols = Object.keys(B10_FORMULA).map(k => parseInt(k) + 4); // k+3 (offset) +1 (1-indexed ExcelJS)
+  // Màu vàng nhạt: cột SUMIF/COUNTIFS khác — tham chiếu sheet DS vào/ra (loại trừ nhóm "tồn" ở trên,
+  // dù cũng nằm trong B10_FORMULA, để giữ đúng 2 màu tách biệt theo ý nghĩa, không lẫn lộn).
+  const sumifCols = Object.keys(B10_FORMULA)
+    .map(k => parseInt(k) + 4) // k+3 (offset) +1 (1-indexed ExcelJS)
+    .filter(ci => !phuCols.includes(ci));
   wsB10.eachRow((row, ri) => {
     if (ri <= 2) return;
     phuCols.forEach(ci => {

@@ -929,9 +929,7 @@ orderBy nào như bản cũ.
    `bican`/`vuan` qua service_role) sau khi xong.
 
 **Còn lại CHƯA sửa** (theo đúng thứ tự ưu tiên đã đề xuất — cố ý để lại, cần quyết định riêng):
-- **#5 (batch không atomic)** — cần viết RPC `batch_commit(ops jsonb)` chạy trong 1 transaction
-  Postgres thật, đổi phần thân `commit()` của shim gọi RPC này. Quy mô lớn hơn hẳn các mục đã sửa,
-  KHÔNG làm trong phiên này — cần bàn với Dũng trước Phase 6 (dữ liệu thật).
+- ~~**#5 (batch không atomic)**~~ — **ĐÃ SỬA (2026-07-20), xem mục 12.**
 - **#4 (dọn chunk 400 di sản Firestore)** — dọn lúc rảnh, không gấp, không ảnh hưởng đúng/sai.
 
 ### 4k. Dọn sạch tàn dư Firebase trong `qlahs-sup.html` — "Firebase chỉ còn vai trò Hosting" (2026-07-19)
@@ -1192,3 +1190,128 @@ không ảnh hưởng người dùng cuối. Đã điều chỉnh cách kiểm c
 **Chưa commit lên nhánh** tại thời điểm ghi chú này — sẽ commit ngay sau, xem lịch sử git để biết
 hash chính xác. Phạm vi CHỈ `qlahs-sup.html` (theo yêu cầu Dũng xác nhận đầu phiên) — chưa mirror
 sang `qlva.html`/`qlva-dev.html`.
+
+## 11. Sheet-hoá nốt "Tồn kỳ trước/kỳ này" — nâng cấp quyết định ở mục 10 (2026-07-19)
+
+Mục 10 ở trên (cùng ngày, phiên trước) đã audit và **CHỦ ĐỘNG quyết định giữ nguyên số tĩnh** cho
+12 cột "Tồn kỳ trước/kỳ này" — lý do: đây là SNAPSHOT tại 1 thời điểm chốt (`kybaocao.tonCuoiKyTheoTD`),
+không có DS sheet danh sách vụ nào để SUMIF/COUNTIFS ra đúng con số đó. Quyết định đó vẫn đúng theo
+đúng nghĩa hẹp "không có danh sách chi tiết để SUM" — nhưng phiên này (Dũng hỏi lại, muốn xem có
+công thức không) tìm ra cách vẫn **click-trace được** dù không có danh sách chi tiết: materialize
+chính con số snapshot đó ra 1 sheet phụ, rồi B10 tra bằng `VLOOKUP` — không phải "true SUMIF từ
+danh sách", nhưng không còn "giấu cứng" trong ô như trước.
+
+**Lưu ý quan trọng về vị trí làm việc (Dũng nhắc trực tiếp trong phiên)**: bản nháp ĐẦU TIÊN của
+sửa đổi này bị làm NHẦM trên `qlva.html`/`qlva-dev.html` (nhánh Firestore, đã lỗi thời về định
+hướng — xem [[qlahsp2_supabase_future_direction]]) thay vì `qlahs-sup.html`. Đã revert sạch 2 file
+đó (`git checkout --`) và làm lại đúng trên `qlahs-sup.html`, đúng file/nhánh mà mục 10 ở trên cũng
+đang làm.
+
+**Đã thêm**:
+- Sheet mới **"Tồn theo ĐL (snapshot)"** — 1 dòng/điều luật, cột A=Mã ĐL (khoá tra cứu) + 12 cột số:
+  6 cột `ĐT/TT/XX-Vụ/BC (trước)` LUÔN điền từ `kyTruoc.tonCuoiKyTheoTD`; 6 cột `(này)` CHỈ điền khi
+  kỳ này đã chốt (`ky.tonCuoiKyTheoTD` có sẵn), để trống + 1 dòng chú thích cuối sheet nếu chưa chốt.
+  `tinhBieu10` trả kèm ra ngoài 2 map đã chuẩn hoá `tonTD_truoc`/`kyTonTD` để dựng sheet này bằng
+  ĐÚNG cùng dữ liệu đã dùng tính `vals[]`, tránh lệch.
+- B10 tra: **"Tồn kỳ trước"** (vals[0,1,34,35,65,66]) LUÔN `IFERROR(VLOOKUP(...sheet snapshot...),0)`.
+  **"Tồn kỳ này"** (vals[2,3,36,37,67,68]) VLOOKUP sheet snapshot nếu kỳ đã chốt, hoặc SUMIF/COUNTIFS
+  thẳng vào "DS tồn ĐT/TT/XX" (đã có sẵn từ trước, đúng pattern các cột Vụ/BC-level khác) nếu kỳ
+  chưa chốt — vì lúc đó số "này" LIVE trùng hệt dữ liệu trong chính sheet đó.
+- Tương thích ngược HOÀN TOÀN với công thức "Tổng thụ lý" đã thêm ở mục 10 (`mkThuLyVu`/`mkThuLyBc`
+  tham chiếu Ô CÙNG DÒNG của "Tồn kỳ trước" qua cell reference, VD `AL9`) — Excel không quan tâm ô
+  được tham chiếu là giá trị tĩnh hay công thức, nên chuỗi công thức "Tồn kỳ trước → Tổng thụ lý"
+  giờ đều là công thức nối tiếp nhau, không cần sửa `mkThuLyVu`/`mkThuLyBc`.
+- Tiện thể sửa 1 bug có sẵn phát hiện khi audit lại đúng hàm này: `IDX_TON_NAY_VU` (dùng trong khối
+  cảnh báo `canhBao`) ghi nhầm `xet_xu: 70` — đếm thủ công lại đúng 88 phần tử mảng `vals[]` xác
+  nhận `xx_tn_vu` nằm ở index **67** (70 là `C61`, hoàn toàn khác ý nghĩa). Chỉ ảnh hưởng dòng cảnh
+  báo chẩn đoán hiển thị khi xuất Excel, KHÔNG ảnh hưởng số liệu thật ghi ra sheet B10.
+
+**Đã kiểm chứng bằng Node + package `exceljs` THẬT** (không chỉ đọc code) — copy nguyên văn
+`tinhBieu10` (bản trước khi port sang `qlahs-sup.html`, logic giống hệt — đã diff xác nhận chỉ khác
+đúng 1 chỗ là bản vá `IDX_TON_NAY_VU`) chạy thật trong Node, dựng 2 kịch bản (kỳ ĐÃ chốt / kỳ CHƯA
+chốt) qua `ExcelJS.Workbook` thật, ghi file `.xlsx` ra đĩa rồi ĐỌC LẠI: sheet "Tồn theo ĐL
+(snapshot)" đúng dữ liệu; ô B10 "Tồn kỳ trước" luôn `VLOOKUP`; ô "Tồn kỳ này" dùng `VLOOKUP` khi
+kỳ đã chốt, `SUMIF`/`COUNTIFS` vào đúng sheet "DS tồn ĐT" khi kỳ chưa chốt; tự mô phỏng lại đúng
+ngữ nghĩa VLOOKUP/SUMIF/COUNTIFS của Excel bằng tay trên dữ liệu THẬT đã ghi trong file (ExcelJS
+không tự eval công thức) để xác nhận công thức sinh ra SẼ trả đúng giá trị nếu mở bằng Excel thật —
+18/18 assertion PASS. `qlahs-sup.html` biên dịch sạch qua `@babel/standalone@7.25.6`.
+**CHƯA mở thử bằng Excel/LibreOffice thật** và **CHƯA xuất thử trên dữ liệu Supabase thật** — nên
+xuất 1 báo cáo tháng thật (cả kỳ đã chốt và kỳ đang mở) trên `qlahs-sup.html`, mở bằng Excel thật,
+xác nhận không báo lỗi `#REF!`/`#N/A` trước khi coi là hoàn tất.
+
+## 12. `batch_commit` RPC — sửa #5 (ghi không atomic), theo yêu cầu Dũng trước khi "chính thức chuyển" (2026-07-20)
+
+Dũng hỏi "kiểm tra lại lần cuối hệ thống ổn định chưa rồi chính thức chuyển sang Supabase". Trước khi
+làm gì tiếp, đã đối chiếu lại roadmap (mục 7/8) và báo Dũng 4 khoảng trống còn CHƯA xong: #5 (ghi
+không atomic), chưa có UI đổi mật khẩu, chưa quyết định offline persistence, Phase 5 (kiểm thử toàn
+diện) chưa làm. Dũng chọn: sửa #5 trước (rủi ro dữ liệu thật nhất), 3 việc còn lại tạm chấp nhận.
+
+**Thiết kế**: `supabase/batch_commit_2026-07-20.sql` — hàm `batch_commit(p_ops jsonb)` nhận mảng thao
+tác ĐÃ được lớp shim JS gộp+sắp đúng thứ tự phụ thuộc FK (logic sắp xếp `_sapXepTheoPhuThuoc`/
+`_TABLE_INSERT_ORDER` giữ NGUYÊN, không chuyển vào SQL — chỉ đổi "N request REST tuần tự" thành "1
+mảng ops, gọi RPC 1 lần"), chạy trọn trong 1 lần gọi hàm = 1 transaction Postgres thật. `_batch()
+.commit()` trong `qlahs-sup.html` đổi theo — dựng `rpcOps` rồi gọi `sb.rpc("batch_commit", {p_ops})`
+1 lần duy nhất thay vì nhiều `sb.from(table).insert/update/delete(...)`.
+
+Từng dòng ghi qua `jsonb_populate_record(null::"table", data)` + build cột động từ ĐÚNG các key có
+mặt trong `data` (đối chiếu `information_schema.columns`, vừa chặn injection qua key lạ vừa giữ
+đúng ngữ nghĩa "field không đụng thì giữ nguyên/dùng DEFAULT" — không ghi đè NULL tường minh, đúng
+bài học Phase 6 mục 9). Xử lý TỪNG DÒNG riêng (không gộp nhiều dòng cùng bảng thành 1 INSERT nhiều
+VALUES) — né luôn 1 gotcha PostgREST đã biết (dòng thiếu field so với dòng khác trong cùng mảng bị
+gán NULL tường minh thay vì DEFAULT) mà KHÔNG tốn thêm round-trip nào (mọi dòng vẫn chạy trong CÙNG
+1 lần gọi hàm). `SECURITY INVOKER` (khác 4 hàm cũ trong `functions.sql` là `DEFINER`) — hàm này chỉ
+đụng 7 bảng đã có RLS "authenticated đọc/ghi toàn bộ", không cần bỏ qua RLS như 4 hàm kia (chỉ cần
+DEFINER vì phải ghi `boDemMaVu`, bảng client không được đụng trực tiếp).
+
+**2 bug thật tự phát hiện qua kiểm thử trên Supabase THẬT (không phải giả thuyết suông), cả 2 đều
+đã sửa trước khi coi là xong**:
+1. Bản đầu dùng `INSERT ... ON CONFLICT (id) DO UPDATE SET <cột có trong data>` cho "upsert" (=
+   Firestore `set(merge:true)`). **SAI**: Postgres validate NOT NULL của TOÀN BỘ cột trong câu
+   INSERT (kể cả cột không liệt kê, tự dùng DEFAULT) TRƯỚC KHI biết có conflict hay không — cột
+   NOT NULL không có DEFAULT (VD `vuan.maNoiSinh`) làm insert "thăm dò" này LUÔN lỗi 23502 dù dòng
+   đã tồn tại và chỉ cần UPDATE. Bắt được qua kịch bản test "upsert lần 2 vào dòng đã có, chỉ truyền
+   đúng 1 field cần đổi" — lỗi thật, không phải lý thuyết. **Đã sửa**: "upsert" tự kiểm tra tồn tại
+   trước (`SELECT ... FOR UPDATE`, vừa xác định vừa khoá dòng chống race), rẽ sang ĐÚNG 1 trong 2
+   nhánh insert/update THUẦN (dùng chung code với type "insert"/"update" gốc, không viết logic
+   riêng dễ lệch).
+2. Bước kiểm tra tồn tại ở trên ban đầu dùng biến `FOUND` sau `EXECUTE ... INTO` động — **SAI**:
+   kiểm chứng thật bằng 1 hàm test cô lập trên chính Supabase xác nhận `FOUND` LUÔN ra `false` sau
+   dạng `EXECUTE` này (kể cả khi có kết quả thật), không đáng tin. **Đã sửa**: dùng
+   `GET DIAGNOSTICS v_row_count = ROW_COUNT` thay thế — kiểm chứng lại bằng hàm test cô lập tương tự,
+   ra đúng 0/1 như kỳ vọng.
+
+**Phát hiện phụ (KHÔNG sửa, ngoài phạm vi đã thống nhất — chỉ ghi lại cho phiên sau quyết định)**:
+Supabase TỰ ĐỘNG cấp `EXECUTE` cho role `anon` (chưa đăng nhập) ngay lúc `CREATE FUNCTION` (default
+privileges của project) — `revoke ... from public` (đúng như 4 hàm cũ trong `functions.sql` đang
+làm) KHÔNG đụng tới quyền đã cấp THẲNG cho `anon`, phải `revoke ... from anon` TƯỜNG MINH mới chặn
+được (đã làm cho `batch_commit`, xác nhận qua `information_schema.routine_privileges` + gọi thật qua
+REST bằng anon key: trước khi thêm revoke này ra `HTTP 401` nhưng do RLS chặn ghi (`42501 - new row
+violates row-level security policy`, hàm VẪN gọi được); sau khi thêm revoke ra đúng `HTTP 401`
+`permission denied for function batch_commit` — chặn sớm hơn, sạch hơn). **Cùng lỗ hổng grant này
+ĐANG tồn tại trên cả 4 hàm `SECURITY DEFINER` gốc trong `functions.sql`** (`sinhMaVuAnMoi`,
+`sinhNhieuMaVuAn`, `tachVuSinhMa`, `capNhatDieuLuatVaLoaiKhoiTo`) — xác nhận qua
+`information_schema.routine_privileges` thấy `anon` vẫn có `EXECUTE` trên cả 4 hàm này dù file đã có
+`revoke ... from public`. Vì các hàm đó là DEFINER (bỏ qua RLS), đây là lỗ hổng THẬT: người **chưa
+đăng nhập** hiện gọi được `sinhMaVuAnMoi`/`sinhNhieuMaVuAn` (tốn bộ đếm `boDemMaVu`) và
+`tachVuSinhMa` (tăng `soDemTach` của BẤT KỲ `vuan` nào, không cần đăng nhập) qua REST. Rủi ro thực tế
+thấp (không đọc/sửa được dữ liệu nghiệp vụ thật, RLS vẫn chặn mọi bảng khác), nhưng là lỗ hổng thật
+cần vá (`revoke execute on function ... from anon;` cho cả 4 hàm) — CHƯA làm trong phiên này (ngoài
+phạm vi Dũng đã chọn), để dành quyết định riêng.
+
+**Đã kiểm chứng đầy đủ trên Supabase THẬT** (project `eutatszoaseixchvjbtg`, qua Session pooler, script
+Node dùng package `pg` — không qua UI/đăng nhập, vì không tự nhập mật khẩu tài khoản người dùng được):
+áp dụng SQL thành công; **14/14 assertion PASS** — insert/update/upsert (cả 2 lần: chưa tồn tại +
+đã tồn tại) đúng ngữ nghĩa partial-write; **rollback ATOMIC THẬT** (1 op insert hợp lệ đứng TRƯỚC 1
+op gây lỗi FK trong CÙNG batch → xác nhận op hợp lệ KHÔNG bị ghi lại, đúng vấn đề #5 cần sửa); chặn
+đúng bảng ngoài whitelist (`boDemMaVu`); xoá đúng. Test JS-only riêng (mock `sb.rpc`, không đụng
+Supabase thật) xác nhận 12/12 assertion về thứ tự `rpcOps` (insert theo đúng thứ tự phụ thuộc FK,
+delete theo thứ tự ngược, `set(merge:true)` map đúng sang `upsert`, batch rỗng không gọi RPC thừa).
+Biên dịch Babel sạch. Dọn sạch toàn bộ dữ liệu test trên Supabase sau khi xong.
+
+**CHƯA làm/CHƯA commit tại thời điểm ghi chú này**: chưa mirror gì (đúng phạm vi chỉ `qlahs-sup.html`
++ `supabase/`). Chưa test qua UI thật (đăng nhập + thao tác nghiệp vụ thật, VD "Thêm vụ án"/"Xoá
+vĩnh viễn"/Import Excel) — mới kiểm chứng ở tầng RPC/SQL trực tiếp, chưa chạy qua đúng luồng
+`_batch().commit()` mới từ trình duyệt thật. Còn 3 khoảng trống Dũng đã chấp nhận tạm gác (UI đổi
+mật khẩu, offline persistence, Phase 5) + phát hiện phụ "anon gọi được 4 hàm DEFINER cũ" ở trên —
+CHƯA "chính thức chuyển sang Supabase" (chưa đổi 4 cán bộ thật sang dùng `qlahs-sup.html`), chờ
+Dũng xác nhận sau khi cân nhắc các điểm còn lại.
