@@ -52,7 +52,16 @@ create table "canbo" (
   "id"        text primary key default gen_random_uuid()::text,
   "hoTen"     text not null,
   "vaiTro"    text not null check ("vaiTro" in ('ksv','dtv','can_bo_thong_ke','khac')),
-  "trangThai" text not null check ("trangThai" in ('dang_cong_tac','da_chuyen_don_vi'))
+  "trangThai" text not null check ("trangThai" in ('dang_cong_tac','da_chuyen_don_vi')),
+  "ngayTao"   timestamptz  -- phát hiện qua export dữ liệu thật (Phase 4) — có trên MỌI dòng thật,
+                            -- bỏ sót ở audit text-based ban đầu (chỉ đọc code, không đối chiếu dữ
+                            -- liệu thật). Cùng lúc phát hiện dữ liệu thật trên qlahs-test dùng field
+                            -- "chucVu" (giá trị "ksv"/"dtv"/"thongke") + KHÔNG có "trangThai" — CODE
+                            -- HIỆN TẠI chỉ đọc/ghi "vaiTro"/"trangThai" (đã grep xác nhận, "chucVu"
+                            -- không xuất hiện ở đâu trong code) — đây là dữ liệu CŨ còn sót tên field
+                            -- cũ trên Firestore, KHÔNG PHẢI vấn đề của schema Postgres này. Transform
+                            -- lúc import (Phase 4) phải map chucVu→vaiTro, mặc định trangThai=
+                            -- 'dang_cong_tac' cho các dòng thiếu — xem SUPABASE_MIGRATION.md.
 );
 create index "canbo_trangThai_idx" on "canbo" ("trangThai");
 
@@ -86,7 +95,11 @@ create table "kybaocao" (
   "tonCuoiBiCan"     jsonb,                    -- cùng hình dạng, số bị can
   "tonCuoiKyTheoTD"  jsonb,                    -- { [toiDanh]: { [giaiDoan]: {vuAn, biCan} } }
   "baoCaoLuu"        jsonb,                    -- báo cáo đầy đủ đã tính, cache cho kỳ đã chốt
-  "thoiDiemTinhLai"  timestamptz               -- chỉ có khi đã bấm "Tính lại số liệu"
+  "thoiDiemTinhLai"  timestamptz,              -- chỉ có khi đã bấm "Tính lại số liệu"
+  -- 3 cột dưới đây phát hiện qua export dữ liệu thật (Phase 4) — bỏ sót ở audit text-based ban đầu.
+  "nguoiTao"         text,                     -- chỉ có ở kỳ tạo qua "Mở kỳ mới" (không phải lưu trữ)
+  "thoiDiemTao"      timestamptz,
+  "ngayKetThuc"      timestamptz               -- ngày kết thúc kỳ (khác "ngayChot" — ngày CHỐT sau khi kết thúc)
 );
 create index "kybaocao_trangThai_idx" on "kybaocao" ("trangThai");
 
@@ -201,6 +214,11 @@ create table "bican" (
   "soQdKtBiCan"        text not null default '',
   "kyThongKeKhoiTo"    text references "kybaocao"("id"),
   "nhomBiCanId"        text,                            -- chỉ có ở bị can sao chép lúc Tách vụ "Ở cả 2 vụ"
+  "nguonNhapLieu"      text,                            -- VD "import_excel" — CÓ TRÊN "vuan" đã biết
+                                                          -- từ trước, phát hiện qua export dữ liệu
+                                                          -- thật (Phase 4) là CŨNG có trên "bican"
+                                                          -- (2160/2252 dòng thật) — bỏ sót ở audit
+                                                          -- text-based ban đầu.
   "ngayTao"            timestamptz,
   "nguoiTao"           text,
   "ngayCapNhat"        timestamptz,

@@ -301,6 +301,67 @@ lộ ra khi đọc kỹ code thay vì suy đoán từ tên gọi. Giá trị th�
 càng nhiều càng tốt" mà là XÁC NHẬN LẠI từng quyết định — 2/7 mục xoá được thật, 5/7 còn lại vẫn
 đúng và giờ có lý do ghi rõ ràng hơn bản gốc.
 
+### 4e. Phase 4 — export/import dữ liệu thật `qlahs-test` làm mock data — ĐÃ HOÀN TẤT (2026-07-19)
+
+Script nằm ngoài repo (thư mục scratchpad phiên làm việc, không commit — thuần công cụ chạy 1 lần,
+không phải phần code sản phẩm): `export_firestore.js` (Playwright, đăng nhập thật
+`qlahs-test.web.app`/`admintest@local.com`, đọc qua `db.collection(...).get()` — không cần Admin
+SDK/service account), `validate_export.js` (đối chiếu mọi tham chiếu kiểu FK giữa các collection
+JSON đã export, chạy TRƯỚC import để biết trước có dữ liệu mồ côi hay không), `import_to_supabase.js`
+(transform + insert qua Session pooler, thứ tự bảng đúng `_TABLE_INSERT_ORDER` của shim).
+
+**Export**: 9354 document/7 collection — `vuan`=1386, `bican`=2252, `lichsuChuyenGiaiDoan`=5068,
+`kybaocao`=6, `canbo`=10, `danhMucToiDanh`=586, `phienGiaoNhan`=46. `validate_export.js` xác nhận
+**0 tham chiếu treo** (mọi `maVuAn`/`maBiCan`/`vuTachRa`/`vuNhapVao`/`kyThongKe`/`phienGiaoNhanId`
+đều trỏ tới document còn tồn tại) — dữ liệu nguồn tự nhất quán trước khi import.
+
+**3 lỗi CHECK constraint thật gặp phải khi import** (Postgres ép kiểu/ràng buộc nghiêm ngặt hơn hẳn
+Firestore schemaless — mỗi lỗi chỉ lộ ra khi thử import THẬT, không đoán trước được từ đọc code):
+1. `vuan.daXoa` NOT NULL nhưng THIẾU HẲN trên toàn bộ 1386 dòng thật (field mới thêm gần đây, dữ
+   liệu cũ chưa có) → fallback `false`.
+2. `vuan.anDiem`/`nguon` mang giá trị "rác" trên ĐÚNG CÙNG 70/1386 dòng (`anDiem: ""` thay vì
+   boolean thật, `nguon: "cq_dieu_tra"` không nằm trong 4 giá trị `NHAN_NGUON` hiện tại của code) —
+   rõ ràng cùng 1 nguồn dữ liệu cũ/quirk chung. Ép `""` → `false` cho mọi cột boolean; `nguon` lạ
+   map về DEFAULT schema (`an_khoi_to_moi`) — **quyết định CHỈ ĐÚNG cho dữ liệu mock/test này**, dữ
+   liệu thật `qlahsp2` ở Phase 6 phải hỏi lại Dũng ý nghĩa thật của `cq_dieu_tra` trước khi map,
+   không lặp lại suy đoán này.
+3. `bican.bienPhapNganChan` giá trị cũ `"tam_giam"` (91/2252 dòng, tên trước khi đổi mã ngắn
+   `"giam"` — khớp 1-1 rõ ràng qua nhãn `<option value="giam">Tạm giam</option>` trong code hiện
+   tại, KHÁC hẳn trường hợp `nguon` ở trên vì đây không phải đoán mà là đổi tên field value thuần
+   tuý) → rename thẳng.
+4. `bican.loaiKhoiTo` giá trị cũ **KHÔNG HỢP LỆ** `"khoi_to_moi"` (123/2252 dòng — đúng bug
+   `BackfillLoaiKhoiToTool` trong `qlva.html` đã tài liệu hoá: `ImportExcelModule` cũ từng hardcode
+   sai giá trị này). Vì đây là field TỰ TÍNH (không nhập tay), script **tính lại đúng bằng thuật
+   toán `tinhLoaiKhoiToTheoNgay` của chính app** (theo từng vụ: bị can có `ngayKhoiTo` NHỎ NHẤT =
+   `ban_dau`, còn lại `bo_sung`) thay vì map bừa — áp dụng cho TOÀN BỘ 2252 bị can (không chỉ 123
+   dòng sai) để đảm bảo nhất quán theo từng vụ, đúng những gì `BackfillLoaiKhoiToTool` sẽ làm nếu
+   chạy trên dữ liệu này. Kết quả: 100% ra `ban_dau` — đã xác nhận đây là ĐÚNG (không phải bug mới):
+   kiểm tra riêng cho thấy trong 242 vụ có ≥2 bị can, **0 vụ có `ngayKhoiTo` khác nhau giữa các bị
+   can** (mọi bị can cùng vụ luôn bị khởi tố cùng ngày trong tập dữ liệu thật này) — nên
+   `tinhLoaiKhoiToTheoNgay` cho ra toàn `ban_dau` là kết quả toán học đúng, không phải lỗi transform.
+5. `lichsuChuyenGiaiDoan.lyDoTach` giá trị cũ `"manual"` (1 dòng — code bản cũ trước khi
+   `TachVuModal` có dropdown lý do, hiện chỉ `'khac_toi_danh'`/`'khac'`) → map về `"khac"` (không rõ
+   lý do cụ thể, cùng nhóm "quyết định chỉ đúng cho mock data" như `nguon` ở trên).
+
+**Import cuối cùng: THÀNH CÔNG 100%, đúng khớp số dòng export** (0 dòng nào bị bỏ qua/rớt):
+`kybaocao`=6, `canbo`=10, `danhMucToiDanh`=586, `vuan`=1386, `bican`=2252, `phienGiaoNhan`=46,
+`lichsuChuyenGiaiDoan`=5068 — 71 ô tổng cộng bị remap theo whitelist (70 `nguon` + 1 `lyDoTach`,
+đúng số dòng "rác" phát hiện ở trên).
+
+**Spot-check dữ liệu sau import** (đúng tinh thần mục 6: kiểm DỮ LIỆU, không phải "đối chiếu B10"):
+`canbo.vaiTro` phân bố hợp lý (5 ksv/4 dtv/1 can_bo_thong_ke, không còn field `chucVu` cũ); FK
+sanity (`bican`→`vuan`, `lichsuChuyenGiaiDoan`→`vuan`) 0 dòng mồ côi; `vuan.daXoa`/`anDiem` toàn bộ
+boolean hợp lệ; `bican.bienPhapNganChan` chỉ còn 2 giá trị hợp lệ (`giam`=722, `tai_ngoai`=1530,
+hết `tam_giam`). Ghi chú: dòng `vuan` mới nhất trong mock data là 1 vụ tên "VU TEST PLAYWRIGHT XOA
+SAU..." — rác còn sót từ 1 lần test Playwright cũ chạy thẳng trên Firestore `qlahs-test` (không
+phải lỗi migration, dữ liệu môi trường test vốn không sạch tuyệt đối — chấp nhận được vì đây đúng
+là mock/test data, không phải production).
+
+Toàn bộ 5 quyết định transform ở trên (trừ #3 rename `tam_giam`→`giam`, là đổi tên value 1-1 chắc
+chắn) đều là **quyết định phù hợp cho MOCK DATA**, KHÔNG áp dụng máy móc lại cho Phase 6 (dữ liệu
+`qlahsp2` thật) — Phase 6 phải hỏi lại Dũng ý nghĩa từng giá trị "rác" cụ thể tìm thấy lúc đó trước
+khi quyết định map/backfill/bỏ qua, vì đây là dữ liệu án hình sự thật, không được đoán.
+
 ## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
 
 **Theo yêu cầu rõ ràng của Dũng** (2026-07-19): đây không còn là gợi ý tuỳ chọn — Phase 2 phải
@@ -461,9 +522,10 @@ sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự 
       Checklist mục 5: 2 mục bỏ hẳn, 1 mục sửa 1 phần, 4 mục rà kỹ và giữ nguyên có lý do rõ ràng.
 - [ ] **Phase 3**: chuyển Auth sang Supabase Auth — tài khoản Firebase Auth hiện có phải tạo lại
       thủ công trên Supabase (không tự động chuyển mật khẩu giữa 2 hệ thống được).
-- [ ] **Phase 4**: export dữ liệu thật từ `qlahs-test` (Firestore) → import làm MOCK DATA vào
-      project Supabase hiện có (xem mục 6, đã cập nhật phạm vi — không phải "cả 2 project" như bản
-      gốc, chỉ 1 project cho tới khi lên thật).
+- [x] **Phase 4**: export dữ liệu thật từ `qlahs-test` (Firestore, 9354 document/7 collection) →
+      import làm MOCK DATA vào project Supabase hiện có — THÀNH CÔNG 100%, đúng khớp số dòng, 5
+      lỗi CHECK constraint thật gặp phải + đã sửa (xem mục 4e chi tiết đầy đủ). Chưa kiểm thử qua
+      UI `qlahs-sup.html` với dữ liệu này — việc tiếp theo.
 - [ ] **Phase 5**: kiểm thử toàn diện trên project Supabase hiện có (đủ bộ Playwright hồi quy hiện
       có + kịch bản mới cho Realtime/RPC), quyết định hướng xử lý khoảng trống offline persistence.
 - [ ] **Phase 6**: **reset project Supabase** (xoá dữ liệu mock, giữ schema/RLS/RPC) → export/import
@@ -480,17 +542,15 @@ FK-ordering thật đã tìm ra và sửa qua chính quá trình test này. `qla
 đã dọn sạch — project Supabase đang ở trạng thái sạch (0 dòng mọi bảng), sẵn sàng nạp mock data.
 
 **Phase 2 ĐÃ HOÀN TẤT** (shim + checklist mục 5). Bảng `meta` đã xoá khỏi schema thật (DROP TABLE
-đã chạy trên project Supabase). Project Supabase hiện đang sạch (0 dòng mọi bảng), sẵn sàng bước
-tiếp theo.
+đã chạy trên project Supabase).
 
-**Việc tiếp theo** (thứ tự khuyến nghị — Phase 2 không còn nằm trong danh sách này nữa):
-1. Viết script export Firestore `qlahs-test` → import Supabase làm mock data (Phase 4), dùng lại
-   đúng Session pooler đã xác nhận hoạt động (mục 4c) — nhớ `ALTER PUBLICATION supabase_realtime
-   ADD TABLE` KHÔNG cần chạy lại (đã bật sẵn cho cả 8 bảng, xem mục 4d).
-2. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đó — trọng tâm là XÁC NHẬN DỮ LIỆU ĐÃ NẠP ĐÚNG
-   (số dòng, giá trị field, đặc biệt field mảng/ngày tháng dễ convert sai), không phải "so B10 với
-   Firestore" (xem lý do đã sửa ở mục 6 — B10 dùng chung 100% code, không có chỗ để tính khác đi).
-   Chạy thử Xuất Excel báo cáo tháng trên dữ liệu mock là 1 phép thử tổng hợp tốt để lộ lỗi map dữ
-   liệu, không phải bước "đối chiếu 2 hệ thống".
-3. Chuyển Auth sang Supabase Auth thật cho toàn bộ tài khoản cán bộ (Phase 3 — hiện chỉ có đúng 1
+**Phase 4 ĐÃ HOÀN TẤT** (export/import mock data từ `qlahs-test`, xem mục 4e) — project Supabase
+hiện có đầy đủ 7 bảng nghiệp vụ với dữ liệu thật (đã transform), sẵn sàng kiểm thử UI.
+
+**Việc tiếp theo** (thứ tự khuyến nghị):
+1. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đã nạp — đăng nhập, duyệt Danh sách vụ án, mở
+   panel chi tiết vài vụ, thử Kỳ báo cáo/Xuất Excel báo cáo tháng (Biểu B10) trên ít nhất 1 kỳ, thử
+   Giao nhận hồ sơ — trọng tâm là XÁC NHẬN DỮ LIỆU HIỂN THỊ ĐÚNG qua UI thật (không phải "so B10
+   với Firestore" — xem lý do ở mục 6, B10 dùng chung 100% code nên không có chỗ để tính khác đi).
+2. Chuyển Auth sang Supabase Auth thật cho toàn bộ tài khoản cán bộ (Phase 3 — hiện chỉ có đúng 1
    tài khoản test `admintest@local.com` phục vụ phát triển/kiểm thử, chưa phải danh sách thật).
