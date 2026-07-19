@@ -419,6 +419,37 @@ cho bug 1, tháng đã có sẵn nhiều vụ cho bug 2) — bộ test Phase 2 b
 không đủ để bắt được, đúng đúng lý do Phase 4 (nạp mock data thật) có giá trị độc lập với việc "chỉ
 kiểm dữ liệu đã nạp đúng chưa" như dự tính ban đầu — nó còn lộ ra cả lỗi TẦNG SHIM chưa từng thấy.
 
+### 4g. Phase 3 — Supabase Auth thật cho tài khoản cán bộ — ĐÃ HOÀN TẤT (2026-07-19)
+
+**Danh sách tài khoản Firebase Auth thật** lấy qua `firebase auth:export` (Firebase CLI, đã đăng
+nhập sẵn trong môi trường này) — `qlahs-test` chỉ có đúng 1 tài khoản test
+(`admintest@local.com`), **`qlahsp2` (production) có 4 tài khoản cán bộ thật**:
+`cherry.vnu@gmail.com`, `nguyenphuongnhung2212@gmail.com`, `ntlinhyenbai@gmail.com`,
+`admin@qlva.local`. Không migrate được mật khẩu gốc giữa 2 hệ thống (Firebase/Supabase dùng thuật
+toán băm khác nhau, export chỉ cho `passwordHash` không tái sử dụng được) — đúng như đã ghi ở mục 7
+từ đầu, tạo lại thủ công với **1 mật khẩu chung tạm thời** do Dũng cung cấp trực tiếp (KHÔNG ghi
+giá trị mật khẩu vào bất kỳ file nào trong git, cùng nguyên tắc đã áp dụng cho mật khẩu DB ở mục 4c).
+
+**Thử đường `signUp()` phía client (dùng `anon key` đã có sẵn) trước — THẤT BẠI, đúng dự đoán**: bị
+chặn bởi (1) yêu cầu xác nhận email trước khi đăng nhập được, (2) giới hạn tốc độ gửi email rất
+thấp của dịch vụ email built-in Supabase (`"email rate limit exceeded"` ngay ở lần thử thứ 2) — cả
+2 đều không phù hợp để tạo 4 tài khoản thật ngay lập tức mà không chờ cán bộ tự bấm link xác nhận
+trong hộp thư.
+
+**Đã dùng Supabase Admin Auth API** (`POST /auth/v1/admin/users`, xác thực bằng key `service_role`
+— **KHÁC** `anon key` đã nhúng sẵn trong `qlahs-sup.html`, key này CHỈ dùng tạm trong script ở
+scratchpad, KHÔNG được ghi vào bất kỳ file nào trong git, cùng nguyên tắc mật khẩu DB) với
+`email_confirm: true` — bỏ qua hẳn bước xác nhận email, tạo xong dùng đăng nhập được ngay. Cả 4
+tài khoản tạo thành công (status 200), không tài khoản nào trùng UID/email với tài khoản cũ.
+
+**Đã kiểm chứng bằng đăng nhập THẬT qua UI** (`qlahs-sup.html`, không mock) — cả 4/4 tài khoản đăng
+nhập thành công vào đúng màn hình "Danh sách vụ án" với mật khẩu chung mới, 0 lỗi console. Phase 3
+coi như hoàn tất — 5 tài khoản Supabase Auth hiện có: `admintest@local.com` (test, từ Phase 1) + 4
+tài khoản cán bộ thật ở trên. **Việc còn lại ngoài phạm vi kỹ thuật**: báo cho từng cán bộ mật khẩu
+tạm để họ tự đăng nhập và đổi lại mật khẩu riêng (Supabase Auth hỗ trợ đổi mật khẩu qua
+`sb.auth.updateUser({password})` sau khi đăng nhập — chưa có UI riêng cho việc này trong
+`qlahs-sup.html`, cần làm nếu/khi cắt hẳn sang Supabase ở Phase 6).
+
 ## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
 
 **Theo yêu cầu rõ ràng của Dũng** (2026-07-19): đây không còn là gợi ý tuỳ chọn — Phase 2 phải
@@ -577,8 +608,10 @@ sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự 
       shim đầy đủ (`db`/`auth` giả lập, `firebase.firestore.FieldValue/FieldPath` giữ nguyên API
       cho ~35 chỗ gọi cũ không cần sửa), 4 vị trí `db.runTransaction` sửa tay gọi `.rpc(...)`.
       Checklist mục 5: 2 mục bỏ hẳn, 1 mục sửa 1 phần, 4 mục rà kỹ và giữ nguyên có lý do rõ ràng.
-- [ ] **Phase 3**: chuyển Auth sang Supabase Auth — tài khoản Firebase Auth hiện có phải tạo lại
-      thủ công trên Supabase (không tự động chuyển mật khẩu giữa 2 hệ thống được).
+- [x] **Phase 3**: chuyển Auth sang Supabase Auth — 4 tài khoản cán bộ thật (lấy qua `firebase
+      auth:export` trên `qlahsp2`) tạo lại qua Admin Auth API với mật khẩu chung tạm thời, đã kiểm
+      chứng đăng nhập THẬT qua UI (mục 4g). Còn lại ngoài phạm vi kỹ thuật: báo mật khẩu tạm cho
+      từng cán bộ + họ tự đổi lại (chưa có UI đổi mật khẩu trong `qlahs-sup.html`).
 - [x] **Phase 4**: export dữ liệu thật từ `qlahs-test` (Firestore, 9354 document/7 collection) →
       import làm MOCK DATA vào project Supabase hiện có — THÀNH CÔNG 100%, đúng khớp số dòng, 5
       lỗi CHECK constraint thật gặp phải + đã sửa (mục 4e). Đã kiểm thử qua UI `qlahs-sup.html`
@@ -610,11 +643,14 @@ transform), đã xác nhận hiển thị/hoạt động đúng qua `qlahs-sup.h
 quyết, Kỳ báo cáo, Giao nhận hồ sơ, Dashboard, Cài đặt — 0 lỗi console mới, 32/32 assertion hồi quy
 PASS).
 
+**Phase 3 ĐÃ HOÀN TẤT** (4 tài khoản cán bộ thật tạo qua Admin Auth API, kiểm chứng đăng nhập thật —
+mục 4g).
+
 **Việc tiếp theo** (thứ tự khuyến nghị):
 1. Thử "Xuất Excel báo cáo tháng" (Biểu B10) trên ít nhất 1 kỳ đã chốt với dữ liệu mock — phép thử
    tổng hợp tốt, chạm gần như mọi field/mọi bảng cùng lúc, dễ lộ lỗi map dữ liệu còn sót (nếu có)
    hơn test đơn lẻ từng màn hình. Chưa làm ở phiên này.
-2. Chuyển Auth sang Supabase Auth thật cho toàn bộ tài khoản cán bộ (Phase 3 — hiện chỉ có đúng 1
-   tài khoản test `admintest@local.com` phục vụ phát triển/kiểm thử, chưa phải danh sách thật).
-3. Phase 5 (kiểm thử toàn diện) — rà lại khoảng trống offline persistence, viết thêm kịch bản
+2. Phase 5 (kiểm thử toàn diện) — rà lại khoảng trống offline persistence, viết thêm kịch bản
    Playwright cho các luồng nghiệp vụ chưa test qua Supabase (Tách vụ/Nhập vụ/Xoá vụ.../Thùng rác).
+3. Cân nhắc thêm UI đổi mật khẩu trong `qlahs-sup.html` trước khi 4 cán bộ thật bắt đầu dùng — hiện
+   họ đang dùng chung 1 mật khẩu tạm, cần tự đổi lại mật khẩu riêng.
