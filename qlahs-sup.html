@@ -8088,6 +8088,37 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"];
   const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS vụ tách XX","DS chuyển đến XX"];
   const DT_KTO = ["DS khởi tố ĐT","DS phục hồi ĐT"];   // khoiToTrucTiep ĐT (cho C7-C24)
+  // "Tổng thụ lý" (C3/C4, C33/C34, C60/C61, xem bieu_B10_mo_ta.md mục 3.2) = Tồn kỳ trước (ô CÙNG
+  // DÒNG, đã có sẵn — không phải DS sheet) + Σ(*_VAO ở trên) − Σ("DS nhập vụ"/"DS chuyển đi" của
+  // đúng giai đoạn đó) — 2026-07-2x, sheet-hoá nốt 6 ô cuối cùng của B10 còn ghi số JS tĩnh (audit
+  // theo yêu cầu Dũng "cột tính toán phải chạy công thức như cột trọng số, tránh trích xuất tĩnh dễ
+  // sai sót"). KHÔNG đổi GIÁ TRỊ (result vẫn = đúng số JS đã tính/kiểm chứng từ trước) — chỉ thêm
+  // formula để có thể click-trace + tự khớp lại nếu dữ liệu DS sheet đổi.
+  // Đối chiếu ĐÚNG công thức JS gốc (C3/C33/C60 ở tinhBieu10) — trừ CẢ "nhập vụ" + "chuyển đi
+  // (hoàn thành)" + "án huỷ" — bieu_B10_mo_ta.md mục 3.2 chỉ nêu 2 vế đầu (mô tả rút gọn), nhưng
+  // code thật (đã audit/kiểm chứng nhiều lần trước đây) LUÔN trừ thêm án huỷ — giữ đúng theo code,
+  // không theo mô tả rút gọn, để không đổi giá trị đã có.
+  const RA_THULY_GD = {
+    dieu_tra: ["DS nhập vụ ĐT", "DS chuyển đi ĐT", "DS án huỷ ĐT"],
+    truy_to:  ["DS nhập vụ TT", "DS chuyển đi TT", "DS án huỷ TT"],
+    xet_xu:   ["DS nhập vụ XX", "DS chuyển đi XX", "DS án huỷ XX"],
+  };
+  const VAO_GD = { dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO };
+  // Vị trí (0-based, trong vals[]) của "Tồn kỳ trước — Vụ" mỗi giai đoạn — cột "BC" luôn ngay cột
+  // KẾ TIẾP (xem layout vals[]: [tp_vu, tp_bc, tn_vu, tn_bc, ...] lặp lại đầu mỗi khối giai đoạn).
+  const IDX_TON_TRUOC_VU = { dieu_tra: 0, truy_to: 34, xet_xu: 65 };
+  function mkThuLyVu(gd, r) {
+    const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 3); // +3: bù cột A(Mã ĐL)/B(Số điều)/C(Tên)
+    const vaoF = VAO_GD[gd].map(s => mkSfVu(s, r)).join("+");
+    const raF = RA_THULY_GD[gd].map(s => mkSfVu(s, r)).join("-");
+    return `${tonTruocCol}${r}+${vaoF}-${raF}`;
+  }
+  function mkThuLyBc(gd, r) {
+    const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 1 + 3); // +1: cột BC ngay sau cột Vụ
+    const vaoF = VAO_GD[gd].map(s => mkCfBc(s, r)).join("+");
+    const raF = RA_THULY_GD[gd].map(s => mkCfBc(s, r)).join("-");
+    return `${tonTruocCol}${r}+${vaoF}-${raF}`;
+  }
   const ALL_VAO = [...DT_VAO, ...TT_VAO, ...XX_VAO];
   const ALL_TON = ["DS tồn ĐT","DS tồn TT","DS tồn XX"];
   const ALL_RA = [
@@ -8096,6 +8127,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     "DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX",
   ];
   const B10_FORMULA = {
+    // ── "Tổng thụ lý" (C3/C4, C33/C34, C60/C61) — xem mkThuLyVu/mkThuLyBc + bieu_B10_mo_ta.md 3.2 ──
+    4:  r => mkThuLyVu("dieu_tra", r),  // C3 Tổng thụ lý ĐT — Vụ
+    5:  r => mkThuLyBc("dieu_tra", r),  // C4 Tổng thụ lý ĐT — Bị can
+    38: r => mkThuLyVu("truy_to", r),   // C33 Tổng thụ lý TT — Vụ
+    39: r => mkThuLyBc("truy_to", r),   // C34 Tổng thụ lý TT — Bị can
+    69: r => mkThuLyVu("xet_xu", r),    // C60 Tổng thụ lý XX — Vụ
+    70: r => mkThuLyBc("xet_xu", r),    // C61 Tổng thụ lý XX — Bị can
     // ── VỤ-level SUMIF (SUMIF cột A × cột B Mã ĐL vụ) ──
     7:  r => `${mkSfVu("DS khởi tố ĐT",r)}+${mkSfVu("DS phục hồi ĐT",r)}`,  // C6 ĐT khởi tố vụ
     26: r => mkSfVu("DS chuyển đến TT",r),   // C25 ĐT → TT vụ

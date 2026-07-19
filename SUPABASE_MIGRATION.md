@@ -1141,3 +1141,54 @@ bảo nó THỰC SỰ được dùng tới nếu đi qua nhiều tầng componen
    Playwright cho các luồng nghiệp vụ chưa test qua Supabase (Tách vụ/Nhập vụ/Xoá vụ.../Thùng rác).
 4. Cân nhắc thêm UI đổi mật khẩu trong `qlahs-sup.html` trước khi 4 cán bộ thật bắt đầu dùng — hiện
    họ đang dùng chung 1 mật khẩu tạm, cần tự đổi lại mật khẩu riêng.
+
+## 10. Nhánh `bieu-10-cong-thuc-day-du` — sheet-hoá nốt cột "Tổng thụ lý" của Biểu B10
+
+Nhánh riêng (tách từ `supabase-migration`, theo yêu cầu Dũng "cẩn thận" trước khi đụng vào báo cáo
+chính thức). Vấn đề Dũng nêu: cột "Tồn kỳ trước/kỳ này" và "Tổng thụ lý" (C3/C4, C33/C34, C60/C61)
+trong sheet "Biểu B10" vẫn ghi số JS tĩnh, không có công thức Excel như các cột trọng số khác — khác
+đúng vấn đề đã ghi ở CLAUDE.md ("Biểu B10 vẫn còn 1 nhóm ô chưa sheet-hoá") từ trước.
+
+**Đã làm rõ 2 loại, chỉ sửa 1 loại**:
+- **"Tồn kỳ trước/kỳ này"** (12 cột: vals[0-3, 34-37, 65-68]) — SNAPSHOT tại 1 thời điểm (từ
+  `kybaocao.tonCuoiKyTheoTD` của kỳ trước/kỳ này), không phải danh sách sự kiện trong kỳ này — KHÔNG
+  có DS sheet nào để SUM/COUNTIF ra, giống hệt lý do "Tồn đầu/cuối kỳ" ở sheet "Tổng hợp báo cáo"
+  không sheet-hoá được. Giữ nguyên số tĩnh, đúng bản chất dữ liệu (đọc từ đâu: JSONB `tonCuoiKyTheoTD`
+  lưu trong `kybaocao` lúc chốt kỳ, KHÔNG phải "không biết lấy từ đâu" — chỉ là không có sheet chi
+  tiết nào tương ứng để trace).
+- **"Tổng thụ lý"** (6 cột: C3/C4, C33/C34, C60/C61) — SHEET-HOÁ ĐƯỢC, vì công thức (theo đúng
+  `bieu_B10_mo_ta.md` mục 3.2, đối chiếu khớp với code `tinhBieu10` đã audit từ trước) = Tồn kỳ
+  trước (ô CÙNG DÒNG) + Σ(DS khởi tố+phục hồi+tách+chuyển đến+trả về của giai đoạn đó) − Σ(DS nhập
+  vụ + DS chuyển đi + DS án huỷ của giai đoạn đó) — mọi thành phần đều có DS sheet sẵn có, tái dùng
+  nguyên vẹn `DT_VAO`/`TT_VAO`/`XX_VAO` đã định nghĩa cho các cột khác, chỉ thêm 2 helper
+  `mkThuLyVu`/`mkThuLyBc` + 6 entry mới vào `B10_FORMULA`. KHÔNG đổi GIÁ TRỊ (result vẫn = đúng số
+  JS đã audit nhiều lần trước đây) — chỉ thêm formula để click-trace được trong Excel.
+
+**Bug tự phát hiện + tự sửa trong lúc viết** (không phải giả thuyết suông): bản đầu quên trừ "DS án
+huỷ {gs}" trong công thức trừ (chỉ có nhập vụ + chuyển đi) — `bieu_B10_mo_ta.md` mục 3.2 mô tả rút
+gọn chỉ nêu 2 vế, nhưng code `tinhBieu10` thật (C3/C33/C60) LUÔN trừ thêm án huỷ — đối chiếu lại
+đúng theo code (nguồn tin cậy đã audit nhiều lần), không theo mô tả rút gọn, tránh đổi giá trị đã có.
+
+**Quirk hạ tầng phát hiện qua chính quá trình kiểm chứng (không phải bug của code này)**: ExcelJS
+KHÔNG lưu field `result` khi giá trị = 0 (đã tự viết test cô lập xác nhận: `{formula:"1-1",
+result:0}` ghi-đọc lại chỉ còn `{formula:"1-1"}`, mất `result`) — ảnh hưởng MỌI ô công thức có kết
+quả 0 trong toàn bộ file (kể cả các ô ĐÃ CÓ SẴN từ trước, không riêng 6 ô mới), không phải lỗi mới
+gây ra. Excel/LibreOffice thật vẫn tính đúng khi mở file thật (tự động recalculate on open, không
+phụ thuộc cache) — chỉ ảnh hưởng công cụ ExcelJS dùng để KIỂM TRA lại (không đọc lại được cache=0),
+không ảnh hưởng người dùng cuối. Đã điều chỉnh cách kiểm chứng để né đúng quirk này (xem dưới).
+
+**Đã kiểm chứng 3 lớp, không chỉ tin số liệu trùng khớp ngẫu nhiên**:
+1. Đối chiếu CODE trực tiếp — từng thành phần cộng/trừ trong `mkThuLyVu`/`mkThuLyBc` so khớp
+   term-by-term với chính biểu thức JS tính C3/C4/C33/C34/C60/C61 trong `tinhBieu10` (phát hiện bug
+   thiếu án huỷ chính từ bước này).
+2. Xuất Biểu B10 thật trên dữ liệu thật hiện có (300 vụ Điều tra) — mọi ô C3/C4 có formula VÀ result
+   khác 0 (VD "Điều 174 BLHS 2025" C3=171, C4=230), khớp đúng số liệu vốn đã hiển thị trước đây.
+3. **Test số khác 0 riêng cho Truy tố** (dữ liệu thật hiện tại 0 vụ ở Truy tố/Xét xử nên không tự
+   nhiên có ca thật để test C33/C34) — tạo 1 vụ TẠM (khởi tố mới trực tiếp tại Truy tố, kỳ "06/2026")
+   qua service_role, xuất lại B10: **C33=1, C34=1 — khớp CHÍNH XÁC**, công thức tham chiếu đúng ô
+   "Tồn trước" CÙNG DÒNG (`AL9`/`AM9`) + đủ 5 thành phần cộng + đủ 3 thành phần trừ. Đã xoá sạch vụ
+   test ngay sau đó, xác nhận dữ liệu về lại đúng trạng thái ban đầu (300/0/0, 0 lỗi console).
+
+**Chưa commit lên nhánh** tại thời điểm ghi chú này — sẽ commit ngay sau, xem lịch sử git để biết
+hash chính xác. Phạm vi CHỈ `qlahs-sup.html` (theo yêu cầu Dũng xác nhận đầu phiên) — chưa mirror
+sang `qlva.html`/`qlva-dev.html`.
