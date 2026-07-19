@@ -7215,16 +7215,20 @@ async function fetchBiCanTheoVuIds(vuIds) {
 // Helper: fetch kỳ thống kê THẬT của riêng từng bị can (từ sự kiện log khoi_to_bican, KHÔNG
 // phải field loaiKhoiTo — bị can bổ sung thêm sau vào 1 vụ cũ có kỳ khởi tố khác hẳn kỳ của vụ,
 // và log là nguồn sự thật duy nhất, đúng nguyên tắc thiết kế #1). Trả về Map<maBiCan, kyId>.
-// 1 query "in" duy nhất (checklist Supabase mục 5, bỏ chia lô 30); lọc loaiSuKien phía client để
-// khỏi cần thêm composite index (đã có sẵn index maVuAn + thoiDiemGhi, không có index cho maVuAn +
-// loaiSuKien — vẫn giữ nguyên lý do này, không liên quan gì tới việc chia lô "in").
+// 1 query "in" duy nhất (checklist Supabase mục 5, bỏ chia lô 30). TRƯỚC ĐÂY lọc loaiSuKien phía
+// CLIENT để khỏi cần thêm composite index Firestore (maVuAn+loaiSuKien) — dưới Postgres, thêm điều
+// kiện where thứ 2 KHÔNG cần index riêng mới hoạt động đúng (chỉ có thể không dùng được index cho
+// PHẦN ĐÓ của điều kiện, vẫn ra kết quả đúng) — lọc thẳng ở query, giảm số dòng phải tải về so với
+// tải NGUYÊN lịch sử rồi lọc lại (VD 1 vụ nhiều lần trả hồ sơ/chuyển giai đoạn có thể có hàng chục
+// dòng log, chỉ 1 dòng là khoi_to_bican/bị can).
 async function fetchKyKhoiToBiCan(vuIds) {
   const map = new Map();
   if (!vuIds.length) return map;
-  const snap = await db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "in", vuIds).get();
+  const snap = await db.collection("lichsuChuyenGiaiDoan")
+    .where("maVuAn", "in", vuIds).where("loaiSuKien", "==", "khoi_to_bican").get();
   snap.docs.forEach(d => {
     const e = d.data();
-    if (e.loaiSuKien === "khoi_to_bican" && e.maBiCan) map.set(e.maBiCan, e.kyThongKe || null);
+    if (e.maBiCan) map.set(e.maBiCan, e.kyThongKe || null);
   });
   return map;
 }
@@ -9701,17 +9705,18 @@ function GiaoNhanHoSoModule({ currentUser }) {
     );
   }, [phien]);
 
-  // Không dùng orderBy kèm where ở đây để khỏi cần composite index mới — sắp xếp lại phía client.
+  // Trước đây tránh dùng orderBy kèm where ở đây để khỏi cần thêm composite index Firestore, tự
+  // sort lại phía client — checklist Supabase mục 5: Postgres không cần "deploy" index riêng như
+  // Firestore mới dùng được where+orderBy kết hợp (dù không có index composite, vẫn chạy đúng, chỉ
+  // có thể chậm hơn với bảng lớn — không đáng lo với quy mô "sự kiện của 1 phiên", vài chục dòng),
+  // dùng thẳng orderBy để server sort, bỏ dòng .sort() thủ công.
   useEffect(() => {
     if (!phien) { setDsQuet([]); return; }
-    return db.collection("lichsuChuyenGiaiDoan").where("phienGiaoNhanId", "==", phien.id).onSnapshot(
-      snap => {
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        list.sort((a, b) => (b.thoiDiemGhi?.toMillis?.() || 0) - (a.thoiDiemGhi?.toMillis?.() || 0));
-        setDsQuet(list);
-      },
-      err => console.error(err)
-    );
+    return db.collection("lichsuChuyenGiaiDoan").where("phienGiaoNhanId", "==", phien.id)
+      .orderBy("thoiDiemGhi", "desc").onSnapshot(
+        snap => setDsQuet(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+        err => console.error(err)
+      );
   }, [phien?.id]);
 
   useEffect(() => {

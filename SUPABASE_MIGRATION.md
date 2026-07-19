@@ -282,13 +282,15 @@ Lý do gốc (vẫn áp dụng cho 5 mục còn lại `[ ]`): viết shim là "g
 tầng dưới" (rủi ro thấp); checklist mục 5 là "chủ động đổi HÀNH VI ứng dụng" (bỏ live listener đóng
 băng, đổi UX phân trang...) — cần tách bạch để dễ khoanh vùng nếu có lỗi phát sinh.
 
-**Cập nhật lần 2 (cùng ngày)**: đã thêm rà mục "cursor pagination đóng băng" — quyết định GIỮ
-NGUYÊN (không phải bỏ sót, xem lý do chi tiết ở đúng mục đó) — và dọn xong phần kỹ thuật "giới hạn
-30-item của `in`" (không phải 1 trong 7 mục checklist chính thức, nhưng cùng tinh thần). Tổng kết
-tới đây: 2 mục bỏ hẳn (`firestoreCacheRegistry`, sentinel), 1 mục rà xong và giữ nguyên (cursor
-pagination). **3 mục còn thật sự chưa rà**: cache lạnh IndexedDB, các quyết định "hot data không
-cần live" khác (`BangBiCanCon`/`BangExcelModule`/cột Kỳ), `fetchWithTtlCache` — cộng 1 mục kỹ thuật
-nhỏ (né composite index thủ công). Để dành phiên sau.
+**Cập nhật lần 3 (cùng ngày)**: đã rà xong thêm "cursor pagination đóng băng" (quyết định GIỮ
+NGUYÊN, lý do chi tiết ở đúng mục đó) và "né composite index thủ công" (2 chỗ sửa, xem mục đó) —
+cộng dọn xong phần kỹ thuật "giới hạn 30-item của `in`" (không phải 1 trong 7 mục checklist chính
+thức, nhưng cùng tinh thần). **Tổng kết tới đây (4/7 mục checklist đã rà)**: 2 mục bỏ hẳn
+(`firestoreCacheRegistry`, sentinel), 1 mục rà xong và giữ nguyên (cursor pagination), 1 mục rà
+xong và sửa 2 chỗ (composite index). **3 mục còn thật sự chưa rà**: cache lạnh IndexedDB, các
+quyết định "hot data không cần live" khác (`BangBiCanCon`/`BangExcelModule`/cột Kỳ),
+`fetchWithTtlCache`. Để dành phiên sau — mục "hot data khác" cần rà TỪNG component riêng (không
+phải 1 thay đổi gọn như các mục đã làm), nên tách thành phiên riêng để không vội.
 
 ## 5. Checklist: rà lại các "tinh chỉnh vì Firebase" — KHÔNG mang nguyên xi sang Supabase
 
@@ -350,11 +352,22 @@ lại lợi ích cốt lõi nhưng bỏ phần phức tạp thừa) — rồi TE
       khi remount) — rà lại TỪNG cái, hỏi "đây có phải công cụ 1-người-thao-tác-tại-1-thời-điểm
       hay màn hình nhiều người cùng xem" — nếu là loại sau, cân nhắc khôi phục live vì Supabase
       không phạt việc đó về chi phí như Firestore.
-- [ ] **Kỹ thuật né composite index thủ công** (VD sort phía client thay vì `orderBy` + index cho
-      `phienGiaoNhan`/`lichsuChuyenGiaiDoan`, tránh phải deploy index Firestore mới) — Postgres tạo
-      index rẻ, không cần bước "deploy" riêng như Firestore — cân nhắc bỏ hẳn workaround, dùng
-      thẳng `ORDER BY` + index Postgres đã có sẵn trong `schema.sql`. **Chưa làm** — quy mô nhỏ,
-      để dành phiên sau cùng lúc với việc còn lại.
+- [x] **Kỹ thuật né composite index thủ công** — rà toàn bộ codebase (grep `composite index`), tìm
+      đúng **2 chỗ thật sự cần sửa** (1 chỗ khác ở `XoaHinhThucGiaiQuyetModal` tái dùng dữ liệu ĐÃ
+      TẢI SẴN thay vì query riêng — đây là thực hành tốt độc lập với backend, không phải "né index",
+      giữ nguyên):
+      1. `GiaoNhanHoSoModule`'s `dsQuet` — trước đây `where("phienGiaoNhanId","==",...)` KHÔNG kèm
+         `orderBy` (né composite index Firestore), tự `.sort()` lại phía client. Đổi sang
+         `.orderBy("thoiDiemGhi","desc")` server-side, bỏ dòng `.sort()` thủ công.
+      2. `fetchKyKhoiToBiCan` — trước đây `where("maVuAn","in",...)` rồi lọc `loaiSuKien` phía
+         CLIENT (né composite index `maVuAn+loaiSuKien`). Đổi sang lọc thẳng trong query
+         (`.where("loaiSuKien","==","khoi_to_bican")`) — Postgres không cần index riêng mới CHẠY
+         ĐÚNG (chỉ có thể không dùng được index cho phần đó, vẫn ra kết quả đúng), giảm số dòng
+         phải tải về so với tải nguyên lịch sử rồi lọc lại.
+      **Đã kiểm chứng bằng Playwright thật** (5 assertion mới, `test_sup_index_avoid.js`, có tạo
+      dữ liệu FK thật — phát hiện thêm ràng buộc `phienGiaoNhanId`/`maBiCan` là FK thật cần dữ liệu
+      hợp lệ, khác Firestore không kiểm tra tham chiếu): 3 sự kiện cùng phiên trả đúng đủ + đúng thứ
+      tự `orderBy` server-side; lọc `loaiSuKien` trong query đúng, không lẫn loại sự kiện khác.
 
 **Đã dọn xong (mục kỹ thuật, không phải "chưa làm")**: giới hạn 30-item của `where(..., "in", ...)`
 — đã xoá hết `chiaNhoDsId`/chia lô 30 trong `qlahs-sup.html` (7 call site: `batchLayBiCanList`,
