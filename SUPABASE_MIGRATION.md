@@ -621,9 +621,104 @@ sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự 
       (mục 4f). Phase 4 coi như HOÀN TẤT.
 - [ ] **Phase 5**: kiểm thử toàn diện trên project Supabase hiện có (đủ bộ Playwright hồi quy hiện
       có + kịch bản mới cho Realtime/RPC), quyết định hướng xử lý khoảng trống offline persistence.
-- [ ] **Phase 6**: **reset project Supabase** (xoá dữ liệu mock, giữ schema/RLS/RPC) → export/import
-      dữ liệu thật `qlahsp2`, đối chiếu số liệu kỹ, cắt sang production. Giữ Firestore ở chế độ
-      đọc-only 1 thời gian làm lưới an toàn trước khi ngừng hẳn.
+- [x] **Phase 6 (phần dữ liệu) ĐÃ HOÀN TẤT (2026-07-19)**: reset Supabase + export/import dữ liệu
+      THẬT từ `qlahsp2`, đối chiếu số liệu kỹ, kiểm chứng qua UI thật — xem mục 4n. **CHƯA cắt hẳn
+      sang production** (Firestore/`qlva.html` vẫn nguyên trạng, không đụng gì, làm lưới an toàn
+      theo đúng yêu cầu Dũng) — việc "ngừng hẳn Firestore" là quyết định RIÊNG, chưa làm.
+
+## 9. Phase 6 — Chuyển dữ liệu thật (2026-07-19)
+
+### 4n. Export/import dữ liệu thật từ `qlahsp2` production — ĐÃ HOÀN TẤT
+
+**Truy cập**: Dũng tạo Service Account key từ Firebase Console (`qlahsp2` → Project Settings →
+Service accounts) — dùng `firebase-admin` Node SDK đọc trực tiếp Firestore (không qua UI/Playwright
+như đợt mock trước, vì không có tài khoản Auth thật để đăng nhập `qlahsp2.web.app` — đúng cách hợp
+lệ hơn cho thao tác admin bất đồng bộ này). Key CHỈ dùng tạm trong scratchpad, **đã xoá ngay sau khi
+xong việc** (cả bản trong scratchpad lẫn nhắc Dũng xoá bản gốc trong Downloads) — không commit vào
+git, đúng nguyên tắc đã áp dụng cho mọi credential khác trong tài liệu này.
+
+**Export**: 12278 document/7 collection — `vuan`=1987, `bican`=2918, `lichsuChuyenGiaiDoan`=6732,
+`kybaocao`=4, `canbo`=34, `danhMucToiDanh`=586, `phienGiaoNhan`=17 — lớn hơn đáng kể so với mock
+data (`qlahs-test`, ~9354 document) vì đây là dữ liệu tích luỹ thật nhiều năm.
+
+**Audit trước khi đụng gì (theo đúng yêu cầu "xem lại hệ thống 1 lượt" của Dũng, không tự ý xoá/ghi
+đè khi chưa rà)**: quét toàn bộ 12278 document theo đúng checklist đã áp dụng cho mock data (enum/
+CHECK constraint, tham chiếu mồ côi FK, field cũ còn sót) — **sạch hơn hẳn mock**: 0 giá trị enum
+lạ, 0 tham chiếu mồ côi (có thể vì các công cụ "Chuẩn hoá" đã từng chạy trên chính production
+trước đây). Tìm được 2 vấn đề thật, cả 2 đều không mơ hồ:
+1. `vuan.daXoa` thiếu ở 1978/1987 dòng (field mới, dữ liệu cũ chưa có) → fallback `false`.
+2. `mucAnCoSauThang` (field CŨ, đã ghi trong CLAUDE.md là "cờ nhị phân +6 tháng" trước khi đổi sang
+   `mucAnThang` số tháng lẻ) — còn sót trên 7 `vuan` + 125 `lichsuChuyenGiaiDoan` — **toàn bộ 132
+   occurrence đều là `false`** (không có `true` nào) → quy đổi `mucAnThang = 0` là CHÍNH XÁC tuyệt
+   đối theo đúng ngữ nghĩa gốc của field cũ (không phải suy đoán), giữ đúng dữ liệu bản án thật thay
+   vì bỏ qua.
+Đã hỏi + được Dũng xác nhận rõ cả 2 điểm trước khi import (không tự quyết định trên dữ liệu án hình
+sự thật, khác hẳn cách xử lý "quyết định phù hợp cho MOCK DATA" ở Phase 4).
+
+**Bug thật gặp phải khi import (KHÁC lần trước, mới hoàn toàn)**: `ngayQuyetDinhUocTinh` (boolean
+NOT NULL DEFAULT false) làm insert `vuan` fail giữa chừng lô đầu tiên (0 dòng `vuan`/`bican`/... bị
+ảnh hưởng — `kybaocao`/`canbo`/`danhMucToiDanh` đã insert xong trước đó, an toàn, idempotent khi
+chạy lại). **Nguyên nhân gốc**: script import luôn liệt kê ĐỦ mọi cột trong câu `INSERT`, gán
+tường minh `NULL` cho cột thiếu dữ liệu — cách này ĐÈ MẤT `DEFAULT` của Postgres (Postgres chỉ tự
+áp `DEFAULT` khi cột đó HOÀN TOÀN vắng mặt khỏi câu lệnh, không phải khi được gán `NULL` tường
+minh). Đã rà lại **toàn bộ** cột NOT NULL của cả 7 bảng (không chỉ vá đúng 1 cột vừa lỗi) — tìm
+thêm 10 cột nữa cùng loại vấn đề (`soBiCan`/`biCanDaiDien`/`soQdKtBiCan`/`laLuuTru`/`tenPhien`/
+`soQuyetDinh`/`nguoiNhanThucTe`/`soButLuc`/`khongTiepNhan`/`lyDoKhongTiepNhan`) — tất cả đều là
+field mới hơn hoặc chỉ áp dụng cho 1 loại sự kiện cụ thể (VD 4 field cuối chỉ có ý nghĩa với
+`loaiSuKien='giao_nhan_ho_so'`), fallback khớp ĐÚNG giá trị `DEFAULT` ghi trong `schema.sql`, không
+suy đoán gì thêm. Sau khi vá đủ 12 cột, chạy lại từ đầu (idempotent) — **import thành công 100%,
+khớp CHÍNH XÁC số dòng ở cả 7 bảng**.
+
+**🔴 Bug thật NGHIÊM TRỌNG hơn, do chính trigger `bican_sync_vuan_trg` (mục 4j) gây ra** — phát
+hiện qua spot-check sau import, KHÔNG PHẢI từ audit trước: trigger tự tính `vuan.dieuLuat` = gộp
+từ `bican.toiDanh` mỗi khi `bican` thay đổi (kể cả INSERT hàng loạt lúc import) — nhưng **TOÀN BỘ
+2918 bị can thật đều có `toiDanh` rỗng hoàn toàn** (đúng bug Import Excel cũ đã audit kỹ trong
+CLAUDE.md "Audit 'chưa xác định điều luật'..."), nên trigger tính ra `NULL` và **GHI ĐÈ MẤT**
+`dieuLuat` hợp lệ vốn có sẵn trên Firestore gốc cho **782/789 vụ có bị can** — dữ liệu quý (điều
+luật đã ghi đúng qua nhiều năm) suýt mất vì áp dụng cơ chế MỚI (tin cậy tuyệt đối vào `bican` làm
+nguồn sự thật) lên dữ liệu LỊCH SỬ có "vết tích" từ trước khi cơ chế đó tồn tại.
+**Đã sửa theo đúng quy trình có sẵn trong app** (KHÔNG viết logic mới, tái dùng 1:1
+`BackfillDieuLuatBCTool` đã audit kỹ — xem `qlahs-sup.html` dòng 2126-2242): (1) khôi phục
+`vuan.dieuLuat` về đúng giá trị GỐC (từ file export JSON, không suy đoán) cho 782 vụ bị ghi đè mất;
+(2) chạy lại ĐÚNG logic backfill (khớp tên tội danh chuẩn hoá bỏ tiền tố "Tội ", khớp số điều, ưu
+tiên BLHS 2025, suy luận từ `dieuLuat` cấp vụ khi bị can rỗng hoàn toàn) cho toàn bộ 2918 bị can —
+trigger tự chạy lại đúng sau mỗi lần UPDATE `bican`, hội tụ về giá trị chính xác.
+**Kết quả cuối cùng: 2910/2918 bị can (99.7%) có `dieuLuatBC` chuẩn** ("Điều N BLHS 2025") — chỉ
+còn ĐÚNG 7 vụ (8 bị can) không suy luận được vì bản thân vụ đó cũng không có `dieuLuat` cấp vụ để
+tra (thiếu dữ liệu gốc thật, không phải lỗi) — khớp gần như chính xác tỷ lệ đã ghi nhận khi chạy
+công cụ này trên mock data trước đây (99.8%), xác nhận tính nhất quán của hệ thống. Lưu ý: field
+`vuan.dieuLuat` (cấp vụ) sau khi trigger tính lại hiển thị **TÊN TỘI DANH** gộp (VD "Tội lạm dụng
+tín nhiệm chiếm đoạt tài sản") thay vì **MÃ ĐIỀU LUẬT** như dữ liệu gốc Import Excel từng ghi thẳng
+("Điều 175 BLHS 2015") — đây là ĐỔI ĐỊNH DẠNG hiển thị (nhất quán với cách MỌI vụ khác trong hệ
+thống hiển thị field này từ trước, xem `tinhDieuLuat`), KHÔNG PHẢI mất dữ liệu — trường quan trọng
+cho thống kê B10 là `bican.dieuLuatBC` (mã chuẩn cấp bị can), đã điền đúng.
+**Bài học cho lần tới**: trigger tự động là "con dao 2 lưỡi" khi áp lên dữ liệu lịch sử tồn tại
+TRƯỚC khi trigger được thêm — luôn kiểm tra kỹ các field mà trigger sẽ TÍNH LẠI (không chỉ field
+trigger ĐỌC) có đang chứa dữ liệu quý cần bảo toàn hay không, trước khi import hàng loạt.
+
+**Seed lại `boDemMaVu`** theo đúng dữ liệu vuan thật (regex tách YYMM+SEQ từ mã vụ, lấy SEQ lớn
+nhất mỗi tháng) — 84 tháng, để tạo vụ án mới qua UI không bị trùng mã (đúng bug đã gặp + sửa ở
+Phase 4, mục 4f — lần này áp dụng ngay trong quy trình import, không phải phát hiện sau).
+
+**Đã kiểm chứng toàn diện**:
+- Đối chiếu số dòng: khớp CHÍNH XÁC cả 7 bảng (export = database).
+- Spot-check: `soBiCan` cache khớp 100% với đếm thật (0 lệch trên toàn bộ 1987 vụ); mọi vụ có bị
+  can đều có đúng 1 người `loaiKhoiTo='ban_dau'`; `dieuLuatBC` chuẩn 2910/2918 bị can.
+- **Qua UI thật** (Playwright, tài khoản test `b10verify@local.com`): đăng nhập, Danh sách vụ án
+  hiện đúng 300 vụ "đang giải quyết" (khớp SQL), mở chi tiết 1 vụ hiện đúng "Tội lạm dụng tín nhiệm
+  chiếm đoạt tài sản" (khớp kết quả backfill), Dashboard hiện đúng "300 vụ / 731 bị can" cho Điều
+  tra (0 cho Truy tố/Xét xử — **xác nhận qua SQL đây là số liệu THẬT**, toàn bộ vụ đang thụ lý của
+  đơn vị này hiện đều ở giai đoạn Điều tra, không phải lỗi), xuất Excel báo cáo tháng cho kỳ thật
+  "06/2026" thành công (311KB, không lỗi). "Tồn đầu kỳ" hiện 0/0/0 — **đúng dự kiến**, đây là kỳ
+  báo cáo đầu tiên trong hệ thống thật, không có kỳ trước để snapshot.
+- 0 lỗi console thật (chỉ 1 lần gặp lại đúng lỗi JWT clock-skew môi trường sandbox đã biết từ mục
+  4d, không phải bug — biến mất khi chạy lại).
+
+**CHƯA làm** (ngoài phạm vi đã thống nhất với Dũng ở bước xác nhận trình tự): KHÔNG đụng gì tới
+Firestore/`qlva.html` — vẫn chạy nguyên trạng làm lưới an toàn. KHÔNG cập nhật tài khoản 4 cán bộ
+thật để bắt đầu dùng Supabase — Supabase hiện có đầy đủ dữ liệu thật + đã kiểm chứng, nhưng việc
+"cắt hẳn sang production" (đổi để cán bộ dùng `qlahs-sup.html` thay vì `qlva.html`) là quyết định
+RIÊNG, cần Dũng xác nhận thêm khi sẵn sàng.
 
 ## 8. Trạng thái hiện tại
 
