@@ -431,8 +431,16 @@ sang Supabase (cuối Phase 6), không lặp lại nhiều vòng test như dự 
    dùng được từ môi trường thực thi hiện tại do chỉ hỗ trợ IPv6) — `psql`/COPY hoặc script Node
    dùng driver `pg`, nhanh hơn nhiều so với qua REST cho khối lượng ~1400 vụ + ~2250 bị can + hàng
    nghìn dòng log.
-4. **Đối chiếu**: so số dòng theo từng bảng, VÀ chạy lại các phép kiểm tra nghiệp vụ đã có (VD
-   tổng số liệu Biểu B10 của 1 kỳ đã chốt phải khớp giữa Firestore cũ và Postgres mới).
+4. **Đối chiếu**: so số dòng theo từng bảng (đúng những gì cần kiểm — export/import có thể sai
+   lệch dữ liệu, VD field mảng/ngày tháng convert sai). **KHÔNG cần** so sánh "B10 tính ra có khớp
+   giữa Firestore cũ và Postgres mới không" như 1 bước riêng — `tinhBieu10`/`tinhBaoCaoKy` là ĐÚNG
+   1 đoạn code JS không đổi gì khi qua shim (chỉ đổi tầng `db` bên dưới), không có chỗ nào để công
+   thức tính RA KHÁC ĐI giữa 2 hệ thống. Nếu B10 sai sau migrate thì chỉ có thể do (a) dữ liệu
+   export/import sai lệch, hoặc (b) shim trả sai dữ liệu so với Firestore — cả 2 đều là lỗi ở TẦNG
+   DỮ LIỆU, không phải lỗi B10. Chạy thử B10 sau khi nạp mock data vẫn có giá trị làm 1 phép thử
+   tổng hợp (chạm gần như mọi field/mọi collection cùng lúc, dễ lộ lỗi map dữ liệu hơn test đơn lẻ
+   từng bảng) — nhưng đúng bản chất là "kiểm tra dữ liệu qua 1 phép tính phức tạp", không phải
+   "đối chiếu logic B10".
 5. **Reset trước khi lên thật**: trước khi import dữ liệu `qlahsp2` thật ở Phase 6, xoá sạch dữ
    liệu mock đã nạp ở bước trên (giữ nguyên schema/RLS/RPC, chỉ xoá rows) — đúng ý định "reset lại
    khi hoàn thiện" Dũng đã nêu.
@@ -479,8 +487,10 @@ tiếp theo.
 1. Viết script export Firestore `qlahs-test` → import Supabase làm mock data (Phase 4), dùng lại
    đúng Session pooler đã xác nhận hoạt động (mục 4c) — nhớ `ALTER PUBLICATION supabase_realtime
    ADD TABLE` KHÔNG cần chạy lại (đã bật sẵn cho cả 8 bảng, xem mục 4d).
-2. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đó trước khi tính tới bước reset + dữ liệu thật —
-   đặc biệt kiểm chứng Biểu B10/số liệu báo cáo (logic tính toán phức tạp nhất trong app) khớp giữa
-   bản Firestore cũ và bản Postgres mới trên cùng 1 tập dữ liệu.
+2. Kiểm thử qua `qlahs-sup.html` với dữ liệu mock đó — trọng tâm là XÁC NHẬN DỮ LIỆU ĐÃ NẠP ĐÚNG
+   (số dòng, giá trị field, đặc biệt field mảng/ngày tháng dễ convert sai), không phải "so B10 với
+   Firestore" (xem lý do đã sửa ở mục 6 — B10 dùng chung 100% code, không có chỗ để tính khác đi).
+   Chạy thử Xuất Excel báo cáo tháng trên dữ liệu mock là 1 phép thử tổng hợp tốt để lộ lỗi map dữ
+   liệu, không phải bước "đối chiếu 2 hệ thống".
 3. Chuyển Auth sang Supabase Auth thật cho toàn bộ tài khoản cán bộ (Phase 3 — hiện chỉ có đúng 1
    tài khoản test `admintest@local.com` phục vụ phát triển/kiểm thử, chưa phải danh sách thật).
