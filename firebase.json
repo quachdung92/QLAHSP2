@@ -13,6 +13,11 @@
       "target": "test",
       "public": "public-test",
       "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+    },
+    {
+      "target": "sup",
+      "public": "public-sup",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
     }
   ]
 }

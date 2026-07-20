@@ -1,4 +1,5 @@
 .firebase/
 public-prod/
 public-test/
+public-sup/
 ~$*.xlsx

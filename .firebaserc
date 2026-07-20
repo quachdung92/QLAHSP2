@@ -16,8 +16,12 @@
       "hosting": {
         "test": [
           "qlahs-test"
+        ],
+        "sup": [
+          "qlahs-sup"
         ]
       }
     }
-  }
+  },
+  "etags": {}
 }
