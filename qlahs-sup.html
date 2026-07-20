@@ -5726,6 +5726,22 @@ function InQRModal({ vuAn, onDong }) {
 
   const dsBan = Array.from({ length: soLuong }, (_, i) => i);
 
+  // Bấm Esc để đóng modal — tiện hơn phải rê chuột tới đúng nút "Đóng", nhất là khi đang xem
+  // trước 1 trang A4 dài phải cuộn.
+  useEffect(() => {
+    const xuLy = (e) => { if (e.key === "Escape") onDong(); };
+    window.addEventListener("keydown", xuLy);
+    return () => window.removeEventListener("keydown", xuLy);
+  }, [onDong]);
+
+  // Chế độ "góc giấy" nhiều bản: chia CẢ TỜ A4 thành lưới 6 ô đều nhau (2 cột × 3 hàng, đúng
+  // "2:2:2" theo hàng) để cắt dễ đo — mỗi ô là 1 hình chữ nhật cố định, cắt theo đúng đường lưới
+  // là xong, không phải đo riêng từng mã. Thứ tự điền ưu tiên ô gần góc TRÊN-PHẢI trước (đúng yêu
+  // cầu "vẫn nhớ mã QR căn gần lề trên và lề phải") — 1 bản (mặc định, phổ biến nhất) rơi đúng vào
+  // ô trên-phải, giữ nguyên cảm giác như bản gốc chỉ có 1 khung góc giấy trước đây.
+  const THU_TU_O_GOC_GIAY = [1, 0, 3, 2, 5, 4];
+  const oDuocDien = new Set(THU_TU_O_GOC_GIAY.slice(0, soLuong));
+
   const noiDung = (
     <div className="fixed inset-0 bg-black/40 z-50 overflow-auto print:bg-white print:overflow-visible">
       {/* Canh giữa bằng margin:auto (mx-auto) thay vì flex items-center — flex-center kết hợp
@@ -5736,14 +5752,19 @@ function InQRModal({ vuAn, onDong }) {
       {goc && <style>{"@page { margin: 5mm; }"}</style>}
       <div className="mx-auto my-8 print:my-0" style={{ width: "210mm" }}>
         <div id="qr-in-a4" className="bg-white relative flex flex-col shadow-xl print:shadow-none"
-             style={{ minHeight: "297mm" }}>
+             style={{ minHeight: "297mm", height: goc ? "297mm" : undefined }}>
           {/* Khối điều khiển — 1 khối DUY NHẤT (chữ hướng dẫn + số bản in + Đóng/In), canh GIỮA,
-              nằm trong luồng bố cục bình thường (không absolute như bản trước) để không bị lệch —
-              vì giờ đã gộp chung 1 khối nên không còn bug "Đóng/In trôi lên sát chữ hướng dẫn" như
-              lúc còn tách 2 khối riêng (khung QR góc giấy absolute không chiếm chỗ). */}
+              NẰM TRONG LUỒNG BỐ CỤC BÌNH THƯỜNG (không absolute) — CỐ Ý, để lưới QR bên dưới (cũng
+              ở luồng bình thường, xem ngay dưới) tự nhường chỗ, không cần z-index "cứu" 2 khối chồng
+              nhau. Bug đã gặp ở bản trước: lưới 6 ô dùng absolute (không chiếm chỗ trong luồng) nên
+              luôn đè lên đúng vùng này trên màn xem trước — dù bấm vẫn trúng nhờ z-index, nhìn vẫn
+              rối/che khuất QR hàng đầu. Nay khối này ẩn khi in (print:hidden, cao 0), nên lưới bên
+              dưới tự động "trồi" lên sát mép trang lúc in thật — không cần logic riêng cho 2
+              trường hợp màn hình/in. */}
           <div className="print:hidden flex flex-col items-center gap-3 pt-8 pb-4 px-4">
             <div className="text-sm text-slate-400 text-center max-w-md">
-              Xem trước trang in A4 — bấm "In" để in thật. Đổi kiểu in mặc định ở Cài đặt → Cài đặt chung.
+              Xem trước trang in A4 — bấm "In" để in thật, hoặc Esc để đóng. Đổi kiểu in mặc định ở
+              Cài đặt → Cài đặt chung.
             </div>
             <div className="flex items-center gap-2">
               <label className="text-xs text-slate-500">Số bản in (hồ sơ nhiều tập):</label>
@@ -5758,16 +5779,27 @@ function InQRModal({ vuAn, onDong }) {
           </div>
 
           {goc ? (
-            // Nhiều bản tự dàn hàng (flex-wrap) ngay trong vùng góc trên-phải — mỗi bản vẫn giữ
-            // đúng khung viền riêng để cắt rời từng cái, "dán đủ các tập" của cùng 1 hồ sơ.
-            <div className="absolute flex flex-wrap gap-2 justify-end" style={{ top: "5mm", right: "5mm", maxWidth: "18cm" }}>
-              {dsBan.map(i => (
-                <div key={i} className="flex flex-col items-center border-2 border-slate-700 rounded-lg px-4 py-3 bg-white">
-                  <div className="flex items-center gap-4">
-                    {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc={kichThuocQR} />}
-                    <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc={kichThuocQR} />
-                  </div>
-                  <div className="mt-1.5 text-xs text-slate-500 text-center break-words" style={{ maxWidth: rongToiDaTenVu }}>{vuAn.tenVu}</div>
+            // Lưới 6 ô đều nhau (2 cột × 3 hàng) — margin:5mm quanh lưới thay cho absolute top/
+            // right/left/bottom trước đây, để lưới nằm Ở LUỒNG BÌNH THƯỜNG ngay sau khối điều
+            // khiển (flex-1 lấp phần còn lại của trang), tự tránh đè lên nhau (xem giải thích ở
+            // khối điều khiển bên trên). Mỗi ô có viền chấm để thấy rõ đường cắt NGAY CẢ Ô CHƯA
+            // DÙNG (giúp "dễ căn" dù chỉ in 1-2 bản). Mỗi mã QR ghim đúng góc trên-phải CỦA CHÍNH
+            // Ô ĐÓ (không phải giữa ô) — cắt xong mỗi mảnh đều có QR nằm đúng 1 góc quen thuộc.
+            <div className="flex-1 grid" style={{
+              margin: "5mm",
+              gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(3, 1fr)",
+            }}>
+              {Array.from({ length: 6 }, (_, i) => (
+                <div key={i} className="relative border border-dashed border-slate-300">
+                  {oDuocDien.has(i) && (
+                    <div className="absolute top-0 right-0 flex flex-col items-center border-2 border-slate-700 rounded-lg px-3 py-2 bg-white">
+                      <div className="flex items-center gap-3">
+                        {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc={kichThuocQR} />}
+                        <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc={kichThuocQR} />
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500 text-center break-words" style={{ maxWidth: rongToiDaTenVu }}>{vuAn.tenVu}</div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
