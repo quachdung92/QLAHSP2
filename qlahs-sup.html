@@ -5674,7 +5674,7 @@ function taoQrDataUrl(text, size = 100) {
   return canvas ? canvas.toDataURL("image/png") : null;
 }
 
-function KhoiQR({ noiDung, nhan }) {
+function KhoiQR({ noiDung, nhan, kichThuoc = "5cm" }) {
   const containerRef = React.useRef(null);
   useEffect(() => {
     if (!containerRef.current) return;
@@ -5688,27 +5688,70 @@ function KhoiQR({ noiDung, nhan }) {
   return (
     <div className="flex flex-col items-center">
       <div ref={containerRef} className="[&>canvas]:w-full [&>canvas]:h-full [&>img]:w-full [&>img]:h-full"
-           style={{ width: "5cm", height: "5cm" }}></div>
+           style={{ width: kichThuoc, height: kichThuoc }}></div>
       <div className="mt-2 text-xs text-slate-400">{nhan}</div>
       <div className="text-sm font-mono">{noiDung}</div>
     </div>
   );
 }
 
+// Lấy/lưu kiểu in mã QR mặc định (localStorage, cùng pattern useBlhsMacDinh) — chọn 1 lần ở đây
+// là ghi nhớ luôn cho lần in tiếp theo (của mọi vụ), không phải chọn lại mỗi lần mở modal.
+// "day_du": khung QR to giữa trang A4 (mặc định gốc, giữ nguyên hành vi cũ).
+// "goc_giay": khung QR nhỏ hơn, đóng khung, ghim góc trên-phải sát lề — để cắt dán vào hồ sơ giấy.
+const KHOA_QR_KIEU_IN = "qlva_qrKieuInMacDinh";
+function useQrKieuInMacDinh() {
+  const [kieu, setKieu] = useState(() => localStorage.getItem(KHOA_QR_KIEU_IN) || "day_du");
+  const set = (v) => { localStorage.setItem(KHOA_QR_KIEU_IN, v); setKieu(v); };
+  return [kieu, set];
+}
+
 // Render qua portal vào #qr-print-root (ngoài #root) để khi in, ẩn #root đi mà không ẩn theo
 // khung QR này — xem chú thích ở khối CSS @media print trong <head>.
 function InQRModal({ vuAn, onDong }) {
+  const [kieuIn, setKieuIn] = useQrKieuInMacDinh();
+  const goc = kieuIn === "goc_giay";
+
   const noiDung = (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 print:bg-white overflow-auto">
-      <div id="qr-in-a4" className="bg-white flex flex-col items-center justify-center"
-           style={{ width: "210mm", minHeight: "297mm" }}>
-        <div className="text-sm text-slate-400 mb-8 print:hidden">Xem trước trang in A4 — bấm "In" để in thật (khổ QR ~5x5cm).</div>
-        <div className="flex items-center gap-10">
-          {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" />}
-          <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" />
+      {/* @page margin nhỏ CHỈ áp dụng khi đang ở chế độ "góc giấy" — mặc định browser thường chừa
+          lề in ~10-19mm, sẽ khiến khung không thể "sát lề" như yêu cầu. Đặt cục bộ trong component
+          (không đụng khối @media print chung ở <head>) theo đúng pattern đã dùng ở
+          BienBanGiaoNhanIn cho @page { size: landscape }. */}
+      {goc && <style>{"@page { margin: 5mm; }"}</style>}
+      <div id="qr-in-a4" className="bg-white relative" style={{ width: "210mm", minHeight: "297mm" }}>
+        <div className="print:hidden flex flex-col items-center gap-3 pt-8">
+          <div className="text-sm text-slate-400">Xem trước trang in A4 — bấm "In" để in thật.</div>
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+            {[["day_du", "Đầy đủ (giữa trang)"], ["goc_giay", "Nhỏ gọn (góc giấy, để cắt dán)"]].map(([v, lbl]) => (
+              <button key={v} onClick={() => setKieuIn(v)}
+                      className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${kieuIn === v ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                {lbl}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="mt-4 text-sm text-slate-500">{vuAn.tenVu}</div>
-        <div className="mt-10 flex gap-2 print:hidden">
+
+        {goc ? (
+          <div className="absolute flex flex-col items-center border-2 border-slate-700 rounded-lg px-4 py-3 bg-white"
+               style={{ top: "5mm", right: "5mm" }}>
+            <div className="flex items-center gap-4">
+              {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc="4cm" />}
+              <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc="4cm" />
+            </div>
+            <div className="mt-1.5 text-xs text-slate-500 text-center" style={{ maxWidth: "8cm" }}>{vuAn.tenVu}</div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center" style={{ minHeight: "230mm" }}>
+            <div className="flex items-center gap-10">
+              {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" />}
+              <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" />
+            </div>
+            <div className="mt-4 text-sm text-slate-500">{vuAn.tenVu}</div>
+          </div>
+        )}
+
+        <div className="print:hidden flex gap-2 justify-center py-8">
           <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
           <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
         </div>
