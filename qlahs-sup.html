@@ -140,13 +140,56 @@ function _makeQuerySnapshot(table, rows) {
   return { docs, size: docs.length, empty: docs.length === 0 };
 }
 
+// ---- Offline read cache (2026-07-20) — thay thế 1 PHẦN "offline persistence" của Firestore đã bỏ
+// (xem comment cuối file cũ "Offline persistence: KHÔNG CÓ tương đương Supabase sẵn có"). PHẠM VI
+// CỐ Ý HẸP, đã bàn với Dũng trước khi làm: CHỈ giữ ĐỌC (`.get()`/`.onSnapshot()`) hoạt động được
+// bằng dữ liệu đã tải trước đó khi mất mạng GIỮA LÚC đang dùng (đúng nhu cầu gốc "wifi chập chờn,
+// di chuyển giữa các phòng" — không phải offline-first thật). CỐ TÌNH KHÔNG xếp hàng/gửi lại các
+// lượt GHI (set/update/delete/batch_commit) khi mất mạng — với hồ sơ án hình sự thật, nhiều người
+// cùng sửa 1 vụ, gửi lại 1 lượt ghi "trễ" sau khi có mạng có rủi ro ghi đè lên thay đổi của người
+// khác đã xảy ra TRONG LÚC mất mạng mà không ai biết — thà báo lỗi ngay lúc ghi để người dùng chủ
+// động thử lại (hành vi ĐÃ CÓ SẴN của mọi nơi gọi set/update/delete — không cần sửa gì thêm), còn
+// hơn âm thầm ghi sai lên báo cáo/vụ án thật.
+//
+// Cache CHỈ ở bộ nhớ (không IndexedDB/localStorage) — mất khi tải lại trang, đúng ý "không lưu đĩa"
+// đã thống nhất: dữ liệu án cũ tồn tại QUA NHIỀU NGÀY trong 1 cache đĩa không kiểm soát được có thể
+// gây hiểu nhầm nghiêm trọng hơn hẳn lợi ích (VD xem nhầm số liệu của hôm qua tưởng là hôm nay).
+//
+// Chỉ dùng cache khi lỗi trông giống MẤT KẾT NỐI THẬT (fetch tự ném lỗi, KHÔNG có field "code" —
+// mọi lỗi PostgREST trả về đều có "code"/"details"/"hint", xem `_isLikelyNetworkError`), KHÔNG
+// dùng cache để che lỗi permission/RLS/truy vấn sai — những lỗi đó phải hiện ra ngay, giấu đi sẽ
+// biến bug thật thành "tưởng đang mất mạng", khó phát hiện hơn.
+const _readCacheStore = new Map(); // cacheKey -> snapshot đã tải thành công gần nhất
+const _READ_CACHE_MAX = 300; // chặn phình vô hạn qua 1 phiên dùng rất dài, không cần chính xác tuyệt đối
+function _isLikelyNetworkError(err) {
+  return !(err && typeof err === "object" && "code" in err);
+}
+async function _getWithFallback(cacheKey, fetchFn) {
+  try {
+    const result = await fetchFn();
+    if (_readCacheStore.size >= _READ_CACHE_MAX && !_readCacheStore.has(cacheKey)) {
+      _readCacheStore.delete(_readCacheStore.keys().next().value); // bỏ entry cũ nhất (Map giữ thứ tự chèn)
+    }
+    _readCacheStore.set(cacheKey, result);
+    return result;
+  } catch (err) {
+    if (_isLikelyNetworkError(err) && _readCacheStore.has(cacheKey)) {
+      console.warn("Mất mạng — hiện dữ liệu đã tải trước đó (có thể cũ) cho:", cacheKey);
+      return _readCacheStore.get(cacheKey);
+    }
+    throw err;
+  }
+}
+
 function _makeDocRef(table, id) {
   return {
     id, _table: table,
     async get() {
-      const { data, error } = await sb.from(table).select("*").eq("id", id).limit(1);
-      if (error) throw error;
-      return _makeDocSnapshot(table, id, data && data[0] ? data[0] : null);
+      return _getWithFallback("doc:" + table + ":" + id, async () => {
+        const { data, error } = await sb.from(table).select("*").eq("id", id).limit(1);
+        if (error) throw error;
+        return _makeDocSnapshot(table, id, data && data[0] ? data[0] : null);
+      });
     },
     async set(data, opts) {
       const resolved = await _resolveFieldValues(table, id, data);
@@ -281,24 +324,31 @@ function _makeQuery(table, state) {
       // thể lặp/bỏ sót (PostgREST không đảm bảo thứ tự ổn định giữa các dòng "hoà" nhau qua nhiều
       // lần gọi .range() riêng biệt). Chưa gây sự cố thật (các query này hiện <500 dòng, luôn gọn
       // trong 1 trang) nhưng sẽ lộ ra khi dữ liệu tăng — thêm tiebreak không tốn gì thêm.
-      if (state.limitN == null) {
-        const PAGE_SIZE = 500; // dưới ngưỡng cắt 1000 đã xác nhận thật, chừa biên an toàn
-        const hasIdOrder = state.orders.some(o => o.field === "id");
-        const stateOrdered = hasIdOrder ? state : { ...state, orders: [...state.orders, { field: "id", dir: "asc" }] };
-        let all = [];
-        let offset = 0;
-        while (true) {
-          const { data, error } = await _buildPgQuery(table, stateOrdered).range(offset, offset + PAGE_SIZE - 1);
-          if (error) throw error;
-          all = all.concat(data);
-          if (data.length < PAGE_SIZE) break;
-          offset += PAGE_SIZE;
+      //
+      // Bọc _getWithFallback (2026-07-20, xem comment "Offline read cache" đầu file) — cacheKey chỉ
+      // cần ĐỦ PHÂN BIỆT giữa các truy vấn khác nhau (không cần tuyệt đối chính xác, chỉ dùng khi
+      // ĐANG lỗi mạng thật để tìm lại kết quả THÀNH CÔNG GẦN NHẤT của ĐÚNG truy vấn này).
+      const cacheKey = "query:" + table + ":" + JSON.stringify(state);
+      return _getWithFallback(cacheKey, async () => {
+        if (state.limitN == null) {
+          const PAGE_SIZE = 500; // dưới ngưỡng cắt 1000 đã xác nhận thật, chừa biên an toàn
+          const hasIdOrder = state.orders.some(o => o.field === "id");
+          const stateOrdered = hasIdOrder ? state : { ...state, orders: [...state.orders, { field: "id", dir: "asc" }] };
+          let all = [];
+          let offset = 0;
+          while (true) {
+            const { data, error } = await _buildPgQuery(table, stateOrdered).range(offset, offset + PAGE_SIZE - 1);
+            if (error) throw error;
+            all = all.concat(data);
+            if (data.length < PAGE_SIZE) break;
+            offset += PAGE_SIZE;
+          }
+          return _makeQuerySnapshot(table, all);
         }
-        return _makeQuerySnapshot(table, all);
-      }
-      const { data, error } = await self._pg();
-      if (error) throw error;
-      return _makeQuerySnapshot(table, data);
+        const { data, error } = await self._pg();
+        if (error) throw error;
+        return _makeQuerySnapshot(table, data);
+      });
     },
     onSnapshot(onNext, onError) {
       return _subscribe(table, {}, () => self.get(), onNext, onError);
@@ -312,10 +362,13 @@ function _makeQuery(table, state) {
     // đang dùng `.get()` để lấy DỮ LIỆU THẬT của từng dòng (đặc biệt các sheet danh sách của Biểu
     // B10 — những chỗ đó cần đúng nguyên bản ghi, không phải chỉ đếm).
     async count() {
-      const q = _buildPgQuery(table, { ...state, orders: [], startAfterCursor: null }, { count: "exact", head: true });
-      const { count, error } = await q;
-      if (error) throw error;
-      return count;
+      const cacheKey = "count:" + table + ":" + JSON.stringify(state);
+      return _getWithFallback(cacheKey, async () => {
+        const q = _buildPgQuery(table, { ...state, orders: [], startAfterCursor: null }, { count: "exact", head: true });
+        const { count, error } = await q;
+        if (error) throw error;
+        return count;
+      });
     },
     _pg() {
       let q = _buildPgQuery(table, state);

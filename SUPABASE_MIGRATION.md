@@ -1315,3 +1315,60 @@ vĩnh viễn"/Import Excel) — mới kiểm chứng ở tầng RPC/SQL trực t
 mật khẩu, offline persistence, Phase 5) + phát hiện phụ "anon gọi được 4 hàm DEFINER cũ" ở trên —
 CHƯA "chính thức chuyển sang Supabase" (chưa đổi 4 cán bộ thật sang dùng `qlahs-sup.html`), chờ
 Dũng xác nhận sau khi cân nhắc các điểm còn lại.
+
+**Cập nhật 2026-07-20 (ngay sau đó) — ĐÃ "CHÍNH THỨC CHUYỂN SANG SUPABASE" thật**: Dũng xác nhận
+merge `bieu-10-cong-thuc-day-du` vào `main`, push (`v1.2`); deploy `qlahs-sup.html` lên site test
+riêng `qlahs-sup.web.app` (`v1.3`); sau đó **đổi thẳng `qlahsp2.web.app` (production, 4 cán bộ thật)
+sang chạy `qlahs-sup.html`** (`v2.0`, `./deploy.sh prod` đổi nghĩa từ deploy `qlva.html` sang
+`qlahs-sup.html` — xem comment đầu `deploy.sh` để biết cách rollback khẩn cấp về `qlva.html` nếu
+cần). `qlva.html`/Firestore KHÔNG bị xoá, chỉ không còn được deploy production nữa.
+
+## 13. Offline read cache — giải quyết 1 phần khoảng trống "offline persistence" (2026-07-20)
+
+Sau khi cắt production sang Supabase (mục 12 cập nhật), Dũng yêu cầu xử lý tiếp khoảng trống
+"offline persistence" (mục "Còn treo" đã báo trước khi deploy) — nhánh riêng `offline-read-cache`
+(tách từ `main`, đã chứa toàn bộ Phase 1-4/6 + batch_commit).
+
+**Phạm vi đã bàn với Dũng trước khi làm (đề xuất, không tự quyết định 1 mình)**: CHỈ giữ **đọc**
+(`.get()`/`.onSnapshot()`/`.count()`) hoạt động được bằng dữ liệu đã tải trước đó khi mất mạng GIỮA
+LÚC đang dùng (đúng nhu cầu gốc đã ghi ở mục 2 "chống mất mạng tạm thời khi đang dùng", KHÔNG phải
+offline-first thật). **CỐ TÌNH KHÔNG** xếp hàng/gửi lại các lượt **ghi** khi mất mạng — lý do: hồ sơ
+án hình sự thật, nhiều người cùng sửa 1 vụ, gửi lại 1 lượt ghi "trễ" sau khi có mạng lại có rủi ro
+ghi đè lên thay đổi của người khác xảy ra ĐÚNG TRONG LÚC mất mạng mà không ai biết — thà báo lỗi
+ngay lúc ghi (hành vi ĐÃ CÓ SẴN ở mọi nơi gọi set/update/delete/batch_commit, không cần sửa) còn
+hơn âm thầm ghi sai lên báo cáo/vụ án thật. Cache CHỈ ở bộ nhớ (không IndexedDB/localStorage, mất
+khi tải lại trang) — dữ liệu án cũ tồn tại qua nhiều ngày trong cache đĩa không kiểm soát được có
+thể gây hiểu nhầm nghiêm trọng hơn lợi ích, khác hẳn cache lạnh IndexedDB đã làm cho "Án đã giải
+quyết" thời Firestore (đó là dữ liệu GẦN NHƯ BẤT BIẾN, không phải dữ liệu đang thay đổi liên tục).
+
+**Thiết kế** (`_getWithFallback`/`_readCacheStore`/`_isLikelyNetworkError`, đặt cạnh `_makeDocSnapshot`
+đầu lớp shim): mọi lần `.get()`/`.count()` thành công tự lưu kết quả vào 1 `Map` trong bộ nhớ theo
+`cacheKey` (dạng `"doc:<table>:<id>"` hoặc `"query:<table>:<JSON.stringify(state)>"`). Khi 1 lần gọi
+LỖI, chỉ dùng cache thay thế nếu lỗi **trông giống mất kết nối thật** (`_isLikelyNetworkError`: lỗi
+KHÔNG có field `code` — mọi lỗi PostgREST trả về đều CÓ `code`/`details`/`hint`, chỉ lỗi `fetch()` tự
+ném (mất mạng/DNS/timeout) mới thiếu field này) — cố tình **KHÔNG** dùng cache để che giấu lỗi
+permission/RLS/query sai thật (những lỗi đó phải hiện ra ngay, giấu đi sẽ biến bug thật thành
+"tưởng đang mất mạng"). Doc/query CHƯA từng tải thành công lần nào thì vẫn ném lỗi bình thường (không
+có gì để dùng tạm). Áp dụng ở đúng 3 nơi: `_makeDocRef.get()`, `_makeQuery.get()` (cả 2 nhánh phân
+trang/không phân trang), `_makeQuery.count()` — **`.onSnapshot()` tự động hưởng lợi** vì `_subscribe`
+gọi lại chính `.get()` làm `fetchFn`, không cần sửa gì thêm ở đó. Cache giới hạn 300 entry (LRU thô
+qua thứ tự chèn của `Map`), tránh phình vô hạn qua 1 phiên dùng rất dài.
+
+Banner cảnh báo mất mạng (`OfflineBanner`/`useOnline`) đã có sẵn từ trước (sót lại từ bản Firestore,
+không bị dọn trong đợt "dọn tàn dư Firebase" — xem mục 4k) — không cần thêm UI mới, chỉ thêm
+`console.warn` khi cache được dùng để dễ chẩn đoán lúc debug.
+
+**Đã kiểm chứng bằng test Node cô lập** (`vm` module, mock `sb.from()`/`.channel()`, không đụng
+Supabase thật — đúng cách đã dùng để test thứ tự `batch_commit` ở mục 12): 8/8 assertion PASS — đọc
+thành công rồi mất mạng trả đúng dữ liệu cũ (doc lẫn query); doc/query CHƯA từng tải thành công vẫn
+ném lỗi đúng khi mất mạng; lỗi PostgREST thật (có `code`) KHÔNG bị cache che giấu dù đã có cache sẵn;
+`onSnapshot()` tự động hưởng lợi qua đường gọi lại `get()`. Biên dịch Babel sạch. Test qua trình
+duyệt thật (server cục bộ, chưa đăng nhập — không tự nhập mật khẩu được) xác nhận màn đăng nhập tải
+sạch, 0 lỗi console.
+
+**CHƯA kiểm chứng**: test qua UI thật CÓ đăng nhập (mô phỏng mất mạng thật giữa lúc xem dữ liệu qua
+DevTools "offline" hoặc rút wifi) — cùng giới hạn không tự đăng nhập được đã gặp ở các phần trước.
+Nên tự thử 1 lần: mở 1 màn có dữ liệu (VD Danh sách vụ án), bật chế độ "Offline" trong DevTools, thao
+tác lại (chuyển tab/tìm kiếm) — xác nhận dữ liệu đã tải vẫn hiện được, không trắng màn hình/không báo
+lỗi vô nghĩa; thử LƯU 1 thay đổi trong lúc offline — xác nhận báo lỗi rõ ràng (không âm thầm mất/
+không tự động gửi lại khi có mạng).
