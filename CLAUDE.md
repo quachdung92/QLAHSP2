@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Bug tiếp theo: "Tồn cuối kỳ" xem trước (kỳ CHƯA chốt) vẫn dùng snapshot sống (2026-07-20)
+
+Ngay sau mục "Kỳ báo cáo: cho mở kỳ mới..." dưới đây — bản sửa đầu tiên chỉ sửa `chotKyBaoCao`
+(hàm chạy lúc bấm nút "Chốt kỳ"), NHƯNG người dùng phát hiện qua ảnh chụp báo cáo thật: xem TRƯỚC
+báo cáo của kỳ 06/2026 lúc còn "Đang mở" (chưa bấm Chốt kỳ) vẫn hiện "Tồn cuối kỳ" Điều tra = 299
+vụ/730 BC dù "Tổng số mới" = 300/731 và "Đã giải quyết" = 0 — thiếu đúng 1 vụ đã chuyển sang Truy tố
+NGOÀI ĐỜI THẬT nhưng sự kiện đó gắn `kyThongKe` = kỳ 07 (đúng lỗi snapshot sống y hệt đã sửa ở
+`chotKyBaoCao`, nhưng nằm ở CHỖ KHÁC: nhánh "kỳ chưa chốt" bên trong `tinhBaoCaoKyTuLog` — hàm
+`chotKyBaoCao` chỉ chạy khi THỰC SỰ bấm nút Chốt, còn màn xem trước (đang mở, `KyChiTietModal`)
+luôn gọi thẳng `tinhBaoCaoKyTuLog` mà KHÔNG qua `chotKyBaoCao`).
+
+**Đã sửa**: nhánh "kỳ chưa chốt" trong `tinhBaoCaoKyTuLog` (trước đây `const hienTaiSnap =
+db.collection("vuan").where(...).where("trangThai","==","dang_giai_quyet").get()`) đổi sang CÙNG
+công thức log đã dùng ở `chotKyBaoCao`: `tonCuoiKy = tonDauKy + soMoi.tong − soGiaiQuyetVu` (và
+tương tự cho bị can) — tái dùng các biến `tonDauKy`/`soMoi`/`chuyenDi`/`traDi`/`hoanThanhTheoGD`/
+`soNhapVu` ĐÃ có sẵn trong cùng scope hàm, không cần query thêm (còn NHANH HƠN bản cũ vì bỏ hẳn 1
+lượt query `vuan` sống). Tiện thể **đơn giản hoá lại `chotKyBaoCao`** — giờ nhánh "chưa chốt" của
+`tinhBaoCaoKyTuLog` đã tự tính đúng `tonCuoiKy`/`tonCuoiBiCanKy`, nên `chotKyBaoCao` không cần tính
+lại (trùng lặp) nữa, chỉ cần đọc thẳng `baoCaoSoBo[gd].tonCuoiKy`/`tonCuoiBiCanKy`.
+Cũng hoist các mảng `ds.tachVu/chuyenDen/traVe/chuyenDi/traDi` (kèm `_soBiCan`) lên TRƯỚC bước tính
+tồn cuối kỳ để dùng chung cho cả công thức log VÀ object `ds` cuối hàm — tránh gọi `vuAnTuLogDocs`
+2 lần cho cùng 1 snapshot (đỡ tốn query kép so với bản đầu).
+Sửa luôn 1 dòng ghi chú UI lỗi thời ở `KyChiTietModal` (nói "Tồn cuối kỳ đang lấy số tồn hiện tại"
+— không còn đúng nữa) thành giải thích đúng: tồn cuối kỳ tính theo log của kỳ, có thể khác "Số tồn
+hiện tại" (dòng riêng bên dưới, cố ý vẫn sống theo thời gian thực) nếu có vụ đổi trạng thái nhưng
+gắn kỳ khác.
+
+**Đã kiểm chứng trên dữ liệu Supabase THẬT** (không phải mock) — mở lại đúng báo cáo kỳ 06/2026 đã
+gặp lỗi trong ảnh chụp gốc: "Tồn cuối kỳ" Điều tra giờ hiện đúng 300 vụ/731 BC (khớp Tổng số mới),
+Truy tố/Xét xử 0/0 — "Số tồn hiện tại" (dòng riêng, cố ý vẫn live) vẫn đúng 299/730 và 1/1 như trước,
+xác nhận 2 con số này giờ tách bạch đúng ý nghĩa, không còn nhầm lẫn.
+
 ## Kỳ báo cáo: cho mở kỳ mới dù kỳ trước chưa chốt + tồn cuối kỳ tính bằng log (2026-07-20)
 
 Theo yêu cầu người dùng (đang trong giai đoạn nhập bù dữ liệu cũ, cần mở kỳ mới ngay dù kỳ hiện tại

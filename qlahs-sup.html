@@ -6607,31 +6607,16 @@ async function tinhSnapTonTheoTD() {
 // kỳ 06 nó vẫn đang tồn. Công thức log không phụ thuộc THỜI ĐIỂM tính (chỉ phụ thuộc kyThongKe đã
 // gắn trên từng sự kiện) nên đúng bất kể chốt sớm hay trễ bao lâu.
 async function chotKyBaoCao(ky, kyTruoc, ngayChot, nguoiChot) {
-  // Gọi tinhBaoCaoKyTuLog với trangThai "dang_mo" — CHỈ để tái dùng các số mới/đã giải quyết đã
-  // tính sẵn theo log (soMoi, chuyenDi, traDi, hoanThanhTheoGD, soNhapVu, và các mảng ds.* kèm
-  // _soBiCan từng vụ); giá trị tonCuoiKy/tonCuoiBiCanKy nó tự tính bên trong (nhánh live snapshot)
-  // bị BỎ QUA, ghi đè bằng công thức log ngay dưới đây trước khi đông cứng vào baoCaoLuu.
+  // Gọi tinhBaoCaoKyTuLog với trangThai "dang_mo" — nhánh "chưa chốt" của chính hàm đó ĐÃ tự tính
+  // tonCuoiKy/tonCuoiBiCanKy bằng công thức log (tồn đầu kỳ + mới − đã giải quyết, xem chú thích
+  // tại đó) nên không cần tính lại ở đây nữa — chỉ cần gom lại thành object tonCuoiKy/tonCuoiBiCan
+  // theo giai đoạn để lưu vào kybaocao (bảng "Cân đối số liệu"/kỳ sau dùng làm tồn đầu kỳ).
   const baoCaoSoBo = await tinhBaoCaoKyTuLog({ ...ky, trangThai: "dang_mo" }, kyTruoc);
   const tonCuoiKy = {};
   const tonCuoiBiCan = {};
-  const tongBiCan = (arr) => arr.reduce((s, v) => s + (v._soBiCan || 0), 0);
   for (const gd of THU_TU_GIAI_DOAN) {
-    const b = baoCaoSoBo[gd];
-    const soGiaiQuyetVu = b.chuyenDi + b.traDi
-      + Object.values(b.hoanThanhTheoGD).reduce((s, n) => s + n, 0) + b.soNhapVu;
-    const bcMoi = tongBiCan(b.ds.khoiToTrucTiep) + tongBiCan(b.ds.tachVu)
-      + tongBiCan(b.ds.chuyenDen) + tongBiCan(b.ds.traVe);
-    // ds.hoanThanh là object {hinhThuc: [...]} (5 hình thức) — cộng dồn BC của cả 5 mảng con.
-    const bcGiaiQuyet = tongBiCan(b.ds.chuyenDi) + tongBiCan(b.ds.traDi)
-      + Object.values(b.ds.hoanThanh).reduce((s, arr) => s + tongBiCan(arr), 0)
-      + tongBiCan(b.ds.nhapVu);
-    tonCuoiKy[gd] = b.tonDauKy + b.soMoi.tong - soGiaiQuyetVu;
-    tonCuoiBiCan[gd] = b.tonDauBiCan + bcMoi - bcGiaiQuyet;
-    // Ghi đè giá trị snapshot sống (tính sai ở trên) bằng giá trị log-based, TRƯỚC KHI đông cứng
-    // qua tachBaoCaoLuu — để KyChiTietModal sau này đọc baoCaoLuu ra đúng số đã sửa, không phải
-    // số live-snapshot cũ.
-    b.tonCuoiKy = tonCuoiKy[gd];
-    b.tonCuoiBiCanKy = tonCuoiBiCan[gd];
+    tonCuoiKy[gd] = baoCaoSoBo[gd].tonCuoiKy;
+    tonCuoiBiCan[gd] = baoCaoSoBo[gd].tonCuoiBiCanKy;
   }
   // tonCuoiKyTheoTD (theo tội danh, dùng cho Biểu B10) VẪN giữ snapshot sống như cũ trong lần
   // chốt đầu — nếu chốt trễ như kịch bản trên, số này CÓ THỂ lệch tương tự; công cụ "Sửa lại tồn
@@ -6886,28 +6871,56 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh });
     }));
 
-    let tonCuoiKy;
+    // Hoist các mảng ds.* (kèm _soBiCan từng vụ) LÊN TRƯỚC bước tính tonCuoiKy — vừa để dùng
+    // chung công thức log-based bên dưới (bcMoi/bcGiaiQuyet), vừa tránh gọi lại vuAnTuLogDocs
+    // 2 LẦN cho cùng 1 snapshot khi dựng object baoCao[gd].ds ở cuối (đỡ tốn query kép).
+    const dsTachVuArr = await vuAnTuLogDocs(tachVuSnap.docs);
+    const dsChuyenDenArr = await vuAnTuLogDocs(chuyenDenSnap.docs);
+    const dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs);
+    const dsChuyenDiArr = await vuAnTuLogDocs(chuyenDi.docs);
+    const dsTraDiArr = await vuAnTuLogDocs(traDi.docs);
+
+    let tonCuoiKy, tonCuoiBiCanKy;
     if (ky.trangThai === "da_chot" && ky.tonCuoiKy) {
       tonCuoiKy = ky.tonCuoiKy[gd] ?? 0;
+      tonCuoiBiCanKy = ky.tonCuoiBiCan?.[gd] ?? 0;
     } else {
-      const hienTaiSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
-      // Loại vụ đã "Đưa vào thùng rác" (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
-      tonCuoiKy = hienTaiSnap.docs.filter(d => !d.data().daXoa).length;
+      // Kỳ CHƯA CHỐT (đang xem trước) — tính bằng CÔNG THỨC LOG (tồn đầu kỳ + mới − đã giải
+      // quyết, theo đúng kyThongKe) giống hệt chotKyBaoCao, THAY VÌ snapshot sống trạng thái vuan
+      // hiện tại như trước đây. Bug đã sửa (2026-07-20, phát hiện qua báo cáo thật): xem trước kỳ
+      // 06/2026 còn mở, "Tổng số mới" Điều tra = 300 và "Đã giải quyết" = 0 (không có sự kiện nào
+      // gắn kyThongKe=06 cho việc chuyển đi) nhưng "Tồn cuối kỳ" lại hiện 299 — thiếu đúng 1 vụ đã
+      // ĐƯỢC CHUYỂN SANG TRUY TỐ THẬT NGOÀI ĐỜI nhưng sự kiện đó gắn kyThongKe=07 (đúng kịch bản
+      // "kỳ 06 không giải quyết, thực tế giải quyết vào kỳ 07") — snapshot sống lúc xem đã không
+      // còn thấy vụ đó "đang giải quyết ở Điều tra" nữa nên đếm thiếu, trong khi dòng "Đã giải
+      // quyết" (log-based, đúng theo kyThongKe=06) vẫn đúng là 0. Đổi sang công thức log để 2 khối
+      // này LUÔN khớp nhau (tồn cuối kỳ = tồn đầu kỳ + số mới − số đã giải quyết hiển thị ngay phía
+      // trên), đúng bản chất "tồn cuối kỳ 06" không phụ thuộc việc vụ đó sau này (kỳ 07) ra sao.
+      const tongBiCan = (arr) => arr.reduce((s, v) => s + (v._soBiCan || 0), 0);
+      const soGiaiQuyetVu = chuyenDi.size + traDi.size
+        + Object.values(hoanThanhTheoGD).reduce((s, n) => s + n, 0) + soNhapVu;
+      const bcMoi = tongBiCan(dsKhoiToTrucTiep) + tongBiCan(dsTachVuArr)
+        + tongBiCan(dsChuyenDenArr) + tongBiCan(dsTraVeArr);
+      const bcGiaiQuyet = tongBiCan(dsChuyenDiArr) + tongBiCan(dsTraDiArr)
+        + Object.values(dsHoanThanhTheoGD).reduce((s, arr) => s + tongBiCan(arr), 0)
+        + tongBiCan(dsNhapVu);
+      tonCuoiKy = tonDauKy + soMoi.tong - soGiaiQuyetVu;
+      tonCuoiBiCanKy = tonDauBiCan + bcMoi - bcGiaiQuyet;
     }
 
     const { soVuTon, soBiCanTon, dsTon } = await tinhTonHienTaiTheoGD(gd);
 
     baoCao[gd] = {
       tonDauKy, tonDauBiCan, soMoi, chuyenDi: chuyenDi.size, traDi: traDi.size,
-      hoanThanhTheoGD, soNhapVu, tonCuoiKy, tonCuoiBiCanKy: soBiCanTon,
+      hoanThanhTheoGD, soNhapVu, tonCuoiKy, tonCuoiBiCanKy,
       soVuTon, soBiCanTon,
       ds: {
         khoiToTrucTiep: dsKhoiToTrucTiep,
-        tachVu: await vuAnTuLogDocs(tachVuSnap.docs),
-        chuyenDen: await vuAnTuLogDocs(chuyenDenSnap.docs),
-        traVe: await vuAnTuLogDocs(traVeSnap.docs),
-        chuyenDi: await vuAnTuLogDocs(chuyenDi.docs),
-        traDi: await vuAnTuLogDocs(traDi.docs),
+        tachVu: dsTachVuArr,
+        chuyenDen: dsChuyenDenArr,
+        traVe: dsTraVeArr,
+        chuyenDi: dsChuyenDiArr,
+        traDi: dsTraDiArr,
         hoanThanh: dsHoanThanhTheoGD,
         nhapVu: dsNhapVu,
         tonHienTai: dsTon,
@@ -9128,7 +9141,10 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
         {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} />}
         {!dangTai && ky.trangThai === "dang_mo" && (
           <div className="text-xs text-slate-400 mt-3">
-            Kỳ đang mở — "Tồn cuối kỳ" đang lấy số tồn hiện tại, sẽ chốt số chính thức khi bấm "Chốt kỳ".
+            Kỳ đang mở — "Tồn cuối kỳ" tính theo dữ liệu đã ghi nhận của kỳ này (tồn đầu kỳ + mới −
+            đã giải quyết), có thể khác "Số tồn hiện tại" bên dưới (luôn theo trạng thái thật tại
+            thời điểm xem) nếu có vụ đã thay đổi trạng thái nhưng gắn kỳ thống kê khác. Bấm
+            "Chốt kỳ" để ghi số này thành chính thức, dùng làm tồn đầu kỳ cho kỳ sau.
           </div>
         )}
         {!dangTai && ky.trangThai === "da_chot" && ky.baoCaoLuu && (
