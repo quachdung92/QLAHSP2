@@ -2405,6 +2405,233 @@ function BackfillNgayQuyetDinhTool() {
   );
 }
 
+// Upload lại file "Danh sách" ĐÃ XUẤT từ chính nút "Xuất Excel" (Danh sách vụ án, xem xuatExcel —
+// đúng cấu trúc flatHeader: 1 dòng/bị can, cột "Mã nội sinh"(A)/"Điều luật"(K) cấp vụ lặp lại) sau
+// khi cán bộ tự tay chuẩn hoá cột "Điều luật" sang đúng mẫu "Điều N BLHS YYYY" (2026-07-20, theo
+// yêu cầu Dũng — dữ liệu do CON NGƯỜI tra cứu/xác nhận, đáng tin hơn suy luận tự động, đặc biệt cho
+// các vụ hoàn toàn không có tội danh nào ở cả 2 cấp — xem CLAUDE.md mục 57 vụ đã liệt kê trước đó).
+// Đọc ĐÚNG bằng header text (không cố định vị trí cột) — chuẩn hoá tay trong Excel dễ chèn/xoá cột.
+function CapNhatDieuLuatTuFileTool() {
+  const [fileName, setFileName] = useState("");
+  const [state, setState] = useState("idle"); // idle | parsing | preview | writing | done | error
+  const [preview, setPreview] = useState(null); // { rows: [...], soKhongKhop, soThieuVu }
+  const [ghiDeCoSan, setGhiDeCoSan] = useState(false);
+  const [ketQua, setKetQua] = useState(null);
+  const [loi, setLoi] = useState("");
+
+  const onFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setFileName(file.name);
+    setState("parsing");
+    setLoi("");
+    setPreview(null);
+    setKetQua(null);
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: "array" });
+        const sheet = wb.Sheets["Danh sách"] || wb.Sheets[wb.SheetNames[0]];
+        if (!sheet) throw new Error("Không tìm thấy sheet nào trong file.");
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+        if (rows.length < 2) throw new Error("Sheet không có dữ liệu.");
+        const header = rows[0].map(h => String(h || "").trim());
+        const idxMaNoiSinh = header.indexOf("Mã nội sinh");
+        const idxDieuLuat = header.indexOf("Điều luật");
+        if (idxMaNoiSinh === -1 || idxDieuLuat === -1) {
+          throw new Error('Không tìm thấy cột "Mã nội sinh" hoặc "Điều luật" — đây có đúng file xuất từ nút "Xuất Excel" (Danh sách vụ án) không?');
+        }
+
+        // Gộp theo Mã nội sinh (file có N dòng/vụ nếu N bị can) — lấy giá trị Điều luật ĐẦU TIÊN
+        // khác rỗng gặp được (cột này lặp lại y hệt mọi dòng của cùng 1 vụ, chỉ cần 1 lần).
+        const dieuLuatTheoVu = new Map();
+        for (let i = 1; i < rows.length; i++) {
+          const ma = String(rows[i][idxMaNoiSinh] || "").trim();
+          const dl = String(rows[i][idxDieuLuat] || "").trim();
+          if (ma && dl && !dieuLuatTheoVu.has(ma)) dieuLuatTheoVu.set(ma, dl);
+        }
+        if (dieuLuatTheoVu.size === 0) throw new Error('Không có dòng nào vừa có "Mã nội sinh" vừa có "Điều luật".');
+
+        setState("checking");
+        const [vaSnap, bcSnap, dmSnap] = await Promise.all([
+          db.collection("vuan").get(), db.collection("bican").get(), db.collection("danhMucToiDanh").get(),
+        ]);
+        const vuanById = new Map(vaSnap.docs.map(d => [d.id, d.data()]));
+        const bcByVu = new Map();
+        bcSnap.docs.forEach(d => {
+          const bc = { id: d.id, ...d.data() };
+          if (!bcByVu.has(bc.maVuAn)) bcByVu.set(bc.maVuAn, []);
+          bcByVu.get(bc.maVuAn).push(bc);
+        });
+        const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
+
+        const previewRows = [];
+        for (const [ma, dlRaw] of dieuLuatTheoVu) {
+          const vuan = vuanById.get(ma);
+          if (!vuan) { previewRows.push({ ma, dlRaw, loai: "khong_thay_vu" }); continue; }
+          const ket = trichDieuLuatTuChuoi(dlRaw, dmByTen, dmByDieu);
+          if (!ket.dieuLuat) { previewRows.push({ ma, tenVu: vuan.tenVu, dlRaw, loai: "khong_khop_danh_muc" }); continue; }
+          const bcs = bcByVu.get(ma) || [];
+          const soBcThieu = bcs.filter(bc => !(bc.dieuLuatBC && bc.dieuLuatBC[0])).length;
+          previewRows.push({
+            ma, tenVu: vuan.tenVu, dlRaw, ten: ket.ten, dieuLuat: ket.dieuLuat,
+            soBiCan: bcs.length, soBcThieu, loai: bcs.length === 0 ? "vu_0_bican" : "vu_co_bican",
+          });
+        }
+        setPreview({
+          rows: previewRows,
+          soKhopDuoc: previewRows.filter(r => r.dieuLuat).length,
+          soKhongKhopDanhMuc: previewRows.filter(r => r.loai === "khong_khop_danh_muc").length,
+          soKhongThayVu: previewRows.filter(r => r.loai === "khong_thay_vu").length,
+        });
+        setState("preview");
+      } catch (err) {
+        setLoi("Lỗi đọc file: " + err.message);
+        setState("error");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const apDung = async () => {
+    setState("writing");
+    setLoi("");
+    try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const [bcSnap] = await Promise.all([db.collection("bican").get()]);
+      const bcByVu = new Map();
+      bcSnap.docs.forEach(d => {
+        const bc = { id: d.id, ...d.data() };
+        if (!bcByVu.has(bc.maVuAn)) bcByVu.set(bc.maVuAn, []);
+        bcByVu.get(bc.maVuAn).push(bc);
+      });
+
+      let soVuSua = 0, soBcSua = 0;
+      const capNhatVuAn = []; // {id: maVu} — cần chạy capNhatDieuLuatVaLoaiKhoiTo sau khi ghi bican
+      let batch = db.batch(); let ops = 0;
+      const commitNeu = async () => { if (ops >= 400) { await batch.commit(); batch = db.batch(); ops = 0; } };
+
+      for (const r of preview.rows) {
+        if (!r.dieuLuat) continue; // không thầy vụ hoặc không khớp danh mục — bỏ qua, không đoán
+        if (r.loai === "vu_0_bican") {
+          batch.update(db.collection("vuan").doc(r.ma), {
+            dieuLuat: r.ten, vuanToiDanh: [r.ten], vuanDieuLuat: [r.dieuLuat],
+            ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+          });
+          soVuSua++; ops++; await commitNeu();
+        } else {
+          const bcs = bcByVu.get(r.ma) || [];
+          let vuCoSua = false;
+          for (const bc of bcs) {
+            const daCo = !!(bc.dieuLuatBC && bc.dieuLuatBC[0]);
+            if (daCo && !ghiDeCoSan) continue; // mặc định chỉ điền chỗ thiếu, không ghi đè
+            const toiDanhMoi = [r.ten, ...(bc.toiDanh || []).slice(1)];
+            const dieuLuatMoi = [r.dieuLuat, ...(bc.dieuLuatBC || []).slice(1)];
+            batch.update(db.collection("bican").doc(bc.id), {
+              toiDanh: toiDanhMoi, dieuLuatBC: dieuLuatMoi,
+              ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+            });
+            soBcSua++; ops++; vuCoSua = true; await commitNeu();
+          }
+          if (vuCoSua) capNhatVuAn.push(r.ma);
+          else if (bcs.length === 0) { /* vụ có bị can trong preview nhưng rỗng thật lúc ghi — bỏ qua */ }
+        }
+      }
+      if (ops > 0) await batch.commit();
+
+      // Sau khi sửa bican, tính lại dieuLuat cấp vụ (gộp toiDanh) — RPC dùng chung, đã audit kỹ
+      // (xem capNhatDieuLuatVaLoaiKhoiTo trong supabase/functions.sql).
+      for (const ma of capNhatVuAn) {
+        await sb.rpc("capNhatDieuLuatVaLoaiKhoiTo", { p_ma_vu_an: ma });
+      }
+
+      soVuSua += capNhatVuAn.length; // đếm cả vụ có bị can được cập nhật gián tiếp qua bị can
+      setKetQua({ soVuSua, soBcSua, soVuCoBiCan: capNhatVuAn.length });
+      setState("done");
+    } catch (err) {
+      setLoi("Lỗi khi ghi: " + err.message);
+      setState("error");
+    }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Cập nhật điều luật từ file đã chuẩn hoá tay</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Dùng khi anh đã tải file qua nút "Xuất Excel" (Danh sách vụ án), tự tay sửa lại cột "Điều luật"
+        sang đúng mẫu "Điều N BLHS YYYY", rồi tải lại đây. Hệ thống tra từng dòng vào danh mục, áp
+        dụng cho vụ 0 bị can trực tiếp; vụ có bị can thì áp cho từng bị can (mặc định CHỈ điền chỗ còn
+        thiếu, không đụng bị can đã có sẵn dữ liệu — bật công tắc bên dưới nếu muốn ghi đè cả những
+        bị can đã có).
+      </p>
+      <label className="flex items-center gap-2 text-sm mb-3">
+        <CongTac checked={ghiDeCoSan} onChange={setGhiDeCoSan} nhan="Ghi đè cả bị can đã có sẵn điều luật" />
+      </label>
+      {state === "idle" || state === "parsing" || state === "checking" ? (
+        <div>
+          <input type="file" accept=".xlsx,.xls" onChange={onFile}
+                 className="text-sm file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:text-sm hover:file:bg-indigo-100" />
+          {fileName && (state === "parsing" || state === "checking") && (
+            <div className="text-xs text-slate-400 mt-1">Đang đọc {fileName}...</div>
+          )}
+        </div>
+      ) : null}
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-3">{loi}</div>}
+      {state === "preview" && preview && (
+        <div>
+          <div className="text-sm bg-blue-50 border border-blue-200 text-blue-800 rounded-lg p-3 mb-3">
+            Đọc được {preview.rows.length} vụ trong file — <b>{preview.soKhopDuoc}</b> khớp đúng danh mục,{" "}
+            {preview.soKhongKhopDanhMuc} không khớp danh mục nào (sẽ bỏ qua), {preview.soKhongThayVu} không tìm
+            thấy vụ tương ứng trong hệ thống (sẽ bỏ qua).
+          </div>
+          <div className="max-h-64 overflow-auto border border-slate-200 rounded-lg mb-3">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 sticky top-0">
+                <tr>
+                  <th className="text-left p-2">Mã vụ</th><th className="text-left p-2">Tên vụ</th>
+                  <th className="text-left p-2">Đọc từ file</th><th className="text-left p-2">Kết quả tra</th>
+                  <th className="text-left p-2">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.rows.map((r, i) => (
+                  <tr key={i} className="border-t border-slate-100">
+                    <td className="p-2 font-mono">{r.ma}</td>
+                    <td className="p-2">{r.tenVu || "—"}</td>
+                    <td className="p-2">{r.dlRaw}</td>
+                    <td className="p-2">{r.dieuLuat || <span className="text-red-500">không khớp</span>}</td>
+                    <td className="p-2">
+                      {r.loai === "khong_thay_vu" && <span className="text-red-500">Không tìm thấy vụ</span>}
+                      {r.loai === "khong_khop_danh_muc" && <span className="text-red-500">Không khớp danh mục</span>}
+                      {r.loai === "vu_0_bican" && <span className="text-green-600">Vụ 0 bị can — sẽ cập nhật</span>}
+                      {r.loai === "vu_co_bican" && (
+                        <span className="text-green-600">
+                          {r.soBiCan} bị can ({r.soBcThieu} còn thiếu{ghiDeCoSan ? ", sẽ ghi đè hết" : ""})
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button onClick={apDung} className="px-3 py-1.5 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white">
+            Áp dụng {preview.soKhopDuoc} vụ khớp được
+          </button>
+        </div>
+      )}
+      {state === "writing" && <div className="text-sm text-slate-600">Đang ghi vào hệ thống...</div>}
+      {state === "done" && ketQua && (
+        <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg p-4">
+          ✓ Đã cập nhật {ketQua.soVuSua} vụ ({ketQua.soBcSua} bị can), trong đó {ketQua.soVuCoBiCan} vụ tính lại
+          điều luật cấp vụ tự động từ bị can vừa sửa.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Sửa loaiKhoiTo bị ghi sai bởi bug cũ ở ImportExcelModule (hardcode "khoi_to_moi" — giá trị
 // KHÔNG HỢP LỆ, đã sửa code 2026-07-13 để bắt import mới tính đúng, nhưng bị can đã import TRƯỚC
 // lúc sửa vẫn còn giá trị sai trong Firestore). Biểu B10 lọc bị can === "ban_dau" mới tính vào
@@ -3302,6 +3529,7 @@ function ImportExcelModule() {
       <DungLaiLichSuTool />
       <SeedDanhMucTool />
       <BackfillDieuLuatBCTool />
+      <CapNhatDieuLuatTuFileTool />
       <BackfillLoaiKhoiToTool />
       <BackfillTomTatBiCanTool />
       <BackfillNgayQuyetDinhGiaoNhanTool />
