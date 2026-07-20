@@ -2,6 +2,115 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Import Excel: resolve "Mã ĐL" (điều luật) NGAY lúc import, sửa file mẫu (2026-07-20)
+
+Theo yêu cầu người dùng: dữ liệu import qua Excel vẫn luôn cần chạy thêm "Chuẩn hóa tội danh /
+điều luật bị can" (Cài đặt → Import Excel) sau đó, nếu không sẽ hiện "chưa xác định" — muốn file
+mẫu tự hướng dẫn đúng ngay từ đầu để KHÔNG cần bước chạy lại này nữa.
+
+**Nguyên nhân**: `ghiVaoCoSoDuLieu` (hàm ghi dữ liệu Import Excel vào CSDL) LUÔN ghi cứng
+`dieuLuatBC: [""]` cho mọi bị can, bất kể cột "Tội danh" trong file có ghi đúng định dạng hay
+không — hoàn toàn không tra danh mục lúc import (khác với suy nghĩ ban đầu là "tra sai", thực ra
+là "không tra gì cả"). Thêm nữa, ví dụ mẫu trong chính file `Mau_Import_DanhSachAn.xlsx` lại ghi
+sai định dạng ("Tội cướp tài sản (Điều 168 BLHS)" — có phần "(Điều...)" phía sau), và "Hướng dẫn"
+không hề nhắc gì về cách ghi cột này — dạy người dùng đúng cách sẽ VẪN không tự nhận được vì code
+không tra cứu lúc import.
+
+**Đã sửa (2 phần)**:
+1. **Gộp logic chuẩn hoá 1 cặp (tên tội danh, mã điều luật) thành 2 hàm dùng chung mới**
+   `taoDanhMucDayDu`/`chuanHoaMotToiDanh` (đặt cạnh `layMaDieuLuatBiCan`) — trích nguyên logic đã
+   có trong `BackfillDieuLuatBCTool` (tra theo số điều → theo tên → suy từ Điều luật cấp vụ nếu
+   trống hoàn toàn), rồi cho `BackfillDieuLuatBCTool` DÙNG LẠI 2 hàm này (giảm trùng lặp) và THÊM
+   MỚI: `ghiVaoCoSoDuLieu` (Import Excel) cũng gọi đúng 2 hàm này để resolve `dieuLuatBC` NGAY lúc
+   ghi — không cần chạy "Chuẩn hóa" riêng sau nữa cho dữ liệu import ĐÚNG định dạng.
+2. **Sửa file mẫu `Mau_Import_DanhSachAn.xlsx`** (qua script Python/openpyxl, xoá sau khi chạy —
+   xem ghi chú "Tài liệu tham khảo" ở dưới về việc không có script gốc làm nguồn sự thật): thêm
+   mục "6b. Cột 'Tội danh' (bị can)..." vào sheet "Hướng dẫn", giải thích rõ 2 cách ghi hợp lệ
+   (tên đầy đủ khớp danh mục, hoặc chỉ số điều luật) và CẢNH BÁO rõ định dạng sai ("Tên (Điều N)");
+   sửa lại 2 dòng ví dụ ở sheet "Danh sách án" từ "Tội cướp tài sản (Điều 168 BLHS)" (sai, không
+   khớp danh mục) thành "Tội cướp tài sản" (đúng, khớp `DANH_MUC_TOI_DANH_MAM`). Cũng cập nhật
+   đoạn hướng dẫn hiển thị ngay trên màn hình Import Excel (`ImportExcelModule`) với nội dung
+   tương tự.
+
+**Đã kiểm chứng bằng test cô lập** (`test_import_dieuluat.js`, trích nguyên hàm mới): "Trộm cắp
+tài sản" (thiếu tiền tố "Tội ") tự resolve đúng "Điều 173 BLHS 2025"; "173" (chỉ số điều) tự
+resolve đúng cả tên lẫn mã; để trống hoàn toàn tự suy đúng từ Điều luật cấp vụ; định dạng SAI như
+ví dụ CŨ trong file mẫu ("Tội trộm cắp tài sản (Điều 173)") xác nhận KHÔNG resolve được — đúng lý
+do bắt buộc phải sửa ví dụ đó. 4/4 assertion PASS. Đã kiểm tra file `.xlsx` sau khi sửa mở lại
+bằng openpyxl không lỗi, cấu trúc cột (23 cột, header dòng 1) giữ nguyên như trước.
+**CHƯA import thử 1 file Excel thật qua UI** để xác nhận `dieuLuatBC` ghi đúng ngay trên dữ liệu
+Firestore/Supabase thật (chỉ kiểm chứng logic thuần qua test cô lập) — nên thử 1 lần trên
+`qlahs-sup.html` với file mẫu vừa sửa trước khi tin tưởng hoàn toàn.
+
+## Bug tiếp theo: "Tồn cuối kỳ" xem trước (kỳ CHƯA chốt) vẫn dùng snapshot sống (2026-07-20)
+
+Ngay sau mục "Kỳ báo cáo: cho mở kỳ mới..." dưới đây — bản sửa đầu tiên chỉ sửa `chotKyBaoCao`
+(hàm chạy lúc bấm nút "Chốt kỳ"), NHƯNG người dùng phát hiện qua ảnh chụp báo cáo thật: xem TRƯỚC
+báo cáo của kỳ 06/2026 lúc còn "Đang mở" (chưa bấm Chốt kỳ) vẫn hiện "Tồn cuối kỳ" Điều tra = 299
+vụ/730 BC dù "Tổng số mới" = 300/731 và "Đã giải quyết" = 0 — thiếu đúng 1 vụ đã chuyển sang Truy tố
+NGOÀI ĐỜI THẬT nhưng sự kiện đó gắn `kyThongKe` = kỳ 07 (đúng lỗi snapshot sống y hệt đã sửa ở
+`chotKyBaoCao`, nhưng nằm ở CHỖ KHÁC: nhánh "kỳ chưa chốt" bên trong `tinhBaoCaoKyTuLog` — hàm
+`chotKyBaoCao` chỉ chạy khi THỰC SỰ bấm nút Chốt, còn màn xem trước (đang mở, `KyChiTietModal`)
+luôn gọi thẳng `tinhBaoCaoKyTuLog` mà KHÔNG qua `chotKyBaoCao`).
+
+**Đã sửa**: nhánh "kỳ chưa chốt" trong `tinhBaoCaoKyTuLog` (trước đây `const hienTaiSnap =
+db.collection("vuan").where(...).where("trangThai","==","dang_giai_quyet").get()`) đổi sang CÙNG
+công thức log đã dùng ở `chotKyBaoCao`: `tonCuoiKy = tonDauKy + soMoi.tong − soGiaiQuyetVu` (và
+tương tự cho bị can) — tái dùng các biến `tonDauKy`/`soMoi`/`chuyenDi`/`traDi`/`hoanThanhTheoGD`/
+`soNhapVu` ĐÃ có sẵn trong cùng scope hàm, không cần query thêm (còn NHANH HƠN bản cũ vì bỏ hẳn 1
+lượt query `vuan` sống). Tiện thể **đơn giản hoá lại `chotKyBaoCao`** — giờ nhánh "chưa chốt" của
+`tinhBaoCaoKyTuLog` đã tự tính đúng `tonCuoiKy`/`tonCuoiBiCanKy`, nên `chotKyBaoCao` không cần tính
+lại (trùng lặp) nữa, chỉ cần đọc thẳng `baoCaoSoBo[gd].tonCuoiKy`/`tonCuoiBiCanKy`.
+Cũng hoist các mảng `ds.tachVu/chuyenDen/traVe/chuyenDi/traDi` (kèm `_soBiCan`) lên TRƯỚC bước tính
+tồn cuối kỳ để dùng chung cho cả công thức log VÀ object `ds` cuối hàm — tránh gọi `vuAnTuLogDocs`
+2 lần cho cùng 1 snapshot (đỡ tốn query kép so với bản đầu).
+Sửa luôn 1 dòng ghi chú UI lỗi thời ở `KyChiTietModal` (nói "Tồn cuối kỳ đang lấy số tồn hiện tại"
+— không còn đúng nữa) thành giải thích đúng: tồn cuối kỳ tính theo log của kỳ, có thể khác "Số tồn
+hiện tại" (dòng riêng bên dưới, cố ý vẫn sống theo thời gian thực) nếu có vụ đổi trạng thái nhưng
+gắn kỳ khác.
+
+**Đã kiểm chứng trên dữ liệu Supabase THẬT** (không phải mock) — mở lại đúng báo cáo kỳ 06/2026 đã
+gặp lỗi trong ảnh chụp gốc: "Tồn cuối kỳ" Điều tra giờ hiện đúng 300 vụ/731 BC (khớp Tổng số mới),
+Truy tố/Xét xử 0/0 — "Số tồn hiện tại" (dòng riêng, cố ý vẫn live) vẫn đúng 299/730 và 1/1 như trước,
+xác nhận 2 con số này giờ tách bạch đúng ý nghĩa, không còn nhầm lẫn.
+
+## Kỳ báo cáo: cho mở kỳ mới dù kỳ trước chưa chốt + tồn cuối kỳ tính bằng log (2026-07-20)
+
+Theo yêu cầu người dùng (đang trong giai đoạn nhập bù dữ liệu cũ, cần mở kỳ mới ngay dù kỳ hiện tại
+chưa chốt) — 2 thay đổi trong `qlahs-sup.html`, module Kỳ báo cáo:
+
+**1. `MoKyMoiForm` thêm checkbox "Bỏ qua cảnh báo 'kỳ trước chưa chốt'"** — trước đây mở kỳ mới
+LUÔN bị chặn cứng nếu còn 1 kỳ `dang_mo` khác (không phải lưu trữ), không có cách nào bypass. Giờ
+tích checkbox này thì bỏ qua hẳn bước kiểm tra, cho phép tồn tại 2 kỳ `dang_mo` cùng lúc. An toàn để
+bypass vì đã sửa mục 2 ngay dưới — tồn cuối kỳ không còn phụ thuộc thứ tự/thời điểm chốt.
+
+**2. `chotKyBaoCao` — tồn cuối kỳ (`tonCuoiKy`/`tonCuoiBiCan`, theo giai đoạn) đổi từ snapshot sống
+sang CÔNG THỨC LOG (tồn đầu kỳ + mới − đã giải quyết, theo đúng `kyThongKe` của từng sự kiện).**
+Lý do bắt buộc: thiết kế cũ giả định "chốt lúc = lúc kỳ thực sự kết thúc" (live trạng thái `vuan`
+tại thời điểm bấm chốt phản ánh đúng lịch sử) — giả định này VỠ khi chốt trễ (đúng kịch bản mục 1):
+vụ tồn ở kỳ 06/2026 nhưng sự kiện giải quyết nó lại được nhập SAU, gắn `kyThongKe` = kỳ 07/2026 —
+nếu tới lúc chốt 06/2026 mới query LIVE, vụ đó đã hết "đang giải quyết" nên bị đếm THIẾU khỏi tồn
+cuối kỳ 06, dù tại đúng thời điểm kết thúc kỳ 06 nó vẫn đang tồn. Công thức log không phụ thuộc THỜI
+ĐIỂM tính, chỉ phụ thuộc `kyThongKe` đã gắn trên sự kiện, nên đúng bất kể chốt sớm hay trễ bao lâu.
+Cài đặt: gọi `tinhBaoCaoKyTuLog` với `trangThai: "dang_mo"` để lấy lại các số mới/giải quyết đã tính
+theo log (bỏ qua giá trị tồn cuối kỳ nó tự tính bên trong theo nhánh live), rồi tự cộng dồn
+`tonDauKy + soMoi.tong − (chuyenDi + traDi + ΣhoanThanhTheoGD + soNhapVu)` — tương tự cho bị can qua
+`_soBiCan` có sẵn trên từng phần tử các mảng `ds.*`. Ghi đè `b.tonCuoiKy`/`b.tonCuoiBiCanKy` TRƯỚC
+khi đông cứng qua `tachBaoCaoLuu`, để `KyChiTietModal` đọc lại đúng số đã sửa.
+**`tonCuoiKyTheoTD` (theo tội danh, dùng cho Biểu B10) CHƯA được sửa theo hướng này** — vẫn giữ
+snapshot sống như cũ ở lần chốt đầu, có thể lệch tương tự nếu chốt trễ. Công cụ "Sửa lại tồn cuối
+kỳ theo tội danh (Biểu B10)" (Cài đặt → Import Excel, `TaiTaoTonTheoTDTool`) đã tính đúng theo log
+từ trước — chạy lại công cụ đó sau khi bù dữ liệu xong để đồng bộ số theo tội danh.
+
+**Đã kiểm chứng bằng test cô lập** (`test_tonCuoiKy_log.js`, mô phỏng đúng kịch bản người dùng nêu):
+vụ 2 bị can khởi tố mới ở kỳ 06 (không có sự kiện giải quyết nào gắn kỳ 06) → tồn cuối kỳ 06 đúng
+"1 vụ/2 bị can" dù thực tế vụ đã được giải quyết SAU với sự kiện gắn kỳ 07; kỳ 07 nhận tồn đầu kỳ =
+1/2 rồi trừ đúng khi có sự kiện hoàn thành gắn kỳ 07 → tồn cuối kỳ 07 = 0/0. 4/4 assertion PASS.
+**CHƯA kiểm chứng bằng cách chốt kỳ thật trên dữ liệu Firestore/Supabase thật** — chốt kỳ là hành
+động không thể hoàn tác (khoá không cho ghi log mới vào kỳ đó), không tự ý thử trên kỳ 06/2026 thật
+đang có dữ liệu. Nên chốt thử 1 kỳ test (hoặc backup trước) để xác nhận số liệu đúng trước khi tin
+tưởng hoàn toàn trên kỳ thật đầu tiên chốt sau bản sửa này.
+
 ## Audit "chưa xác định điều luật" ở Biểu B10 — không phải xung đột BLHS 2015/2025 (2026-07-19)
 
 Theo yêu cầu người dùng: nhiều vụ án cũ bị Biểu B10/TK tội danh báo "chưa xác định điều luật" dù

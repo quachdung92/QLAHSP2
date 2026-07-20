@@ -658,6 +658,25 @@ function fmtDate(d) {
   return `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}/${dt.getFullYear()}`;
 }
 
+// Khớp tìm kiếm theo "Số QĐ KTVA" — hỗ trợ định dạng "số-ngày" (VD "835-12/09/2024") để phân biệt
+// các vụ TRÙNG SỐ quyết định nhưng khác NGÀY quyết định (rất hay gặp trong thực tế, số QĐ KTVA
+// thường lặp lại giữa các đơn vị/năm khác nhau). Gõ theo định dạng này → phải khớp CẢ số lẫn ngày;
+// gõ bình thường (không có "-NGÀY" ở cuối) → vẫn khớp theo số như trước, không đổi hành vi cũ.
+// `tuKhoaGoc` cần giữ nguyên dấu "-"/"/" (không quan trọng hoa/thường vì chỉ có số) nên nhận thẳng
+// chuỗi đã trim (kể cả bản đã lowercase ở nơi gọi cũng không sao, số/ký tự phân cách không đổi).
+function khopSoQdKtva(v, tuKhoaGoc) {
+  const tk = (tuKhoaGoc || "").trim();
+  const m = tk.match(/^(.+)-\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/);
+  if (m) {
+    const soPhan = m[1].trim().toLowerCase();
+    const ngayTim = new Date(Number(m[4]), Number(m[3]) - 1, Number(m[2]));
+    if (soPhan && !isNaN(ngayTim)) {
+      return (v.soQdKtva || "").toLowerCase().includes(soPhan) && fmtDate(v.ngayQdKtva) === fmtDate(ngayTim);
+    }
+  }
+  return (v.soQdKtva || "").toLowerCase().includes(tk.toLowerCase());
+}
+
 function fromInputDate(s) {
   if (!s) return null;
   const [y, m, dd] = s.split("-").map(Number);
@@ -826,6 +845,47 @@ function layMaDieuLuatBiCan(bc, danhMucByTen) {
     bc.toiDanh?.[0] ||
     ""
   );
+}
+
+// Dựng cặp map tra cứu ĐẦY ĐỦ (giữ nguyên cả entry danh mục — cần cả tenToiDanh lẫn dieuLuat để
+// SỬA LẠI/ĐIỀN tên tội danh khi bị can chỉ ghi số điều hoặc để trống hoàn toàn) — KHÁC
+// `taoDanhMucByTen` ở trên (chỉ trả CHUỖI dieuLuat, đủ dùng cho các nơi TÍNH SỐ LIỆU theo điều
+// luật, không cần sửa lại tên). Dùng chung cho BackfillDieuLuatBCTool VÀ Import Excel (resolve
+// ngay lúc import, xem chuanHoaMotToiDanh) — tránh viết lặp lại thêm 1 nơi nữa.
+function taoDanhMucDayDu(danhMuc) {
+  const dmByTen = {}, dmByDieu = {};
+  danhMuc.forEach(data => {
+    const keyTen = chuanHoaTenToiDanh(data.tenToiDanh);
+    if (!dmByTen[keyTen] || data.namBLHS === "2025") dmByTen[keyTen] = data;
+    const mDieu = (data.dieuLuat || "").match(/Điều\s+(\d+[a-zA-Z]*)/i);
+    if (mDieu) {
+      const keyDieu = mDieu[1].toLowerCase();
+      if (!dmByDieu[keyDieu] || data.namBLHS === "2025") dmByDieu[keyDieu] = data;
+    }
+  });
+  return { dmByTen, dmByDieu };
+}
+// Chuẩn hoá 1 cặp (tên tội danh, mã điều luật) của 1 bị can — logic gốc trích từ
+// BackfillDieuLuatBCTool (xem đó để biết lịch sử audit). Trả {ten, dieuLuat, changed} —
+// changed=false nghĩa là giữ nguyên input (đã có ref sẵn, hoặc không tra được gì thêm).
+// `dieuLuatCapVu` (field `dieuLuat` của chính vuan) chỉ dùng khi tenGoc RỖNG HOÀN TOÀN.
+function chuanHoaMotToiDanh(tenGoc, dieuLuatGoc, dieuLuatCapVu, dmByTen, dmByDieu) {
+  const t = (tenGoc || "").trim();
+  const dl = (dieuLuatGoc || "").trim();
+  if (dl) return { ten: tenGoc, dieuLuat: dieuLuatGoc, changed: false };
+  if (/^\d+[a-zA-Z]?$/.test(t)) {
+    const hit = dmByDieu[t.toLowerCase()];
+    if (hit) return { ten: hit.tenToiDanh, dieuLuat: hit.dieuLuat, changed: true };
+  } else if (t) {
+    const hit = dmByTen[chuanHoaTenToiDanh(t)];
+    if (hit) return { ten: t, dieuLuat: hit.dieuLuat, changed: true };
+  } else if ((dieuLuatCapVu || "").trim()) {
+    const dlCapVu = dieuLuatCapVu.trim();
+    const mDieu = dlCapVu.match(/Điều\s+(\d+[a-zA-Z]*)/i);
+    const hit = mDieu ? dmByDieu[mDieu[1].toLowerCase()] : dmByTen[chuanHoaTenToiDanh(dlCapVu)];
+    if (hit) return { ten: hit.tenToiDanh, dieuLuat: hit.dieuLuat, changed: true };
+  }
+  return { ten: tenGoc, dieuLuat: dieuLuatGoc, changed: false };
 }
 
 function tinhTenVu(biCanList) {
@@ -2194,27 +2254,9 @@ function BackfillDieuLuatBCTool() {
       ]);
       // maVuAn của bican CHÍNH LÀ id của vuan (cùng bất biến RPC "capNhatDieuLuatVaLoaiKhoiTo" dựa vào, xem supabase/functions.sql).
       const vuanById = new Map(vaSnap.docs.map(d => [d.id, d.data()]));
-
-      // Lookup theo tên tội danh (chuẩn hoá bỏ tiền tố "Tội " — audit 2026-07-19: nguyên nhân
-      // CHÍNH gây "chưa xác định điều luật" hàng loạt ở vụ cũ là khớp tên TUYỆT ĐỐI trong khi
-      // danh mục luôn ghi đủ "Tội ..." còn dữ liệu cũ/import hay ghi tắt thiếu tiền tố này), ưu
-      // tiên BLHS 2025 khi trùng (trước đây ưu tiên "namBLHS === '2015'" — dead code từ khi danh
-      // mục đổi hết nhãn sang "2025", không còn entry nào gắn nhãn "2015" nữa).
-      const dmByTen = {};
-      // Lookup theo số điều (lowercase, VD "173", "134a") — ưu tiên BLHS 2025 khi trùng (VD Điều
-      // 173 tồn tại ở CẢ BLHS 1999 lẫn 2025 nhưng là 2 tội hoàn toàn khác nhau — ưu tiên 2025 vì
-      // áp dụng cho phần lớn vụ án hiện hành).
-      const dmByDieu = {};
-      dmSnap.docs.forEach(d => {
-        const data = d.data();
-        const keyTen = chuanHoaTenToiDanh(data.tenToiDanh);
-        if (!dmByTen[keyTen] || data.namBLHS === "2025") dmByTen[keyTen] = data;
-        const mDieu = (data.dieuLuat || "").match(/Điều\s+(\d+[a-zA-Z]*)/i);
-        if (mDieu) {
-          const keyDieu = mDieu[1].toLowerCase();
-          if (!dmByDieu[keyDieu] || data.namBLHS === "2025") dmByDieu[keyDieu] = data;
-        }
-      });
+      // dmByTen/dmByDieu (giữ nguyên cả entry danh mục) + logic chuẩn hoá 1 cặp (tên, mã) giờ dùng
+      // chung với Import Excel — xem taoDanhMucDayDu/chuanHoaMotToiDanh (đầu file, cạnh tinhDieuLuat).
+      const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
 
       let soCapNhat = 0, soBo = 0, soLoi = 0, soSuyTuVu = 0;
       const BATCH_SIZE = 400;
@@ -2225,37 +2267,17 @@ function BackfillDieuLuatBCTool() {
         const toiDanh = [...(bc.toiDanh || [""])];
         const dieuLuatBC = [...(bc.dieuLuatBC || [])];
         let changed = false;
+        const dieuLuatCapVu = (vuanById.get(bc.maVuAn)?.dieuLuat || "").trim();
 
         for (let i = 0; i < toiDanh.length; i++) {
-          const t = (toiDanh[i] || "").trim();
-          const dl = (dieuLuatBC[i] || "").trim();
-          if (dl) continue; // đã có ref, bỏ qua
-
-          if (/^\d+[a-zA-Z]?$/.test(t)) {
-            // Chỉ có số điều → tra ngược để lấy cả tên lẫn ref
-            const hit = dmByDieu[t.toLowerCase()];
-            if (hit) { toiDanh[i] = hit.tenToiDanh; dieuLuatBC[i] = hit.dieuLuat; changed = true; }
-          } else if (t) {
-            // Tên tội danh nhưng thiếu dieuLuatBC → điền ref (chuẩn hoá bỏ tiền tố "Tội " khi so
-            // khớp, xem ghi chú ở dmByTen)
-            const hit = dmByTen[chuanHoaTenToiDanh(t)];
-            if (hit) { dieuLuatBC[i] = hit.dieuLuat; changed = true; }
-          } else {
-            // toiDanh RỖNG hoàn toàn — audit 2026-07-19 xác nhận đây mới là nguyên nhân CHÍNH gây
-            // "chưa xác định điều luật" hàng loạt (96% bị can của vụ nhập qua Import Excel, không
-            // phải lỗi khớp tên/BLHS như nghi ngờ ban đầu): mẫu "Danh sách án" ghi Điều luật thẳng
-            // vào CẤP VỤ (vuan.dieuLuat, từ cột Excel riêng) nhưng bỏ trống cột Tội danh CẤP BỊ CAN
-            // — nên vụ vẫn hiện đúng "Điều luật" trên Danh sách vụ án, còn B10 (tính theo dieuLuatBC
-            // của TỪNG bị can) thì không có gì để tra. Suy ra từ dieuLuat cấp vụ, áp dụng CHUNG cho
-            // mọi bị can cùng vụ (giả định "cùng vụ = cùng tội danh chính" — đúng với đa số vụ đồng
-            // phạm 1 tội, có thể sai với vụ nhiều tội danh khác nhau theo từng bị can; cán bộ tự sửa
-            // lại qua "Sửa thông tin vụ án" nếu phát hiện sai — vẫn tốt hơn hẳn "chưa xác định").
-            const dieuLuatCapVu = (vuanById.get(bc.maVuAn)?.dieuLuat || "").trim();
-            if (dieuLuatCapVu) {
-              const mDieu = dieuLuatCapVu.match(/Điều\s+(\d+[a-zA-Z]*)/i);
-              const hit = mDieu ? dmByDieu[mDieu[1].toLowerCase()] : dmByTen[chuanHoaTenToiDanh(dieuLuatCapVu)];
-              if (hit) { toiDanh[i] = hit.tenToiDanh; dieuLuatBC[i] = hit.dieuLuat; changed = true; soSuyTuVu++; }
-            }
+          const truocKhiSua = !(toiDanh[i] || "").trim();
+          const ket = chuanHoaMotToiDanh(toiDanh[i], dieuLuatBC[i], dieuLuatCapVu, dmByTen, dmByDieu);
+          if (ket.changed) {
+            toiDanh[i] = ket.ten; dieuLuatBC[i] = ket.dieuLuat; changed = true;
+            // toiDanh RỖNG hoàn toàn trước khi sửa = suy ra từ Điều luật cấp vụ (audit 2026-07-19:
+            // nguyên nhân CHÍNH gây "chưa xác định điều luật" hàng loạt — mẫu "Danh sách án" ghi
+            // Điều luật thẳng vào CẤP VỤ nhưng bỏ trống cột Tội danh CẤP BỊ CAN).
+            if (truocKhiSua) soSuyTuVu++;
           }
         }
 
@@ -2915,6 +2937,13 @@ function ImportExcelModule() {
       const dsMoi = [...ketQuaDoc.moi, ...dsThayThe];
       await sinhNhieuMaVuAn(dsMoi);
 
+      // Tải danh mục tội danh 1 lần để RESOLVE ngay "Mã ĐL" (dieuLuatBC) của từng bị can lúc import
+      // — trước đây luôn ghi rỗng, phải chạy riêng "Chuẩn hóa tội danh/điều luật bị can" (Cài đặt →
+      // Import Excel) sau đó mới hết "chưa xác định". Dùng chung logic với BackfillDieuLuatBCTool
+      // (xem taoDanhMucDayDu/chuanHoaMotToiDanh) để 2 nơi luôn khớp nhau, không lệch quy tắc.
+      const dmSnap = await db.collection("danhMucToiDanh").get();
+      const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
+
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
       const ghiChuNhap = "Nhập qua Import Excel (Danh sách án).";
@@ -2995,9 +3024,13 @@ function ImportExcelModule() {
         for (let i = 0; i < v.biCanList.length; i++) {
           const bc = v.biCanList[i];
           const bcRef = db.collection("bican").doc();
+          // Resolve NGAY "Mã ĐL" từ cột "Tội danh" (tên đúng danh mục, hoặc chỉ số điều VD "173"),
+          // fallback sang Điều luật cấp vụ (v.dieuLuat, cột Excel riêng) nếu ô Tội danh bỏ trống
+          // hoàn toàn — dữ liệu import ra chuẩn ngay, không còn phải chạy lại "Chuẩn hóa" sau.
+          const ket = chuanHoaMotToiDanh(bc.toiDanh, "", v.dieuLuat, dmByTen, dmByDieu);
           batch.set(bcRef, {
             maVuAn: maNoiSinh, hoTen: bc.hoTen, namSinh: bc.namSinh,
-            gioiTinh: bc.gioiTinh, toiDanh: bc.toiDanh ? [bc.toiDanh] : [""], dieuLuatBC: [""],
+            gioiTinh: bc.gioiTinh, toiDanh: ket.ten ? [ket.ten] : [""], dieuLuatBC: [ket.dieuLuat || ""],
             dangVien: bc.dangVien, dangVienGiuChucVu: false,
             danToc: bc.danToc, quocTich: "Việt Nam", trinhDo: "", taiPham: "khong",
             loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
@@ -3049,6 +3082,18 @@ function ImportExcelModule() {
         có trong hệ thống (theo mã vụ nếu có điền, hoặc theo Số + Ngày QĐ KTVA) để bỏ qua, tránh
         ghi trùng/lỗi xung đột — chỉ những vụ thật sự mới mới được đưa vào xem trước và cho phép
         ghi vào hệ thống.
+      </p>
+      <p className="text-sm text-slate-500 mb-6 bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+        <b>Cột "Tội danh" (cấp bị can, không phải "Điều luật" cấp vụ)</b> quyết định "Mã ĐL" dùng
+        cho Biểu B10 có tự nhận đúng ngay lúc import hay không — ghi ĐÚNG 1 trong 2 cách sau để
+        không phải chạy lại "Chuẩn hóa tội danh / điều luật bị can" (Cài đặt → Import Excel) sau
+        này: (1) ghi đúng tên tội danh như trong danh mục của hệ thống (VD "Tội trộm cắp tài sản"
+        — có/không tiền tố "Tội " đều được, không phân biệt hoa/thường), hoặc (2) chỉ ghi SỐ điều
+        luật (VD "173"). <b>Không ghi kèm số điều trong ngoặc</b> (VD "Tội trộm cắp tài sản (Điều
+        173)") — dạng này không khớp được danh mục. Bỏ trống hoàn toàn cột này thì hệ thống sẽ tự
+        suy ra tội danh chính từ cột "Điều luật" cấp vụ (áp dụng chung cho mọi bị can cùng vụ — có
+        thể không đúng nếu vụ nhiều tội danh khác nhau theo từng bị can, kiểm tra lại qua "Sửa
+        thông tin vụ án" nếu cần).
       </p>
 
       {status !== "writing" && status !== "done" && (
@@ -5414,7 +5459,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
       const hit = (hienThiMa(v) || "").toLowerCase().includes(k)
         || (v.tenVu || "").toLowerCase().includes(k)
         || (v.dieuLuat || "").toLowerCase().includes(k)
-        || (v.soQdKtva || "").toLowerCase().includes(k)
+        || khopSoQdKtva(v, k)
         || (v.biCanDaiDien || "").toLowerCase().includes(k)
         || dsBiCan.some(bc => (bc.hoTen || "").toLowerCase().includes(k));
       if (!hit) return false;
@@ -5674,7 +5719,7 @@ function taoQrDataUrl(text, size = 100) {
   return canvas ? canvas.toDataURL("image/png") : null;
 }
 
-function KhoiQR({ noiDung, nhan }) {
+function KhoiQR({ noiDung, nhan, kichThuoc = "5cm" }) {
   const containerRef = React.useRef(null);
   useEffect(() => {
     if (!containerRef.current) return;
@@ -5688,29 +5733,150 @@ function KhoiQR({ noiDung, nhan }) {
   return (
     <div className="flex flex-col items-center">
       <div ref={containerRef} className="[&>canvas]:w-full [&>canvas]:h-full [&>img]:w-full [&>img]:h-full"
-           style={{ width: "5cm", height: "5cm" }}></div>
+           style={{ width: kichThuoc, height: kichThuoc }}></div>
       <div className="mt-2 text-xs text-slate-400">{nhan}</div>
       <div className="text-sm font-mono">{noiDung}</div>
     </div>
   );
 }
 
+// Lấy/lưu kiểu in mã QR mặc định (localStorage, cùng pattern useBlhsMacDinh) — chọn 1 lần ở đây
+// là ghi nhớ luôn cho lần in tiếp theo (của mọi vụ), không phải chọn lại mỗi lần mở modal.
+// "day_du": khung QR to giữa trang A4 (mặc định gốc, giữ nguyên hành vi cũ).
+// "goc_giay": khung QR nhỏ hơn, đóng khung, ghim góc trên-phải sát lề — để cắt dán vào hồ sơ giấy.
+const KHOA_QR_KIEU_IN = "qlva_qrKieuInMacDinh";
+function useQrKieuInMacDinh() {
+  const [kieu, setKieu] = useState(() => localStorage.getItem(KHOA_QR_KIEU_IN) || "day_du");
+  const set = (v) => { localStorage.setItem(KHOA_QR_KIEU_IN, v); setKieu(v); };
+  return [kieu, set];
+}
+
 // Render qua portal vào #qr-print-root (ngoài #root) để khi in, ẩn #root đi mà không ẩn theo
 // khung QR này — xem chú thích ở khối CSS @media print trong <head>.
 function InQRModal({ vuAn, onDong }) {
+  // Đọc đúng kiểu in mặc định đang đặt ở Cài đặt → Cài đặt chung (không có nút gạt riêng trong
+  // modal này nữa — bản đầu tiên đặt nút gạt ở đây nhưng nằm lẫn trong màn xem trước A4 dài, khó
+  // thấy; đổi hẳn sang Cài đặt cho dễ tìm, modal chỉ còn việc HIỂN THỊ đúng theo lựa chọn đó).
+  const [kieuIn] = useQrKieuInMacDinh();
+  const goc = kieuIn === "goc_giay";
+  // Số bản in mỗi trang — CỐ Ý là state cục bộ của modal (không lưu localStorage như kieuIn): nhu
+  // cầu hồ sơ nhiều tập là ngoại lệ, không phải mặc định nên luôn) reset về 1 mỗi lần mở modal,
+  // tránh việc lỡ in tràn lan 6 bản cho 1 vụ chỉ có 1 tập chỉ vì vụ trước đó cần nhiều bản.
+  const [soLuong, setSoLuong] = useState(1);
+  const kichThuocQR = goc ? "4cm" : "5cm";
+  // Bề rộng tối đa của phần tên vụ (chú thích dưới QR) — CHẶN CỨNG theo đúng bề rộng của hàng QR
+  // (1 hoặc 2 mã cạnh nhau tuỳ có/không mã ngành cấp), để tên hồ sơ dài không kéo giãn cả khối in
+  // rộng ra ngoài ý muốn — tên dài chỉ tự xuống dòng trong đúng bề rộng này.
+  const rongToiDaTenVu = vuAn.maNganhCap ? `calc(2 * ${kichThuocQR} + 1cm)` : kichThuocQR;
+
+  const dsBan = Array.from({ length: soLuong }, (_, i) => i);
+
+  // Bấm Esc để đóng modal — tiện hơn phải rê chuột tới đúng nút "Đóng", nhất là khi đang xem
+  // trước 1 trang A4 dài phải cuộn.
+  useEffect(() => {
+    const xuLy = (e) => { if (e.key === "Escape") onDong(); };
+    window.addEventListener("keydown", xuLy);
+    return () => window.removeEventListener("keydown", xuLy);
+  }, [onDong]);
+
+  // Chế độ "góc giấy" nhiều bản: chia CẢ TỜ A4 thành lưới 6 ô đều nhau (2 cột × 3 hàng, đúng
+  // "2:2:2" theo hàng) để cắt dễ đo — mỗi ô là 1 hình chữ nhật cố định, cắt theo đúng đường lưới
+  // là xong, không phải đo riêng từng mã. Thứ tự điền ưu tiên ô gần góc TRÊN-PHẢI trước (đúng yêu
+  // cầu "vẫn nhớ mã QR căn gần lề trên và lề phải") — 1 bản (mặc định, phổ biến nhất) rơi đúng vào
+  // ô trên-phải, giữ nguyên cảm giác như bản gốc chỉ có 1 khung góc giấy trước đây.
+  const THU_TU_O_GOC_GIAY = [1, 0, 3, 2, 5, 4];
+  const oDuocDien = new Set(THU_TU_O_GOC_GIAY.slice(0, soLuong));
+
   const noiDung = (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 print:bg-white overflow-auto">
-      <div id="qr-in-a4" className="bg-white flex flex-col items-center justify-center"
-           style={{ width: "210mm", minHeight: "297mm" }}>
-        <div className="text-sm text-slate-400 mb-8 print:hidden">Xem trước trang in A4 — bấm "In" để in thật (khổ QR ~5x5cm).</div>
-        <div className="flex items-center gap-10">
-          {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" />}
-          <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" />
-        </div>
-        <div className="mt-4 text-sm text-slate-500">{vuAn.tenVu}</div>
-        <div className="mt-10 flex gap-2 print:hidden">
-          <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
-          <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+    <div className="fixed inset-0 bg-black/40 z-50 overflow-auto print:bg-white print:overflow-visible">
+      {/* Canh giữa bằng margin:auto (mx-auto) thay vì flex items-center — flex-center kết hợp
+          overflow-auto có lỗi CSS phổ biến: khi nội dung cao/rộng hơn khung nhìn, phần tràn ra ở
+          ĐẦU (trên/trái) bị cắt mất, không cuộn tới được (đây chính là lý do khung QR ở góc trên
+          từng bị "cắt mất 1 phần" khi màn hình không đủ cao). mx-auto + overflow-auto luôn cuộn
+          được đầy đủ mọi phía bất kể trang A4 lớn hơn khung nhìn bao nhiêu. */}
+      {/* Lề phải >= 1.5cm (yêu cầu 2026-07-20) — khai báo THẲNG ở @page (thứ tự top/right/bottom/
+          left), KHÔNG cộng dồn thêm ở nội dung như 2 bản trước (10mm rồi 10.2mm marginRight riêng
+          của lưới) — lý do các bản trước vẫn bị cắt dù đã đệm thêm: @page margin thu hẹp VÙNG IN
+          THỰC TẾ xuống còn (210mm − lề trái − lề phải), nhưng khung nội dung bên dưới vẫn khai báo
+          cứng "210mm" (đúng khổ giấy DANH NGHĨA, không phải vùng in sau khi trừ lề) — phần dư TRÀN
+          ra ngoài vùng in bị cắt mất, bất kể đệm thêm bao nhiêu ở bên trong khung 210mm đó (đệm chỉ
+          dịch chuyển NỘI DUNG bên trong 1 khung vẫn TRÀN, không thu hẹp lại khung để vừa vùng in).
+          Sửa tận gốc: khung nội dung (goc mode) đặt đúng bằng vùng in thực tế (210 − 5 − 15 =
+          190mm rộng, 297 − 5 − 5 = 287mm cao) — không còn tràn, không cần đệm thêm ở lưới nữa. */}
+      {goc && <style>{"@page { margin: 5mm 15mm 5mm 5mm; }"}</style>}
+      <div className="mx-auto my-8 print:my-0" style={{ width: goc ? "190mm" : "210mm" }}>
+        <div id="qr-in-a4" className="bg-white relative flex flex-col shadow-xl print:shadow-none"
+             style={{ minHeight: goc ? "287mm" : "297mm", height: goc ? "287mm" : undefined }}>
+          {/* Khối điều khiển — 1 khối DUY NHẤT (chữ hướng dẫn + số bản in + Đóng/In), canh GIỮA,
+              NẰM TRONG LUỒNG BỐ CỤC BÌNH THƯỜNG (không absolute) — CỐ Ý, để lưới QR bên dưới (cũng
+              ở luồng bình thường, xem ngay dưới) tự nhường chỗ, không cần z-index "cứu" 2 khối chồng
+              nhau. Bug đã gặp ở bản trước: lưới 6 ô dùng absolute (không chiếm chỗ trong luồng) nên
+              luôn đè lên đúng vùng này trên màn xem trước — dù bấm vẫn trúng nhờ z-index, nhìn vẫn
+              rối/che khuất QR hàng đầu. Nay khối này ẩn khi in (print:hidden, cao 0), nên lưới bên
+              dưới tự động "trồi" lên sát mép trang lúc in thật — không cần logic riêng cho 2
+              trường hợp màn hình/in. */}
+          <div className="print:hidden flex flex-col items-center gap-3 pt-8 pb-4 px-4">
+            <div className="text-sm text-slate-400 text-center max-w-md">
+              Xem trước trang in A4 — bấm "In" để in thật, hoặc Esc để đóng. Đổi kiểu in mặc định ở
+              Cài đặt → Cài đặt chung.
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500">Số bản in (hồ sơ nhiều tập):</label>
+              <input type="number" min={1} max={6} value={soLuong}
+                     onChange={e => setSoLuong(Math.min(6, Math.max(1, Number(e.target.value) || 1)))}
+                     className="w-16 px-2 py-1 text-sm text-center border border-slate-300 rounded-lg" />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
+              <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+            </div>
+          </div>
+
+          {goc ? (
+            // Lưới 6 ô đều nhau (2 cột × 3 hàng) — margin:5mm quanh lưới thay cho absolute top/
+            // right/left/bottom trước đây, để lưới nằm Ở LUỒNG BÌNH THƯỜNG ngay sau khối điều
+            // khiển (flex-1 lấp phần còn lại của trang), tự tránh đè lên nhau (xem giải thích ở
+            // khối điều khiển bên trên). Mỗi ô có viền chấm để thấy rõ đường cắt NGAY CẢ Ô CHƯA
+            // DÙNG (giúp "dễ căn" dù chỉ in 1-2 bản). Mỗi mã QR ghim đúng góc trên-phải CỦA CHÍNH
+            // Ô ĐÓ (không phải giữa ô) — cắt xong mỗi mảnh đều có QR nằm đúng 1 góc quen thuộc.
+            <div className="flex-1 grid" style={{
+              // Lề đều 5mm quanh lưới — phần "lề phải >= 1.5cm" giờ đã do @page lo đúng ở gốc
+              // (khung nội dung khớp đúng vùng in thực tế, xem giải thích ở trên), không cần đệm
+              // thêm riêng ở đây nữa (2 bản trước cộng dồn 10mm/10.2mm ở đây mà vẫn bị cắt, vì bug
+              // nằm ở chỗ khác — khung nội dung tràn ra ngoài vùng in, không phải do lề ở đây chưa
+              // đủ).
+              margin: "5mm",
+              gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(3, 1fr)",
+            }}>
+              {Array.from({ length: 6 }, (_, i) => (
+                <div key={i} className="relative border border-dashed border-slate-300">
+                  {oDuocDien.has(i) && (
+                    <div className="absolute top-0 right-0 flex flex-col items-center border-2 border-slate-700 rounded-lg px-3 py-2 bg-white">
+                      <div className="flex items-center gap-3">
+                        {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc={kichThuocQR} />}
+                        <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc={kichThuocQR} />
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500 text-center break-words" style={{ maxWidth: rongToiDaTenVu }}>{vuAn.tenVu}</div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center py-6">
+              <div className="flex flex-wrap gap-8 justify-center" style={{ maxWidth: "19cm" }}>
+                {dsBan.map(i => (
+                  <div key={i} className="flex flex-col items-center">
+                    <div className="flex items-center gap-10">
+                      {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc={kichThuocQR} />}
+                      <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc={kichThuocQR} />
+                    </div>
+                    <div className="mt-4 text-sm text-slate-500 text-center break-words" style={{ maxWidth: rongToiDaTenVu }}>{vuAn.tenVu}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -6474,13 +6640,38 @@ async function tinhSnapTonTheoTD() {
   return { tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD };
 }
 
+// tonCuoiKy/tonCuoiBiCan (theo giai đoạn, KHÔNG phải theo tội danh) tính bằng CÔNG THỨC LOG
+// (tồn đầu kỳ + mới − đã giải quyết, gộp theo đúng kyThongKe của từng sự kiện) THAY VÌ snapshot
+// sống trạng thái `vuan` hiện tại — sửa theo yêu cầu người dùng 2026-07-20 khi cho phép "mở kỳ
+// mới dù kỳ trước chưa chốt" (nhập bù dữ liệu). Lý do bắt buộc phải đổi: bản cũ giả định "chốt lúc
+// = lúc kỳ thực sự kết thúc" (live state tại thời điểm bấm chốt = đúng lịch sử), giả định này VỠ
+// khi chốt TRỄ — VD vụ đang tồn ở kỳ 06/2026 nhưng cán bộ chỉ nhập sự kiện giải quyết vào hệ thống
+// sau đó, gắn kyThongKe = kỳ 07/2026 (đúng bản chất nghiệp vụ: việc giải quyết XẢY RA/được ghi vào
+// kỳ sau) — nếu tới lúc chốt 06/2026 mới query LIVE trạng thái vuan, vụ đó đã KHÔNG CÒN
+// "dang_giai_quyet" nữa nên bị đếm THIẾU khỏi tồn cuối kỳ 06/2026, dù tại đúng thời điểm kết thúc
+// kỳ 06 nó vẫn đang tồn. Công thức log không phụ thuộc THỜI ĐIỂM tính (chỉ phụ thuộc kyThongKe đã
+// gắn trên từng sự kiện) nên đúng bất kể chốt sớm hay trễ bao lâu.
 async function chotKyBaoCao(ky, kyTruoc, ngayChot, nguoiChot) {
-  const { tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD } = await tinhSnapTonTheoTD();
-  const baoCaoTuLog = await tinhBaoCaoKyTuLog({ ...ky, trangThai: "da_chot", tonCuoiKy }, kyTruoc);
+  // Gọi tinhBaoCaoKyTuLog với trangThai "dang_mo" — nhánh "chưa chốt" của chính hàm đó ĐÃ tự tính
+  // tonCuoiKy/tonCuoiBiCanKy bằng công thức log (tồn đầu kỳ + mới − đã giải quyết, xem chú thích
+  // tại đó) nên không cần tính lại ở đây nữa — chỉ cần gom lại thành object tonCuoiKy/tonCuoiBiCan
+  // theo giai đoạn để lưu vào kybaocao (bảng "Cân đối số liệu"/kỳ sau dùng làm tồn đầu kỳ).
+  const baoCaoSoBo = await tinhBaoCaoKyTuLog({ ...ky, trangThai: "dang_mo" }, kyTruoc);
+  const tonCuoiKy = {};
+  const tonCuoiBiCan = {};
+  for (const gd of THU_TU_GIAI_DOAN) {
+    tonCuoiKy[gd] = baoCaoSoBo[gd].tonCuoiKy;
+    tonCuoiBiCan[gd] = baoCaoSoBo[gd].tonCuoiBiCanKy;
+  }
+  // tonCuoiKyTheoTD (theo tội danh, dùng cho Biểu B10) VẪN giữ snapshot sống như cũ trong lần
+  // chốt đầu — nếu chốt trễ như kịch bản trên, số này CÓ THỂ lệch tương tự; công cụ "Sửa lại tồn
+  // cuối kỳ theo tội danh (Biểu B10)" (Cài đặt → Import Excel) đã tính đúng theo log cho toàn bộ
+  // lịch sử, chạy lại công cụ đó sau khi bù dữ liệu xong để đồng bộ số theo tội danh.
+  const { tonCuoiKyTheoTD } = await tinhSnapTonTheoTD();
   await db.collection("kybaocao").doc(ky.id).update({
     trangThai: "da_chot", ngayChot, nguoiChot, thoiDiemChot: new Date(),
     tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD,
-    baoCaoLuu: tachBaoCaoLuu(baoCaoTuLog),
+    baoCaoLuu: tachBaoCaoLuu(baoCaoSoBo),
   });
 }
 
@@ -6490,6 +6681,12 @@ function MoKyMoiForm({ onDong, onXong }) {
   const [loi, setLoi] = useState("");
   const [dangLuu, setDangLuu] = useState(false);
   const [laLuuTru, setLaLuuTru] = useState(false);
+  // Bỏ qua cảnh báo "kỳ trước chưa chốt" — dùng khi đang bù dữ liệu (VD nhập trễ các sự kiện của
+  // kỳ cũ) và cần mở kỳ mới ngay để tiếp tục ghi nhận việc phát sinh sau đó, không muốn/không thể
+  // chốt kỳ cũ ngay lúc này. An toàn để bypass vì "tồn cuối kỳ" giờ tính bằng công thức log (xem
+  // chotKyBaoCao) — không còn phụ thuộc việc chốt sớm hay trễ, nên có thể chốt kỳ cũ sau này bất
+  // cứ lúc nào mà số liệu vẫn đúng.
+  const [boQuaCanhBao, setBoQuaCanhBao] = useState(false);
 
   const luu = async () => {
     if (!tenKy.trim()) { setLoi("Cần nhập tên kỳ."); return; }
@@ -6497,11 +6694,13 @@ function MoKyMoiForm({ onDong, onXong }) {
     setDangLuu(true);
     try {
       if (!laLuuTru) {
-        const dangMo = await db.collection("kybaocao").where("trangThai", "==", "dang_mo").limit(1).get();
-        if (!dangMo.empty) {
-          setLoi(`Đang có kỳ "${dangMo.docs[0].data().tenKy}" chưa chốt — cần chốt kỳ đó trước khi mở kỳ mới.`);
-          setDangLuu(false);
-          return;
+        if (!boQuaCanhBao) {
+          const dangMo = await db.collection("kybaocao").where("trangThai", "==", "dang_mo").limit(1).get();
+          if (!dangMo.empty) {
+            setLoi(`Đang có kỳ "${dangMo.docs[0].data().tenKy}" chưa chốt — cần chốt kỳ đó trước khi mở kỳ mới, hoặc tích "Bỏ qua cảnh báo" bên dưới nếu đang bù dữ liệu.`);
+            setDangLuu(false);
+            return;
+          }
         }
         await db.collection("kybaocao").add({
           tenKy: tenKy.trim(), ngayBatDau: fromInputDate(ngayBatDau), ngayChot: null,
@@ -6541,6 +6740,15 @@ function MoKyMoiForm({ onDong, onXong }) {
           <div className="text-xs text-slate-500 mt-0.5">Không ràng buộc vào chuỗi kỳ báo cáo. Dùng để thêm các vụ án đã giải quyết từ trước — sự kiện gán vào kỳ này không tính vào số liệu báo cáo tháng nào.</div>
         </div>
       </label>
+      {!laLuuTru && (
+        <label className="flex items-start gap-2 cursor-pointer mb-4">
+          <input type="checkbox" checked={boQuaCanhBao} onChange={e => setBoQuaCanhBao(e.target.checked)} className="mt-0.5" />
+          <div>
+            <div className="text-sm font-medium text-slate-700">Bỏ qua cảnh báo "kỳ trước chưa chốt"</div>
+            <div className="text-xs text-slate-500 mt-0.5">Dùng khi đang bù dữ liệu cho kỳ cũ và cần mở kỳ mới ngay để tiếp tục ghi nhận việc phát sinh sau đó — nhớ quay lại chốt kỳ cũ khi bù xong. An toàn: "tồn cuối kỳ" tính theo đúng dữ liệu đã ghi nhận của từng kỳ, không phụ thuộc chốt sớm hay trễ.</div>
+          </div>
+        </label>
+      )}
       <div className="flex justify-end gap-2">
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={dangLuu}
@@ -6575,7 +6783,8 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
     <KhungModalHanhDong tieuDe={`Chốt kỳ "${ky.tenKy}"`}>
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
       <div className="text-xs text-slate-500 mb-3">
-        Hệ thống sẽ tự chụp số "Còn" của từng cơ quan tại thời điểm chốt để làm "Án cũ" cho kỳ sau.
+        Hệ thống tính số "Còn" của từng cơ quan theo đúng dữ liệu đã ghi nhận cho kỳ này (tồn đầu
+        kỳ + mới − đã giải quyết, không phụ thuộc bạn chốt sớm hay trễ) để làm "Án cũ" cho kỳ sau.
         Sau khi chốt, không thao tác nào ghi log mới vào kỳ này được nữa.
       </div>
       <label className="text-xs text-slate-500 block mb-1">Ngày chốt</label>
@@ -6707,28 +6916,56 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh });
     }));
 
-    let tonCuoiKy;
+    // Hoist các mảng ds.* (kèm _soBiCan từng vụ) LÊN TRƯỚC bước tính tonCuoiKy — vừa để dùng
+    // chung công thức log-based bên dưới (bcMoi/bcGiaiQuyet), vừa tránh gọi lại vuAnTuLogDocs
+    // 2 LẦN cho cùng 1 snapshot khi dựng object baoCao[gd].ds ở cuối (đỡ tốn query kép).
+    const dsTachVuArr = await vuAnTuLogDocs(tachVuSnap.docs);
+    const dsChuyenDenArr = await vuAnTuLogDocs(chuyenDenSnap.docs);
+    const dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs);
+    const dsChuyenDiArr = await vuAnTuLogDocs(chuyenDi.docs);
+    const dsTraDiArr = await vuAnTuLogDocs(traDi.docs);
+
+    let tonCuoiKy, tonCuoiBiCanKy;
     if (ky.trangThai === "da_chot" && ky.tonCuoiKy) {
       tonCuoiKy = ky.tonCuoiKy[gd] ?? 0;
+      tonCuoiBiCanKy = ky.tonCuoiBiCan?.[gd] ?? 0;
     } else {
-      const hienTaiSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
-      // Loại vụ đã "Đưa vào thùng rác" (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
-      tonCuoiKy = hienTaiSnap.docs.filter(d => !d.data().daXoa).length;
+      // Kỳ CHƯA CHỐT (đang xem trước) — tính bằng CÔNG THỨC LOG (tồn đầu kỳ + mới − đã giải
+      // quyết, theo đúng kyThongKe) giống hệt chotKyBaoCao, THAY VÌ snapshot sống trạng thái vuan
+      // hiện tại như trước đây. Bug đã sửa (2026-07-20, phát hiện qua báo cáo thật): xem trước kỳ
+      // 06/2026 còn mở, "Tổng số mới" Điều tra = 300 và "Đã giải quyết" = 0 (không có sự kiện nào
+      // gắn kyThongKe=06 cho việc chuyển đi) nhưng "Tồn cuối kỳ" lại hiện 299 — thiếu đúng 1 vụ đã
+      // ĐƯỢC CHUYỂN SANG TRUY TỐ THẬT NGOÀI ĐỜI nhưng sự kiện đó gắn kyThongKe=07 (đúng kịch bản
+      // "kỳ 06 không giải quyết, thực tế giải quyết vào kỳ 07") — snapshot sống lúc xem đã không
+      // còn thấy vụ đó "đang giải quyết ở Điều tra" nữa nên đếm thiếu, trong khi dòng "Đã giải
+      // quyết" (log-based, đúng theo kyThongKe=06) vẫn đúng là 0. Đổi sang công thức log để 2 khối
+      // này LUÔN khớp nhau (tồn cuối kỳ = tồn đầu kỳ + số mới − số đã giải quyết hiển thị ngay phía
+      // trên), đúng bản chất "tồn cuối kỳ 06" không phụ thuộc việc vụ đó sau này (kỳ 07) ra sao.
+      const tongBiCan = (arr) => arr.reduce((s, v) => s + (v._soBiCan || 0), 0);
+      const soGiaiQuyetVu = chuyenDi.size + traDi.size
+        + Object.values(hoanThanhTheoGD).reduce((s, n) => s + n, 0) + soNhapVu;
+      const bcMoi = tongBiCan(dsKhoiToTrucTiep) + tongBiCan(dsTachVuArr)
+        + tongBiCan(dsChuyenDenArr) + tongBiCan(dsTraVeArr);
+      const bcGiaiQuyet = tongBiCan(dsChuyenDiArr) + tongBiCan(dsTraDiArr)
+        + Object.values(dsHoanThanhTheoGD).reduce((s, arr) => s + tongBiCan(arr), 0)
+        + tongBiCan(dsNhapVu);
+      tonCuoiKy = tonDauKy + soMoi.tong - soGiaiQuyetVu;
+      tonCuoiBiCanKy = tonDauBiCan + bcMoi - bcGiaiQuyet;
     }
 
     const { soVuTon, soBiCanTon, dsTon } = await tinhTonHienTaiTheoGD(gd);
 
     baoCao[gd] = {
       tonDauKy, tonDauBiCan, soMoi, chuyenDi: chuyenDi.size, traDi: traDi.size,
-      hoanThanhTheoGD, soNhapVu, tonCuoiKy, tonCuoiBiCanKy: soBiCanTon,
+      hoanThanhTheoGD, soNhapVu, tonCuoiKy, tonCuoiBiCanKy,
       soVuTon, soBiCanTon,
       ds: {
         khoiToTrucTiep: dsKhoiToTrucTiep,
-        tachVu: await vuAnTuLogDocs(tachVuSnap.docs),
-        chuyenDen: await vuAnTuLogDocs(chuyenDenSnap.docs),
-        traVe: await vuAnTuLogDocs(traVeSnap.docs),
-        chuyenDi: await vuAnTuLogDocs(chuyenDi.docs),
-        traDi: await vuAnTuLogDocs(traDi.docs),
+        tachVu: dsTachVuArr,
+        chuyenDen: dsChuyenDenArr,
+        traVe: dsTraVeArr,
+        chuyenDi: dsChuyenDiArr,
+        traDi: dsTraDiArr,
         hoanThanh: dsHoanThanhTheoGD,
         nhapVu: dsNhapVu,
         tonHienTai: dsTon,
@@ -8949,7 +9186,10 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
         {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} />}
         {!dangTai && ky.trangThai === "dang_mo" && (
           <div className="text-xs text-slate-400 mt-3">
-            Kỳ đang mở — "Tồn cuối kỳ" đang lấy số tồn hiện tại, sẽ chốt số chính thức khi bấm "Chốt kỳ".
+            Kỳ đang mở — "Tồn cuối kỳ" tính theo dữ liệu đã ghi nhận của kỳ này (tồn đầu kỳ + mới −
+            đã giải quyết), có thể khác "Số tồn hiện tại" bên dưới (luôn theo trạng thái thật tại
+            thời điểm xem) nếu có vụ đã thay đổi trạng thái nhưng gắn kỳ thống kê khác. Bấm
+            "Chốt kỳ" để ghi số này thành chính thức, dùng làm tồn đầu kỳ cho kỳ sau.
           </div>
         )}
         {!dangTai && ky.trangThai === "da_chot" && ky.baoCaoLuu && (
@@ -9457,7 +9697,7 @@ function AnDaGiaiQuyetModule() {
         || (v.ksvChinh || "").toLowerCase().includes(k)
         || (v.ksvHoTro || []).some(t => (t || "").toLowerCase().includes(k))
         || (v.ghiChu || "").toLowerCase().includes(k)
-        || (v.soQdKtva || "").toLowerCase().includes(k)
+        || khopSoQdKtva(v, k)
       );
     }
     return rows;
@@ -10186,7 +10426,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
     || (v.tenVu || "").toLowerCase().includes(k)
     || (v.dieuLuat || "").toLowerCase().includes(k)
     || (v.ksvChinh || "").toLowerCase().includes(k)
-    || (v.soQdKtva || "").toLowerCase().includes(k);
+    || khopSoQdKtva(v, k);
 
   // Cho phép lọc riêng theo KSV (không bắt buộc gõ từ khoá kèm theo) — VD chọn 1 KSV để xem hết
   // hồ sơ đang giải quyết của người đó, khỏi phải nhớ gõ đúng tên.
@@ -11410,6 +11650,9 @@ function khopFilterCot(col, f, row) {
     if (f.den && (ms == null || ms > fromInputDate(f.den).getTime() + 86399999)) return false;
     return true;
   }
+  // Cột Số QĐ KTVA hỗ trợ riêng định dạng "số-ngày" (xem khopSoQdKtva) — row ở đây chính là object
+  // vụ án đầy đủ (đủ field soQdKtva/ngayQdKtva để hàm đó tra), không chỉ giá trị đã getValue().
+  if (col.id === "soQdKtva") return khopSoQdKtva(row, f);
   return (val == null ? "" : String(val)).toLowerCase().includes(String(f).toLowerCase());
 }
 // Áp toàn bộ filter cột (theo đúng NHOM_COT_*) lên 1 danh sách — dùng chung cho cả bảng vụ án và
@@ -12057,7 +12300,7 @@ function BangExcelModule() {
       (hienThiMa(v) || "").toLowerCase().includes(k) ||
       (v.tenVu || "").toLowerCase().includes(k) ||
       (v.ksvChinh || "").toLowerCase().includes(k) ||
-      (v.soQdKtva || "").toLowerCase().includes(k)
+      khopSoQdKtva(v, k)
     );
   }, [list, tuKhoa]);
 
@@ -12384,11 +12627,36 @@ function XoaVinhVienModal({ vuAn, onDong, onXong }) {
   );
 }
 
+// Cài đặt chung — nơi gom các tuỳ chọn hiển thị/hành vi cấp máy (localStorage), KHÔNG phải dữ
+// liệu nghiệp vụ. Hiện chỉ có 1 mục (kiểu in mã QR) nhưng tách riêng module để dễ thêm mục khác
+// sau này mà không phải lục trong các tab quản trị (Cán bộ/Import/Thùng rác...).
+function CaiDatChungModule() {
+  const [kieuIn, setKieuIn] = useQrKieuInMacDinh();
+  const goc = kieuIn === "goc_giay";
+  return (
+    <div className="max-w-xl">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3">In mã QR</h3>
+      <div className="flex items-center justify-between gap-4 p-4 bg-white rounded-lg border border-slate-200">
+        <div>
+          <div className="text-sm font-medium text-slate-700">Khung nhỏ gọn, ghim góc giấy</div>
+          <div className="text-xs text-slate-400 mt-1">
+            Bật: khung QR nhỏ hơn, đóng viền, ghim sát góc trên-phải trang A4 — tiện cắt dán vào hồ
+            sơ giấy. Tắt: khung QR to, giữa trang (mặc định cũ). Áp dụng ngay cho mọi lần bấm
+            "In mã QR" tiếp theo, không cần chọn lại.
+          </div>
+        </div>
+        <CongTac checked={goc} onChange={(v) => setKieuIn(v ? "goc_giay" : "day_du")} />
+      </div>
+    </div>
+  );
+}
+
 // CaiDatModule — gom Import Excel, Nhật ký thao tác, Cán bộ vào 1 chỗ để
 // tránh người dùng bình thường vô tình chạm vào các thao tác quản trị.
 function CaiDatModule() {
-  const [subTab, setSubTab] = useState("log");
+  const [subTab, setSubTab] = useState("chung");
   const tabs = [
+    { id: "chung",     label: "Cài đặt chung"      },
     { id: "log",       label: "Nhật ký thao tác"  },
     { id: "canbo",     label: "Cán bộ"             },
     { id: "danhmuc",   label: "Danh mục tội danh"  },
@@ -12409,12 +12677,13 @@ function CaiDatModule() {
       </div>
       {/* "Bảng dữ liệu" tự cuộn nội bộ (bảng dài, toolbar/cảnh báo cố định phía trên) nên cần bọc
           trong flex-1 min-h-0 để h-full bên trong nó có chiều cao xác định — đúng pattern "Bố cục
-          cuộn trang" đã ghi trong CLAUDE.md. Các tab khác (Nhật ký/Cán bộ/Danh mục/Import/Thùng
-          rác) vẫn để cả trang cuộn qua <main> như trước, không đổi hành vi của chúng. */}
+          cuộn trang" đã ghi trong CLAUDE.md. Các tab khác (Chung/Nhật ký/Cán bộ/Danh mục/Import/
+          Thùng rác) vẫn để cả trang cuộn qua <main> như trước, không đổi hành vi của chúng. */}
       {subTab === "bangexcel" ? (
         <div className="flex-1 min-h-0"><BangExcelModule /></div>
       ) : (
         <>
+          {subTab === "chung"    && <CaiDatChungModule />}
           {subTab === "log"      && <NhatKyModule />}
           {subTab === "canbo"    && <CanBoModule />}
           {subTab === "danhmuc"  && <DanhMucToiDanhModule />}
