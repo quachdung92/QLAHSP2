@@ -5709,7 +5709,10 @@ function useQrKieuInMacDinh() {
 // Render qua portal vào #qr-print-root (ngoài #root) để khi in, ẩn #root đi mà không ẩn theo
 // khung QR này — xem chú thích ở khối CSS @media print trong <head>.
 function InQRModal({ vuAn, onDong }) {
-  const [kieuIn, setKieuIn] = useQrKieuInMacDinh();
+  // Đọc đúng kiểu in mặc định đang đặt ở Cài đặt → Cài đặt chung (không có nút gạt riêng trong
+  // modal này nữa — bản đầu tiên đặt nút gạt ở đây nhưng nằm lẫn trong màn xem trước A4 dài, khó
+  // thấy; đổi hẳn sang Cài đặt cho dễ tìm, modal chỉ còn việc HIỂN THỊ đúng theo lựa chọn đó).
+  const [kieuIn] = useQrKieuInMacDinh();
   const goc = kieuIn === "goc_giay";
 
   const noiDung = (
@@ -5720,16 +5723,9 @@ function InQRModal({ vuAn, onDong }) {
           BienBanGiaoNhanIn cho @page { size: landscape }. */}
       {goc && <style>{"@page { margin: 5mm; }"}</style>}
       <div id="qr-in-a4" className="bg-white relative" style={{ width: "210mm", minHeight: "297mm" }}>
-        <div className="print:hidden flex flex-col items-center gap-3 pt-8">
-          <div className="text-sm text-slate-400">Xem trước trang in A4 — bấm "In" để in thật.</div>
-          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-            {[["day_du", "Đầy đủ (giữa trang)"], ["goc_giay", "Nhỏ gọn (góc giấy, để cắt dán)"]].map(([v, lbl]) => (
-              <button key={v} onClick={() => setKieuIn(v)}
-                      className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${kieuIn === v ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
-                {lbl}
-              </button>
-            ))}
-          </div>
+        <div className="print:hidden text-sm text-slate-400 text-center pt-8">
+          Xem trước trang in A4 — bấm "In" để in thật.
+          Đổi kiểu in mặc định ở Cài đặt → Cài đặt chung.
         </div>
 
         {goc ? (
@@ -12427,11 +12423,36 @@ function XoaVinhVienModal({ vuAn, onDong, onXong }) {
   );
 }
 
+// Cài đặt chung — nơi gom các tuỳ chọn hiển thị/hành vi cấp máy (localStorage), KHÔNG phải dữ
+// liệu nghiệp vụ. Hiện chỉ có 1 mục (kiểu in mã QR) nhưng tách riêng module để dễ thêm mục khác
+// sau này mà không phải lục trong các tab quản trị (Cán bộ/Import/Thùng rác...).
+function CaiDatChungModule() {
+  const [kieuIn, setKieuIn] = useQrKieuInMacDinh();
+  const goc = kieuIn === "goc_giay";
+  return (
+    <div className="max-w-xl">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3">In mã QR</h3>
+      <div className="flex items-center justify-between gap-4 p-4 bg-white rounded-lg border border-slate-200">
+        <div>
+          <div className="text-sm font-medium text-slate-700">Khung nhỏ gọn, ghim góc giấy</div>
+          <div className="text-xs text-slate-400 mt-1">
+            Bật: khung QR nhỏ hơn, đóng viền, ghim sát góc trên-phải trang A4 — tiện cắt dán vào hồ
+            sơ giấy. Tắt: khung QR to, giữa trang (mặc định cũ). Áp dụng ngay cho mọi lần bấm
+            "In mã QR" tiếp theo, không cần chọn lại.
+          </div>
+        </div>
+        <CongTac checked={goc} onChange={(v) => setKieuIn(v ? "goc_giay" : "day_du")} />
+      </div>
+    </div>
+  );
+}
+
 // CaiDatModule — gom Import Excel, Nhật ký thao tác, Cán bộ vào 1 chỗ để
 // tránh người dùng bình thường vô tình chạm vào các thao tác quản trị.
 function CaiDatModule() {
-  const [subTab, setSubTab] = useState("log");
+  const [subTab, setSubTab] = useState("chung");
   const tabs = [
+    { id: "chung",     label: "Cài đặt chung"      },
     { id: "log",       label: "Nhật ký thao tác"  },
     { id: "canbo",     label: "Cán bộ"             },
     { id: "danhmuc",   label: "Danh mục tội danh"  },
@@ -12452,12 +12473,13 @@ function CaiDatModule() {
       </div>
       {/* "Bảng dữ liệu" tự cuộn nội bộ (bảng dài, toolbar/cảnh báo cố định phía trên) nên cần bọc
           trong flex-1 min-h-0 để h-full bên trong nó có chiều cao xác định — đúng pattern "Bố cục
-          cuộn trang" đã ghi trong CLAUDE.md. Các tab khác (Nhật ký/Cán bộ/Danh mục/Import/Thùng
-          rác) vẫn để cả trang cuộn qua <main> như trước, không đổi hành vi của chúng. */}
+          cuộn trang" đã ghi trong CLAUDE.md. Các tab khác (Chung/Nhật ký/Cán bộ/Danh mục/Import/
+          Thùng rác) vẫn để cả trang cuộn qua <main> như trước, không đổi hành vi của chúng. */}
       {subTab === "bangexcel" ? (
         <div className="flex-1 min-h-0"><BangExcelModule /></div>
       ) : (
         <>
+          {subTab === "chung"    && <CaiDatChungModule />}
           {subTab === "log"      && <NhatKyModule />}
           {subTab === "canbo"    && <CanBoModule />}
           {subTab === "danhmuc"  && <DanhMucToiDanhModule />}
