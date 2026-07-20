@@ -701,6 +701,17 @@ function hienThiMa(vuAn) {
 // cũ không bị dùng lại.
 const _biCanCache = {};
 function xoaBiCanCache(maVuAn) { delete _biCanCache[maVuAn]; }
+// Bug thật đã sửa (2026-07-20, phát hiện qua báo cáo Dũng "data đã cập nhật nhưng báo cáo vẫn cũ",
+// dù xem đúng kỳ ĐANG MỞ — không phải lỗi cache baoCaoLuu của kỳ đã chốt): các CÔNG CỤ GHI HÀNG
+// LOẠT (BackfillDieuLuatBCTool, CapNhatDieuLuatTuFileTool, Import Excel...) ghi thẳng qua
+// batch.update() KHÔNG đi qua ThemBiCanForm/SuaBiCanForm/TachVuAnModal/NhapVuModal/XoaVuAnModal —
+// 7 chỗ DUY NHẤT gọi xoaBiCanCache(maVuAn) trong toàn bộ code — nên _biCanCache giữ nguyên giá trị
+// CŨ (VD "chưa xác định") cho MỌI vụ đã mở báo cáo/panel TRƯỚC đó trong cùng phiên trình duyệt, dù
+// dữ liệu Postgres đã đúng — báo cáo "kỳ đang mở" (tính LIVE, không phải snapshot) vẫn đọc lại
+// đúng cache cũ này qua layBiCanInfo/batchLayBiCanList. Bulk tool sửa NHIỀU vụ cùng lúc, biết
+// TRƯỚC không vụ nào là ngoại lệ — xoá SẠCH cache (không cần theo dõi từng maVuAn) là cách chắc
+// chắn nhất, tránh lặp lại đúng lớp bug này ở công cụ hàng loạt nào khác thêm sau này.
+function xoaToanBoBiCanCache() { for (const k in _biCanCache) delete _biCanCache[k]; }
 
 async function layBiCanInfo(maVuAn) {
   if (_biCanCache[maVuAn]) return _biCanCache[maVuAn];
@@ -2302,6 +2313,7 @@ function BackfillDieuLuatBCTool() {
         if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; }
       }
       if (batchCount > 0) await batch.commit();
+      xoaToanBoBiCanCache(); // xem ghi chú ở định nghĩa — bulk tool ghi thẳng, không đi qua form đơn lẻ
 
       setState("done");
       setInfo(`Đã chuẩn hóa ${soCapNhat} bị can (trong đó ${soSuyTuVu} suy ra từ Điều luật cấp vụ do bị can trống hoàn toàn tội danh). Bỏ qua ${soBo} (đã đầy đủ hoặc không khớp danh mục).`);
@@ -2546,6 +2558,7 @@ function CapNhatDieuLuatTuFileTool() {
         await sb.rpc("capNhatDieuLuatVaLoaiKhoiTo", { p_ma_vu_an: ma });
       }
 
+      xoaToanBoBiCanCache(); // xem ghi chú ở định nghĩa — bulk tool ghi thẳng, không đi qua form đơn lẻ
       soVuSua += capNhatVuAn.length; // đếm cả vụ có bị can được cập nhật gián tiếp qua bị can
       setKetQua({ soVuSua, soBcSua, soVuCoBiCan: capNhatVuAn.length });
       setState("done");
