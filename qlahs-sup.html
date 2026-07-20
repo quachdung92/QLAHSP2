@@ -6474,13 +6474,53 @@ async function tinhSnapTonTheoTD() {
   return { tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD };
 }
 
+// tonCuoiKy/tonCuoiBiCan (theo giai đoạn, KHÔNG phải theo tội danh) tính bằng CÔNG THỨC LOG
+// (tồn đầu kỳ + mới − đã giải quyết, gộp theo đúng kyThongKe của từng sự kiện) THAY VÌ snapshot
+// sống trạng thái `vuan` hiện tại — sửa theo yêu cầu người dùng 2026-07-20 khi cho phép "mở kỳ
+// mới dù kỳ trước chưa chốt" (nhập bù dữ liệu). Lý do bắt buộc phải đổi: bản cũ giả định "chốt lúc
+// = lúc kỳ thực sự kết thúc" (live state tại thời điểm bấm chốt = đúng lịch sử), giả định này VỠ
+// khi chốt TRỄ — VD vụ đang tồn ở kỳ 06/2026 nhưng cán bộ chỉ nhập sự kiện giải quyết vào hệ thống
+// sau đó, gắn kyThongKe = kỳ 07/2026 (đúng bản chất nghiệp vụ: việc giải quyết XẢY RA/được ghi vào
+// kỳ sau) — nếu tới lúc chốt 06/2026 mới query LIVE trạng thái vuan, vụ đó đã KHÔNG CÒN
+// "dang_giai_quyet" nữa nên bị đếm THIẾU khỏi tồn cuối kỳ 06/2026, dù tại đúng thời điểm kết thúc
+// kỳ 06 nó vẫn đang tồn. Công thức log không phụ thuộc THỜI ĐIỂM tính (chỉ phụ thuộc kyThongKe đã
+// gắn trên từng sự kiện) nên đúng bất kể chốt sớm hay trễ bao lâu.
 async function chotKyBaoCao(ky, kyTruoc, ngayChot, nguoiChot) {
-  const { tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD } = await tinhSnapTonTheoTD();
-  const baoCaoTuLog = await tinhBaoCaoKyTuLog({ ...ky, trangThai: "da_chot", tonCuoiKy }, kyTruoc);
+  // Gọi tinhBaoCaoKyTuLog với trangThai "dang_mo" — CHỈ để tái dùng các số mới/đã giải quyết đã
+  // tính sẵn theo log (soMoi, chuyenDi, traDi, hoanThanhTheoGD, soNhapVu, và các mảng ds.* kèm
+  // _soBiCan từng vụ); giá trị tonCuoiKy/tonCuoiBiCanKy nó tự tính bên trong (nhánh live snapshot)
+  // bị BỎ QUA, ghi đè bằng công thức log ngay dưới đây trước khi đông cứng vào baoCaoLuu.
+  const baoCaoSoBo = await tinhBaoCaoKyTuLog({ ...ky, trangThai: "dang_mo" }, kyTruoc);
+  const tonCuoiKy = {};
+  const tonCuoiBiCan = {};
+  const tongBiCan = (arr) => arr.reduce((s, v) => s + (v._soBiCan || 0), 0);
+  for (const gd of THU_TU_GIAI_DOAN) {
+    const b = baoCaoSoBo[gd];
+    const soGiaiQuyetVu = b.chuyenDi + b.traDi
+      + Object.values(b.hoanThanhTheoGD).reduce((s, n) => s + n, 0) + b.soNhapVu;
+    const bcMoi = tongBiCan(b.ds.khoiToTrucTiep) + tongBiCan(b.ds.tachVu)
+      + tongBiCan(b.ds.chuyenDen) + tongBiCan(b.ds.traVe);
+    // ds.hoanThanh là object {hinhThuc: [...]} (5 hình thức) — cộng dồn BC của cả 5 mảng con.
+    const bcGiaiQuyet = tongBiCan(b.ds.chuyenDi) + tongBiCan(b.ds.traDi)
+      + Object.values(b.ds.hoanThanh).reduce((s, arr) => s + tongBiCan(arr), 0)
+      + tongBiCan(b.ds.nhapVu);
+    tonCuoiKy[gd] = b.tonDauKy + b.soMoi.tong - soGiaiQuyetVu;
+    tonCuoiBiCan[gd] = b.tonDauBiCan + bcMoi - bcGiaiQuyet;
+    // Ghi đè giá trị snapshot sống (tính sai ở trên) bằng giá trị log-based, TRƯỚC KHI đông cứng
+    // qua tachBaoCaoLuu — để KyChiTietModal sau này đọc baoCaoLuu ra đúng số đã sửa, không phải
+    // số live-snapshot cũ.
+    b.tonCuoiKy = tonCuoiKy[gd];
+    b.tonCuoiBiCanKy = tonCuoiBiCan[gd];
+  }
+  // tonCuoiKyTheoTD (theo tội danh, dùng cho Biểu B10) VẪN giữ snapshot sống như cũ trong lần
+  // chốt đầu — nếu chốt trễ như kịch bản trên, số này CÓ THỂ lệch tương tự; công cụ "Sửa lại tồn
+  // cuối kỳ theo tội danh (Biểu B10)" (Cài đặt → Import Excel) đã tính đúng theo log cho toàn bộ
+  // lịch sử, chạy lại công cụ đó sau khi bù dữ liệu xong để đồng bộ số theo tội danh.
+  const { tonCuoiKyTheoTD } = await tinhSnapTonTheoTD();
   await db.collection("kybaocao").doc(ky.id).update({
     trangThai: "da_chot", ngayChot, nguoiChot, thoiDiemChot: new Date(),
     tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD,
-    baoCaoLuu: tachBaoCaoLuu(baoCaoTuLog),
+    baoCaoLuu: tachBaoCaoLuu(baoCaoSoBo),
   });
 }
 
@@ -6490,6 +6530,12 @@ function MoKyMoiForm({ onDong, onXong }) {
   const [loi, setLoi] = useState("");
   const [dangLuu, setDangLuu] = useState(false);
   const [laLuuTru, setLaLuuTru] = useState(false);
+  // Bỏ qua cảnh báo "kỳ trước chưa chốt" — dùng khi đang bù dữ liệu (VD nhập trễ các sự kiện của
+  // kỳ cũ) và cần mở kỳ mới ngay để tiếp tục ghi nhận việc phát sinh sau đó, không muốn/không thể
+  // chốt kỳ cũ ngay lúc này. An toàn để bypass vì "tồn cuối kỳ" giờ tính bằng công thức log (xem
+  // chotKyBaoCao) — không còn phụ thuộc việc chốt sớm hay trễ, nên có thể chốt kỳ cũ sau này bất
+  // cứ lúc nào mà số liệu vẫn đúng.
+  const [boQuaCanhBao, setBoQuaCanhBao] = useState(false);
 
   const luu = async () => {
     if (!tenKy.trim()) { setLoi("Cần nhập tên kỳ."); return; }
@@ -6497,11 +6543,13 @@ function MoKyMoiForm({ onDong, onXong }) {
     setDangLuu(true);
     try {
       if (!laLuuTru) {
-        const dangMo = await db.collection("kybaocao").where("trangThai", "==", "dang_mo").limit(1).get();
-        if (!dangMo.empty) {
-          setLoi(`Đang có kỳ "${dangMo.docs[0].data().tenKy}" chưa chốt — cần chốt kỳ đó trước khi mở kỳ mới.`);
-          setDangLuu(false);
-          return;
+        if (!boQuaCanhBao) {
+          const dangMo = await db.collection("kybaocao").where("trangThai", "==", "dang_mo").limit(1).get();
+          if (!dangMo.empty) {
+            setLoi(`Đang có kỳ "${dangMo.docs[0].data().tenKy}" chưa chốt — cần chốt kỳ đó trước khi mở kỳ mới, hoặc tích "Bỏ qua cảnh báo" bên dưới nếu đang bù dữ liệu.`);
+            setDangLuu(false);
+            return;
+          }
         }
         await db.collection("kybaocao").add({
           tenKy: tenKy.trim(), ngayBatDau: fromInputDate(ngayBatDau), ngayChot: null,
@@ -6541,6 +6589,15 @@ function MoKyMoiForm({ onDong, onXong }) {
           <div className="text-xs text-slate-500 mt-0.5">Không ràng buộc vào chuỗi kỳ báo cáo. Dùng để thêm các vụ án đã giải quyết từ trước — sự kiện gán vào kỳ này không tính vào số liệu báo cáo tháng nào.</div>
         </div>
       </label>
+      {!laLuuTru && (
+        <label className="flex items-start gap-2 cursor-pointer mb-4">
+          <input type="checkbox" checked={boQuaCanhBao} onChange={e => setBoQuaCanhBao(e.target.checked)} className="mt-0.5" />
+          <div>
+            <div className="text-sm font-medium text-slate-700">Bỏ qua cảnh báo "kỳ trước chưa chốt"</div>
+            <div className="text-xs text-slate-500 mt-0.5">Dùng khi đang bù dữ liệu cho kỳ cũ và cần mở kỳ mới ngay để tiếp tục ghi nhận việc phát sinh sau đó — nhớ quay lại chốt kỳ cũ khi bù xong. An toàn: "tồn cuối kỳ" tính theo đúng dữ liệu đã ghi nhận của từng kỳ, không phụ thuộc chốt sớm hay trễ.</div>
+          </div>
+        </label>
+      )}
       <div className="flex justify-end gap-2">
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={dangLuu}
@@ -6575,7 +6632,8 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
     <KhungModalHanhDong tieuDe={`Chốt kỳ "${ky.tenKy}"`}>
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
       <div className="text-xs text-slate-500 mb-3">
-        Hệ thống sẽ tự chụp số "Còn" của từng cơ quan tại thời điểm chốt để làm "Án cũ" cho kỳ sau.
+        Hệ thống tính số "Còn" của từng cơ quan theo đúng dữ liệu đã ghi nhận cho kỳ này (tồn đầu
+        kỳ + mới − đã giải quyết, không phụ thuộc bạn chốt sớm hay trễ) để làm "Án cũ" cho kỳ sau.
         Sau khi chốt, không thao tác nào ghi log mới vào kỳ này được nữa.
       </div>
       <label className="text-xs text-slate-500 block mb-1">Ngày chốt</label>

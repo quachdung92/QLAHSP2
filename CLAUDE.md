@@ -2,6 +2,43 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Kỳ báo cáo: cho mở kỳ mới dù kỳ trước chưa chốt + tồn cuối kỳ tính bằng log (2026-07-20)
+
+Theo yêu cầu người dùng (đang trong giai đoạn nhập bù dữ liệu cũ, cần mở kỳ mới ngay dù kỳ hiện tại
+chưa chốt) — 2 thay đổi trong `qlahs-sup.html`, module Kỳ báo cáo:
+
+**1. `MoKyMoiForm` thêm checkbox "Bỏ qua cảnh báo 'kỳ trước chưa chốt'"** — trước đây mở kỳ mới
+LUÔN bị chặn cứng nếu còn 1 kỳ `dang_mo` khác (không phải lưu trữ), không có cách nào bypass. Giờ
+tích checkbox này thì bỏ qua hẳn bước kiểm tra, cho phép tồn tại 2 kỳ `dang_mo` cùng lúc. An toàn để
+bypass vì đã sửa mục 2 ngay dưới — tồn cuối kỳ không còn phụ thuộc thứ tự/thời điểm chốt.
+
+**2. `chotKyBaoCao` — tồn cuối kỳ (`tonCuoiKy`/`tonCuoiBiCan`, theo giai đoạn) đổi từ snapshot sống
+sang CÔNG THỨC LOG (tồn đầu kỳ + mới − đã giải quyết, theo đúng `kyThongKe` của từng sự kiện).**
+Lý do bắt buộc: thiết kế cũ giả định "chốt lúc = lúc kỳ thực sự kết thúc" (live trạng thái `vuan`
+tại thời điểm bấm chốt phản ánh đúng lịch sử) — giả định này VỠ khi chốt trễ (đúng kịch bản mục 1):
+vụ tồn ở kỳ 06/2026 nhưng sự kiện giải quyết nó lại được nhập SAU, gắn `kyThongKe` = kỳ 07/2026 —
+nếu tới lúc chốt 06/2026 mới query LIVE, vụ đó đã hết "đang giải quyết" nên bị đếm THIẾU khỏi tồn
+cuối kỳ 06, dù tại đúng thời điểm kết thúc kỳ 06 nó vẫn đang tồn. Công thức log không phụ thuộc THỜI
+ĐIỂM tính, chỉ phụ thuộc `kyThongKe` đã gắn trên sự kiện, nên đúng bất kể chốt sớm hay trễ bao lâu.
+Cài đặt: gọi `tinhBaoCaoKyTuLog` với `trangThai: "dang_mo"` để lấy lại các số mới/giải quyết đã tính
+theo log (bỏ qua giá trị tồn cuối kỳ nó tự tính bên trong theo nhánh live), rồi tự cộng dồn
+`tonDauKy + soMoi.tong − (chuyenDi + traDi + ΣhoanThanhTheoGD + soNhapVu)` — tương tự cho bị can qua
+`_soBiCan` có sẵn trên từng phần tử các mảng `ds.*`. Ghi đè `b.tonCuoiKy`/`b.tonCuoiBiCanKy` TRƯỚC
+khi đông cứng qua `tachBaoCaoLuu`, để `KyChiTietModal` đọc lại đúng số đã sửa.
+**`tonCuoiKyTheoTD` (theo tội danh, dùng cho Biểu B10) CHƯA được sửa theo hướng này** — vẫn giữ
+snapshot sống như cũ ở lần chốt đầu, có thể lệch tương tự nếu chốt trễ. Công cụ "Sửa lại tồn cuối
+kỳ theo tội danh (Biểu B10)" (Cài đặt → Import Excel, `TaiTaoTonTheoTDTool`) đã tính đúng theo log
+từ trước — chạy lại công cụ đó sau khi bù dữ liệu xong để đồng bộ số theo tội danh.
+
+**Đã kiểm chứng bằng test cô lập** (`test_tonCuoiKy_log.js`, mô phỏng đúng kịch bản người dùng nêu):
+vụ 2 bị can khởi tố mới ở kỳ 06 (không có sự kiện giải quyết nào gắn kỳ 06) → tồn cuối kỳ 06 đúng
+"1 vụ/2 bị can" dù thực tế vụ đã được giải quyết SAU với sự kiện gắn kỳ 07; kỳ 07 nhận tồn đầu kỳ =
+1/2 rồi trừ đúng khi có sự kiện hoàn thành gắn kỳ 07 → tồn cuối kỳ 07 = 0/0. 4/4 assertion PASS.
+**CHƯA kiểm chứng bằng cách chốt kỳ thật trên dữ liệu Firestore/Supabase thật** — chốt kỳ là hành
+động không thể hoàn tác (khoá không cho ghi log mới vào kỳ đó), không tự ý thử trên kỳ 06/2026 thật
+đang có dữ liệu. Nên chốt thử 1 kỳ test (hoặc backup trước) để xác nhận số liệu đúng trước khi tin
+tưởng hoàn toàn trên kỳ thật đầu tiên chốt sau bản sửa này.
+
 ## Audit "chưa xác định điều luật" ở Biểu B10 — không phải xung đột BLHS 2015/2025 (2026-07-19)
 
 Theo yêu cầu người dùng: nhiều vụ án cũ bị Biểu B10/TK tội danh báo "chưa xác định điều luật" dù
