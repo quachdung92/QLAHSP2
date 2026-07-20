@@ -2,6 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Import Excel: resolve "Mã ĐL" (điều luật) NGAY lúc import, sửa file mẫu (2026-07-20)
+
+Theo yêu cầu người dùng: dữ liệu import qua Excel vẫn luôn cần chạy thêm "Chuẩn hóa tội danh /
+điều luật bị can" (Cài đặt → Import Excel) sau đó, nếu không sẽ hiện "chưa xác định" — muốn file
+mẫu tự hướng dẫn đúng ngay từ đầu để KHÔNG cần bước chạy lại này nữa.
+
+**Nguyên nhân**: `ghiVaoCoSoDuLieu` (hàm ghi dữ liệu Import Excel vào CSDL) LUÔN ghi cứng
+`dieuLuatBC: [""]` cho mọi bị can, bất kể cột "Tội danh" trong file có ghi đúng định dạng hay
+không — hoàn toàn không tra danh mục lúc import (khác với suy nghĩ ban đầu là "tra sai", thực ra
+là "không tra gì cả"). Thêm nữa, ví dụ mẫu trong chính file `Mau_Import_DanhSachAn.xlsx` lại ghi
+sai định dạng ("Tội cướp tài sản (Điều 168 BLHS)" — có phần "(Điều...)" phía sau), và "Hướng dẫn"
+không hề nhắc gì về cách ghi cột này — dạy người dùng đúng cách sẽ VẪN không tự nhận được vì code
+không tra cứu lúc import.
+
+**Đã sửa (2 phần)**:
+1. **Gộp logic chuẩn hoá 1 cặp (tên tội danh, mã điều luật) thành 2 hàm dùng chung mới**
+   `taoDanhMucDayDu`/`chuanHoaMotToiDanh` (đặt cạnh `layMaDieuLuatBiCan`) — trích nguyên logic đã
+   có trong `BackfillDieuLuatBCTool` (tra theo số điều → theo tên → suy từ Điều luật cấp vụ nếu
+   trống hoàn toàn), rồi cho `BackfillDieuLuatBCTool` DÙNG LẠI 2 hàm này (giảm trùng lặp) và THÊM
+   MỚI: `ghiVaoCoSoDuLieu` (Import Excel) cũng gọi đúng 2 hàm này để resolve `dieuLuatBC` NGAY lúc
+   ghi — không cần chạy "Chuẩn hóa" riêng sau nữa cho dữ liệu import ĐÚNG định dạng.
+2. **Sửa file mẫu `Mau_Import_DanhSachAn.xlsx`** (qua script Python/openpyxl, xoá sau khi chạy —
+   xem ghi chú "Tài liệu tham khảo" ở dưới về việc không có script gốc làm nguồn sự thật): thêm
+   mục "6b. Cột 'Tội danh' (bị can)..." vào sheet "Hướng dẫn", giải thích rõ 2 cách ghi hợp lệ
+   (tên đầy đủ khớp danh mục, hoặc chỉ số điều luật) và CẢNH BÁO rõ định dạng sai ("Tên (Điều N)");
+   sửa lại 2 dòng ví dụ ở sheet "Danh sách án" từ "Tội cướp tài sản (Điều 168 BLHS)" (sai, không
+   khớp danh mục) thành "Tội cướp tài sản" (đúng, khớp `DANH_MUC_TOI_DANH_MAM`). Cũng cập nhật
+   đoạn hướng dẫn hiển thị ngay trên màn hình Import Excel (`ImportExcelModule`) với nội dung
+   tương tự.
+
+**Đã kiểm chứng bằng test cô lập** (`test_import_dieuluat.js`, trích nguyên hàm mới): "Trộm cắp
+tài sản" (thiếu tiền tố "Tội ") tự resolve đúng "Điều 173 BLHS 2025"; "173" (chỉ số điều) tự
+resolve đúng cả tên lẫn mã; để trống hoàn toàn tự suy đúng từ Điều luật cấp vụ; định dạng SAI như
+ví dụ CŨ trong file mẫu ("Tội trộm cắp tài sản (Điều 173)") xác nhận KHÔNG resolve được — đúng lý
+do bắt buộc phải sửa ví dụ đó. 4/4 assertion PASS. Đã kiểm tra file `.xlsx` sau khi sửa mở lại
+bằng openpyxl không lỗi, cấu trúc cột (23 cột, header dòng 1) giữ nguyên như trước.
+**CHƯA import thử 1 file Excel thật qua UI** để xác nhận `dieuLuatBC` ghi đúng ngay trên dữ liệu
+Firestore/Supabase thật (chỉ kiểm chứng logic thuần qua test cô lập) — nên thử 1 lần trên
+`qlahs-sup.html` với file mẫu vừa sửa trước khi tin tưởng hoàn toàn.
+
 ## Bug tiếp theo: "Tồn cuối kỳ" xem trước (kỳ CHƯA chốt) vẫn dùng snapshot sống (2026-07-20)
 
 Ngay sau mục "Kỳ báo cáo: cho mở kỳ mới..." dưới đây — bản sửa đầu tiên chỉ sửa `chotKyBaoCao`

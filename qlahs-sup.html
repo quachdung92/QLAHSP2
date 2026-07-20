@@ -847,6 +847,47 @@ function layMaDieuLuatBiCan(bc, danhMucByTen) {
   );
 }
 
+// Dựng cặp map tra cứu ĐẦY ĐỦ (giữ nguyên cả entry danh mục — cần cả tenToiDanh lẫn dieuLuat để
+// SỬA LẠI/ĐIỀN tên tội danh khi bị can chỉ ghi số điều hoặc để trống hoàn toàn) — KHÁC
+// `taoDanhMucByTen` ở trên (chỉ trả CHUỖI dieuLuat, đủ dùng cho các nơi TÍNH SỐ LIỆU theo điều
+// luật, không cần sửa lại tên). Dùng chung cho BackfillDieuLuatBCTool VÀ Import Excel (resolve
+// ngay lúc import, xem chuanHoaMotToiDanh) — tránh viết lặp lại thêm 1 nơi nữa.
+function taoDanhMucDayDu(danhMuc) {
+  const dmByTen = {}, dmByDieu = {};
+  danhMuc.forEach(data => {
+    const keyTen = chuanHoaTenToiDanh(data.tenToiDanh);
+    if (!dmByTen[keyTen] || data.namBLHS === "2025") dmByTen[keyTen] = data;
+    const mDieu = (data.dieuLuat || "").match(/Điều\s+(\d+[a-zA-Z]*)/i);
+    if (mDieu) {
+      const keyDieu = mDieu[1].toLowerCase();
+      if (!dmByDieu[keyDieu] || data.namBLHS === "2025") dmByDieu[keyDieu] = data;
+    }
+  });
+  return { dmByTen, dmByDieu };
+}
+// Chuẩn hoá 1 cặp (tên tội danh, mã điều luật) của 1 bị can — logic gốc trích từ
+// BackfillDieuLuatBCTool (xem đó để biết lịch sử audit). Trả {ten, dieuLuat, changed} —
+// changed=false nghĩa là giữ nguyên input (đã có ref sẵn, hoặc không tra được gì thêm).
+// `dieuLuatCapVu` (field `dieuLuat` của chính vuan) chỉ dùng khi tenGoc RỖNG HOÀN TOÀN.
+function chuanHoaMotToiDanh(tenGoc, dieuLuatGoc, dieuLuatCapVu, dmByTen, dmByDieu) {
+  const t = (tenGoc || "").trim();
+  const dl = (dieuLuatGoc || "").trim();
+  if (dl) return { ten: tenGoc, dieuLuat: dieuLuatGoc, changed: false };
+  if (/^\d+[a-zA-Z]?$/.test(t)) {
+    const hit = dmByDieu[t.toLowerCase()];
+    if (hit) return { ten: hit.tenToiDanh, dieuLuat: hit.dieuLuat, changed: true };
+  } else if (t) {
+    const hit = dmByTen[chuanHoaTenToiDanh(t)];
+    if (hit) return { ten: t, dieuLuat: hit.dieuLuat, changed: true };
+  } else if ((dieuLuatCapVu || "").trim()) {
+    const dlCapVu = dieuLuatCapVu.trim();
+    const mDieu = dlCapVu.match(/Điều\s+(\d+[a-zA-Z]*)/i);
+    const hit = mDieu ? dmByDieu[mDieu[1].toLowerCase()] : dmByTen[chuanHoaTenToiDanh(dlCapVu)];
+    if (hit) return { ten: hit.tenToiDanh, dieuLuat: hit.dieuLuat, changed: true };
+  }
+  return { ten: tenGoc, dieuLuat: dieuLuatGoc, changed: false };
+}
+
 function tinhTenVu(biCanList) {
   const coTen = biCanList.filter(bc => bc.hoTen && bc.hoTen.trim());
   if (coTen.length === 0) return "";
@@ -2213,27 +2254,9 @@ function BackfillDieuLuatBCTool() {
       ]);
       // maVuAn của bican CHÍNH LÀ id của vuan (cùng bất biến RPC "capNhatDieuLuatVaLoaiKhoiTo" dựa vào, xem supabase/functions.sql).
       const vuanById = new Map(vaSnap.docs.map(d => [d.id, d.data()]));
-
-      // Lookup theo tên tội danh (chuẩn hoá bỏ tiền tố "Tội " — audit 2026-07-19: nguyên nhân
-      // CHÍNH gây "chưa xác định điều luật" hàng loạt ở vụ cũ là khớp tên TUYỆT ĐỐI trong khi
-      // danh mục luôn ghi đủ "Tội ..." còn dữ liệu cũ/import hay ghi tắt thiếu tiền tố này), ưu
-      // tiên BLHS 2025 khi trùng (trước đây ưu tiên "namBLHS === '2015'" — dead code từ khi danh
-      // mục đổi hết nhãn sang "2025", không còn entry nào gắn nhãn "2015" nữa).
-      const dmByTen = {};
-      // Lookup theo số điều (lowercase, VD "173", "134a") — ưu tiên BLHS 2025 khi trùng (VD Điều
-      // 173 tồn tại ở CẢ BLHS 1999 lẫn 2025 nhưng là 2 tội hoàn toàn khác nhau — ưu tiên 2025 vì
-      // áp dụng cho phần lớn vụ án hiện hành).
-      const dmByDieu = {};
-      dmSnap.docs.forEach(d => {
-        const data = d.data();
-        const keyTen = chuanHoaTenToiDanh(data.tenToiDanh);
-        if (!dmByTen[keyTen] || data.namBLHS === "2025") dmByTen[keyTen] = data;
-        const mDieu = (data.dieuLuat || "").match(/Điều\s+(\d+[a-zA-Z]*)/i);
-        if (mDieu) {
-          const keyDieu = mDieu[1].toLowerCase();
-          if (!dmByDieu[keyDieu] || data.namBLHS === "2025") dmByDieu[keyDieu] = data;
-        }
-      });
+      // dmByTen/dmByDieu (giữ nguyên cả entry danh mục) + logic chuẩn hoá 1 cặp (tên, mã) giờ dùng
+      // chung với Import Excel — xem taoDanhMucDayDu/chuanHoaMotToiDanh (đầu file, cạnh tinhDieuLuat).
+      const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
 
       let soCapNhat = 0, soBo = 0, soLoi = 0, soSuyTuVu = 0;
       const BATCH_SIZE = 400;
@@ -2244,37 +2267,17 @@ function BackfillDieuLuatBCTool() {
         const toiDanh = [...(bc.toiDanh || [""])];
         const dieuLuatBC = [...(bc.dieuLuatBC || [])];
         let changed = false;
+        const dieuLuatCapVu = (vuanById.get(bc.maVuAn)?.dieuLuat || "").trim();
 
         for (let i = 0; i < toiDanh.length; i++) {
-          const t = (toiDanh[i] || "").trim();
-          const dl = (dieuLuatBC[i] || "").trim();
-          if (dl) continue; // đã có ref, bỏ qua
-
-          if (/^\d+[a-zA-Z]?$/.test(t)) {
-            // Chỉ có số điều → tra ngược để lấy cả tên lẫn ref
-            const hit = dmByDieu[t.toLowerCase()];
-            if (hit) { toiDanh[i] = hit.tenToiDanh; dieuLuatBC[i] = hit.dieuLuat; changed = true; }
-          } else if (t) {
-            // Tên tội danh nhưng thiếu dieuLuatBC → điền ref (chuẩn hoá bỏ tiền tố "Tội " khi so
-            // khớp, xem ghi chú ở dmByTen)
-            const hit = dmByTen[chuanHoaTenToiDanh(t)];
-            if (hit) { dieuLuatBC[i] = hit.dieuLuat; changed = true; }
-          } else {
-            // toiDanh RỖNG hoàn toàn — audit 2026-07-19 xác nhận đây mới là nguyên nhân CHÍNH gây
-            // "chưa xác định điều luật" hàng loạt (96% bị can của vụ nhập qua Import Excel, không
-            // phải lỗi khớp tên/BLHS như nghi ngờ ban đầu): mẫu "Danh sách án" ghi Điều luật thẳng
-            // vào CẤP VỤ (vuan.dieuLuat, từ cột Excel riêng) nhưng bỏ trống cột Tội danh CẤP BỊ CAN
-            // — nên vụ vẫn hiện đúng "Điều luật" trên Danh sách vụ án, còn B10 (tính theo dieuLuatBC
-            // của TỪNG bị can) thì không có gì để tra. Suy ra từ dieuLuat cấp vụ, áp dụng CHUNG cho
-            // mọi bị can cùng vụ (giả định "cùng vụ = cùng tội danh chính" — đúng với đa số vụ đồng
-            // phạm 1 tội, có thể sai với vụ nhiều tội danh khác nhau theo từng bị can; cán bộ tự sửa
-            // lại qua "Sửa thông tin vụ án" nếu phát hiện sai — vẫn tốt hơn hẳn "chưa xác định").
-            const dieuLuatCapVu = (vuanById.get(bc.maVuAn)?.dieuLuat || "").trim();
-            if (dieuLuatCapVu) {
-              const mDieu = dieuLuatCapVu.match(/Điều\s+(\d+[a-zA-Z]*)/i);
-              const hit = mDieu ? dmByDieu[mDieu[1].toLowerCase()] : dmByTen[chuanHoaTenToiDanh(dieuLuatCapVu)];
-              if (hit) { toiDanh[i] = hit.tenToiDanh; dieuLuatBC[i] = hit.dieuLuat; changed = true; soSuyTuVu++; }
-            }
+          const truocKhiSua = !(toiDanh[i] || "").trim();
+          const ket = chuanHoaMotToiDanh(toiDanh[i], dieuLuatBC[i], dieuLuatCapVu, dmByTen, dmByDieu);
+          if (ket.changed) {
+            toiDanh[i] = ket.ten; dieuLuatBC[i] = ket.dieuLuat; changed = true;
+            // toiDanh RỖNG hoàn toàn trước khi sửa = suy ra từ Điều luật cấp vụ (audit 2026-07-19:
+            // nguyên nhân CHÍNH gây "chưa xác định điều luật" hàng loạt — mẫu "Danh sách án" ghi
+            // Điều luật thẳng vào CẤP VỤ nhưng bỏ trống cột Tội danh CẤP BỊ CAN).
+            if (truocKhiSua) soSuyTuVu++;
           }
         }
 
@@ -2934,6 +2937,13 @@ function ImportExcelModule() {
       const dsMoi = [...ketQuaDoc.moi, ...dsThayThe];
       await sinhNhieuMaVuAn(dsMoi);
 
+      // Tải danh mục tội danh 1 lần để RESOLVE ngay "Mã ĐL" (dieuLuatBC) của từng bị can lúc import
+      // — trước đây luôn ghi rỗng, phải chạy riêng "Chuẩn hóa tội danh/điều luật bị can" (Cài đặt →
+      // Import Excel) sau đó mới hết "chưa xác định". Dùng chung logic với BackfillDieuLuatBCTool
+      // (xem taoDanhMucDayDu/chuanHoaMotToiDanh) để 2 nơi luôn khớp nhau, không lệch quy tắc.
+      const dmSnap = await db.collection("danhMucToiDanh").get();
+      const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
+
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
       const ghiChuNhap = "Nhập qua Import Excel (Danh sách án).";
@@ -3014,9 +3024,13 @@ function ImportExcelModule() {
         for (let i = 0; i < v.biCanList.length; i++) {
           const bc = v.biCanList[i];
           const bcRef = db.collection("bican").doc();
+          // Resolve NGAY "Mã ĐL" từ cột "Tội danh" (tên đúng danh mục, hoặc chỉ số điều VD "173"),
+          // fallback sang Điều luật cấp vụ (v.dieuLuat, cột Excel riêng) nếu ô Tội danh bỏ trống
+          // hoàn toàn — dữ liệu import ra chuẩn ngay, không còn phải chạy lại "Chuẩn hóa" sau.
+          const ket = chuanHoaMotToiDanh(bc.toiDanh, "", v.dieuLuat, dmByTen, dmByDieu);
           batch.set(bcRef, {
             maVuAn: maNoiSinh, hoTen: bc.hoTen, namSinh: bc.namSinh,
-            gioiTinh: bc.gioiTinh, toiDanh: bc.toiDanh ? [bc.toiDanh] : [""], dieuLuatBC: [""],
+            gioiTinh: bc.gioiTinh, toiDanh: ket.ten ? [ket.ten] : [""], dieuLuatBC: [ket.dieuLuat || ""],
             dangVien: bc.dangVien, dangVienGiuChucVu: false,
             danToc: bc.danToc, quocTich: "Việt Nam", trinhDo: "", taiPham: "khong",
             loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
@@ -3068,6 +3082,18 @@ function ImportExcelModule() {
         có trong hệ thống (theo mã vụ nếu có điền, hoặc theo Số + Ngày QĐ KTVA) để bỏ qua, tránh
         ghi trùng/lỗi xung đột — chỉ những vụ thật sự mới mới được đưa vào xem trước và cho phép
         ghi vào hệ thống.
+      </p>
+      <p className="text-sm text-slate-500 mb-6 bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+        <b>Cột "Tội danh" (cấp bị can, không phải "Điều luật" cấp vụ)</b> quyết định "Mã ĐL" dùng
+        cho Biểu B10 có tự nhận đúng ngay lúc import hay không — ghi ĐÚNG 1 trong 2 cách sau để
+        không phải chạy lại "Chuẩn hóa tội danh / điều luật bị can" (Cài đặt → Import Excel) sau
+        này: (1) ghi đúng tên tội danh như trong danh mục của hệ thống (VD "Tội trộm cắp tài sản"
+        — có/không tiền tố "Tội " đều được, không phân biệt hoa/thường), hoặc (2) chỉ ghi SỐ điều
+        luật (VD "173"). <b>Không ghi kèm số điều trong ngoặc</b> (VD "Tội trộm cắp tài sản (Điều
+        173)") — dạng này không khớp được danh mục. Bỏ trống hoàn toàn cột này thì hệ thống sẽ tự
+        suy ra tội danh chính từ cột "Điều luật" cấp vụ (áp dụng chung cho mọi bị can cùng vụ — có
+        thể không đúng nếu vụ nhiều tội danh khác nhau theo từng bị can, kiểm tra lại qua "Sửa
+        thông tin vụ án" nếu cần).
       </p>
 
       {status !== "writing" && status !== "done" && (
