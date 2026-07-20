@@ -658,6 +658,25 @@ function fmtDate(d) {
   return `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}/${dt.getFullYear()}`;
 }
 
+// Khớp tìm kiếm theo "Số QĐ KTVA" — hỗ trợ định dạng "số-ngày" (VD "835-12/09/2024") để phân biệt
+// các vụ TRÙNG SỐ quyết định nhưng khác NGÀY quyết định (rất hay gặp trong thực tế, số QĐ KTVA
+// thường lặp lại giữa các đơn vị/năm khác nhau). Gõ theo định dạng này → phải khớp CẢ số lẫn ngày;
+// gõ bình thường (không có "-NGÀY" ở cuối) → vẫn khớp theo số như trước, không đổi hành vi cũ.
+// `tuKhoaGoc` cần giữ nguyên dấu "-"/"/" (không quan trọng hoa/thường vì chỉ có số) nên nhận thẳng
+// chuỗi đã trim (kể cả bản đã lowercase ở nơi gọi cũng không sao, số/ký tự phân cách không đổi).
+function khopSoQdKtva(v, tuKhoaGoc) {
+  const tk = (tuKhoaGoc || "").trim();
+  const m = tk.match(/^(.+)-\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/);
+  if (m) {
+    const soPhan = m[1].trim().toLowerCase();
+    const ngayTim = new Date(Number(m[4]), Number(m[3]) - 1, Number(m[2]));
+    if (soPhan && !isNaN(ngayTim)) {
+      return (v.soQdKtva || "").toLowerCase().includes(soPhan) && fmtDate(v.ngayQdKtva) === fmtDate(ngayTim);
+    }
+  }
+  return (v.soQdKtva || "").toLowerCase().includes(tk.toLowerCase());
+}
+
 function fromInputDate(s) {
   if (!s) return null;
   const [y, m, dd] = s.split("-").map(Number);
@@ -5414,7 +5433,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
       const hit = (hienThiMa(v) || "").toLowerCase().includes(k)
         || (v.tenVu || "").toLowerCase().includes(k)
         || (v.dieuLuat || "").toLowerCase().includes(k)
-        || (v.soQdKtva || "").toLowerCase().includes(k)
+        || khopSoQdKtva(v, k)
         || (v.biCanDaiDien || "").toLowerCase().includes(k)
         || dsBiCan.some(bc => (bc.hoTen || "").toLowerCase().includes(k));
       if (!hit) return false;
@@ -9652,7 +9671,7 @@ function AnDaGiaiQuyetModule() {
         || (v.ksvChinh || "").toLowerCase().includes(k)
         || (v.ksvHoTro || []).some(t => (t || "").toLowerCase().includes(k))
         || (v.ghiChu || "").toLowerCase().includes(k)
-        || (v.soQdKtva || "").toLowerCase().includes(k)
+        || khopSoQdKtva(v, k)
       );
     }
     return rows;
@@ -10381,7 +10400,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
     || (v.tenVu || "").toLowerCase().includes(k)
     || (v.dieuLuat || "").toLowerCase().includes(k)
     || (v.ksvChinh || "").toLowerCase().includes(k)
-    || (v.soQdKtva || "").toLowerCase().includes(k);
+    || khopSoQdKtva(v, k);
 
   // Cho phép lọc riêng theo KSV (không bắt buộc gõ từ khoá kèm theo) — VD chọn 1 KSV để xem hết
   // hồ sơ đang giải quyết của người đó, khỏi phải nhớ gõ đúng tên.
@@ -11605,6 +11624,9 @@ function khopFilterCot(col, f, row) {
     if (f.den && (ms == null || ms > fromInputDate(f.den).getTime() + 86399999)) return false;
     return true;
   }
+  // Cột Số QĐ KTVA hỗ trợ riêng định dạng "số-ngày" (xem khopSoQdKtva) — row ở đây chính là object
+  // vụ án đầy đủ (đủ field soQdKtva/ngayQdKtva để hàm đó tra), không chỉ giá trị đã getValue().
+  if (col.id === "soQdKtva") return khopSoQdKtva(row, f);
   return (val == null ? "" : String(val)).toLowerCase().includes(String(f).toLowerCase());
 }
 // Áp toàn bộ filter cột (theo đúng NHOM_COT_*) lên 1 danh sách — dùng chung cho cả bảng vụ án và
@@ -12252,7 +12274,7 @@ function BangExcelModule() {
       (hienThiMa(v) || "").toLowerCase().includes(k) ||
       (v.tenVu || "").toLowerCase().includes(k) ||
       (v.ksvChinh || "").toLowerCase().includes(k) ||
-      (v.soQdKtva || "").toLowerCase().includes(k)
+      khopSoQdKtva(v, k)
     );
   }, [list, tuKhoa]);
 
