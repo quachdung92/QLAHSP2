@@ -5749,7 +5749,13 @@ function InQRModal({ vuAn, onDong }) {
           ĐẦU (trên/trái) bị cắt mất, không cuộn tới được (đây chính là lý do khung QR ở góc trên
           từng bị "cắt mất 1 phần" khi màn hình không đủ cao). mx-auto + overflow-auto luôn cuộn
           được đầy đủ mọi phía bất kể trang A4 lớn hơn khung nhìn bao nhiêu. */}
-      {goc && <style>{"@page { margin: 5mm; }"}</style>}
+      {/* Lề phải khai báo RIÊNG rộng hơn (10mm thay vì 5mm, thứ tự CSS @page là top/right/bottom/
+          left) — theo phản hồi thực tế: máy in vẫn cắt mất khung viền dù đã đệm thêm 10.2mm ở
+          NỘI DUNG (marginRight của lưới, xem bên dưới), tự tay đặt "Lề: Tùy chỉnh" 10mm bên phải
+          trong hộp thoại in thì hết cắt — nghĩa là bản thân @page cũng cần khai báo lề phải lớn
+          hơn để Chrome tự áp dụng đúng ngay từ đầu, không phải chỉnh tay mỗi lần in. Cộng dồn với
+          10.2mm đệm ở nội dung vẫn an toàn (chỉ bớt chỗ trống, không ảnh hưởng gì khác). */}
+      {goc && <style>{"@page { margin: 5mm 10mm 5mm 5mm; }"}</style>}
       <div className="mx-auto my-8 print:my-0" style={{ width: "210mm" }}>
         <div id="qr-in-a4" className="bg-white relative flex flex-col shadow-xl print:shadow-none"
              style={{ minHeight: "297mm", height: goc ? "297mm" : undefined }}>
