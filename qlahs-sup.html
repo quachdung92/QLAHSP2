@@ -713,10 +713,23 @@ function xoaBiCanCache(maVuAn) { delete _biCanCache[maVuAn]; }
 // chắn nhất, tránh lặp lại đúng lớp bug này ở công cụ hàng loạt nào khác thêm sau này.
 function xoaToanBoBiCanCache() { for (const k in _biCanCache) delete _biCanCache[k]; }
 
+// Chọn bị can ĐẠI DIỆN cho "tội danh chính" của vụ — PHẢI khớp đúng quy ước "ban_dau" đã dùng
+// thống nhất ở tinhBieu10.vuPrimaryDL/vuPrimaryDL_xuat (bị can loaiKhoiTo="ban_dau", hoặc phần tử
+// đầu nếu không có). Bug đã sửa (2026-07-20, phát hiện qua báo cáo Dũng "chi tiết số liệu vẫn hiện
+// nhiều vụ chưa có tội danh dù mở từng vụ ra đều có"): layBiCanInfo/batchLayBiCanList TRƯỚC ĐÂY
+// lấy bcList[0] — PHẦN TỬ ĐẦU TIÊN Postgres trả về, KHÔNG đảm bảo là bị can "ban_dau" (thứ tự
+// không có ORDER BY tường minh) — vụ nhiều bị can, người "ban_dau" đứng sau trong kết quả trả về
+// thì bị can KHÔNG PHẢI đại diện chính lại được chọn hiển thị, có thể trống tội danh dù vụ thực
+// sự đã có đầy đủ ở đúng bị can chính.
+function chonBiCanChinh(bcList) {
+  return bcList.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList[0];
+}
+
 async function layBiCanInfo(maVuAn) {
   if (_biCanCache[maVuAn]) return _biCanCache[maVuAn];
   const bcSnap = await db.collection("bican").where("maVuAn", "==", maVuAn).get();
-  const toiDanhChinh = bcSnap.docs.length > 0 ? (bcSnap.docs[0].data().toiDanh?.[0] || "") : "";
+  const bcChinh = bcSnap.docs.length > 0 ? chonBiCanChinh(bcSnap.docs.map(d => d.data())) : null;
+  const toiDanhChinh = bcChinh?.toiDanh?.[0] || "";
   const info = { soBiCan: bcSnap.size, toiDanhChinh };
   _biCanCache[maVuAn] = info;
   return info;
@@ -737,7 +750,8 @@ async function batchLayBiCanList(maVuAnList) {
   for (const id of maVuAnList) {
     if (!_biCanCache[id]) {
       const bcList = result[id] || [];
-      _biCanCache[id] = { soBiCan: bcList.length, toiDanhChinh: bcList[0]?.toiDanh?.[0] || "" };
+      // chonBiCanChinh (xem layBiCanInfo) — cùng lý do, tránh chọn nhầm bị can không đại diện.
+      _biCanCache[id] = { soBiCan: bcList.length, toiDanhChinh: (bcList.length ? chonBiCanChinh(bcList) : null)?.toiDanh?.[0] || "" };
     }
   }
   return result;
