@@ -5714,49 +5714,79 @@ function InQRModal({ vuAn, onDong }) {
   // thấy; đổi hẳn sang Cài đặt cho dễ tìm, modal chỉ còn việc HIỂN THỊ đúng theo lựa chọn đó).
   const [kieuIn] = useQrKieuInMacDinh();
   const goc = kieuIn === "goc_giay";
+  // Số bản in mỗi trang — CỐ Ý là state cục bộ của modal (không lưu localStorage như kieuIn): nhu
+  // cầu hồ sơ nhiều tập là ngoại lệ, không phải mặc định nên luôn) reset về 1 mỗi lần mở modal,
+  // tránh việc lỡ in tràn lan 6 bản cho 1 vụ chỉ có 1 tập chỉ vì vụ trước đó cần nhiều bản.
+  const [soLuong, setSoLuong] = useState(1);
+  const kichThuocQR = goc ? "4cm" : "5cm";
+  // Bề rộng tối đa của phần tên vụ (chú thích dưới QR) — CHẶN CỨNG theo đúng bề rộng của hàng QR
+  // (1 hoặc 2 mã cạnh nhau tuỳ có/không mã ngành cấp), để tên hồ sơ dài không kéo giãn cả khối in
+  // rộng ra ngoài ý muốn — tên dài chỉ tự xuống dòng trong đúng bề rộng này.
+  const rongToiDaTenVu = vuAn.maNganhCap ? `calc(2 * ${kichThuocQR} + 1cm)` : kichThuocQR;
+
+  const dsBan = Array.from({ length: soLuong }, (_, i) => i);
 
   const noiDung = (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 print:bg-white overflow-auto">
-      {/* @page margin nhỏ CHỈ áp dụng khi đang ở chế độ "góc giấy" — mặc định browser thường chừa
-          lề in ~10-19mm, sẽ khiến khung không thể "sát lề" như yêu cầu. Đặt cục bộ trong component
-          (không đụng khối @media print chung ở <head>) theo đúng pattern đã dùng ở
-          BienBanGiaoNhanIn cho @page { size: landscape }. */}
+    <div className="fixed inset-0 bg-black/40 z-50 overflow-auto print:bg-white print:overflow-visible">
+      {/* Canh giữa bằng margin:auto (mx-auto) thay vì flex items-center — flex-center kết hợp
+          overflow-auto có lỗi CSS phổ biến: khi nội dung cao/rộng hơn khung nhìn, phần tràn ra ở
+          ĐẦU (trên/trái) bị cắt mất, không cuộn tới được (đây chính là lý do khung QR ở góc trên
+          từng bị "cắt mất 1 phần" khi màn hình không đủ cao). mx-auto + overflow-auto luôn cuộn
+          được đầy đủ mọi phía bất kể trang A4 lớn hơn khung nhìn bao nhiêu. */}
       {goc && <style>{"@page { margin: 5mm; }"}</style>}
-      <div id="qr-in-a4" className="bg-white relative" style={{ width: "210mm", minHeight: "297mm" }}>
-        {/* Khối điều khiển xem trước — CỐ Ý đặt absolute góc trên-trái (không nằm trong luồng bố
-            cục bình thường) để không chiếm chỗ/đẩy lệch nội dung in bên dưới. Bug đã gặp: khi khối
-            này ở luồng bình thường, chế độ "góc giấy" có khung QR absolute (không chiếm chỗ), khiến
-            nút Đóng/In (cũng ở luồng bình thường, đứng sau) bị trôi lên sát ngay dưới dòng chữ
-            hướng dẫn thay vì nằm gọn 1 chỗ — tách khối này ra absolute để độc lập hoàn toàn với
-            khung QR dù ở chế độ nào. */}
-        <div className="print:hidden absolute top-3 left-3 z-10 flex flex-col items-start gap-2 max-w-[240px] bg-white/95 backdrop-blur-sm rounded-lg shadow border border-slate-200 p-3">
-          <div className="text-xs text-slate-400">
-            Xem trước trang in A4 — bấm "In" để in thật. Đổi kiểu in mặc định ở Cài đặt → Cài đặt chung.
+      <div className="mx-auto my-8 print:my-0" style={{ width: "210mm" }}>
+        <div id="qr-in-a4" className="bg-white relative flex flex-col shadow-xl print:shadow-none"
+             style={{ minHeight: "297mm" }}>
+          {/* Khối điều khiển — 1 khối DUY NHẤT (chữ hướng dẫn + số bản in + Đóng/In), canh GIỮA,
+              nằm trong luồng bố cục bình thường (không absolute như bản trước) để không bị lệch —
+              vì giờ đã gộp chung 1 khối nên không còn bug "Đóng/In trôi lên sát chữ hướng dẫn" như
+              lúc còn tách 2 khối riêng (khung QR góc giấy absolute không chiếm chỗ). */}
+          <div className="print:hidden flex flex-col items-center gap-3 pt-8 pb-4 px-4">
+            <div className="text-sm text-slate-400 text-center max-w-md">
+              Xem trước trang in A4 — bấm "In" để in thật. Đổi kiểu in mặc định ở Cài đặt → Cài đặt chung.
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500">Số bản in (hồ sơ nhiều tập):</label>
+              <input type="number" min={1} max={6} value={soLuong}
+                     onChange={e => setSoLuong(Math.min(6, Math.max(1, Number(e.target.value) || 1)))}
+                     className="w-16 px-2 py-1 text-sm text-center border border-slate-300 rounded-lg" />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
+              <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={onDong} className="px-3 py-1.5 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
-            <button onClick={() => window.print()} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
-          </div>
-        </div>
 
-        {goc ? (
-          <div className="absolute flex flex-col items-center border-2 border-slate-700 rounded-lg px-4 py-3 bg-white"
-               style={{ top: "5mm", right: "5mm" }}>
-            <div className="flex items-center gap-4">
-              {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc="4cm" />}
-              <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc="4cm" />
+          {goc ? (
+            // Nhiều bản tự dàn hàng (flex-wrap) ngay trong vùng góc trên-phải — mỗi bản vẫn giữ
+            // đúng khung viền riêng để cắt rời từng cái, "dán đủ các tập" của cùng 1 hồ sơ.
+            <div className="absolute flex flex-wrap gap-2 justify-end" style={{ top: "5mm", right: "5mm", maxWidth: "18cm" }}>
+              {dsBan.map(i => (
+                <div key={i} className="flex flex-col items-center border-2 border-slate-700 rounded-lg px-4 py-3 bg-white">
+                  <div className="flex items-center gap-4">
+                    {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc={kichThuocQR} />}
+                    <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc={kichThuocQR} />
+                  </div>
+                  <div className="mt-1.5 text-xs text-slate-500 text-center break-words" style={{ maxWidth: rongToiDaTenVu }}>{vuAn.tenVu}</div>
+                </div>
+              ))}
             </div>
-            <div className="mt-1.5 text-xs text-slate-500 text-center" style={{ maxWidth: "8cm" }}>{vuAn.tenVu}</div>
-          </div>
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <div className="flex items-center gap-10">
-              {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" />}
-              <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" />
+          ) : (
+            <div className="flex-1 flex items-center justify-center py-6">
+              <div className="flex flex-wrap gap-8 justify-center" style={{ maxWidth: "19cm" }}>
+                {dsBan.map(i => (
+                  <div key={i} className="flex flex-col items-center">
+                    <div className="flex items-center gap-10">
+                      {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc={kichThuocQR} />}
+                      <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc={kichThuocQR} />
+                    </div>
+                    <div className="mt-4 text-sm text-slate-500 text-center break-words" style={{ maxWidth: rongToiDaTenVu }}>{vuAn.tenVu}</div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="mt-4 text-sm text-slate-500">{vuAn.tenVu}</div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
