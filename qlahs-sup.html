@@ -5723,9 +5723,20 @@ function InQRModal({ vuAn, onDong }) {
           BienBanGiaoNhanIn cho @page { size: landscape }. */}
       {goc && <style>{"@page { margin: 5mm; }"}</style>}
       <div id="qr-in-a4" className="bg-white relative" style={{ width: "210mm", minHeight: "297mm" }}>
-        <div className="print:hidden text-sm text-slate-400 text-center pt-8">
-          Xem trước trang in A4 — bấm "In" để in thật.
-          Đổi kiểu in mặc định ở Cài đặt → Cài đặt chung.
+        {/* Khối điều khiển xem trước — CỐ Ý đặt absolute góc trên-trái (không nằm trong luồng bố
+            cục bình thường) để không chiếm chỗ/đẩy lệch nội dung in bên dưới. Bug đã gặp: khi khối
+            này ở luồng bình thường, chế độ "góc giấy" có khung QR absolute (không chiếm chỗ), khiến
+            nút Đóng/In (cũng ở luồng bình thường, đứng sau) bị trôi lên sát ngay dưới dòng chữ
+            hướng dẫn thay vì nằm gọn 1 chỗ — tách khối này ra absolute để độc lập hoàn toàn với
+            khung QR dù ở chế độ nào. */}
+        <div className="print:hidden absolute top-3 left-3 z-10 flex flex-col items-start gap-2 max-w-[240px] bg-white/95 backdrop-blur-sm rounded-lg shadow border border-slate-200 p-3">
+          <div className="text-xs text-slate-400">
+            Xem trước trang in A4 — bấm "In" để in thật. Đổi kiểu in mặc định ở Cài đặt → Cài đặt chung.
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onDong} className="px-3 py-1.5 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
+            <button onClick={() => window.print()} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+          </div>
         </div>
 
         {goc ? (
@@ -5738,7 +5749,7 @@ function InQRModal({ vuAn, onDong }) {
             <div className="mt-1.5 text-xs text-slate-500 text-center" style={{ maxWidth: "8cm" }}>{vuAn.tenVu}</div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center" style={{ minHeight: "230mm" }}>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
             <div className="flex items-center gap-10">
               {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" />}
               <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" />
@@ -5746,11 +5757,6 @@ function InQRModal({ vuAn, onDong }) {
             <div className="mt-4 text-sm text-slate-500">{vuAn.tenVu}</div>
           </div>
         )}
-
-        <div className="print:hidden flex gap-2 justify-center py-8">
-          <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
-          <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
-        </div>
       </div>
     </div>
   );
