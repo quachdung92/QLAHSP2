@@ -5674,7 +5674,7 @@ function taoQrDataUrl(text, size = 100) {
   return canvas ? canvas.toDataURL("image/png") : null;
 }
 
-function KhoiQR({ noiDung, nhan }) {
+function KhoiQR({ noiDung, nhan, kichThuoc = "5cm" }) {
   const containerRef = React.useRef(null);
   useEffect(() => {
     if (!containerRef.current) return;
@@ -5688,29 +5688,141 @@ function KhoiQR({ noiDung, nhan }) {
   return (
     <div className="flex flex-col items-center">
       <div ref={containerRef} className="[&>canvas]:w-full [&>canvas]:h-full [&>img]:w-full [&>img]:h-full"
-           style={{ width: "5cm", height: "5cm" }}></div>
+           style={{ width: kichThuoc, height: kichThuoc }}></div>
       <div className="mt-2 text-xs text-slate-400">{nhan}</div>
       <div className="text-sm font-mono">{noiDung}</div>
     </div>
   );
 }
 
+// Lấy/lưu kiểu in mã QR mặc định (localStorage, cùng pattern useBlhsMacDinh) — chọn 1 lần ở đây
+// là ghi nhớ luôn cho lần in tiếp theo (của mọi vụ), không phải chọn lại mỗi lần mở modal.
+// "day_du": khung QR to giữa trang A4 (mặc định gốc, giữ nguyên hành vi cũ).
+// "goc_giay": khung QR nhỏ hơn, đóng khung, ghim góc trên-phải sát lề — để cắt dán vào hồ sơ giấy.
+const KHOA_QR_KIEU_IN = "qlva_qrKieuInMacDinh";
+function useQrKieuInMacDinh() {
+  const [kieu, setKieu] = useState(() => localStorage.getItem(KHOA_QR_KIEU_IN) || "day_du");
+  const set = (v) => { localStorage.setItem(KHOA_QR_KIEU_IN, v); setKieu(v); };
+  return [kieu, set];
+}
+
 // Render qua portal vào #qr-print-root (ngoài #root) để khi in, ẩn #root đi mà không ẩn theo
 // khung QR này — xem chú thích ở khối CSS @media print trong <head>.
 function InQRModal({ vuAn, onDong }) {
+  // Đọc đúng kiểu in mặc định đang đặt ở Cài đặt → Cài đặt chung (không có nút gạt riêng trong
+  // modal này nữa — bản đầu tiên đặt nút gạt ở đây nhưng nằm lẫn trong màn xem trước A4 dài, khó
+  // thấy; đổi hẳn sang Cài đặt cho dễ tìm, modal chỉ còn việc HIỂN THỊ đúng theo lựa chọn đó).
+  const [kieuIn] = useQrKieuInMacDinh();
+  const goc = kieuIn === "goc_giay";
+  // Số bản in mỗi trang — CỐ Ý là state cục bộ của modal (không lưu localStorage như kieuIn): nhu
+  // cầu hồ sơ nhiều tập là ngoại lệ, không phải mặc định nên luôn) reset về 1 mỗi lần mở modal,
+  // tránh việc lỡ in tràn lan 6 bản cho 1 vụ chỉ có 1 tập chỉ vì vụ trước đó cần nhiều bản.
+  const [soLuong, setSoLuong] = useState(1);
+  const kichThuocQR = goc ? "4cm" : "5cm";
+  // Bề rộng tối đa của phần tên vụ (chú thích dưới QR) — CHẶN CỨNG theo đúng bề rộng của hàng QR
+  // (1 hoặc 2 mã cạnh nhau tuỳ có/không mã ngành cấp), để tên hồ sơ dài không kéo giãn cả khối in
+  // rộng ra ngoài ý muốn — tên dài chỉ tự xuống dòng trong đúng bề rộng này.
+  const rongToiDaTenVu = vuAn.maNganhCap ? `calc(2 * ${kichThuocQR} + 1cm)` : kichThuocQR;
+
+  const dsBan = Array.from({ length: soLuong }, (_, i) => i);
+
+  // Bấm Esc để đóng modal — tiện hơn phải rê chuột tới đúng nút "Đóng", nhất là khi đang xem
+  // trước 1 trang A4 dài phải cuộn.
+  useEffect(() => {
+    const xuLy = (e) => { if (e.key === "Escape") onDong(); };
+    window.addEventListener("keydown", xuLy);
+    return () => window.removeEventListener("keydown", xuLy);
+  }, [onDong]);
+
+  // Chế độ "góc giấy" nhiều bản: chia CẢ TỜ A4 thành lưới 6 ô đều nhau (2 cột × 3 hàng, đúng
+  // "2:2:2" theo hàng) để cắt dễ đo — mỗi ô là 1 hình chữ nhật cố định, cắt theo đúng đường lưới
+  // là xong, không phải đo riêng từng mã. Thứ tự điền ưu tiên ô gần góc TRÊN-PHẢI trước (đúng yêu
+  // cầu "vẫn nhớ mã QR căn gần lề trên và lề phải") — 1 bản (mặc định, phổ biến nhất) rơi đúng vào
+  // ô trên-phải, giữ nguyên cảm giác như bản gốc chỉ có 1 khung góc giấy trước đây.
+  const THU_TU_O_GOC_GIAY = [1, 0, 3, 2, 5, 4];
+  const oDuocDien = new Set(THU_TU_O_GOC_GIAY.slice(0, soLuong));
+
   const noiDung = (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 print:bg-white overflow-auto">
-      <div id="qr-in-a4" className="bg-white flex flex-col items-center justify-center"
-           style={{ width: "210mm", minHeight: "297mm" }}>
-        <div className="text-sm text-slate-400 mb-8 print:hidden">Xem trước trang in A4 — bấm "In" để in thật (khổ QR ~5x5cm).</div>
-        <div className="flex items-center gap-10">
-          {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" />}
-          <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" />
-        </div>
-        <div className="mt-4 text-sm text-slate-500">{vuAn.tenVu}</div>
-        <div className="mt-10 flex gap-2 print:hidden">
-          <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
-          <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+    <div className="fixed inset-0 bg-black/40 z-50 overflow-auto print:bg-white print:overflow-visible">
+      {/* Canh giữa bằng margin:auto (mx-auto) thay vì flex items-center — flex-center kết hợp
+          overflow-auto có lỗi CSS phổ biến: khi nội dung cao/rộng hơn khung nhìn, phần tràn ra ở
+          ĐẦU (trên/trái) bị cắt mất, không cuộn tới được (đây chính là lý do khung QR ở góc trên
+          từng bị "cắt mất 1 phần" khi màn hình không đủ cao). mx-auto + overflow-auto luôn cuộn
+          được đầy đủ mọi phía bất kể trang A4 lớn hơn khung nhìn bao nhiêu. */}
+      {goc && <style>{"@page { margin: 5mm; }"}</style>}
+      <div className="mx-auto my-8 print:my-0" style={{ width: "210mm" }}>
+        <div id="qr-in-a4" className="bg-white relative flex flex-col shadow-xl print:shadow-none"
+             style={{ minHeight: "297mm", height: goc ? "297mm" : undefined }}>
+          {/* Khối điều khiển — 1 khối DUY NHẤT (chữ hướng dẫn + số bản in + Đóng/In), canh GIỮA,
+              NẰM TRONG LUỒNG BỐ CỤC BÌNH THƯỜNG (không absolute) — CỐ Ý, để lưới QR bên dưới (cũng
+              ở luồng bình thường, xem ngay dưới) tự nhường chỗ, không cần z-index "cứu" 2 khối chồng
+              nhau. Bug đã gặp ở bản trước: lưới 6 ô dùng absolute (không chiếm chỗ trong luồng) nên
+              luôn đè lên đúng vùng này trên màn xem trước — dù bấm vẫn trúng nhờ z-index, nhìn vẫn
+              rối/che khuất QR hàng đầu. Nay khối này ẩn khi in (print:hidden, cao 0), nên lưới bên
+              dưới tự động "trồi" lên sát mép trang lúc in thật — không cần logic riêng cho 2
+              trường hợp màn hình/in. */}
+          <div className="print:hidden flex flex-col items-center gap-3 pt-8 pb-4 px-4">
+            <div className="text-sm text-slate-400 text-center max-w-md">
+              Xem trước trang in A4 — bấm "In" để in thật, hoặc Esc để đóng. Đổi kiểu in mặc định ở
+              Cài đặt → Cài đặt chung.
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500">Số bản in (hồ sơ nhiều tập):</label>
+              <input type="number" min={1} max={6} value={soLuong}
+                     onChange={e => setSoLuong(Math.min(6, Math.max(1, Number(e.target.value) || 1)))}
+                     className="w-16 px-2 py-1 text-sm text-center border border-slate-300 rounded-lg" />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
+              <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+            </div>
+          </div>
+
+          {goc ? (
+            // Lưới 6 ô đều nhau (2 cột × 3 hàng) — margin:5mm quanh lưới thay cho absolute top/
+            // right/left/bottom trước đây, để lưới nằm Ở LUỒNG BÌNH THƯỜNG ngay sau khối điều
+            // khiển (flex-1 lấp phần còn lại của trang), tự tránh đè lên nhau (xem giải thích ở
+            // khối điều khiển bên trên). Mỗi ô có viền chấm để thấy rõ đường cắt NGAY CẢ Ô CHƯA
+            // DÙNG (giúp "dễ căn" dù chỉ in 1-2 bản). Mỗi mã QR ghim đúng góc trên-phải CỦA CHÍNH
+            // Ô ĐÓ (không phải giữa ô) — cắt xong mỗi mảnh đều có QR nằm đúng 1 góc quen thuộc.
+            <div className="flex-1 grid" style={{
+              // Lề phải rộng hơn các lề còn lại (10mm thay vì 5mm) — CỘT PHẢI là cột duy nhất có
+              // mã QR ghim sát lề VẬT LÝ thật của giấy (cột trái ghim "right-0" là sát đường kẻ
+              // GIỮA lưới, không phải mép giấy, nên không cần đổi). Máy in thực tế thường có vùng
+              // không in được (non-printable area) rộng hơn @page margin trình duyệt khai báo,
+              // dễ cắt mất rìa phải mã QR — thêm 0.5cm dự phòng riêng cho lề này.
+              marginTop: "5mm", marginRight: "10mm", marginBottom: "5mm", marginLeft: "5mm",
+              gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(3, 1fr)",
+            }}>
+              {Array.from({ length: 6 }, (_, i) => (
+                <div key={i} className="relative border border-dashed border-slate-300">
+                  {oDuocDien.has(i) && (
+                    <div className="absolute top-0 right-0 flex flex-col items-center border-2 border-slate-700 rounded-lg px-3 py-2 bg-white">
+                      <div className="flex items-center gap-3">
+                        {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc={kichThuocQR} />}
+                        <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc={kichThuocQR} />
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500 text-center break-words" style={{ maxWidth: rongToiDaTenVu }}>{vuAn.tenVu}</div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center py-6">
+              <div className="flex flex-wrap gap-8 justify-center" style={{ maxWidth: "19cm" }}>
+                {dsBan.map(i => (
+                  <div key={i} className="flex flex-col items-center">
+                    <div className="flex items-center gap-10">
+                      {vuAn.maNganhCap && <KhoiQR noiDung={vuAn.maNganhCap} nhan="Mã ngành cấp" kichThuoc={kichThuocQR} />}
+                      <KhoiQR noiDung={vuAn.maNoiSinh} nhan="Mã vụ án" kichThuoc={kichThuocQR} />
+                    </div>
+                    <div className="mt-4 text-sm text-slate-500 text-center break-words" style={{ maxWidth: rongToiDaTenVu }}>{vuAn.tenVu}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -12442,11 +12554,36 @@ function XoaVinhVienModal({ vuAn, onDong, onXong }) {
   );
 }
 
+// Cài đặt chung — nơi gom các tuỳ chọn hiển thị/hành vi cấp máy (localStorage), KHÔNG phải dữ
+// liệu nghiệp vụ. Hiện chỉ có 1 mục (kiểu in mã QR) nhưng tách riêng module để dễ thêm mục khác
+// sau này mà không phải lục trong các tab quản trị (Cán bộ/Import/Thùng rác...).
+function CaiDatChungModule() {
+  const [kieuIn, setKieuIn] = useQrKieuInMacDinh();
+  const goc = kieuIn === "goc_giay";
+  return (
+    <div className="max-w-xl">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3">In mã QR</h3>
+      <div className="flex items-center justify-between gap-4 p-4 bg-white rounded-lg border border-slate-200">
+        <div>
+          <div className="text-sm font-medium text-slate-700">Khung nhỏ gọn, ghim góc giấy</div>
+          <div className="text-xs text-slate-400 mt-1">
+            Bật: khung QR nhỏ hơn, đóng viền, ghim sát góc trên-phải trang A4 — tiện cắt dán vào hồ
+            sơ giấy. Tắt: khung QR to, giữa trang (mặc định cũ). Áp dụng ngay cho mọi lần bấm
+            "In mã QR" tiếp theo, không cần chọn lại.
+          </div>
+        </div>
+        <CongTac checked={goc} onChange={(v) => setKieuIn(v ? "goc_giay" : "day_du")} />
+      </div>
+    </div>
+  );
+}
+
 // CaiDatModule — gom Import Excel, Nhật ký thao tác, Cán bộ vào 1 chỗ để
 // tránh người dùng bình thường vô tình chạm vào các thao tác quản trị.
 function CaiDatModule() {
-  const [subTab, setSubTab] = useState("log");
+  const [subTab, setSubTab] = useState("chung");
   const tabs = [
+    { id: "chung",     label: "Cài đặt chung"      },
     { id: "log",       label: "Nhật ký thao tác"  },
     { id: "canbo",     label: "Cán bộ"             },
     { id: "danhmuc",   label: "Danh mục tội danh"  },
@@ -12467,12 +12604,13 @@ function CaiDatModule() {
       </div>
       {/* "Bảng dữ liệu" tự cuộn nội bộ (bảng dài, toolbar/cảnh báo cố định phía trên) nên cần bọc
           trong flex-1 min-h-0 để h-full bên trong nó có chiều cao xác định — đúng pattern "Bố cục
-          cuộn trang" đã ghi trong CLAUDE.md. Các tab khác (Nhật ký/Cán bộ/Danh mục/Import/Thùng
-          rác) vẫn để cả trang cuộn qua <main> như trước, không đổi hành vi của chúng. */}
+          cuộn trang" đã ghi trong CLAUDE.md. Các tab khác (Chung/Nhật ký/Cán bộ/Danh mục/Import/
+          Thùng rác) vẫn để cả trang cuộn qua <main> như trước, không đổi hành vi của chúng. */}
       {subTab === "bangexcel" ? (
         <div className="flex-1 min-h-0"><BangExcelModule /></div>
       ) : (
         <>
+          {subTab === "chung"    && <CaiDatChungModule />}
           {subTab === "log"      && <NhatKyModule />}
           {subTab === "canbo"    && <CanBoModule />}
           {subTab === "danhmuc"  && <DanhMucToiDanhModule />}
