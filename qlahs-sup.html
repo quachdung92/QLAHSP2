@@ -5786,12 +5786,13 @@ function InQRModal({ vuAn, onDong }) {
             // DÙNG (giúp "dễ căn" dù chỉ in 1-2 bản). Mỗi mã QR ghim đúng góc trên-phải CỦA CHÍNH
             // Ô ĐÓ (không phải giữa ô) — cắt xong mỗi mảnh đều có QR nằm đúng 1 góc quen thuộc.
             <div className="flex-1 grid" style={{
-              // Lề phải rộng hơn các lề còn lại (10mm thay vì 5mm) — CỘT PHẢI là cột duy nhất có
+              // Lề phải rộng hơn các lề còn lại (10.2mm thay vì 5mm) — CỘT PHẢI là cột duy nhất có
               // mã QR ghim sát lề VẬT LÝ thật của giấy (cột trái ghim "right-0" là sát đường kẻ
               // GIỮA lưới, không phải mép giấy, nên không cần đổi). Máy in thực tế thường có vùng
-              // không in được (non-printable area) rộng hơn @page margin trình duyệt khai báo,
-              // dễ cắt mất rìa phải mã QR — thêm 0.5cm dự phòng riêng cho lề này.
-              marginTop: "5mm", marginRight: "10mm", marginBottom: "5mm", marginLeft: "5mm",
+              // không in được (non-printable area) rộng hơn @page margin trình duyệt khai báo, dễ
+              // cắt mất rìa phải mã QR — thêm 0.5cm dự phòng (2026-07-20), sau đó lùi thêm 0.2mm
+              // nữa (10mm → 10.2mm) vì vẫn còn mất khung viền khi in thật.
+              marginTop: "5mm", marginRight: "10.2mm", marginBottom: "5mm", marginLeft: "5mm",
               gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(3, 1fr)",
             }}>
               {Array.from({ length: 6 }, (_, i) => (
