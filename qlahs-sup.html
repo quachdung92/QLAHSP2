@@ -5749,16 +5749,19 @@ function InQRModal({ vuAn, onDong }) {
           ĐẦU (trên/trái) bị cắt mất, không cuộn tới được (đây chính là lý do khung QR ở góc trên
           từng bị "cắt mất 1 phần" khi màn hình không đủ cao). mx-auto + overflow-auto luôn cuộn
           được đầy đủ mọi phía bất kể trang A4 lớn hơn khung nhìn bao nhiêu. */}
-      {/* Lề phải khai báo RIÊNG rộng hơn (10mm thay vì 5mm, thứ tự CSS @page là top/right/bottom/
-          left) — theo phản hồi thực tế: máy in vẫn cắt mất khung viền dù đã đệm thêm 10.2mm ở
-          NỘI DUNG (marginRight của lưới, xem bên dưới), tự tay đặt "Lề: Tùy chỉnh" 10mm bên phải
-          trong hộp thoại in thì hết cắt — nghĩa là bản thân @page cũng cần khai báo lề phải lớn
-          hơn để Chrome tự áp dụng đúng ngay từ đầu, không phải chỉnh tay mỗi lần in. Cộng dồn với
-          10.2mm đệm ở nội dung vẫn an toàn (chỉ bớt chỗ trống, không ảnh hưởng gì khác). */}
-      {goc && <style>{"@page { margin: 5mm 10mm 5mm 5mm; }"}</style>}
-      <div className="mx-auto my-8 print:my-0" style={{ width: "210mm" }}>
+      {/* Lề phải >= 1.5cm (yêu cầu 2026-07-20) — khai báo THẲNG ở @page (thứ tự top/right/bottom/
+          left), KHÔNG cộng dồn thêm ở nội dung như 2 bản trước (10mm rồi 10.2mm marginRight riêng
+          của lưới) — lý do các bản trước vẫn bị cắt dù đã đệm thêm: @page margin thu hẹp VÙNG IN
+          THỰC TẾ xuống còn (210mm − lề trái − lề phải), nhưng khung nội dung bên dưới vẫn khai báo
+          cứng "210mm" (đúng khổ giấy DANH NGHĨA, không phải vùng in sau khi trừ lề) — phần dư TRÀN
+          ra ngoài vùng in bị cắt mất, bất kể đệm thêm bao nhiêu ở bên trong khung 210mm đó (đệm chỉ
+          dịch chuyển NỘI DUNG bên trong 1 khung vẫn TRÀN, không thu hẹp lại khung để vừa vùng in).
+          Sửa tận gốc: khung nội dung (goc mode) đặt đúng bằng vùng in thực tế (210 − 5 − 15 =
+          190mm rộng, 297 − 5 − 5 = 287mm cao) — không còn tràn, không cần đệm thêm ở lưới nữa. */}
+      {goc && <style>{"@page { margin: 5mm 15mm 5mm 5mm; }"}</style>}
+      <div className="mx-auto my-8 print:my-0" style={{ width: goc ? "190mm" : "210mm" }}>
         <div id="qr-in-a4" className="bg-white relative flex flex-col shadow-xl print:shadow-none"
-             style={{ minHeight: "297mm", height: goc ? "297mm" : undefined }}>
+             style={{ minHeight: goc ? "287mm" : "297mm", height: goc ? "287mm" : undefined }}>
           {/* Khối điều khiển — 1 khối DUY NHẤT (chữ hướng dẫn + số bản in + Đóng/In), canh GIỮA,
               NẰM TRONG LUỒNG BỐ CỤC BÌNH THƯỜNG (không absolute) — CỐ Ý, để lưới QR bên dưới (cũng
               ở luồng bình thường, xem ngay dưới) tự nhường chỗ, không cần z-index "cứu" 2 khối chồng
@@ -5792,13 +5795,12 @@ function InQRModal({ vuAn, onDong }) {
             // DÙNG (giúp "dễ căn" dù chỉ in 1-2 bản). Mỗi mã QR ghim đúng góc trên-phải CỦA CHÍNH
             // Ô ĐÓ (không phải giữa ô) — cắt xong mỗi mảnh đều có QR nằm đúng 1 góc quen thuộc.
             <div className="flex-1 grid" style={{
-              // Lề phải rộng hơn các lề còn lại (10.2mm thay vì 5mm) — CỘT PHẢI là cột duy nhất có
-              // mã QR ghim sát lề VẬT LÝ thật của giấy (cột trái ghim "right-0" là sát đường kẻ
-              // GIỮA lưới, không phải mép giấy, nên không cần đổi). Máy in thực tế thường có vùng
-              // không in được (non-printable area) rộng hơn @page margin trình duyệt khai báo, dễ
-              // cắt mất rìa phải mã QR — thêm 0.5cm dự phòng (2026-07-20), sau đó lùi thêm 0.2mm
-              // nữa (10mm → 10.2mm) vì vẫn còn mất khung viền khi in thật.
-              marginTop: "5mm", marginRight: "10.2mm", marginBottom: "5mm", marginLeft: "5mm",
+              // Lề đều 5mm quanh lưới — phần "lề phải >= 1.5cm" giờ đã do @page lo đúng ở gốc
+              // (khung nội dung khớp đúng vùng in thực tế, xem giải thích ở trên), không cần đệm
+              // thêm riêng ở đây nữa (2 bản trước cộng dồn 10mm/10.2mm ở đây mà vẫn bị cắt, vì bug
+              // nằm ở chỗ khác — khung nội dung tràn ra ngoài vùng in, không phải do lề ở đây chưa
+              // đủ).
+              margin: "5mm",
               gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(3, 1fr)",
             }}>
               {Array.from({ length: 6 }, (_, i) => (
