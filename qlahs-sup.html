@@ -3891,7 +3891,7 @@ const THOI_HAN_BAO_QUAN_DAC_BIET = {
   tu_hinh: "Vĩnh viễn", chung_than: "Vĩnh viễn", an_treo: "11 năm", phat_tien: "11 năm",
 };
 const NHAN_LOAI_MUC_AN = {
-  nam: "Theo năm tù", an_treo: "Án treo", phat_tien: "Phạt tiền",
+  nam: "Tù giam (theo năm)", an_treo: "Án treo", phat_tien: "Phạt tiền",
   chung_than: "Chung thân", tu_hinh: "Tử hình",
 };
 // Các mốc trong bảng trên, tăng dần — dùng để tra "mốc lớn nhất không vượt quá mức án" (xem
@@ -3941,6 +3941,94 @@ function tinhThoiHanBaoQuanVu(vuAn) {
   return null;
 }
 
+// ---- Mức án TỪNG bị can (2026-07-21) ----
+// Ghi chú thiết kế: mức án cấp VỤ (mucAnLoai/mucAnNam/mucAnThang trên vuAn, xem
+// tinhThoiHanBaoQuanVu ở trên) đã có sẵn từ trước, nhập ở Giao nhận hồ sơ lúc nộp lưu trữ, dùng
+// để tính Thời hạn bảo quản — đại diện 1 mức án duy nhất cho cả vụ. Bộ 3 field CÙNG TÊN này thêm
+// mới trên TỪNG `bican` (cùng enum NHAN_LOAI_MUC_AN) ghi lại đúng mức án của MỖI bị can (vụ nhiều
+// bị can thường mỗi người 1 mức án khác nhau), nhập ngay lúc "Hoàn thành vụ án" chọn Đã xét xử
+// hoặc lúc "Sửa thông tin vụ án" bổ sung sau đó.
+function moiMucAnTungBiCan(biCanList) {
+  return Object.fromEntries((biCanList || []).map(b => [b.id, {
+    mucAnLoai: b.mucAnLoai || "nam",
+    mucAnNam: b.mucAnNam != null ? String(b.mucAnNam) : "",
+    mucAnThang: b.mucAnThang != null ? String(b.mucAnThang) : "",
+  }]));
+}
+function mucAnBiCanThanhPatch(s) {
+  const mucAnLoai = (s && s.mucAnLoai) || "nam";
+  const mucAnNam = mucAnLoai === "nam" ? (Number(s.mucAnNam) || null) : null;
+  const mucAnThang = mucAnLoai === "nam" ? (Number(s.mucAnThang) || 0) : null;
+  return { mucAnLoai, mucAnNam, mucAnThang };
+}
+// Dùng chung ở HoanThanhVuAnModal (lúc chọn "Đã xét xử") và SuaVuAnForm (vụ đã Đã xét xử, bổ
+// sung/sửa lại sau) — loại hình phạt mặc định "nam" (Tù giam theo năm, xem NHAN_LOAI_MUC_AN),
+// đúng loại phổ biến nhất, tham khảo nguyên UI đã có ở Giao nhận hồ sơ (DongGiaoNhan).
+function MucAnTungBiCanEditor({ biCanList, gia, onDoi }) {
+  if (!biCanList || biCanList.length === 0) return null;
+  return (
+    <div className="mb-3">
+      <label className="text-xs text-slate-500 block mb-1">Mức án từng bị can</label>
+      <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
+        {biCanList.map(bc => {
+          const s = gia[bc.id] || { mucAnLoai: "nam", mucAnNam: "", mucAnThang: "" };
+          return (
+            <div key={bc.id} className="flex flex-wrap items-center gap-2 p-2 text-xs">
+              <span className="w-32 shrink-0 font-medium text-slate-700 truncate" title={bc.hoTen}>{bc.hoTen || "(chưa rõ tên)"}</span>
+              <select value={s.mucAnLoai} onChange={e => onDoi(bc.id, { mucAnLoai: e.target.value })}
+                      className={oInput + " py-1 px-1.5 w-32"}>
+                {Object.entries(NHAN_LOAI_MUC_AN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+              {s.mucAnLoai === "nam" && (
+                <>
+                  <input type="number" min="0" step="1" value={s.mucAnNam} placeholder="0"
+                         onChange={e => onDoi(bc.id, { mucAnNam: e.target.value })}
+                         className={oInput + " py-1 px-1.5 w-14"} />
+                  <span className="text-slate-400">năm</span>
+                  <input type="number" min="0" max="11" step="1" value={s.mucAnThang} placeholder="0"
+                         onChange={e => onDoi(bc.id, { mucAnThang: e.target.value })}
+                         className={oInput + " py-1 px-1.5 w-14"} />
+                  <span className="text-slate-400">tháng</span>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// So sánh "mức án cao nhất" giữa các bị can của 1 vụ — dùng để tự động suy ra mức án cấp VỤ
+// (vuan.mucAnLoai/mucAnNam/mucAnThang, xem tinhThoiHanBaoQuanVu) khi vụ ĐÃ nhập mức án cho ít
+// nhất 1 bị can, thay vì bắt cán bộ nhập tay lại y hệt ở Giao nhận hồ sơ (2026-07-21, theo yêu
+// cầu người dùng). Xếp hạng "cao nhất" theo KẾT QUẢ Thời hạn bảo quản mà mức án đó suy ra (không
+// xếp hạng trừu tượng theo loại hình phạt, VD tù giam ngắn vs án treo) — vì mục đích cuối cùng của
+// việc so sánh này CHÍNH LÀ để chọn mức án cho ra thời hạn bảo quản dài nhất, so trực tiếp qua kết
+// quả là an toàn nhất, không cần suy đoán thêm 1 tầng xếp hạng riêng có thể sai lệch với bảng gốc.
+function soNamTuThoiHanBaoQuan(chuoi) {
+  if (!chuoi) return -1;
+  if (chuoi === "Vĩnh viễn") return Infinity;
+  const m = chuoi.match(/(\d+)/);
+  return m ? Number(m[1]) : -1;
+}
+// `dsBiCan`: mảng object có mucAnLoai/mucAnNam/mucAnThang (bican doc thật hoặc patch vừa tính) —
+// trả về bị can có thời hạn bảo quản suy ra DÀI NHẤT, hoặc null nếu KHÔNG bị can nào cho ra kết
+// quả xác định (chưa nhập bị can nào, hoặc mọi bị can đều nhập mức án dưới mốc thấp nhất của
+// bảng — coi như "chưa có dữ liệu đáng tin", để Giao nhận hồ sơ rơi về nhập tay cấp vụ như cũ).
+function mucAnBiCanCaoNhat(dsBiCan) {
+  let best = null, bestVal = -1;
+  (dsBiCan || []).forEach(bc => {
+    if (!bc || !bc.mucAnLoai) return;
+    const soNam = bc.mucAnLoai === "nam" ? (Number(bc.mucAnNam) || 0) + (Number(bc.mucAnThang) || 0) / 12 : null;
+    const thoiHan = tinhThoiHanBaoQuanTheoMucAn(bc.mucAnLoai, soNam);
+    if (!thoiHan) return;
+    const val = soNamTuThoiHanBaoQuan(thoiHan);
+    if (val > bestVal) { bestVal = val; best = bc; }
+  });
+  return best;
+}
+
 function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [vuAn, setVuAn] = useState(null);
@@ -3955,6 +4043,10 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
   // đang giải quyết) hoặc "sao_chep" (thuộc diện NHƯNG vẫn còn hành vi khác ở vụ gốc, hiếm dùng)
   // là lúc hệ thống tự tách 1 phần.
   const [trangThaiBiCan, setTrangThaiBiCan] = useState({});
+  // Mức án từng bị can — chỉ có ý nghĩa/hiện ra khi chọn hình thức "Đã xét xử" (xem
+  // MucAnTungBiCanEditor). { [bcId]: { mucAnLoai, mucAnNam, mucAnThang } }
+  const [mucAnBiCan, setMucAnBiCan] = useState({});
+  const suaMucAnBiCan = (id, patch) => setMucAnBiCan(s => ({ ...s, [id]: { ...s[id], ...patch } }));
 
   useEffect(() => {
     Promise.all([
@@ -3970,6 +4062,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       const bc = bcSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       setBiCanList(bc);
       setTrangThaiBiCan(Object.fromEntries(bc.map(b => [b.id, "chuyen_han"])));
+      setMucAnBiCan(moiMucAnTungBiCan(bc));
     }).catch(err => { console.error(err); hd.setLoi("Lỗi khi tải dữ liệu vụ án: " + err.message); });
   }, [vuAnId]);
 
@@ -4011,6 +4104,16 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
 
       const fieldVuAn = fieldSoQuyetDinhTrenVuAn(hinhThuc);
 
+      // Mức án từng bị can — chỉ áp dụng khi hình thức là Đã xét xử (xem MucAnTungBiCanEditor).
+      // Tính TRƯỚC batch.update(vuan) để suy ra bị can có mức án cao nhất, tự đồng bộ luôn lên
+      // mucAnLoai/mucAnNam/mucAnThang cấp vụ (dùng cho Giao nhận hồ sơ tính Thời hạn bảo quản) —
+      // xem mucAnBiCanCaoNhat. Không có bị can nào cho ra kết quả xác định thì giữ nguyên mức án
+      // cấp vụ hiện có (nhập tay ở Giao nhận hồ sơ như trước đây).
+      const bcMucAnPatches = hinhThuc === "da_xet_xu"
+        ? biCanList.map(bc => ({ id: bc.id, ...mucAnBiCanThanhPatch(mucAnBiCan[bc.id]) }))
+        : [];
+      const bcCaoNhat = hinhThuc === "da_xet_xu" ? mucAnBiCanCaoNhat(bcMucAnPatches) : null;
+
       if (!laMotPhan) {
         const batch = db.batch();
         batch.update(db.collection("vuan").doc(vuAn.id), {
@@ -4018,6 +4121,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
           ...(fieldVuAn ? { [fieldVuAn]: soQuyetDinh.trim() } : {}),
           // Index nhanh cho module Án đã giải quyết — không cần query log mỗi lần mở
           ngayQuyetDinh: ngaySuKien, kyHoanThanh: kyId,
+          ...(bcCaoNhat ? { mucAnLoai: bcCaoNhat.mucAnLoai, mucAnNam: bcCaoNhat.mucAnNam, mucAnThang: bcCaoNhat.mucAnThang } : {}),
           ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
         });
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
@@ -4025,7 +4129,16 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
           soQuyetDinh: soQuyetDinh.trim(),
           ngaySuKien, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
         }));
+        if (hinhThuc === "da_xet_xu") {
+          bcMucAnPatches.forEach(p => {
+            batch.update(db.collection("bican").doc(p.id), {
+              mucAnLoai: p.mucAnLoai, mucAnNam: p.mucAnNam, mucAnThang: p.mucAnThang,
+              ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+            });
+          });
+        }
         await batch.commit();
+        if (hinhThuc === "da_xet_xu" && biCanList.length > 0) xoaBiCanCache(vuAn.id);
       } else {
         const { maVuMoi, batch } = await tachVuAn({
           vuGoc: vuAn, biCanTachIds: idsChuyenHan, biCanSaoChepIds: idsSaoChep, biCanList,
@@ -4075,6 +4188,9 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
           <label className="text-xs text-slate-500 block mb-1">Nơi chuyển đến</label>
           <input value={noiChuyenDen} onChange={e => setNoiChuyenDen(e.target.value)} className={oInput + " mb-3"} />
         </>
+      )}
+      {hinhThuc === "da_xet_xu" && (
+        <MucAnTungBiCanEditor biCanList={biCanList} gia={mucAnBiCan} onDoi={suaMucAnBiCan} />
       )}
       {laTdcDc && biCanList.length > 0 && (
         <div className="mb-3">
@@ -4858,6 +4974,21 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
   // ngayQuyetDinhUocTinh) hoặc do hoàn thành trước khi có field riêng cho từng hình thức.
   const laDaHoanThanh = vuAn.trangThai !== "dang_giai_quyet";
   const fieldSoQD = laDaHoanThanh ? fieldSoQuyetDinhTrenVuAn(vuAn.trangThai) : null;
+  // Mức án từng bị can chỉ áp dụng cho vụ Đã xét xử (xem MucAnTungBiCanEditor) — tải riêng danh
+  // sách bị can của vụ (form này trước đây không cần tới bican) chỉ khi thật sự cần hiển thị.
+  const laDaXetXu = vuAn.trangThai === "da_xet_xu";
+  const [biCanList, setBiCanList] = useState(null);
+  const [mucAnBiCan, setMucAnBiCan] = useState({});
+  const suaMucAnBiCan = (id, patch) => setMucAnBiCan(s => ({ ...s, [id]: { ...s[id], ...patch } }));
+  useEffect(() => {
+    if (!laDaXetXu) return;
+    db.collection("bican").where("maVuAn", "==", vuAn.id).get().then(snap => {
+      const bc = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setBiCanList(bc);
+      setMucAnBiCan(moiMucAnTungBiCan(bc));
+    }).catch(err => console.error(err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [laDaXetXu, vuAn.id]);
   const [ngayQuyetDinh, setNgayQuyetDinh] = useState(toInputDate(vuAn.ngayQuyetDinh));
   const [soQuyetDinhGQ, setSoQuyetDinhGQ] = useState(fieldSoQD ? (vuAn[fieldSoQD] || "") : "");
   const [maNganhCap, setMaNganhCap] = useState(vuAn.maNganhCap || "");
@@ -4901,8 +5032,19 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
     if (!ngayQdKtva) { setLoi("Cần nhập ngày QĐ khởi tố VA."); return; }
     setDangLuu(true);
     try {
+      const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
-      await db.collection("vuan").doc(vuAn.id).update({
+      // Mức án từng bị can — chỉ có ý nghĩa khi vụ Đã xét xử VÀ đã tải xong danh sách bị can (xem
+      // MucAnTungBiCanEditor). Suy ra bị can có mức án cao nhất để đồng bộ TỰ ĐỘNG lên
+      // mucAnLoai/mucAnNam/mucAnThang cấp vụ (dùng cho Giao nhận hồ sơ tính Thời hạn bảo quản) —
+      // xem mucAnBiCanCaoNhat; không có bị can nào cho ra kết quả xác định thì giữ nguyên mức án
+      // cấp vụ hiện có, không đụng tới (vẫn nhập tay ở Giao nhận hồ sơ như trước đây).
+      const bcMucAnPatches = (laDaXetXu && biCanList)
+        ? biCanList.map(bc => ({ id: bc.id, ...mucAnBiCanThanhPatch(mucAnBiCan[bc.id]) }))
+        : [];
+      const bcCaoNhat = bcMucAnPatches.length ? mucAnBiCanCaoNhat(bcMucAnPatches) : null;
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), {
         maNganhCap: maNganhCap.trim() || null, tenVu: tenVu.trim(),
         nguon, nguonChiTiet: nguon === "an_noi_khac_chuyen_den" ? nguonChiTiet.trim() : "",
         soQdKtva: soQdKtva.trim(), ngayQdKtva: fromInputDate(ngayQdKtva),
@@ -4923,8 +5065,21 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
           // để Án đã giải quyết thôi tô đỏ cảnh báo dòng này.
           ngayQuyetDinhUocTinh: false,
         } : {}),
-        ngayCapNhat: new Date(), nguoiCapNhatCuoi: nguoiThucHien,
+        ...(bcCaoNhat ? { mucAnLoai: bcCaoNhat.mucAnLoai, mucAnNam: bcCaoNhat.mucAnNam, mucAnThang: bcCaoNhat.mucAnThang } : {}),
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
+      // Mức án từng bị can — chỉ ghi khi vụ Đã xét xử VÀ đã tải xong danh sách bị can; vụ chưa/
+      // không phải Đã xét xử thì biCanList luôn null, bỏ qua.
+      if (laDaXetXu && biCanList) {
+        bcMucAnPatches.forEach(p => {
+          batch.update(db.collection("bican").doc(p.id), {
+            mucAnLoai: p.mucAnLoai, mucAnNam: p.mucAnNam, mucAnThang: p.mucAnThang,
+            ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+          });
+        });
+      }
+      await batch.commit();
+      if (laDaXetXu && biCanList && biCanList.length > 0) xoaBiCanCache(vuAn.id);
       addToast("Đã lưu thông tin vụ án");
       onXong();
     } catch (err) {
@@ -4964,6 +5119,15 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
                 <input value={soQuyetDinhGQ} onChange={e => setSoQuyetDinhGQ(e.target.value)} className={oInput} />
               </Truong>
             </div>
+            {laDaXetXu && (
+              biCanList === null ? (
+                <div className="text-xs text-slate-400 mt-2">Đang tải danh sách bị can...</div>
+              ) : (
+                <div className="mt-3">
+                  <MucAnTungBiCanEditor biCanList={biCanList} gia={mucAnBiCan} onDoi={suaMucAnBiCan} />
+                </div>
+              )
+            )}
           </div>
         )}
 
@@ -10228,6 +10392,23 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
   const [mucAnLoai, setMucAnLoai] = useState(dong.mucAnLoai || "nam");
   const [mucAnNam, setMucAnNam] = useState(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
   const [mucAnThang, setMucAnThang] = useState(dong.mucAnThang != null ? String(dong.mucAnThang) : "");
+  // 2 phương thức tính mức án cấp vụ (2026-07-21, theo yêu cầu người dùng): NẾU vụ đã nhập mức án
+  // cho ít nhất 1 bị can (qua "Hoàn thành vụ án"/"Sửa thông tin vụ án", xem MucAnTungBiCanEditor)
+  // thì TỰ ĐỘNG lấy bị can có mức án cao nhất để tính Thời hạn bảo quản, không cho nhập tay nữa —
+  // tránh 2 nguồn dữ liệu (cấp vụ nhập tay vs cấp bị can) lệch nhau. Nếu CHƯA bị can nào có mức án
+  // thì vẫn nhập tay như trước (phương thức cũ, cho vụ chưa dùng tính năng mức án từng bị can).
+  // undefined = đang tải danh sách bị can, null = không có bị can nào đủ điều kiện (chế độ nhập
+  // tay), object = bị can có mức án cao nhất (chế độ tự động) — xem mucAnBiCanCaoNhat.
+  const [bcCaoNhat, setBcCaoNhat] = useState(undefined);
+  useEffect(() => {
+    if (!dangSua || dong.trangThaiVu !== "da_xet_xu" || !hienThoiHan) return;
+    setBcCaoNhat(undefined);
+    db.collection("bican").where("maVuAn", "==", dong.maVuAn).get().then(snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setBcCaoNhat(mucAnBiCanCaoNhat(list) || null);
+    }).catch(err => { console.error(err); setBcCaoNhat(null); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dangSua]);
   // "Không tiếp nhận" (2026-07-17) — chỉ áp dụng cho giao dịch NHẬN (xem moTaTiepNhan), đánh dấu
   // hồ sơ KSV/ĐTV mang sang KHÔNG được nhận (VD thiếu thông tin), kèm lý do gõ tay bắt buộc.
   const [khongTiepNhan, setKhongTiepNhan] = useState(!!dong.khongTiepNhan);
@@ -10271,13 +10452,30 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
       khongTiepNhan, lyDoKhongTiepNhan: khongTiepNhan ? lyDoKhongTiepNhan.trim() : "",
     };
     if (dong.trangThaiVu === "da_xet_xu") {
-      const soNamMoi = mucAnLoai === "nam" ? (Number(mucAnNam) || null) : null;
-      const soThangMoi = mucAnLoai === "nam" ? (Number(mucAnThang) || 0) : null;
-      const soNamTinh = mucAnLoai === "nam" ? (Number(mucAnNam) || 0) + soThangMoi / 12 : null;
-      patch.mucAnLoai = mucAnLoai;
-      patch.mucAnNam = soNamMoi;
-      patch.mucAnThang = soThangMoi;
-      patch.thoiHanBaoQuan = tinhThoiHanBaoQuanTheoMucAn(mucAnLoai, soNamTinh) || "";
+      // Còn đang tải danh sách bị can để biết dùng phương thức nào (xem effect ở trên) — chặn lưu
+      // thay vì lỡ ghi sai chế độ (VD ghi tay trong khi lẽ ra phải tự động theo bị can).
+      if (bcCaoNhat === undefined) {
+        addToast("Đang tải dữ liệu bị can để tính mức án, vui lòng thử lại sau giây lát.", "error");
+        return false;
+      }
+      let mucAnLoaiMoi, mucAnNamMoi, mucAnThangMoi;
+      if (bcCaoNhat) {
+        // Đã có bị can nhập mức án — TỰ ĐỘNG lấy đúng bị can cao nhất, không dùng giá trị nhập
+        // tay (select/input đã bị ẩn khỏi UI trong trường hợp này).
+        mucAnLoaiMoi = bcCaoNhat.mucAnLoai;
+        mucAnNamMoi = bcCaoNhat.mucAnNam ?? null;
+        mucAnThangMoi = bcCaoNhat.mucAnThang ?? null;
+      } else {
+        // Chưa bị can nào có mức án — phương thức cũ: nhập tay cấp vụ.
+        mucAnLoaiMoi = mucAnLoai;
+        mucAnNamMoi = mucAnLoai === "nam" ? (Number(mucAnNam) || null) : null;
+        mucAnThangMoi = mucAnLoai === "nam" ? (Number(mucAnThang) || 0) : null;
+      }
+      const soNamTinh = mucAnLoaiMoi === "nam" ? (Number(mucAnNamMoi) || 0) + (Number(mucAnThangMoi) || 0) / 12 : null;
+      patch.mucAnLoai = mucAnLoaiMoi;
+      patch.mucAnNam = mucAnNamMoi;
+      patch.mucAnThang = mucAnThangMoi;
+      patch.thoiHanBaoQuan = tinhThoiHanBaoQuanTheoMucAn(mucAnLoaiMoi, soNamTinh) || "";
       try {
         await db.collection("vuan").doc(dong.maVuAn).update({
           mucAnLoai: patch.mucAnLoai, mucAnNam: patch.mucAnNam, mucAnThang: patch.mucAnThang,
@@ -10383,24 +10581,35 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
             <td className="p-3 text-xs"><span className="text-slate-300">—</span></td>
           ) : dangSua ? (
             <td className="p-2 text-xs" onClick={e => e.stopPropagation()}>
-              <div className="flex flex-wrap items-center gap-1">
-                <select value={mucAnLoai} onChange={e => setMucAnLoai(e.target.value)}
-                        className={oInput + " text-xs py-1 px-1.5 w-24"}>
-                  {Object.entries(NHAN_LOAI_MUC_AN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-                {mucAnLoai === "nam" && (
-                  <>
-                    <input type="number" min="0" step="1" value={mucAnNam}
-                           onChange={e => setMucAnNam(e.target.value)}
-                           className={oInput + " text-xs py-1 px-1.5 w-12"} />
-                    <span className="text-slate-400">năm</span>
-                    <input type="number" min="0" max="11" step="1" value={mucAnThang}
-                           onChange={e => setMucAnThang(e.target.value)}
-                           className={oInput + " text-xs py-1 px-1.5 w-12"} />
-                    <span className="text-slate-400">tháng</span>
-                  </>
-                )}
-              </div>
+              {bcCaoNhat === undefined ? (
+                <span className="text-slate-400">Đang tải...</span>
+              ) : bcCaoNhat ? (
+                // Chế độ tự động: đã có bị can nhập mức án, không cho sửa tay ở đây nữa — sửa qua
+                // "Hoàn thành vụ án"/"Sửa thông tin vụ án" (khối "Mức án từng bị can").
+                <div className="text-slate-600">
+                  <div className="text-emerald-700 font-medium">Tự động (bị can mức án cao nhất)</div>
+                  <div>{bcCaoNhat.hoTen}: {moTaMucAn(bcCaoNhat)}</div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-1">
+                  <select value={mucAnLoai} onChange={e => setMucAnLoai(e.target.value)}
+                          className={oInput + " text-xs py-1 px-1.5 w-24"}>
+                    {Object.entries(NHAN_LOAI_MUC_AN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                  {mucAnLoai === "nam" && (
+                    <>
+                      <input type="number" min="0" step="1" value={mucAnNam}
+                             onChange={e => setMucAnNam(e.target.value)}
+                             className={oInput + " text-xs py-1 px-1.5 w-12"} />
+                      <span className="text-slate-400">năm</span>
+                      <input type="number" min="0" max="11" step="1" value={mucAnThang}
+                             onChange={e => setMucAnThang(e.target.value)}
+                             className={oInput + " text-xs py-1 px-1.5 w-12"} />
+                      <span className="text-slate-400">tháng</span>
+                    </>
+                  )}
+                </div>
+              )}
             </td>
           ) : (
             <td className="p-3 text-xs whitespace-nowrap"><span className="text-slate-700">{moTaMucAn(dong)}</span></td>

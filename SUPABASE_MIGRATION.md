@@ -1140,6 +1140,7 @@ bảo nó THỰC SỰ được dùng tới nếu đi qua nhiều tầng componen
 4. Cân nhắc thêm UI đổi mật khẩu trong `qlahs-sup.html` trước khi 4 cán bộ thật bắt đầu dùng — hiện
    họ đang dùng chung 1 mật khẩu tạm, cần tự đổi lại mật khẩu riêng.
 
+<<<<<<< HEAD
 ## 10. Nhánh `bieu-10-cong-thuc-day-du` — sheet-hoá nốt cột "Tổng thụ lý" của Biểu B10
 
 Nhánh riêng (tách từ `supabase-migration`, theo yêu cầu Dũng "cẩn thận" trước khi đụng vào báo cáo
@@ -1372,3 +1373,85 @@ Nên tự thử 1 lần: mở 1 màn có dữ liệu (VD Danh sách vụ án), b
 tác lại (chuyển tab/tìm kiếm) — xác nhận dữ liệu đã tải vẫn hiện được, không trắng màn hình/không báo
 lỗi vô nghĩa; thử LƯU 1 thay đổi trong lúc offline — xác nhận báo lỗi rõ ràng (không âm thầm mất/
 không tự động gửi lại khi có mạng).
+
+## 14. Mức án từng bị can — port từ `qlva.html`, chặn bởi thiếu cột Postgres (2026-07-21)
+
+Theo yêu cầu Dũng: port tính năng "Mức án từng bị can" (đã làm trước đó trên nhánh `main`/
+`qlva.html`, Firestore — xem CLAUDE.md) sang `qlahs-sup.html`, CỘNG THÊM yêu cầu mới: Giao nhận hồ
+sơ (lúc nộp hồ sơ lưu trữ, tính "Thời hạn bảo quản") giờ có **2 phương thức** — (a) NẾU vụ đã nhập
+mức án cho ít nhất 1 bị can (qua "Hoàn thành vụ án"/"Sửa thông tin vụ án") thì TỰ ĐỘNG lấy bị can
+có mức án cao nhất để tính, không cho nhập tay nữa; (b) nếu CHƯA bị can nào có mức án thì vẫn nhập
+tay cấp vụ như trước (phương thức cũ, không đổi).
+
+**Lưu ý về nhánh git (quan trọng, tránh nhầm lẫn)**: bản đầu tiên của tính năng này được code trên
+nhánh `muc-an-tung-bican-supabase` (tạo từ `origin/supabase-migration`, commit `6c348cb` — nhánh
+này đã DỪNG LẠI từ Phase 6, không theo kịp `main` vì mọi phát triển tiếp theo (mục 10-13 ở trên:
+`batch_commit` RPC atomic, offline read cache, "chính thức chuyển sang Supabase"...) đều đi thẳng
+qua `main`, không qua `supabase-migration` nữa). Phát hiện ra sự lệch nhánh này NGAY khi chuẩn bị
+deploy — đã cherry-pick lại 2 commit của tính năng này lên đúng `origin/main` mới nhất (nhánh
+`muc-an-tung-bican-onmain`), merge sạch không xung đột ở `qlahs-sup.html` (chỉ xung đột ở chính
+file changelog này do 2 nhánh cùng thêm mục "10" — đã đổi số mục ở đây thành 14 cho đúng thứ tự).
+**Bài học**: `supabase-migration` giờ coi như nhánh ĐÃ NGHỈ HƯU (lịch sử, không phát triển tiếp) —
+mọi việc từ nay làm thẳng trên `main`, đừng tạo nhánh mới từ `supabase-migration` nữa.
+
+**Kiểm chứng lại cần thiết vì đổi nền tảng ghi dữ liệu**: `main` đã đổi `_batch().commit()` sang
+gọi RPC `batch_commit` (1 transaction Postgres thật, atomic — mục 12) THAY CHO việc gọi tuần tự
+nhiều `sb.from(table).update()` như bản `supabase-migration` cũ mà tính năng này ĐÃ kiểm thử lần
+đầu. Đây là 2 code path ghi dữ liệu KHÁC NHAU — kết quả kiểm thử cũ (dưới đây, trên
+`supabase-migration`) không tự động đúng cho `main`, đã kiểm thử lại toàn bộ lần nữa sau khi
+cherry-pick (xem phần "Đã kiểm chứng lại trên `main`" cuối mục này).
+
+**Code JS đã port + mở rộng xong** (nguyên bản, viết trên `qlahs-sup.html` nhánh
+`muc-an-tung-bican-supabase`): 3 hàm/component dùng chung `moiMucAnTungBiCan`/
+`mucAnBiCanThanhPatch`/`MucAnTungBiCanEditor` (y hệt bản Firestore) + hàm MỚI `mucAnBiCanCaoNhat`
+(xếp hạng "cao nhất" theo THỜI HẠN BẢO QUẢN mà mức án đó suy ra — không xếp hạng trừu tượng theo
+loại hình phạt — xem comment trong code). `HoanThanhVuAnModal`/`SuaVuAnForm` sau khi ghi mức án
+từng bị can, tự đồng bộ NGAY `vuan.mucAnLoai/mucAnNam/mucAnThang` = bị can cao nhất trong CÙNG
+batch (để Giao nhận hồ sơ + mọi nơi đọc `tinhThoiHanBaoQuanVu(vuAn)` khác tự động đúng, không cần
+sửa gì thêm ở đó). `DongGiaoNhan` tải bị can của vụ ngay khi vào chế độ sửa (nếu
+`trangThaiVu==="da_xet_xu"` và cột Thời hạn bảo quản đang hiện), quyết định auto/manual qua
+`mucAnBiCanCaoNhat`.
+
+**PHÁT HIỆN BLOCKER khi kiểm thử qua UI thật (Playwright, tài khoản `admintest@local.com`, dữ liệu
+THẬT đã migrate từ `qlahsp2` ở Phase 6 — không phải mock)**: bảng `"bican"` trên Postgres **KHÔNG
+CÓ** 3 cột `mucAnLoai`/`mucAnNam`/`mucAnThang` — khác Firestore (schemaless, thêm field mới vào 1
+document không cần khai báo trước), Postgres bắt buộc `ALTER TABLE` trước khi ghi được. Bắt được
+lỗi này qua vụ thật `QLVA_E01.53_2504_0082` (Vũ Tuất Thanh và đồng phạm, 2 bị can): bấm "Hoàn
+thành" → "Đã xét xử" → nhập mức án 2 bị can (12 năm / 8 năm) → Xác nhận — **phần ghi `vuan` THÀNH
+CÔNG** (đã có sẵn 2 cột này từ tính năng mức án cấp vụ cũ) nhưng **phần ghi `bican` LỖI ÂM THẦM**
+(`sb.from("bican").update(...)` trả lỗi Postgres `42703 column "bican.mucAnLoai" does not exist`,
+`console.error` log lỗi nhưng KHÔNG có toast báo người dùng — modal vẫn đóng như thành công). Xác
+nhận lại bằng truy vấn RAW qua `sb.from("bican").select('"mucAnLoai"')` → cùng lỗi `42703`.
+
+**Đã dọn sạch ngay dữ liệu test trên vụ thật đó** (khác `qlahs-test`/`qlva-dev.html` — đây là dữ
+liệu SẢN XUẤT THẬT, không phải seed test): revert `vuan.trangThai` về `dang_giai_quyet`, xoá
+`ngayQuyetDinh`/`kyHoanThanh`/`soBanAn`/`mucAnLoai`/`mucAnNam`/`mucAnThang`, xoá đúng sự kiện
+`hoan_thanh` vừa tạo trong `lichsuChuyenGiaiDoan` — xác nhận lại bằng `.get()` sau đó khớp đúng
+trạng thái gốc. Bảng `bican` của vụ này hoàn toàn KHÔNG bị đụng (đúng dự kiến, vì ghi lỗi ngay từ
+đầu) — xác nhận `ngayCapNhat` của cả 2 bị can vẫn là mốc thời gian TRƯỚC lúc test, không đổi.
+
+**Việc cần làm trước khi tính năng này chạy được** — đã viết sẵn migration
+`supabase/add_mucan_bican_2026-07-21.sql` (thuần `ALTER TABLE ADD COLUMN IF NOT EXISTS`, kiểu dữ
+liệu/ràng buộc COPY Y HỆT `vuan.mucAnLoai/mucAnNam/mucAnThang` trong `schema.sql`, cả 3 cột đều
+NULLABLE — an toàn tuyệt đối, không đụng dữ liệu/dòng nào có sẵn, không cần backfill), nhưng
+**CHƯA áp dụng lên project Supabase thật** — phiên này KHÔNG có mật khẩu Session pooler (đúng
+nguyên tắc bảo mật đã ghi ở mục "Kết nối" trong `supabase/README.md`: không lưu trong git, chỉ
+truyền qua chat/biến môi trường tạm khi Dũng cung cấp trực tiếp, xem tiền lệ mục 4j). Dũng cần
+chọn 1 trong 2 cách: (1) cung cấp mật khẩu Session pooler qua chat để chạy migration trực tiếp
+(giống mục 4j đã làm), hoặc (2) tự dán nội dung file SQL trên vào Supabase Dashboard → SQL Editor
+(project `eutatszoaseixchvjbtg`) → Run — không cần chia sẻ mật khẩu, chỉ cần đăng nhập Dashboard
+sẵn có. Sau khi cột đã tồn tại, cần lặp lại đúng kịch bản kiểm thử ở trên (Hoàn thành → Đã xét xử →
+mức án 2 bị can → xác nhận `bican` ghi đúng + Giao nhận hồ sơ hiện đúng chế độ tự động) trước khi
+merge nhánh này.
+
+**Phát hiện phụ đáng lưu ý (không phải trọng tâm, ghi lại để không quên)**: batch của shim
+(`_batch().commit()`) ném lỗi đúng chuẩn (`if (error) throw error`) khi 1 phần tử `update` thất
+bại, nhưng lỗi đó KHÔNG hiển thị cho người dùng ở đúng luồng "Hoàn thành vụ án" (chỉ thấy qua
+console, không có toast/thông báo trong modal) — nghĩa là người dùng thật có thể KHÔNG BIẾT 1 phần
+thao tác đã thất bại âm thầm (ở đây là phần bị can, còn phần vụ án vẫn báo "thành công"/đóng modal
+bình thường). Đây có thể là 1 khoảng trống xử lý lỗi rộng hơn (liên quan phát hiện #5 "batch không
+atomic" ở mục 4i/4j — batch không atomic CỘNG với lỗi không hiển thị = người dùng có thể tin dữ
+liệu đã lưu đủ trong khi thực ra chỉ lưu được 1 phần) — ngoài phạm vi sửa của lần này, nêu ra để
+Dũng cân nhắc có cần xử lý rộng hơn (VD `hd.batDauXacNhanKy`/tương đương nên bọc try/catch quanh
+TOÀN BỘ callback và luôn hiện lỗi nếu có) hay không.
+>>>>>>> 2b8eb30 (Port mức án từng bị can sang qlahs-sup.html + tự động chọn bị can mức án cao nhất)
