@@ -6363,6 +6363,34 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
     );
   }, [vuAnId]);
 
+  // Xoá bị can khỏi vụ án — công cụ sửa sai sót (VD thêm nhầm người/trùng lặp), KHÔNG phải hành
+  // động nghiệp vụ (không hỏi kỳ, không ghi log riêng) — giới hạn giống "+ Thêm bị can" (chỉ vụ
+  // đang giải quyết) để không đụng dữ liệu vụ đã hoàn thành/đã tính vào báo cáo kỳ. Khác "Xoá vụ
+  // án" (soft-delete, khôi phục được qua Thùng rác) — đây là XOÁ VĨNH VIỄN thật vì không có Thùng
+  // rác cho từng bị can, nên phải xoá kèm MỌI sự kiện lịch sử tham chiếu tới bị can này TRƯỚC —
+  // "lichsuChuyenGiaiDoan"."maBiCan" tham chiếu "bican"."id" không có ON DELETE CASCADE, xoá
+  // "bican" trước sẽ lỗi vi phạm khoá ngoại nếu còn sự kiện "khoi_to_bican" trỏ tới nó.
+  // dieuLuat/loaiKhoiTo/soBiCan cấp vụ tự động tính lại qua trigger Postgres
+  // "bican_sync_vuan_trg" ngay sau khi xoá — không cần gọi gì thêm ở đây.
+  const xoaBiCan = async (bc) => {
+    if (!window.confirm(
+      `Xoá bị can "${bc.hoTen}" khỏi vụ án này?\n\n` +
+      `Không thể hoàn tác (khác "Xoá vụ án" — không có Thùng rác cho từng bị can).`
+    )) return;
+    try {
+      const logSnap = await db.collection("lichsuChuyenGiaiDoan").where("maBiCan", "==", bc.id).get();
+      const batch = db.batch();
+      logSnap.docs.forEach(d => batch.delete(d.ref));
+      batch.delete(db.collection("bican").doc(bc.id));
+      await batch.commit();
+      xoaBiCanCache(vuAn.id);
+      addToast("Đã xoá bị can");
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi xoá bị can: " + err.message, "error");
+    }
+  };
+
   if (!vuAnId) {
     return (
       <div className="w-[420px] shrink-0 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 text-sm text-center px-4">
@@ -6491,8 +6519,11 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
                             </Badge>
                           </td>
                           <td className="p-2">{bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "Ban đầu"}</td>
-                          <td className="p-2">
+                          <td className="p-2 whitespace-nowrap">
                             <button onClick={() => setBiCanDangSua(bc)} className="text-indigo-600 hover:text-indigo-700 font-medium">Sửa</button>
+                            {(!vuAn.trangThai || vuAn.trangThai === "dang_giai_quyet") && (
+                              <button onClick={() => xoaBiCan(bc)} className="text-red-500 hover:text-red-700 font-medium ml-2">Xoá</button>
+                            )}
                           </td>
                         </tr>
                       ))}

@@ -1509,3 +1509,37 @@ mất fix" đã ghi ở CLAUDE.md trước đây, nhưng lần này lệch vì K
 nhầm nhánh). Dũng cần tự chạy `git push origin main` (từ nhánh `main` cục bộ, đã fast-forward sẵn
 tới đúng commit đang chạy production) để đồng bộ lại GitHub — nếu không, phiên làm việc sau có thể
 vô tình deploy đè mất tính năng này nếu lấy nhầm code từ `origin/main` (đang thiếu 3 commit).
+
+## 15. Xoá bị can khỏi vụ án (2026-07-21)
+
+Theo yêu cầu Dũng — trước đây `ChiTietPanel` chỉ có "Sửa" cho từng bị can, không có cách xoá 1 bị
+can đã lỡ thêm nhầm (VD trùng lặp, sai người) mà không xoá cả vụ án. Thêm nút "Xoá" cạnh "Sửa"
+trong bảng bị can, giới hạn CHỈ hiện khi vụ đang "đang giải quyết" (giống điều kiện đã có sẵn của
+"+ Thêm bị can") — không cho xoá bị can của vụ đã hoàn thành/đã tính vào báo cáo kỳ.
+
+**Khác "Xoá vụ án" (soft-delete, khôi phục được qua Thùng rác) — đây là XOÁ VĨNH VIỄN THẬT**, vì
+không có Thùng rác cho từng bị can. Bắt buộc phải xoá kèm MỌI sự kiện `lichsuChuyenGiaiDoan` có
+`maBiCan` trỏ tới bị can đó TRƯỚC khi xoá dòng `bican` — cột `"maBiCan"` tham chiếu `"bican"."id"`
+KHÔNG có `ON DELETE CASCADE` trong schema, xoá `bican` trước sẽ lỗi vi phạm khoá ngoại nếu còn sự
+kiện `khoi_to_bican` trỏ tới (đã xác nhận lỗi này THẬT khi thử nghiệm, xem bên dưới). Cả 2 xoá gộp
+1 batch — shim tự đảm bảo xoá đúng thứ tự (log trước, bị can sau) qua `_TABLE_INSERT_ORDER` đảo
+ngược đã có sẵn. Dùng `window.confirm()` xác nhận đơn giản (đã là pattern có sẵn trong app, VD
+`KyBaoCaoModule` đổi chiều sắp xếp) — không cần mức xác nhận chặt kiểu gõ lại mã như
+`XoaVinhVienModal`, vì phạm vi chỉ 1 bị can, không phải cascade toàn vụ. `dieuLuat`/`loaiKhoiTo`/
+`soBiCan`/`biCanDaiDien` cấp vụ tự tính lại qua trigger Postgres `bican_sync_vuan_trg` (đã có sẵn,
+chạy cả trên DELETE) — không cần gọi gì thêm.
+
+**Đã kiểm chứng trên vụ thật `QLVA_E01.53_2504_0082`** (2 bị can thật, không đụng vào): tạo 1 bị
+can test qua data layer (mô phỏng đúng có kèm 1 sự kiện `khoi_to_bican` trỏ `maBiCan` tới nó, y hệt
+bị can thật) → xác nhận UI hiện đúng "Bị can (3)" + `dieuLuat` tự gộp thêm "Test" (trigger chạy
+đúng lúc INSERT) → thực thi đúng logic xoá (bỏ qua bước `window.confirm()` vì môi trường trình
+duyệt tự động của phiên này tự huỷ mọi dialog gốc trình duyệt, không phải hành vi của code mới) —
+xoá thành công, 0 lỗi khoá ngoại → đọc lại DB xác nhận: `soBiCan` về đúng 2, `dieuLuat` về đúng
+"Tội lừa đảo chiếm đoạt tài sản" (mất "Test"), sự kiện log test đã biến mất, cả 2 bị can thật
+(`loaiKhoiTo`, tên...) hoàn toàn không đổi. UI (`onSnapshot` sống) tự cập nhật lại đúng "Bị can
+(2)" ngay không cần tải lại trang.
+**CHƯA kiểm chứng được đúng luồng bấm nút thật qua `window.confirm()`** (do môi trường test tự huỷ
+dialog gốc) — nên tự bấm thử 1 lần qua UI thật (KHÔNG phải vụ án thật, tạo 1 vụ test trước) để xác
+nhận hộp thoại xác nhận hiện đúng nội dung và nút "Xoá" ở bảng bị can gọi đúng hàm này trước khi
+hoàn toàn yên tâm — logic xử lý dữ liệu đã kiểm chứng đầy đủ, chỉ còn phần tương tác UI thuần tuý
+chưa tự bấm qua click thật.
