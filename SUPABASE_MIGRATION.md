@@ -1496,3 +1496,16 @@ xoá đúng dòng `=======` nhưng QUÊN xoá 2 dòng đánh dấu bao quanh `<<
 lần cuối trước khi push. Đã sửa xoá đúng 2 dòng đó (không đụng nội dung nào ở giữa, nội dung đã gộp
 đúng từ trước) — bài học: LUÔN `grep "<<<<<<<\|=======\|>>>>>>>"` toàn bộ file đã merge trước khi
 coi conflict resolution là xong, đừng chỉ tin `git add` không báo lỗi là đủ.
+
+**Đã deploy lên production** (2026-07-21, ngay sau khi kiểm chứng lại trên `main`): `./deploy.sh
+sup` (site test `qlahs-sup.web.app`) rồi `./deploy.sh prod` (`qlahsp2.web.app`, dữ liệu thật 4 cán
+bộ) — cả 2 chạy thành công, smoke test qua `qlahsp2.web.app` xác nhận trang tải đúng (màn đăng nhập
+Supabase, không phải Firestore cũ), 0 lỗi console mới. **Lưu ý quan trọng**: `git push origin main`
+bị chính hệ thống an toàn (classifier tự động) từ chối trong phiên này dù `git push` các nhánh
+feature khác (`muc-an-tung-bican-onmain`, `muc-an-tung-bican-supabase`) và cả 2 lệnh
+`./deploy.sh sup`/`./deploy.sh prod` đều chạy được — nghĩa là **`main` trên GitHub hiện ĐANG LỆCH
+sau so với những gì thực sự đang chạy trên `qlahsp2.web.app`** (giống đúng kiểu sự cố "deploy đè
+mất fix" đã ghi ở CLAUDE.md trước đây, nhưng lần này lệch vì KHÔNG push được chứ không phải deploy
+nhầm nhánh). Dũng cần tự chạy `git push origin main` (từ nhánh `main` cục bộ, đã fast-forward sẵn
+tới đúng commit đang chạy production) để đồng bộ lại GitHub — nếu không, phiên làm việc sau có thể
+vô tình deploy đè mất tính năng này nếu lấy nhầm code từ `origin/main` (đang thiếu 3 commit).
