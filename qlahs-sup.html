@@ -717,6 +717,21 @@ function chonBiCanChinh(bcList) {
   return bcList.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList[0];
 }
 
+// Bug thật đã sửa (2026-07-20, phát hiện qua ảnh chụp Dũng gửi: "Chi tiết số liệu" nhóm 125/300
+// vụ mới Điều tra vào "(Chưa có tội danh)" dù mở từng vụ ra đều thấy có — toàn bộ 125 vụ đó là
+// vụ 0 BỊ CAN, tên vụ còn ghi rõ "... bị Lừa đảo chiếm đoạt tài sản"). layBiCanInfo/
+// batchLayBiCanInfo/vuAnTuLogDocs TRƯỚC ĐÂY chỉ tra "tội danh chính" trong bảng "bican" — vụ 0
+// bị can thì KHÔNG CÓ GÌ để tra, luôn ra rỗng — HOÀN TOÀN bỏ qua field "dieuLuat"/"vuanToiDanh"
+// cấp VỤ (đúng nguồn dữ liệu cho trường hợp CHƯA CÓ bị can, xem nguyên tắc thiết kế #7 CLAUDE.md
+// và "form thống nhất Điều luật" — field này ĐÃ được chuẩn hoá đúng qua công cụ upload lại, chỉ
+// là không có nơi nào chịu ĐỌC nó khi tính "tội danh chính" cho báo cáo). Hàm dưới đây suy tội
+// danh từ dieuLuat cấp vụ (phần tử đầu, tách theo ";") CHỈ khi bị can không có gì — đúng thứ tự
+// ưu tiên đã dùng ở vuPrimaryDL (Biểu B10)/_tkGetDLVu (TK tội danh), không bịa dữ liệu mới.
+function toiDanhChinhCuaVu(vu, toiDanhTuBiCan) {
+  if (toiDanhTuBiCan) return toiDanhTuBiCan;
+  return (vu?.dieuLuat || "").split(";")[0].trim();
+}
+
 async function layBiCanInfo(maVuAn) {
   const bcSnap = await db.collection("bican").where("maVuAn", "==", maVuAn).get();
   const bcChinh = bcSnap.docs.length > 0 ? chonBiCanChinh(bcSnap.docs.map(d => d.data())) : null;
@@ -7083,7 +7098,7 @@ async function vuAnTuLogDocs(logDocs) {
     const vu = vuanMap[l.maVuAn];
     if (!vu) return null;
     const bcInfo = bicanMap[l.maVuAn] || { soBiCan: 0, toiDanhChinh: "" };
-    return { ...vu, _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
+    return { ...vu, _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: toiDanhChinhCuaVu(vu, bcInfo.toiDanhChinh) };
   }).filter(Boolean);
 }
 
@@ -7154,7 +7169,7 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
         layBiCanInfo(l.maVuAn),
       ]);
       if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
-      const entry = { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
+      const entry = { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: toiDanhChinhCuaVu(vuDoc.data(), bcInfo.toiDanhChinh) };
       hoanThanhTheoGD[l.hinhThucHoanThanh] = (hoanThanhTheoGD[l.hinhThucHoanThanh] || 0) + 1;
       dsHoanThanhTheoGD[l.hinhThucHoanThanh].push(entry);
     }));
@@ -7173,7 +7188,7 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       ]);
       if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
       soNhapVu++;
-      dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh });
+      dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: toiDanhChinhCuaVu(vuDoc.data(), bcInfo.toiDanhChinh) });
     }));
 
     // Hoist các mảng ds.* (kèm _soBiCan từng vụ) LÊN TRƯỚC bước tính tonCuoiKy — vừa để dùng
@@ -7243,7 +7258,7 @@ async function tinhTonHienTaiTheoGD(gd) {
   const docsTon = vuTonSnap.docs.filter(d => !d.data().daXoa);
   const dsTon = await Promise.all(docsTon.map(async d => {
     const bcInfo = await layBiCanInfo(d.id);
-    return { id: d.id, ...d.data(), _soBiCan: bcInfo.soBiCan, _toiDanhChinh: bcInfo.toiDanhChinh };
+    return { id: d.id, ...d.data(), _soBiCan: bcInfo.soBiCan, _toiDanhChinh: toiDanhChinhCuaVu(d.data(), bcInfo.toiDanhChinh) };
   }));
   const soBiCanTon = dsTon.reduce((s, v) => s + v._soBiCan, 0);
   return { soVuTon: docsTon.length, soBiCanTon, dsTon };
