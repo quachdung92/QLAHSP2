@@ -1181,19 +1181,45 @@ liệu SẢN XUẤT THẬT, không phải seed test): revert `vuan.trangThai` v�
 trạng thái gốc. Bảng `bican` của vụ này hoàn toàn KHÔNG bị đụng (đúng dự kiến, vì ghi lỗi ngay từ
 đầu) — xác nhận `ngayCapNhat` của cả 2 bị can vẫn là mốc thời gian TRƯỚC lúc test, không đổi.
 
-**Việc cần làm trước khi tính năng này chạy được** — đã viết sẵn migration
-`supabase/add_mucan_bican_2026-07-21.sql` (thuần `ALTER TABLE ADD COLUMN IF NOT EXISTS`, kiểu dữ
-liệu/ràng buộc COPY Y HỆT `vuan.mucAnLoai/mucAnNam/mucAnThang` trong `schema.sql`, cả 3 cột đều
-NULLABLE — an toàn tuyệt đối, không đụng dữ liệu/dòng nào có sẵn, không cần backfill), nhưng
-**CHƯA áp dụng lên project Supabase thật** — phiên này KHÔNG có mật khẩu Session pooler (đúng
-nguyên tắc bảo mật đã ghi ở mục "Kết nối" trong `supabase/README.md`: không lưu trong git, chỉ
-truyền qua chat/biến môi trường tạm khi Dũng cung cấp trực tiếp, xem tiền lệ mục 4j). Dũng cần
-chọn 1 trong 2 cách: (1) cung cấp mật khẩu Session pooler qua chat để chạy migration trực tiếp
-(giống mục 4j đã làm), hoặc (2) tự dán nội dung file SQL trên vào Supabase Dashboard → SQL Editor
-(project `eutatszoaseixchvjbtg`) → Run — không cần chia sẻ mật khẩu, chỉ cần đăng nhập Dashboard
-sẵn có. Sau khi cột đã tồn tại, cần lặp lại đúng kịch bản kiểm thử ở trên (Hoàn thành → Đã xét xử →
-mức án 2 bị can → xác nhận `bican` ghi đúng + Giao nhận hồ sơ hiện đúng chế độ tự động) trước khi
-merge nhánh này.
+**ĐÃ ÁP DỤNG migration thành công** — Dũng cung cấp mật khẩu Session pooler trực tiếp qua chat
+(cùng tiền lệ mục 4j, KHÔNG ghi vào file nào trong git — dùng qua biến môi trường trong 1 script
+Node/`pg` tạm ở thư mục scratchpad, xoá script ngay sau khi chạy xong). Xác nhận qua
+`information_schema.columns`: cả 3 cột `mucAnLoai`(text)/`mucAnNam`(integer)/`mucAnThang`(integer)
+đã tồn tại trên `bican`.
+
+**Mắt xích thứ 2 phát hiện ngay sau đó**: lần thử lại đầu tiên qua UI vẫn báo lỗi y hệt ("Could not
+find the 'mucAnLoai' column of 'bican' in the schema cache") — không phải cột chưa tạo (đã xác
+nhận có ở bước trên), mà là **PostgREST cache schema lúc khởi động, không tự phát hiện `ALTER
+TABLE` chạy qua kết nối Postgres trực tiếp** (khác hẳn khi tạo bảng/cột qua chính PostgREST). Cần
+gọi thêm `NOTIFY pgrst, 'reload schema';` (qua cùng kết nối `pg`) để buộc PostgREST nạp lại schema
+— sau lệnh này, ghi `bican.mucAnLoai/...` qua `qlahs-sup.html` thành công ngay. **Ghi chú cho lần
+sau**: bất kỳ `ALTER TABLE`/`CREATE COLUMN` nào chạy qua kết nối Postgres trực tiếp (Session pooler)
+thay vì qua Supabase Dashboard đều cần thêm bước `NOTIFY pgrst, 'reload schema'` này, nếu không
+PostgREST sẽ báo lỗi "column does not exist" dù cột đã tồn tại thật trong DB.
+
+**Đã kiểm thử lại TOÀN BỘ qua UI thật trên đúng vụ `QLVA_E01.53_2504_0082`** sau khi sửa cả 2 mắt
+xích trên:
+1. Hoàn thành → Đã xét xử → nhập mức án Vũ Tuất Thanh 12 năm / Nguyễn Thị Thuý Hằng 8 năm → Xác
+   nhận → đọc thẳng DB: cả 2 `bican` ghi đúng field, VÀ `vuan.mucAnLoai/mucAnNam` tự đồng bộ đúng
+   thành "nam"/12 (bị can cao nhất) — không cần nhập tay lại ở Giao nhận hồ sơ.
+2. Bắt đầu phiên Nhận + bật "Nộp hồ sơ lưu trữ" → quét mã vụ trên → dòng hiện đúng "Mức án cao
+   nhất: 12 năm", "Thời hạn bảo quản: 49 năm" (khớp mốc 12 trong bảng gốc) ngay từ lúc quét (không
+   cần sửa) — vì `ghiNhanVuVaoPhien` đọc thẳng `vuan.mucAnLoai` đã tự đồng bộ ở bước 1.
+3. Bấm "Sửa" dòng đó → xác nhận đúng chế độ TỰ ĐỘNG: hiện "Tự động (bị can mức án cao nhất) — Vũ
+   Tuất Thanh: 12 năm", KHÔNG còn select/input nhập tay → bấm "Lưu" → không lỗi, dữ liệu giữ nguyên
+   đúng.
+
+**Đã dọn sạch dữ liệu test trên vụ thật này ngay sau khi xác nhận PASS**: xoá 2 sự kiện log vừa
+tạo (`hoan_thanh`, `giao_nhan_ho_so`), xoá phiên giao nhận vừa tạo, revert `vuan` về đúng trạng thái
+gốc (`trangThai: dang_giai_quyet`, mọi field mức án/quyết định về `null`), xoá `mucAnLoai/mucAnNam/
+mucAnThang` trên cả 2 `bican` — xác nhận lại bằng cách đọc DB: vụ trở về ĐÚNG 3 sự kiện log gốc
+(`khoi_to_vu` + 2 `khoi_to_bican`), không còn dấu vết gì của lần test. Phiên "Nhận hồ sơ của Ngô
+Thị Lành" (tên tự đặt lúc test) đã biến mất khỏi "Phiên gần đây", các phiên thật của người dùng
+thật (`nguyenphuongnhung2212@gmail.com`...) không bị đụng.
+
+**Tính năng đã sẵn sàng merge** — không còn blocker kỹ thuật nào. Nhánh
+`muc-an-tung-bican-supabase` (tạo từ `origin/supabase-migration`) đã có đầy đủ code + migration đã
+áp dụng thật lên Supabase.
 
 **Phát hiện phụ đáng lưu ý (không phải trọng tâm, ghi lại để không quên)**: batch của shim
 (`_batch().commit()`) ném lỗi đúng chuẩn (`if (error) throw error`) khi 1 phần tử `update` thất

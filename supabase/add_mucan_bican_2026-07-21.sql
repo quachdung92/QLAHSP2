@@ -18,9 +18,20 @@
 -- "not null"/default bắt buộc) — không có dòng "bican" nào bị ảnh hưởng, không cần backfill.
 -- Chạy 1 lần qua Supabase Dashboard → SQL Editor (project eutatszoaseixchvjbtg), hoặc qua Session
 -- pooler như các script khác trong thư mục này (xem supabase/README.md mục "Kết nối").
+--
+-- ĐÃ ÁP DỤNG THẬT lên project eutatszoaseixchvjbtg (2026-07-21) — file này giữ lại làm lịch sử
+-- schema, không cần chạy lại trừ khi tạo mới 1 project Supabase khác từ đầu.
+--
+-- LƯU Ý QUAN TRỌNG khi chạy ALTER TABLE qua kết nối Postgres TRỰC TIẾP (Session pooler) thay vì
+-- qua Supabase Dashboard SQL Editor: PostgREST cache schema lúc khởi động và KHÔNG tự phát hiện
+-- ALTER TABLE chạy ngoài luồng của nó — thiếu bước NOTIFY dưới đây sẽ khiến mọi request REST tới
+-- cột mới báo lỗi "Could not find the '...' column ... in the schema cache" dù cột đã tồn tại
+-- thật trong DB (đã gặp thật khi áp dụng lần đầu, xem SUPABASE_MIGRATION.md mục 10).
 -- ============================================================================
 
 alter table "bican"
   add column if not exists "mucAnLoai" text check ("mucAnLoai" in ('nam','an_treo','phat_tien','chung_than','tu_hinh')),
   add column if not exists "mucAnNam" integer,
   add column if not exists "mucAnThang" integer check ("mucAnThang" between 0 and 11);
+
+notify pgrst, 'reload schema';
