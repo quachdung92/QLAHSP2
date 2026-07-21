@@ -3957,9 +3957,26 @@ function moiMucAnTungBiCan(biCanList) {
 }
 function mucAnBiCanThanhPatch(s) {
   const mucAnLoai = (s && s.mucAnLoai) || "nam";
-  const mucAnNam = mucAnLoai === "nam" ? (Number(s.mucAnNam) || null) : null;
-  const mucAnThang = mucAnLoai === "nam" ? (Number(s.mucAnThang) || 0) : null;
-  return { mucAnLoai, mucAnNam, mucAnThang };
+  if (mucAnLoai !== "nam") return { mucAnLoai, mucAnNam: null, mucAnThang: null };
+  let nam = Number(s.mucAnNam) || 0;
+  let thang = Number(s.mucAnThang) || 0;
+  // Chặn LẦN CUỐI ngay trước khi ghi DB (phòng khi onBlur ở UI vì lý do gì đó không kịp chạy) —
+  // cột "mucAnThang" có ràng buộc CHECK between 0-11 ở Postgres, gửi >= 12 sẽ bị DB từ chối thẳng.
+  if (thang >= 12) { nam += Math.floor(thang / 12); thang = thang % 12; }
+  return { mucAnLoai, mucAnNam: nam || null, mucAnThang: thang };
+}
+// Chuẩn hoá ô "tháng lẻ" khi gõ vượt quá 11 (VD gõ tắt "40 tháng" thay vì tự quy đổi "3 năm 4
+// tháng") — cộng phần dư chia hết cho 12 vào năm, giữ lại đúng phần dư 0-11 ở tháng. BẮT BUỘC vì
+// cột "mucAnThang" trên cả "vuan" lẫn "bican" có ràng buộc CHECK (between 0 and 11) ở Postgres —
+// gửi thẳng "40" lên sẽ bị DB từ chối (lỗi ràng buộc, không lưu được), khác Firestore (không có
+// ràng buộc kiểu này nên trước đây không cần chặn). Trả về `null` nếu KHÔNG cần chuẩn hoá (đã hợp
+// lệ), để nơi gọi biết có cần cập nhật state hay không.
+function chuanHoaThangLe(namHienTai, thangNhap) {
+  const thang = Number(thangNhap);
+  if (!Number.isFinite(thang) || thang < 12) return null;
+  const namCong = Math.floor(thang / 12);
+  const thangConLai = thang % 12;
+  return { mucAnNam: String((Number(namHienTai) || 0) + namCong), mucAnThang: String(thangConLai) };
 }
 // Dùng chung ở HoanThanhVuAnModal (lúc chọn "Đã xét xử") và SuaVuAnForm (vụ đã Đã xét xử, bổ
 // sung/sửa lại sau) — loại hình phạt mặc định "nam" (Tù giam theo năm, xem NHAN_LOAI_MUC_AN),
@@ -3987,6 +4004,10 @@ function MucAnTungBiCanEditor({ biCanList, gia, onDoi }) {
                   <span className="text-slate-400">năm</span>
                   <input type="number" min="0" max="11" step="1" value={s.mucAnThang} placeholder="0"
                          onChange={e => onDoi(bc.id, { mucAnThang: e.target.value })}
+                         onBlur={e => {
+                           const chuan = chuanHoaThangLe(s.mucAnNam, e.target.value);
+                           if (chuan) onDoi(bc.id, chuan);
+                         }}
                          className={oInput + " py-1 px-1.5 w-14"} />
                   <span className="text-slate-400">tháng</span>
                 </>
@@ -10497,10 +10518,15 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
         mucAnNamMoi = bcCaoNhat.mucAnNam ?? null;
         mucAnThangMoi = bcCaoNhat.mucAnThang ?? null;
       } else {
-        // Chưa bị can nào có mức án — phương thức cũ: nhập tay cấp vụ.
+        // Chưa bị can nào có mức án — phương thức cũ: nhập tay cấp vụ. Chặn LẦN CUỐI phần "tháng
+        // lẻ" vượt 11 trước khi ghi (phòng khi onBlur ở UI vì lý do gì đó không kịp chạy) — cột
+        // "mucAnThang" có ràng buộc CHECK between 0-11 ở Postgres, gửi >= 12 sẽ bị DB từ chối.
         mucAnLoaiMoi = mucAnLoai;
-        mucAnNamMoi = mucAnLoai === "nam" ? (Number(mucAnNam) || null) : null;
-        mucAnThangMoi = mucAnLoai === "nam" ? (Number(mucAnThang) || 0) : null;
+        let namSo = mucAnLoai === "nam" ? (Number(mucAnNam) || 0) : 0;
+        let thangSo = mucAnLoai === "nam" ? (Number(mucAnThang) || 0) : 0;
+        if (mucAnLoai === "nam" && thangSo >= 12) { namSo += Math.floor(thangSo / 12); thangSo = thangSo % 12; }
+        mucAnNamMoi = mucAnLoai === "nam" ? (namSo || null) : null;
+        mucAnThangMoi = mucAnLoai === "nam" ? thangSo : null;
       }
       const soNamTinh = mucAnLoaiMoi === "nam" ? (Number(mucAnNamMoi) || 0) + (Number(mucAnThangMoi) || 0) / 12 : null;
       patch.mucAnLoai = mucAnLoaiMoi;
@@ -10635,6 +10661,10 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
                       <span className="text-slate-400">năm</span>
                       <input type="number" min="0" max="11" step="1" value={mucAnThang}
                              onChange={e => setMucAnThang(e.target.value)}
+                             onBlur={e => {
+                               const chuan = chuanHoaThangLe(mucAnNam, e.target.value);
+                               if (chuan) { setMucAnNam(chuan.mucAnNam); setMucAnThang(chuan.mucAnThang); }
+                             }}
                              className={oInput + " text-xs py-1 px-1.5 w-12"} />
                       <span className="text-slate-400">tháng</span>
                     </>
@@ -12823,7 +12853,11 @@ function DongVuBangExcel({ vuAn, index, keo, suaVu, daMoRong, onToggleMoRong }) 
       </td>
       <td {...oTd("mucAnThang")}>
         {vuAn.mucAnLoai === "nam" ? (<>
-          <OCellText type="number" value={vuAn.mucAnThang} onCommit={v => suaVu(vuAn.id, { mucAnThang: v ? Number(v) : null })} />
+          <OCellText type="number" value={vuAn.mucAnThang} onCommit={v => {
+            const chuan = chuanHoaThangLe(vuAn.mucAnNam, v);
+            if (chuan) suaVu(vuAn.id, { mucAnNam: Number(chuan.mucAnNam), mucAnThang: Number(chuan.mucAnThang) });
+            else suaVu(vuAn.id, { mucAnThang: v ? Number(v) : null });
+          }} />
           <TayKeoFill onBatDau={() => keo.batDauKeo(index, "mucAnThang", vuAn.mucAnThang)} />
         </>) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
       </td>

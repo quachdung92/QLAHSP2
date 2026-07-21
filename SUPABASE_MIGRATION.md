@@ -1543,3 +1543,34 @@ dialog gốc) — nên tự bấm thử 1 lần qua UI thật (KHÔNG phải v�
 nhận hộp thoại xác nhận hiện đúng nội dung và nút "Xoá" ở bảng bị can gọi đúng hàm này trước khi
 hoàn toàn yên tâm — logic xử lý dữ liệu đã kiểm chứng đầy đủ, chỉ còn phần tương tác UI thuần tuý
 chưa tự bấm qua click thật.
+
+## 16. Bug thật: nhập "tháng lẻ" mức án ≥ 12 làm hỏng cả phiên Giao nhận hồ sơ (2026-07-21)
+
+Dũng báo "giao nhận trên 30 hồ sơ hệ thống báo lỗi không lưu được, dẫn đến không in/lưu được" —
+**thử tái hiện bằng cách quét 35 hồ sơ thật vào 1 phiên Nhận thật, sửa 1 dòng, bấm Lưu phiên + In
+phiên — KHÔNG tái hiện được lỗi nào** (đã dọn sạch dữ liệu test). Số lượng hồ sơ (35) không phải
+nguyên nhân thật.
+
+Dũng tự xác định lại đúng nguyên nhân: **gõ "40" vào ô "tháng" của Mức án từng bị can** (ý định
+"3 năm 4 tháng" nhưng gõ tổng số tháng thay vì tách riêng) — cột `"mucAnThang"` trên CẢ `"vuan"` LẪN
+`"bican"` có ràng buộc `CHECK (... between 0 and 11)` trong Postgres (khác Firestore, không có
+ràng buộc kiểu này) — gửi "40" lên bị DB từ chối thẳng, ghi thất bại. Vì "Lưu phiên"/"In phiên" ở
+Giao nhận hồ sơ đều tự lưu hộ dòng đang sửa dở TRƯỚC (xem `luuDongDangSuaNeuCo`), 1 dòng lưu lỗi vì
+mức án sai sẽ chặn đứng luôn cả "Lưu phiên"/"In phiên" — đúng khớp mô tả "không lưu/in được".
+
+**Đã sửa theo đúng yêu cầu Dũng: tự động quy đổi "tháng lẻ" ≥ 12 thành năm + tháng** (VD "40 tháng"
+→ tự cộng thêm 3 vào năm, còn lại "4" ở tháng) thay vì chặn/báo lỗi khi gõ. Thêm hàm dùng chung
+`chuanHoaThangLe(namHienTai, thangNhap)` (cạnh `mucAnBiCanThanhPatch`) — áp dụng ở **2 lớp**:
+1. **UI, lúc rời khỏi ô "tháng" (`onBlur`)** — cả 3 nơi nhập tháng: `MucAnTungBiCanEditor` (dùng
+   chung `HoanThanhVuAnModal`/`SuaVuAnForm`), `DongGiaoNhan` (Giao nhận hồ sơ, chế độ nhập tay cấp
+   vụ), và cột `mucAnThang` trong `BangExcelModule` (Cài đặt → Bảng dữ liệu). Dùng `onBlur` thay vì
+   `onChange` để không giật số giữa lúc đang gõ dở (VD gõ "1" rồi "4" để ra "14").
+2. **Ngay trước khi ghi DB** (`mucAnBiCanThanhPatch` + nhánh nhập tay trong `DongGiaoNhan.luu()`)
+   — phòng khi `onBlur` vì lý do gì đó không kịp chạy (VD bấm Enter/click nút khác quá nhanh) —
+   lớp phòng thủ cuối cùng trước khi patch rời khỏi trình duyệt, đảm bảo KHÔNG BAO GIỜ gửi
+   `mucAnThang >= 12` lên Postgres nữa dù đi qua đường nào.
+
+**Đã kiểm chứng qua UI thật trên vụ `QLVA_E01.53_2504_0082`**: nhập "3" năm + "40" tháng cho Vũ
+Tuất Thanh → bấm ra ngoài ô (blur) → xác nhận tự động thành "6" năm + "4" tháng (3 + floor(40/12)=3
+= 6; 40 mod 12 = 4) — đúng "3 năm 4 tháng" cộng dồn vào 3 năm đã có. Đóng modal bằng "Huỷ", xác
+nhận DB không bị đổi gì (chỉ test phía UI, không lưu).
