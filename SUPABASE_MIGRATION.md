@@ -1140,7 +1140,6 @@ bảo nó THỰC SỰ được dùng tới nếu đi qua nhiều tầng componen
 4. Cân nhắc thêm UI đổi mật khẩu trong `qlahs-sup.html` trước khi 4 cán bộ thật bắt đầu dùng — hiện
    họ đang dùng chung 1 mật khẩu tạm, cần tự đổi lại mật khẩu riêng.
 
-<<<<<<< HEAD
 ## 10. Nhánh `bieu-10-cong-thuc-day-du` — sheet-hoá nốt cột "Tổng thụ lý" của Biểu B10
 
 Nhánh riêng (tách từ `supabase-migration`, theo yêu cầu Dũng "cẩn thận" trước khi đụng vào báo cáo
@@ -1480,4 +1479,20 @@ atomic" ở mục 4i/4j — batch không atomic CỘNG với lỗi không hiển
 liệu đã lưu đủ trong khi thực ra chỉ lưu được 1 phần) — ngoài phạm vi sửa của lần này, nêu ra để
 Dũng cân nhắc có cần xử lý rộng hơn (VD `hd.batDauXacNhanKy`/tương đương nên bọc try/catch quanh
 TOÀN BỘ callback và luôn hiện lỗi nếu có) hay không.
->>>>>>> 2b8eb30 (Port mức án từng bị can sang qlahs-sup.html + tự động chọn bị can mức án cao nhất)
+
+**Đã kiểm chứng lại trên `main` sau cherry-pick** (nhánh `muc-an-tung-bican-onmain`, code path ghi
+dữ liệu ĐÃ ĐỔI sang `batch_commit` RPC atomic — mục 12 — khác hẳn bản `supabase-migration` cũ đã
+kiểm thử ở trên): lặp lại đúng kịch bản trên vụ thật `QLVA_E01.53_2504_0082` (lần này Vũ Tuất Thanh
+15 năm / Nguyễn Thị Thuý Hằng 5 năm) — Hoàn thành → Đã xét xử → cả 2 `bican` ghi đúng qua RPC mới,
+`vuan` tự đồng bộ đúng "nam"/15 (bị can cao nhất); Giao nhận hồ sơ quét vụ hiện ngay "Mức án cao
+nhất: 15 năm"/"Thời hạn bảo quản: 52 năm" (khớp mốc 15 trong bảng gốc); bấm "Sửa" xác nhận đúng chế
+độ tự động "Vũ Tuất Thanh: 15 năm", không còn ô nhập tay — 0 lỗi console mới. Đã dọn sạch dữ liệu
+test ngay sau đó (giống hệt quy trình lần trước), xác nhận vụ về đúng 3 sự kiện log gốc.
+
+**Tự phát hiện + tự sửa 1 lỗi thao tác của chính mình khi cherry-pick**: `git cherry-pick` báo
+xung đột ở `SUPABASE_MIGRATION.md` (2 nhánh cùng thêm mục "10" ở cuối file) — lúc gộp thủ công đã
+xoá đúng dòng `=======` nhưng QUÊN xoá 2 dòng đánh dấu bao quanh `<<<<<<< HEAD` (đầu) và
+`>>>>>>> 2b8eb30 (...)` (cuối), để lọt vào 2 commit đã tạo trước khi phát hiện lại khi rà lại file
+lần cuối trước khi push. Đã sửa xoá đúng 2 dòng đó (không đụng nội dung nào ở giữa, nội dung đã gộp
+đúng từ trước) — bài học: LUÔN `grep "<<<<<<<\|=======\|>>>>>>>"` toàn bộ file đã merge trước khi
+coi conflict resolution là xong, đừng chỉ tin `git add` không báo lỗi là đủ.
