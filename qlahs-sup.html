@@ -739,14 +739,36 @@ async function layBiCanInfo(maVuAn) {
   return { soBiCan: bcSnap.size, toiDanhChinh };
 }
 
-// Batch-read toàn bộ bị can cho nhiều vụ án — 1 "in" query DUY NHẤT (checklist Supabase mục 5:
-// Postgres ANY() không giới hạn 30 item như Firestore, bỏ hẳn chia lô — xem shim, ghi chú đầu
-// khối <script> chính). Trả { maVuAn: [bcData, ...] }.
+// Chia nhỏ mảng id thành các lô AN TOÀN cho mệnh đề "in" qua PostgREST (2026-07-21) — "checklist
+// Supabase mục 5" từng bỏ hẳn chia lô 30 của Firestore với lý do "Postgres ANY() không giới hạn"
+// — ĐÚNG cho bản thân Postgres, nhưng SAI THỰC TẾ vì PostgREST gửi `.in()` qua QUERY STRING trên
+// URL của request GET: URL quá dài (id list lớn) bị chính server/proxy từ chối "Bad Request" —
+// giới hạn nằm ở tầng HTTP, không phải Postgres. Bắt được lỗi THẬT trên dữ liệu production (2031
+// vụ án): 1000 id vẫn chạy được, 1500 id lỗi "Bad Request" ngay — chọn lô 300 để có biên an toàn
+// rộng (id dài hơn dự kiến, dữ liệu tăng thêm vẫn không chạm ngưỡng). Dùng cho MỌI nơi query "in"
+// theo danh sách vụ án — số lượng vụ án chỉ tăng theo thời gian, không có lý do để mỗi nơi tự chịu
+// rủi ro này riêng lẻ. `tuyChinh(q)` (optional) để thêm điều kiện `where` khác vào CÙNG câu query
+// (VD lọc thêm `loaiSuKien`), áp dụng cho MỌI lô như nhau.
+const CHIA_LO_IN_KICH_THUOC = 300;
+async function chiaLoTruyVanIn(table, field, ids, tuyChinh) {
+  if (!ids || ids.length === 0) return [];
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += CHIA_LO_IN_KICH_THUOC) chunks.push(ids.slice(i, i + CHIA_LO_IN_KICH_THUOC));
+  const snaps = await Promise.all(chunks.map(chunk => {
+    let q = db.collection(table).where(field, "in", chunk);
+    if (tuyChinh) q = tuyChinh(q);
+    return q.get();
+  }));
+  return snaps.flatMap(s => s.docs);
+}
+
+// Batch-read toàn bộ bị can cho nhiều vụ án — chia lô an toàn qua chiaLoTruyVanIn (xem ghi chú
+// trên). Trả { maVuAn: [bcData, ...] }.
 async function batchLayBiCanList(maVuAnList) {
   if (!maVuAnList.length) return {};
   const result = {};
-  const snap = await db.collection("bican").where("maVuAn", "in", maVuAnList).get();
-  snap.docs.forEach(doc => {
+  const docs = await chiaLoTruyVanIn("bican", "maVuAn", maVuAnList);
+  docs.forEach(doc => {
     const bc = { id: doc.id, ...doc.data() };
     if (!result[bc.maVuAn]) result[bc.maVuAn] = [];
     result[bc.maVuAn].push(bc);
@@ -5809,12 +5831,12 @@ function DanhSachPanel({ selectedId, onSelect }) {
       const idsCanTai = ids.filter(id => !bicanTimKiemTheoVu[id]);
       if (idsCanTai.length === 0) return;
       setDangTaiTimBiCan(true);
-      db.collection("bican").where("maVuAn", "in", idsCanTai).get()
-        .then(snap => {
+      chiaLoTruyVanIn("bican", "maVuAn", idsCanTai)
+        .then(docs => {
           setBicanTimKiemTheoVu(cu => {
             const moi = { ...cu };
             idsCanTai.forEach(id => { moi[id] = []; });
-            snap.docs.forEach(d => {
+            docs.forEach(d => {
               const bc = { id: d.id, ...d.data() };
               (moi[bc.maVuAn] = moi[bc.maVuAn] || []).push(bc);
             });
@@ -5848,12 +5870,12 @@ function DanhSachPanel({ selectedId, onSelect }) {
     const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
     const idsCanTai = ids.filter(id => !logKyTheoVu[id]);
     if (idsCanTai.length === 0) return;
-    db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "in", idsCanTai).get()
-      .then(snap => {
+    chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", idsCanTai)
+      .then(docs => {
         setLogKyTheoVu(cu => {
           const moi = { ...cu };
           idsCanTai.forEach(id => { moi[id] = []; });
-          snap.docs.forEach(d => {
+          docs.forEach(d => {
             const ev = { id: d.id, ...d.data() };
             (moi[ev.maVuAn] = moi[ev.maVuAn] || []).push(ev);
           });
@@ -7004,10 +7026,9 @@ function ThongKeKyHienTai() {
 
         const vuIdsGq = [...new Set(gqSnap.docs.map(d => d.data().maVuAn).filter(Boolean))];
         if (vuIdsGq.length === 0) { setSoGiaiQuyetBiCan(0); return; }
-        const vuGqSnap = await db.collection("vuan")
-          .where(firebase.firestore.FieldPath.documentId(), "in", vuIdsGq).get();
+        const vuGqDocs = await chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), vuIdsGq);
         if (huy) return;
-        setSoGiaiQuyetBiCan(vuGqSnap.docs.reduce((s, d) => s + (d.data().soBiCan || 0), 0));
+        setSoGiaiQuyetBiCan(vuGqDocs.reduce((s, d) => s + (d.data().soBiCan || 0), 0));
       })
       .catch(err => console.error(err));
     return () => { huy = true; };
@@ -7301,14 +7322,16 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
 async function vuAnTuLogDocs(logDocs) {
   if (!logDocs.length) return [];
   const maVuAnList = [...new Set(logDocs.map(d => d.data().maVuAn))];
-  // Batch-read vuan + bican song song — 1 query "in" duy nhất thay vì chia lô 30 (checklist
-  // Supabase mục 5, Postgres ANY() không giới hạn như Firestore).
-  const [vuanSnap, bicanMap] = await Promise.all([
-    db.collection("vuan").where(firebase.firestore.FieldPath.documentId(), "in", maVuAnList).get(),
+  // Batch-read vuan + bican song song — chia lô qua chiaLoTruyVanIn (2026-07-21: "checklist Supabase
+  // mục 5" từng bỏ hẳn chia lô với lý do "Postgres ANY() không giới hạn" — ĐÚNG cho Postgres nhưng
+  // SAI thực tế vì PostgREST gửi .in() qua URL query string, dài quá sẽ bị 400 Bad Request. Đặc biệt
+  // quan trọng ở ĐÂY vì hàm này nuôi Kỳ báo cáo/Biểu B10 — kỳ nhiều vụ án là kịch bản thật sẽ gặp).
+  const [vuanDocs, bicanMap] = await Promise.all([
+    chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), maVuAnList),
     batchLayBiCanInfo(maVuAnList),
   ]);
   const vuanMap = {};
-  vuanSnap.docs.forEach(d => { vuanMap[d.id] = { id: d.id, ...d.data() }; });
+  vuanDocs.forEach(d => { vuanMap[d.id] = { id: d.id, ...d.data() }; });
   return logDocs.map(d => {
     const l = d.data();
     const vu = vuanMap[l.maVuAn];
@@ -8147,13 +8170,14 @@ function collectVuIdsFromBaoCao(baoCao) {
   return [...ids];
 }
 
-// Helper: fetch bị can theo danh sách vụ IDs — 1 query "in" duy nhất (checklist Supabase mục 5,
-// bỏ chia lô 30 vốn chỉ cần cho giới hạn "in" của Firestore).
+// Helper: fetch bị can theo danh sách vụ IDs — chia lô qua chiaLoTruyVanIn (2026-07-21: xem ghi
+// chú đầy đủ ở định nghĩa chiaLoTruyVanIn — "checklist Supabase mục 5" từng bỏ chia lô với lý do
+// "Postgres ANY() không giới hạn", SAI thực tế vì PostgREST gửi .in() qua URL, dài quá bị 400).
 async function fetchBiCanTheoVuIds(vuIds) {
   if (!vuIds.length) return {};
-  const snap = await db.collection("bican").where("maVuAn", "in", vuIds).get();
+  const docs = await chiaLoTruyVanIn("bican", "maVuAn", vuIds);
   const byVu = {};
-  snap.docs.forEach(d => {
+  docs.forEach(d => {
     const bc = { id: d.id, ...d.data() };
     (byVu[bc.maVuAn] = byVu[bc.maVuAn] || []).push(bc);
   });
@@ -8163,18 +8187,16 @@ async function fetchBiCanTheoVuIds(vuIds) {
 // Helper: fetch kỳ thống kê THẬT của riêng từng bị can (từ sự kiện log khoi_to_bican, KHÔNG
 // phải field loaiKhoiTo — bị can bổ sung thêm sau vào 1 vụ cũ có kỳ khởi tố khác hẳn kỳ của vụ,
 // và log là nguồn sự thật duy nhất, đúng nguyên tắc thiết kế #1). Trả về Map<maBiCan, kyId>.
-// 1 query "in" duy nhất (checklist Supabase mục 5, bỏ chia lô 30). TRƯỚC ĐÂY lọc loaiSuKien phía
-// CLIENT để khỏi cần thêm composite index Firestore (maVuAn+loaiSuKien) — dưới Postgres, thêm điều
-// kiện where thứ 2 KHÔNG cần index riêng mới hoạt động đúng (chỉ có thể không dùng được index cho
-// PHẦN ĐÓ của điều kiện, vẫn ra kết quả đúng) — lọc thẳng ở query, giảm số dòng phải tải về so với
-// tải NGUYÊN lịch sử rồi lọc lại (VD 1 vụ nhiều lần trả hồ sơ/chuyển giai đoạn có thể có hàng chục
-// dòng log, chỉ 1 dòng là khoi_to_bican/bị can).
+// Chia lô qua chiaLoTruyVanIn (2026-07-21, xem ghi chú ở fetchBiCanTheoVuIds) — dùng tham số
+// tuyChinh để thêm điều kiện loaiSuKien vào CÙNG câu query của mỗi lô, giảm số dòng phải tải về
+// so với tải NGUYÊN lịch sử rồi lọc lại (VD 1 vụ nhiều lần trả hồ sơ/chuyển giai đoạn có thể có
+// hàng chục dòng log, chỉ 1 dòng là khoi_to_bican/bị can).
 async function fetchKyKhoiToBiCan(vuIds) {
   const map = new Map();
   if (!vuIds.length) return map;
-  const snap = await db.collection("lichsuChuyenGiaiDoan")
-    .where("maVuAn", "in", vuIds).where("loaiSuKien", "==", "khoi_to_bican").get();
-  snap.docs.forEach(d => {
+  const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", vuIds,
+    q => q.where("loaiSuKien", "==", "khoi_to_bican"));
+  docs.forEach(d => {
     const e = d.data();
     if (e.maBiCan) map.set(e.maBiCan, e.kyThongKe || null);
   });

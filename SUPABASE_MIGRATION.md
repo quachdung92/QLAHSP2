@@ -1574,3 +1574,56 @@ mức án sai sẽ chặn đứng luôn cả "Lưu phiên"/"In phiên" — đún
 Tuất Thanh → bấm ra ngoài ô (blur) → xác nhận tự động thành "6" năm + "4" tháng (3 + floor(40/12)=3
 = 6; 40 mod 12 = 4) — đúng "3 năm 4 tháng" cộng dồn vào 3 năm đã có. Đóng modal bằng "Huỷ", xác
 nhận DB không bị đổi gì (chỉ test phía UI, không lưu).
+
+## 17. Bug hệ thống: query `.where(field, "in", ids)` với danh sách ID lớn bị PostgREST từ chối
+"Bad Request" — vỡ tính năng "tìm theo tên bị can" (2026-07-21)
+
+Dũng báo "tính năng tìm theo tên bị can hoạt động không hiệu quả". Tái hiện trên
+`qlahsp2.web.app` thật: mở "Danh sách vụ án" → tab "Tất cả" (2043 vụ án, 2031 vụ chưa vào
+Thùng rác) → gõ tên 1 bị can có thật ("Đinh Văn Nam", vụ `QLVA_E01.53_2304_0003`) → hệ thống báo
+"Không có vụ án nào khớp" / "0 / 2031 vụ án" dù dữ liệu tồn tại thật.
+
+**Nguyên nhân gốc**: bước "chuyển sang Supabase" trước đây (checklist Supabase mục 5) đã CHỦ Ý bỏ
+hẳn việc chia lô 30 phần tử cho mọi query kiểu `.where(field, "in", dsId)` — lý luận lúc đó "Postgres
+`ANY()` không giới hạn số phần tử như Firestore `in` (giới hạn cứng 30)". Lý luận này **ĐÚNG cho bản
+thân Postgres** nhưng **SAI trong thực tế triển khai qua PostgREST**: PostgREST gửi mệnh đề `.in()`
+qua **query string của request GET**, không phải body — danh sách ID càng dài, URL càng dài, và khi
+URL vượt quá giới hạn của tầng HTTP (proxy/server, không phải Postgres) thì toàn bộ request bị từ
+chối thẳng **"Bad Request"** — lỗi bị nuốt bởi `.catch(err => console.error(err))` ở nhiều nơi nên
+không có gì hiện trên UI ngoài "0 kết quả", trông giống hệt "không tìm thấy" hợp lệ.
+
+**Xác định ngưỡng thật bằng test trực tiếp trên dữ liệu production** (nhị phân dò ngưỡng, không suy
+đoán): 1000 ID vẫn chạy được, 1500 ID lỗi "Bad Request" ngay — chọn lô **300** cho biên an toàn rộng
+(ID dài hơn dự kiến, dữ liệu tăng thêm theo thời gian vẫn khó chạm ngưỡng).
+
+**Đã sửa**: thêm 1 helper dùng chung `chiaLoTruyVanIn(table, field, ids, tuyChinh)` (đặt ngay trước
+`batchLayBiCanList`) — chia `ids` thành các lô 300, chạy song song qua `Promise.all`, gộp kết quả lại
+thành 1 mảng docs phẳng; tham số `tuyChinh(q)` (optional) để thêm điều kiện `where` khác vào CÙNG câu
+query của mỗi lô (VD lọc thêm `loaiSuKien`). Áp dụng cho **7 nơi** từng query "in" theo danh sách vụ
+án không chia lô (rà bằng grep toàn file, không chỉ sửa đúng chỗ tính năng bị báo lỗi):
+- `batchLayBiCanList` (nuôi cả `batchLayBiCanInfo` — dùng ở nhiều nơi, sửa 1 chỗ lợi cả chuỗi).
+- `DanhSachPanel`: effect tìm theo tên bị can (`bicanTimKiemTheoVu` — đúng tính năng Dũng báo lỗi)
+  và effect cột "Kỳ mới/Kỳ giải quyết/Kỳ vào Truy tố/Kỳ chuyển Xét xử" (`logKyTheoVu`).
+- `DashboardModule`: query đếm bị can đã giải quyết trong kỳ (`vuGqSnap`).
+- `vuAnTuLogDocs` — **quan trọng nhất về rủi ro**, hàm này nuôi thẳng Kỳ báo cáo/Biểu B10 (báo cáo
+  thống kê chính thức) — 1 kỳ có đủ nhiều vụ án (khởi tố/giải quyết/tồn) sẽ dính ĐÚNG lỗi này, âm
+  thầm làm sai số liệu báo cáo mà không có dấu hiệu gì trên UI ngoài việc thiếu 1 số vụ trong tổng.
+- `fetchBiCanTheoVuIds`, `fetchKyKhoiToBiCan` (hàm sau cần tham số `tuyChinh` vì có thêm điều kiện
+  `loaiSuKien == "khoi_to_bican"` kết hợp cùng `maVuAn in [...]`).
+
+**KHÔNG sửa** 1 nơi còn lại dùng `"in"` không chia lô (`ImportExcelModule`, đối chiếu vụ trùng theo
+`vuGoc`) — phạm vi mảng ID ở đó bị chặn bởi số dòng trùng trong 1 lần import (luôn nhỏ, không có
+đường nào tăng tới hàng nghìn), rủi ro không đáng kể so với 7 chỗ trên.
+
+**Đã kiểm chứng bằng dữ liệu Supabase THẬT trên production** (không phải mock, chỉ đọc — không ghi
+gì, không cần dọn dẹp sau test): gọi thẳng `chiaLoTruyVanIn("bican","maVuAn",ids)` với toàn bộ 2043
+ID vụ án thật qua console — trả về đúng 3077 bị can, tìm thấy đúng "Đinh Văn Nam" (vụ đã bị
+`daXoa:true`, tức đã vào Thùng rác — giải thích luôn vì sao ví dụ này không hiện trên UI: Danh sách
+vụ án CỐ Ý lọc bỏ vụ trong Thùng rác, không phải bug). Chọn lại 1 ví dụ THẬT SỰ hợp lệ — bị can
+"Nguyễn Bá Thái" (vụ `QLVA_E01.53_2501_0116`, đứng thứ ~1016 trong danh sách 2031 vụ đang hoạt động,
+nằm ngoài hẳn phạm vi 500-1000 dòng đầu mà lỗi cũ vẫn còn "may mắn" hoạt động được) — gõ vào ô tìm
+kiếm ở tab "Tất cả" qua UI thật, xác nhận trả về đúng **1/2031 vụ án**, đúng mã vụ
+`QLVA_E01.53_2501_0116`. Mở thêm Kỳ báo cáo → xem chi tiết kỳ 06/2026 (đang mở, gọi thẳng
+`tinhBaoCaoKyTuLog` → `vuAnTuLogDocs` với toàn bộ log của kỳ) — ra số liệu hợp lý (300 vụ/731 BC
+Điều tra + 49 vụ/148 BC Xét xử = 349 vụ mới, khớp đúng con số "Mới trong kỳ: 349 vụ" hiển thị ở đầu
+Danh sách vụ án), 0 lỗi console thật (chỉ còn cảnh báo Babel/Tailwind vô hại).
