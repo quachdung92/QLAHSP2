@@ -694,50 +694,39 @@ function hienThiMa(vuAn) {
   return vuAn.maNganhCap || vuAn.maNoiSinh;
 }
 
-// ── Cache bị can theo phiên (session) ────────────────────────────────────────
-// Tránh query Firestore lặp lại cho cùng 1 vụ khi xem báo cáo nhiều lần.
-// Key = maVuAn, value = { soBiCan, toiDanhChinh }.
-// Gọi xoaBiCanCache(maVuAn) sau bất kỳ thao tác tạo/sửa bị can để dữ liệu
-// cũ không bị dùng lại.
-const _biCanCache = {};
-function xoaBiCanCache(maVuAn) { delete _biCanCache[maVuAn]; }
-// Bug thật đã sửa (2026-07-20, phát hiện qua báo cáo Dũng "data đã cập nhật nhưng báo cáo vẫn cũ",
-// dù xem đúng kỳ ĐANG MỞ — không phải lỗi cache baoCaoLuu của kỳ đã chốt): các CÔNG CỤ GHI HÀNG
-// LOẠT (BackfillDieuLuatBCTool, CapNhatDieuLuatTuFileTool, Import Excel...) ghi thẳng qua
-// batch.update() KHÔNG đi qua ThemBiCanForm/SuaBiCanForm/TachVuAnModal/NhapVuModal/XoaVuAnModal —
-// 7 chỗ DUY NHẤT gọi xoaBiCanCache(maVuAn) trong toàn bộ code — nên _biCanCache giữ nguyên giá trị
-// CŨ (VD "chưa xác định") cho MỌI vụ đã mở báo cáo/panel TRƯỚC đó trong cùng phiên trình duyệt, dù
-// dữ liệu Postgres đã đúng — báo cáo "kỳ đang mở" (tính LIVE, không phải snapshot) vẫn đọc lại
-// đúng cache cũ này qua layBiCanInfo/batchLayBiCanList. Bulk tool sửa NHIỀU vụ cùng lúc, biết
-// TRƯỚC không vụ nào là ngoại lệ — xoá SẠCH cache (không cần theo dõi từng maVuAn) là cách chắc
-// chắn nhất, tránh lặp lại đúng lớp bug này ở công cụ hàng loạt nào khác thêm sau này.
-function xoaToanBoBiCanCache() { for (const k in _biCanCache) delete _biCanCache[k]; }
+// ── Đọc bị can theo vụ — LUÔN TẢI MỚI, không cache (2026-07-20) ─────────────────
+// Trước đây có "_biCanCache" (cache theo phiên trình duyệt, key=maVuAn) để né query Firestore lặp
+// lại — đúng lý do khi còn Firestore (tính phí/giới hạn theo LƯỢT ĐỌC). Từ khi chuyển hẳn sang
+// Supabase (không còn giới hạn kiểu đó), cache này chỉ còn TOÀN RỦI RO không còn LỢI ÍCH tương
+// xứng: đã bắt được ĐÚNG 2 bug thật liên tiếp trong 1 buổi do cache không được xoá đúng lúc (công
+// cụ ghi hàng loạt không đi qua đường xoaBiCanCache của form đơn lẻ → báo cáo hiện dữ liệu CŨ dù
+// Postgres đã đúng — xem Dũng phản ánh "data đã cập nhật nhưng báo cáo vẫn cũ", 2026-07-20). Theo
+// đúng yêu cầu Dũng ("đổi sang Supabase rồi, có phải lo lượt đọc như Firebase nữa đâu") — bỏ hẳn
+// cache, LUÔN query Postgres mới mỗi lần gọi. Giữ NGUYÊN tên hàm/chữ ký (layBiCanInfo/
+// batchLayBiCanList/batchLayBiCanInfo/xoaBiCanCache/xoaToanBoBiCanCache) để không phải sửa hàng
+// chục nơi gọi — xoaBiCanCache/xoaToanBoBiCanCache giờ là no-op vô hại (không còn gì để xoá),
+// giữ lại lời gọi cũ cho rõ Ý ĐỊNH tại chỗ gọi, không gây lỗi nếu ai đó quên gọi.
+function xoaBiCanCache(maVuAn) { /* no-op — không còn cache, xem ghi chú trên */ }
+function xoaToanBoBiCanCache() { /* no-op — không còn cache, xem ghi chú trên */ }
 
 // Chọn bị can ĐẠI DIỆN cho "tội danh chính" của vụ — PHẢI khớp đúng quy ước "ban_dau" đã dùng
 // thống nhất ở tinhBieu10.vuPrimaryDL/vuPrimaryDL_xuat (bị can loaiKhoiTo="ban_dau", hoặc phần tử
-// đầu nếu không có). Bug đã sửa (2026-07-20, phát hiện qua báo cáo Dũng "chi tiết số liệu vẫn hiện
-// nhiều vụ chưa có tội danh dù mở từng vụ ra đều có"): layBiCanInfo/batchLayBiCanList TRƯỚC ĐÂY
-// lấy bcList[0] — PHẦN TỬ ĐẦU TIÊN Postgres trả về, KHÔNG đảm bảo là bị can "ban_dau" (thứ tự
-// không có ORDER BY tường minh) — vụ nhiều bị can, người "ban_dau" đứng sau trong kết quả trả về
-// thì bị can KHÔNG PHẢI đại diện chính lại được chọn hiển thị, có thể trống tội danh dù vụ thực
-// sự đã có đầy đủ ở đúng bị can chính.
+// đầu nếu không có) — KHÔNG lấy bừa phần tử đầu tiên Postgres trả về (không có ORDER BY tường
+// minh, không đảm bảo đúng thứ tự "ban_dau" luôn đứng trước).
 function chonBiCanChinh(bcList) {
   return bcList.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList[0];
 }
 
 async function layBiCanInfo(maVuAn) {
-  if (_biCanCache[maVuAn]) return _biCanCache[maVuAn];
   const bcSnap = await db.collection("bican").where("maVuAn", "==", maVuAn).get();
   const bcChinh = bcSnap.docs.length > 0 ? chonBiCanChinh(bcSnap.docs.map(d => d.data())) : null;
   const toiDanhChinh = bcChinh?.toiDanh?.[0] || "";
-  const info = { soBiCan: bcSnap.size, toiDanhChinh };
-  _biCanCache[maVuAn] = info;
-  return info;
+  return { soBiCan: bcSnap.size, toiDanhChinh };
 }
 
 // Batch-read toàn bộ bị can cho nhiều vụ án — 1 "in" query DUY NHẤT (checklist Supabase mục 5:
 // Postgres ANY() không giới hạn 30 item như Firestore, bỏ hẳn chia lô — xem shim, ghi chú đầu
-// khối <script> chính). Trả { maVuAn: [bcData, ...] }. Đồng thời cập nhật _biCanCache cho vụ chưa có.
+// khối <script> chính). Trả { maVuAn: [bcData, ...] }.
 async function batchLayBiCanList(maVuAnList) {
   if (!maVuAnList.length) return {};
   const result = {};
@@ -747,25 +736,18 @@ async function batchLayBiCanList(maVuAnList) {
     if (!result[bc.maVuAn]) result[bc.maVuAn] = [];
     result[bc.maVuAn].push(bc);
   });
-  for (const id of maVuAnList) {
-    if (!_biCanCache[id]) {
-      const bcList = result[id] || [];
-      // chonBiCanChinh (xem layBiCanInfo) — cùng lý do, tránh chọn nhầm bị can không đại diện.
-      _biCanCache[id] = { soBiCan: bcList.length, toiDanhChinh: (bcList.length ? chonBiCanChinh(bcList) : null)?.toiDanh?.[0] || "" };
-    }
-  }
   return result;
 }
 
-// Batch version của layBiCanInfo — trả { maVuAn: { soBiCan, toiDanhChinh } }, dùng cache phiên.
+// Batch version của layBiCanInfo — trả { maVuAn: { soBiCan, toiDanhChinh } }.
 async function batchLayBiCanInfo(maVuAnList) {
   if (!maVuAnList.length) return {};
+  const byVu = await batchLayBiCanList(maVuAnList);
   const result = {};
-  const toFetch = maVuAnList.filter(id => !_biCanCache[id]);
-  maVuAnList.filter(id => _biCanCache[id]).forEach(id => { result[id] = _biCanCache[id]; });
-  if (toFetch.length) {
-    await batchLayBiCanList(toFetch);
-    toFetch.forEach(id => { result[id] = _biCanCache[id] || { soBiCan: 0, toiDanhChinh: "" }; });
+  for (const id of maVuAnList) {
+    const bcList = byVu[id] || [];
+    const bcChinh = bcList.length ? chonBiCanChinh(bcList) : null;
+    result[id] = { soBiCan: bcList.length, toiDanhChinh: bcChinh?.toiDanh?.[0] || "" };
   }
   return result;
 }
