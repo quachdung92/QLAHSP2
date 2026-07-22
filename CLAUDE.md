@@ -2,6 +2,150 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
+
+Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:
+
+**1. Trường mới "Lý do giao nhận"** — ghi tay ngay tại dòng (giống Số bút lục/Người nhận thực tế:
+không bắt buộc, không ảnh hưởng số liệu báo cáo kỳ). Field mới `lyDoGiaoNhan` trên sự kiện
+`giao_nhan_ho_so`. UI dùng `<input list="ds-lydo-gnhs">` + `<datalist>` (hằng số
+`GOI_Y_LY_DO_GIAO_NHAN`: "Hồ sơ trao đổi"/"Hồ sơ kết thúc điều tra"/"Hồ sơ chuyển toà"/"Hồ sơ tạm
+đình chỉ"/"Hồ sơ đình chỉ"/"Hồ sơ trả điều tra bổ sung") — CHO CHỌN 1 gợi ý HOẶC tự gõ lý do khác,
+không phải enum cứng, cùng pattern đã dùng cho ô KSV/ĐTV (`list="ds-canbo-gnhs"`).
+
+**2. Gọn bảng trên màn hình — KSV/ĐTV chuyển từ 2 cột riêng xuống dưới "Tên vụ"** (theo phản hồi
+người dùng: "dàn hàng ngang nhiều quá", khó xem trên màn hình bé) — hiển thị `KSV: x — ĐTV: y`
+**in đậm, màu đỏ** (`font-bold text-red-600`) ngay dưới dòng QĐ KTVA trong ô Tên vụ, thay vì 2 cột
+`<th>` riêng. Lúc sửa dòng (`dangSua`), 2 ô input KSV/ĐTV cũng chuyển vào trong cùng ô Tên vụ (xếp
+dọc) thay vì 2 `<td>` riêng. Nhờ bớt 2 cột mà thêm được cột "Lý do giao nhận" mới mà bảng KHÔNG
+rộng hơn trước (net −1 cột). Chỉ đổi ở bảng trên MÀN HÌNH (`DongGiaoNhan`) — Biên bản in A4
+(`BienBanGiaoNhanIn`) giữ nguyên KSV/ĐTV là 2 cột riêng (khổ in A4 ngang không có vấn đề "màn hình
+bé", giữ dạng bảng quen thuộc để ký), chỉ thêm cột "Lý do giao nhận" mới vào đó.
+
+**3. Excel "Tải toàn bộ lịch sử" — tách "Hình thức giải quyết" thành 3 cột + thêm cột ngày gần
+nhất** — trước đây 1 cột gộp text `"<Nhãn> — <Số QĐ> (<Ngày QĐ>)"` (`moTaHinhThucGiaiQuyet`) khó
+lọc/sort, cộng 1 cột "Ngày giải quyết" riêng đã thêm trước đó (trùng lặp 1 phần dữ liệu). Đổi thành
+đúng 3 cột riêng: **"Hình thức giải quyết"** (chỉ nhãn, VD "Đã xét xử"), **"Số QĐ"**
+(`soQdGiaiQuyet`), **"Ngày QĐ"** (`ngayQuyetDinh`, thay hẳn cột "Ngày giải quyết" cũ — cùng nguồn
+dữ liệu, không giữ trùng 2 cột cùng ý nghĩa). Thêm cột **"Ngày {giao/nhận} gần nhất"**
+(`fmtNgayGio(moiNhat.thoiDiemGhi)`, đặt trước "Số lần"/"Lịch sử") — vụ có thể được giao/nhận nhiều
+lần (`events.length > 1`), cột này cho xem nhanh lần MỚI NHẤT mà không cần mở ô "Lịch sử" ở cuối
+dòng. "Lý do giao nhận" (mục 1) được thêm vào từng dòng trong ô "Lịch sử {giao/nhận}" (bên cạnh
+"Người nhận"/"Bút lục"/"Quét" đã có) — không thêm cột riêng cho nó ở Excel (theo đúng pattern Số
+bút lục/Người nhận thực tế cũng chỉ nằm trong "Lịch sử", không có cột riêng, vì các field này có
+thể khác nhau giữa các lần quét, hợp lý hơn khi xem theo dòng thời gian thay vì 1 cột tổng).
+
+**Hạ tầng quan trọng — cột mới cần ALTER TABLE trên Postgres thật (khác Firestore schemaless)**:
+`qlahs-sup.html` chạy trên Supabase — thêm field mới vào 1 sự kiện log không tự động tạo cột như
+Firestore, phải chạy DDL thật. Đã chạy `alter table "lichsuChuyenGiaiDoan" add column
+"lyDoGiaoNhan" text not null default ''` + `notify pgrst, 'reload schema'` qua kết nối Postgres
+trực tiếp (Session pooler, xem `supabase/README.md`) — **đã kiểm chứng lỗi thật trước khi sửa**:
+thử ghi qua UI trước khi ALTER, nhận đúng lỗi `Could not find the 'lyDoGiaoNhan' column of
+'lichsuChuyenGiaiDoan' in the schema cache`, sau khi ALTER xong thì ghi thành công ngay. Đã cập
+nhật `supabase/schema.sql` (nguồn sự thật cho lần deploy schema tiếp theo) thêm cột này vào
+`CREATE TABLE "lichsuChuyenGiaiDoan"` để không bị lệch với DB thật. Nếu cần thêm field mới tương tự
+sau này, nhớ luôn kiểm tra bước ALTER TABLE này trước khi tin code đã xong — khác hẳn thói quen cũ
+khi sửa `qlva.html`/Firestore (chỉ cần sửa code, không cần đụng gì tới "schema" vì Firestore không
+có).
+
+**Đã kiểm chứng bằng Playwright thật trên dữ liệu Supabase thật** (`qlahs-sup.html`, project
+`eutatszoaseixchvjbtg`) — mở 1 phiên Giao thật, thêm 1 vụ thật qua "Tìm thủ công" (Nguyễn Quốc Huy),
+xác nhận: ô Tên vụ hiện đúng "KSV: Quách Tiến Dũng — ĐTV: Phạm Hữu Kha" in đậm đỏ ngay dưới tên vụ;
+bấm sửa dòng, chọn "Hồ sơ kết thúc điều tra" từ datalist "Lý do giao nhận", lưu — xác nhận cột hiện
+đúng giá trị trên bảng VÀ ghi đúng vào Postgres thật (query trực tiếp qua `db.collection(...)`);
+dựng lại đúng logic xây dựng sheet Excel (tách riêng, không phụ thuộc UI) bằng chính dữ liệu vừa
+ghi — xác nhận header đủ 16 cột đúng thứ tự (Hình thức giải quyết/Số QĐ/Ngày QĐ tách riêng, có "Ngày
+giao gần nhất"), dòng dữ liệu đúng giá trị, "Lịch sử giao" có đúng "Lý do: Hồ sơ kết thúc điều tra".
+Đã dọn sạch dữ liệu test (xoá sự kiện + phiên test) sau khi kiểm chứng. 0 lỗi console liên quan tới
+thay đổi này (ngoại trừ cảnh báo Babel kích thước file vô hại đã biết).
+**Chưa kiểm chứng qua thao tác tải file Excel thật xuống đĩa** (nút "⬇ Tải toàn bộ lịch sử" trên
+dữ liệu SẢN XUẤT thật có hàng nghìn dòng giao nhận — bấm thử trong lúc kiểm chứng làm treo cứng tab
+trình duyệt test hàng chục giây do phải sinh hàng nghìn ảnh QR đồng bộ, môi trường test cũng không
+lưu được file tải xuống ra đĩa để mở lại kiểm tra trực tiếp) — logic xây dựng sheet đã được xác
+nhận đúng qua cách trên (dựng lại chính xác cùng đoạn code với dữ liệu thật), nhưng nên tự tải thử
+1 lần trên `qlahs-sup.html` thật và mở file bằng Excel để yên tâm tuyệt đối trước khi coi đây là
+đã kiểm chứng đầy đủ 100%.
+
+## Bug đã sửa: Biểu B10 "Tồn kỳ này" theo tội danh dùng số LIVE khi kỳ chưa chốt (2026-07-21, `qlahs-sup.html`)
+
+Người dùng phát hiện qua file Biểu B10 tải về: đang trong giai đoạn nhập bổ sung dữ liệu nên để
+cả 2 kỳ 06/2026 và 07/2026 cùng "Đang mở" (chưa chốt) — 1 vụ được ghi nhận GIẢI QUYẾT vào kỳ 07
+(`kyThongKe` = kỳ 07) làm tồn của kỳ 06 trên B10 BỊ THAY ĐỔI ngay lập tức, dù đúng nguyên tắc "log
+là nguồn sự thật duy nhất": số liệu của kỳ 06 chỉ phụ thuộc `kyThongKe` gắn trên sự kiện, không
+phụ thuộc thời điểm xem/tải báo cáo, và 1 sự kiện gắn kỳ 07 không được phép ảnh hưởng tới kỳ 06.
+
+**Nguyên nhân**: `tinhBieu10` (tính Biểu B10 theo TỪNG tội danh D) có nhánh "Tồn kỳ này" tách biệt
+cho kỳ ĐÃ CHỐT (dùng snapshot `kyTonTD`, đúng) và kỳ CHƯA CHỐT — nhánh chưa chốt lại đọc THẲNG
+`d.tonHienTai` (LIVE, tại đúng thời điểm bấm xem/tải) lọc theo D, thay vì tính theo công thức log.
+Đây là CÙNG LOẠI bug đã sửa ở `tinhBaoCaoKyTuLog` cho số tồn TỔNG (không theo tội danh) — xem
+"Kỳ báo cáo: cho mở kỳ mới dù kỳ trước chưa chốt + tồn cuối kỳ tính bằng log" — nhưng bản sửa đó
+CHƯA lan sang `tinhBieu10` (đúng như CLAUDE.md đã ghi chú trước đây: "tonCuoiKyTheoTD... CHƯA được
+sửa theo hướng này"). Khi 1 vụ đang tồn ở kỳ 06 bị đổi `trangThai` (VD sang "tam_dinh_chi") do 1
+hành động Hoàn thành vụ án gắn `kyThongKe=07`, `tinhTonHienTaiTheoGD` (lọc `trangThai ==
+"dang_giai_quyet"`) LẬP TỨC không còn thấy vụ đó nữa — B10 kỳ 06 (đọc live) mất đúng 1 vụ ở tội
+danh đó ngay khi vừa thao tác, dù sự kiện đó đúng ra chỉ nên ảnh hưởng kỳ 07.
+
+**Đã sửa**: thêm hàm `tonTheoLogD(d, moiArr, D, tpVu, tpBc)` trong `tinhBieu10` — tính "tồn kỳ này
+theo D" bằng công thức log: `tồn đầu kỳ theo D (tonTD_truoc) + mới theo D (khởi tố trực tiếp + tách
+vụ + chuyển đến + trả về, đã lọc `kyThongKe` đúng kỳ) − ra theo D (chuyển đi + trả đi + mọi hình
+thức hoàn thành + nhập vụ, cùng lọc kỳThongKe)` — ÁP DỤNG CHO CẢ VỤ VÀ BỊ CAN, thay thế nhánh
+`vuCoD(d.tonHienTai, D)`/`bcCoD(d.tonHienTai, D)` cũ. Nhánh kỳ ĐÃ CHỐT (dùng `kyTonTD`) giữ nguyên
+không đổi. Cũng sửa luôn dòng cảnh báo chẩn đoán (`tonThucTe` so sánh tổng B10 với "thực tế" để
+phát hiện vụ thiếu điều luật) — trước đây ưu tiên `soVuTon` (live) cho cả nhánh chưa chốt, đổi
+sang ưu tiên `baoCao[gd].tonCuoiKy` (aggregate log-based, cùng nguồn số liệu với `tonTheoLogD` mới)
+để tránh cảnh báo giả do lệch NGUỒN dữ liệu (live vs log) chứ không phải do thiếu điều luật thật.
+
+**Đã kiểm chứng bằng dữ liệu Supabase THẬT** (`qlahs-sup.html`, project test, không phải mock) —
+tính B10 kỳ 06/2026 cho tội danh "Tội hiếp dâm người dưới 16 tuổi" (Điều 142 BLHS 2025), ghi nhận
+đúng 8 vụ tồn; sau đó thực hiện ĐÚNG thao tác "Hoàn thành vụ án" thật (viết batch y hệt
+`HoanThanhVuAnModal`) cho 1 vụ đang tồn ở tội danh này, gắn `kyThongKe = kỳ 07/2026` (không phải
+06) — tính lại B10 kỳ 06: tồn vẫn đúng **8** (không đổi, đúng kỳ vọng), trong khi tổng tồn
+log-based `tonCuoiKy` của kỳ 06 cũng giữ nguyên 300 (đã đúng từ bản sửa trước, không bị đụng lại).
+Đối chiếu thêm: TRƯỚC khi sửa, aggregate `tonCuoiKy` (log, 300) và `soVuTon` (live, 298) của kỳ 06
+đã lệch nhau sẵn trên dữ liệu thật — bằng chứng trực tiếp bug này đã xảy ra thật trên dữ liệu sản
+xuất trước khi sửa, không phải giả thuyết suông. Đã dọn sạch dữ liệu test (xoá sự kiện log vừa tạo,
+khôi phục lại `trangThai`/`ngayQuyetDinh`/`kyHoanThanh`/`soQuyetDinhTamDinhChi` của vụ về đúng
+trạng thái gốc, xác nhận qua lịch sử vụ chỉ còn `khoi_to_vu`+`khoi_to_bican`). 0 lỗi console liên
+quan tới thay đổi này.
+
+**Giới hạn còn lại (không thuộc phạm vi sửa lần này, ĐÃ ghi chú từ trước)**: "Tồn đầu kỳ theo tội
+danh" (`tonTD_truoc`, lấy từ `kyTruoc.tonCuoiKyTheoTD`) CHỈ có giá trị đáng tin khi kỳ TRƯỚC đã
+CHỐT — nếu xem trước 1 kỳ mà kỳ liền trước nó cũng đang mở (VD xem trước kỳ 07 khi kỳ 06 chưa
+chốt), "tồn đầu kỳ theo tội danh" của kỳ 07 sẽ ra 0 cho mọi tội danh (kiểm chứng trực tiếp: kỳ
+07/"Điều 142" ra `dt_tn_vu = -2` trong lúc test ở trên) — ĐÂY LÀ GIỚI HẠN ĐÃ BIẾT, không phải lỗi
+mới, đúng lý do công cụ "Sửa lại tồn cuối kỳ theo tội danh (Biểu B10)" (Cài đặt → Import Excel,
+`taiTaoTonCuoiKyTheoTDTatCa`) tồn tại — chạy công cụ đó SAU KHI chốt xong các kỳ đang nhập bổ sung,
+theo đúng thứ tự thời gian, để tồn đầu kỳ theo tội danh của mọi kỳ sau đó được tính đúng.
+
+## Import Excel: thêm lựa chọn "Giữ cả 2 vụ" khi trùng Số/Ngày QĐ KTVA (2026-07-21, `qlahs-sup.html`)
+
+Theo yêu cầu người dùng — trước đây mỗi dòng "vụ trùng" (trùng mã vụ hoặc trùng Số+Ngày QĐ KTVA
+với vụ đã có) chỉ có 1 lựa chọn nhị phân: tích "Thay vụ cũ" (đưa vụ cũ vào Thùng rác, nhập vụ mới
+thay vào) hoặc để trống (bỏ qua hẳn, không nhập). Không có cách nào nhập vụ mới từ file MÀ VẪN GIỮ
+NGUYÊN vụ cũ — cần thiết khi trùng Số/Ngày QĐ KTVA chỉ là trùng hợp/sai sót nhập liệu, còn thực tế
+là 2 vụ hoàn toàn khác nhau.
+
+**Đã sửa** (`ImportExcelModule`, `qlahs-sup.html`): đổi checkbox "Thay vụ cũ" mỗi dòng trùng thành
+1 dropdown 3 lựa chọn — "Bỏ qua" (mặc định, giữ hành vi cũ) / "Thay vụ cũ" (giữ nguyên logic cũ:
+soft-delete vụ cũ qua Thùng rác) / **"Giữ cả 2 vụ"** (mới — nhập vụ từ file như 1 vụ HOÀN TOÀN MỚI,
+KHÔNG đụng gì tới vụ cũ, không soft-delete). State đổi từ `Set` (`trungDuocChon`) sang `Map`
+(`trungLuaChon`, index → `"thay_the"` | `"giu_ca_2"`, vắng mặt = bỏ qua) để biểu diễn 3 trạng thái
+mỗi dòng thay vì nhị phân. Guard "⚠ Có vụ tách ra từ vụ này" (`idsCoVuCon`, chặn soft-delete để
+tránh mồ côi hoá vụ tách) **chỉ áp dụng cho "Thay vụ cũ"** — vô hiệu hoá đúng option đó trong
+`<select>` (`disabled`), "Giữ cả 2 vụ" luôn dùng được vì không đụng gì tới vụ cũ. `ghiVaoCoSoDuLieu`
+gộp cả `dsThayThe` VÀ `dsGiuCa2` vào chung `dsMoi` (xử lý y hệt vụ mới bình thường — sinh mã, ghi
+log...), chỉ `dsThayThe` mới chạy thêm vòng `batch.update` soft-delete vụ cũ.
+
+**Đã kiểm chứng bằng Playwright thật trên dữ liệu Supabase thật** (`qlahs-sup.html`, project test) —
+dựng file Excel test qua `XLSX.write` ngay trong console trình duyệt (1 dòng trùng Số QĐ KTVA "1680"
++ Ngày QĐ KTVA khớp đúng 1 vụ thật đã có trong hệ thống, 1 dòng vụ mới độc lập để đối chiếu), inject
+qua `DataTransfer` vào input file thật (không phải mock) — xác nhận: hệ thống nhận diện đúng "1 vụ
+trùng"; chọn "Giữ cả 2 vụ" ở dropdown, nút "Ghi" đổi đúng label "(gồm 1 vụ giữ cả 2)"; bấm ghi, xác
+nhận qua query Supabase thật CẢ 2 vụ cùng tồn tại với CÙNG Số/Ngày QĐ KTVA "1680"/30/08/2025 (vụ cũ
+`daXoa: false`, không bị đụng vào; vụ mới tạo ra mã hệ thống riêng) — đúng ý nghĩa "giữ cả 2". Đã dọn
+sạch dữ liệu test sau khi kiểm chứng (xoá `vuan`/`bican`/`lichsuChuyenGiaiDoan` liên quan). 0 lỗi
+console (ngoại trừ cảnh báo Babel kích thước file vô hại đã biết).
+
 ## Import Excel: resolve "Mã ĐL" (điều luật) NGAY lúc import, sửa file mẫu (2026-07-20)
 
 Theo yêu cầu người dùng: dữ liệu import qua Excel vẫn luôn cần chạy thêm "Chuẩn hóa tội danh /
