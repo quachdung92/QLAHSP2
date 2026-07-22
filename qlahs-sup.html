@@ -11128,6 +11128,24 @@ function GiaoNhanHoSoModule({ currentUser }) {
         return [...map.values()];
       };
 
+      // Cảnh báo "đã giao lại" cho sheet Nhận/Nhận lưu trữ (2026-07-22, theo yêu cầu người dùng) —
+      // 1 hồ sơ đã NHẬN nhưng sau đó lại được GIAO đi (ngày giao > ngày nhận) thì dòng hiển thị đại
+      // diện (lần nhận gần nhất) đã không còn đúng thực tế đang giữ hồ sơ nữa, cần cảnh báo ngay
+      // trên sheet Nhận để người xem không tưởng nhầm hồ sơ vẫn đang ở đây. Gom TOÀN BỘ sự kiện
+      // (cả giao lẫn nhận, không lọc theo sheet) theo vụ án — `rows` đã sort desc theo thời gian
+      // nên list con của mỗi vụ cũng tự động giữ đúng thứ tự mới → cũ.
+      const taatCaTheoVu = new Map();
+      rows.forEach(r => {
+        if (!taatCaTheoVu.has(r.maVuAn)) taatCaTheoVu.set(r.maVuAn, []);
+        taatCaTheoVu.get(r.maVuAn).push(r);
+      });
+      const timGiaoLaiSauNhan = (maVuAn, ngayNhanMs) => {
+        const all = taatCaTheoVu.get(maVuAn) || [];
+        // Đã sort desc (mới nhất trước) nên phần tử khớp ĐẦU TIÊN gặp được chính là lần giao gần
+        // nhất sau đó — đủ dùng, không cần tìm mọi lần.
+        return all.find(r => r.loaiGiaoDich === "giao" && (r.thoiDiemGhi?.toMillis?.() || 0) > ngayNhanMs) || null;
+      };
+
       const dongLichSuMotLan = (r) => {
         const parts = [fmtNgayGio(r.thoiDiemGhi)];
         if (r.nguoiNhanThucTe) parts.push(`Người nhận: ${r.nguoiNhanThucTe}`);
@@ -11139,23 +11157,30 @@ function GiaoNhanHoSoModule({ currentUser }) {
       const wb = new ExcelJS.Workbook();
       const QR_PX = 60; // ~60px vuông — đủ scan lại được (correctLevel M), giữ file không quá nặng
 
-      const themSheet = (tenSheet, nhomTheoVu, nhanCot) => {
+      const themSheet = (tenSheet, nhomTheoVu, nhanCot, laSheetNhan) => {
         const ws = wb.addWorksheet(tenSheet);
         ws.views = [{ state: "frozen", ySplit: 1 }];
         const hRow = ws.addRow([
           "STT", "Mã vụ (QR)", "Tên vụ", "Hình thức giải quyết", "Ngày giải quyết", "Tiếp nhận",
-          "Mức án cao nhất", "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV", "ĐTV",
-          `Số lần ${nhanCot}`, `Lịch sử ${nhanCot}`,
+          "Cảnh báo", "Mức án cao nhất", "Thời hạn bảo quản", "Số QĐ KTVA", "Ngày QĐ KTVA", "KSV",
+          "ĐTV", `Số lần ${nhanCot}`, `Lịch sử ${nhanCot}`,
         ]);
         hRow.font = { bold: true };
         hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
         ws.columns = [
           { width: 6 }, { width: 13 }, { width: 30 }, { width: 24 }, { width: 15 }, { width: 22 },
-          { width: 16 }, { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 }, { width: 16 },
-          { width: 10 }, { width: 50 },
+          { width: 26 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 13 }, { width: 16 },
+          { width: 16 }, { width: 10 }, { width: 50 },
         ];
         nhomTheoVu.forEach((events, i) => {
           const moiNhat = events[0];
+          // Cảnh báo "đã giao lại" (2026-07-22) — chỉ áp dụng cho sheet Nhận/Nhận lưu trữ, vì chỉ
+          // hồ sơ đã NHẬN mới có khái niệm "giao lại" (trả ra khỏi tay). Chỉ cảnh báo khi có sự
+          // kiện GIAO của CHÍNH vụ này diễn ra SAU lần nhận đang hiển thị đại diện (moiNhat).
+          const giaoLai = laSheetNhan
+            ? timGiaoLaiSauNhan(moiNhat.maVuAn, moiNhat.thoiDiemGhi?.toMillis?.() || 0)
+            : null;
+          const canhBao = giaoLai ? `⚠ Đã giao lại ngày ${fmtNgayGio(giaoLai.thoiDiemGhi)}` : "";
           const row = ws.addRow([
             i + 1,
             "", // Mã vụ để trống chữ — thay bằng ảnh QR nhúng đè lên đúng ô này
@@ -11167,6 +11192,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
             // Excel. Vụ đang giải quyết (chưa có ngày) hiện "—", khớp cách fmtDate xử lý null.
             fmtDate(moiNhat.ngayQuyetDinh),
             moTaTiepNhan(moiNhat),
+            canhBao,
             moTaMucAn(moiNhat),
             moiNhat.thoiHanBaoQuan || "",
             moiNhat.soQdKtva || "",
@@ -11177,7 +11203,10 @@ function GiaoNhanHoSoModule({ currentUser }) {
             events.map(dongLichSuMotLan).join("\n"),
           ]);
           row.height = Math.max(46, events.length * 15); // pt — đủ cao cho cả ảnh QR lẫn nhiều dòng lịch sử
-          row.getCell(14).alignment = { wrapText: true, vertical: "top" };
+          row.getCell(15).alignment = { wrapText: true, vertical: "top" };
+          if (canhBao) {
+            row.getCell(7).font = { bold: true, color: { argb: "FFDC2626" } };
+          }
           const dataUrl = taoQrDataUrl(moiNhat.maVuAn, 120);
           if (dataUrl) {
             const imgId = wb.addImage({ base64: dataUrl, extension: "png" });
@@ -11194,13 +11223,13 @@ function GiaoNhanHoSoModule({ currentUser }) {
       // lưu trữ cho dễ quản lý") — "Nhận lưu trữ" tách riêng khỏi "Nhận" thường qua
       // `laLuuTruTheoPhien` (join ở trên), vì đây là 2 luồng nghiệp vụ khác hẳn nhau (nộp hồ sơ
       // lưu trữ vs giao/nhận hồ sơ đang xử lý bình thường).
-      const soVuGiao = themSheet("Giao", gomTheoVu(rows.filter(r => r.loaiGiaoDich === "giao")), "giao");
+      const soVuGiao = themSheet("Giao", gomTheoVu(rows.filter(r => r.loaiGiaoDich === "giao")), "giao", false);
       const soVuNhan = themSheet("Nhận", gomTheoVu(rows.filter(r =>
         r.loaiGiaoDich === "nhan" && !laLuuTruTheoPhien.get(r.phienGiaoNhanId)
-      )), "nhận");
+      )), "nhận", true);
       const soVuNhanLuuTru = themSheet("Nhận lưu trữ", gomTheoVu(rows.filter(r =>
         r.loaiGiaoDich === "nhan" && laLuuTruTheoPhien.get(r.phienGiaoNhanId)
-      )), "nhận lưu trữ");
+      )), "nhận lưu trữ", true);
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
