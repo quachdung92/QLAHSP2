@@ -295,7 +295,12 @@ create table "lichsuChuyenGiaiDoan" (
   "mucAnNam"              integer,
   "mucAnThang"            integer,
   "khongTiepNhan"         boolean not null default false,   -- chỉ có ý nghĩa khi loaiGiaoDich='nhan'
-  "lyDoKhongTiepNhan"     text not null default ''
+  "lyDoKhongTiepNhan"     text not null default '',
+  -- Lý do giao nhận (2026-07-22) — ghi tay ngay tại dòng, gợi ý qua GOI_Y_LY_DO_GIAO_NHAN ở
+  -- qlahs-sup.html nhưng KHÔNG ràng buộc CHECK enum (cho tự gõ lý do khác ngoài gợi ý). Cột này
+  -- được thêm bằng ALTER TABLE trực tiếp lên project thật (không phải deploy lại schema.sql từ
+  -- đầu) — xem ghi chú CLAUDE.md "Giao nhận hồ sơ: thêm 'Lý do giao nhận'...".
+  "lyDoGiaoNhan"          text not null default ''
 );
 
 create index "lichsuChuyenGiaiDoan_maVuAn_thoiDiemGhi_idx"
