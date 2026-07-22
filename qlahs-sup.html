@@ -3908,6 +3908,12 @@ const BANG_THOI_HAN_BAO_QUAN_THEO_NAM = {
   15: "52 năm", 14: "51 năm", 13: "50 năm", 12: "49 năm", 11: "48 năm", 10: "47 năm",
   9: "34 năm", 8: "33 năm", 7.5: "33 năm", 7: "32 năm", 6: "31 năm", 5.5: "31 năm",
   5: "30 năm", 4.5: "30 năm", 3.5: "23 năm", 3: "19 năm",
+  // Mốc "0" (2026-07-22, theo yêu cầu người dùng, KHÔNG có trong bảng gốc "thoi han bao quan.xlsx")
+  // — mở rộng mốc "3" (19 năm) xuống ÁP DỤNG CHO MỌI mức án tù DƯỚI 3 năm luôn, không chỉ từ đúng
+  // 3 năm trở lên như bảng gốc (trước đây mức án < 3 năm trả về null vì bảng gốc không phủ tới).
+  // Kết quả: cả dải "trên 0 năm đến dưới 3 năm 5 tháng" đều ra "19 năm" (mốc 0 và mốc 3 cho cùng 1
+  // giá trị, mốc 3 giữ lại nguyên trạng để đối chiếu đúng bảng gốc, không xoá).
+  0: "19 năm",
 };
 const THOI_HAN_BAO_QUAN_DAC_BIET = {
   tu_hinh: "Vĩnh viễn", chung_than: "Vĩnh viễn", an_treo: "11 năm", phat_tien: "11 năm",
