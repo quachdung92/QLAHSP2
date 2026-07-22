@@ -10525,7 +10525,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
       soButLuc: soButLuc.trim(),
       khongTiepNhan, lyDoKhongTiepNhan: khongTiepNhan ? lyDoKhongTiepNhan.trim() : "",
     };
-    if (dong.trangThaiVu === "da_xet_xu") {
+    if (hienThoiHan && dong.trangThaiVu === "da_xet_xu") {
       // Còn đang tải danh sách bị can để biết dùng phương thức nào (xem effect ở trên) — chặn lưu
       // thay vì lỡ ghi sai chế độ (VD ghi tay trong khi lẽ ra phải tự động theo bị can).
       if (bcCaoNhat === undefined) {
