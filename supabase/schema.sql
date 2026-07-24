@@ -287,6 +287,11 @@ create table "lichsuChuyenGiaiDoan" (
   "nguoiNhan"             text,      -- snapshot vuan.dtvCbdt, sửa được sau
   "nguoiNhanThucTe"       text not null default '',
   "soButLuc"              text not null default '',
+  -- Số tập hồ sơ (2026-07-22) — ghi tay ngay tại dòng, cùng nhóm với soButLuc (không bắt buộc,
+  -- không ảnh hưởng số liệu báo cáo kỳ). Cột này được thêm bằng ALTER TABLE trực tiếp lên project
+  -- thật (không phải deploy lại schema.sql từ đầu) — xem ghi chú CLAUDE.md "Giao nhận hồ sơ: thêm
+  -- ô 'Số tập hồ sơ'...".
+  "soTapHoSo"             text not null default '',
   "trangThaiVu"           text,      -- snapshot vuan.trangThai
   "soQdGiaiQuyet"         text,      -- snapshot số QĐ giải quyết tương ứng
   "ngayQuyetDinh"         timestamptz,  -- snapshot ngày giải quyết
