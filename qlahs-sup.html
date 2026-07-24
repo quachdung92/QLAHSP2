@@ -10803,10 +10803,16 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
         )}
         {dangSua ? (
           <>
-            <td className="p-2" onClick={e => e.stopPropagation()}>
-              <input value={lyDoGiaoNhan} onChange={e => setLyDoGiaoNhan(e.target.value)} list="ds-lydo-gnhs"
-                     className={oInput} placeholder="Chọn hoặc tự gõ..." />
-            </td>
+            {/* "Lý do giao nhận" ẩn ở phiên "Nộp hồ sơ lưu trữ" (2026-07-22, theo yêu cầu người
+                dùng "cho gọn") — không có ý nghĩa với luồng nộp lưu trữ (đã có "Hình thức giải
+                quyết"/"Mức án"/"Thời hạn bảo quản" đủ ngữ cảnh), dùng lại đúng hienThoiHan
+                (= phien.laLuuTru, xem prop truyền vào) thay vì thêm prop mới. */}
+            {!hienThoiHan && (
+              <td className="p-2" onClick={e => e.stopPropagation()}>
+                <input value={lyDoGiaoNhan} onChange={e => setLyDoGiaoNhan(e.target.value)} list="ds-lydo-gnhs"
+                       className={oInput} placeholder="Chọn hoặc tự gõ..." />
+              </td>
+            )}
             <td className="p-2" onClick={e => e.stopPropagation()}>
               <input value={nguoiNhanThucTe} onChange={e => setNguoiNhanThucTe(e.target.value)} list="ds-canbo-gnhs" className={oInput} placeholder="Ghi rõ nếu khác ĐTV" />
             </td>
@@ -10827,7 +10833,9 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
           </>
         ) : (
           <>
-            <td className="p-3">{dong.lyDoGiaoNhan || <span className="text-slate-300">—</span>}</td>
+            {!hienThoiHan && (
+              <td className="p-3">{dong.lyDoGiaoNhan || <span className="text-slate-300">—</span>}</td>
+            )}
             <td className="p-3">{dong.nguoiNhanThucTe || <span className="text-slate-300">—</span>}</td>
             <td className="p-3">
               <div>{dong.soButLuc || <span className="text-slate-300">—</span>}</div>
@@ -10896,7 +10904,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
               <th className="border border-slate-800 p-2 w-24">Mã vụ</th>
               <th className="border border-slate-800 p-2">Tên vụ</th>
               <th className="border border-slate-800 p-2 w-24">Trạng thái HS</th>
-              <th className="border border-slate-800 p-2 w-24">Lý do giao nhận</th>
+              {!phien.laLuuTru && <th className="border border-slate-800 p-2 w-24">Lý do giao nhận</th>}
               {phien.loaiGiaoDich === "nhan" && <th className="border border-slate-800 p-2 w-28">Tiếp nhận</th>}
               {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Mức án cao nhất</th>}
               {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Thời hạn bảo quản</th>}
@@ -10922,7 +10930,9 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
                     <div className="text-xs text-slate-500 mt-0.5">QĐ KTVA: {d.soQdKtva || "—"} — {fmtDate(d.ngayQdKtva)}</div>
                   </td>
                   <td className="border border-slate-800 p-2 align-top text-xs">{moTaHinhThucGiaiQuyet(d)}</td>
-                  <td className="border border-slate-800 p-2 align-top text-xs">{d.lyDoGiaoNhan || ""}</td>
+                  {!phien.laLuuTru && (
+                    <td className="border border-slate-800 p-2 align-top text-xs">{d.lyDoGiaoNhan || ""}</td>
+                  )}
                   {phien.loaiGiaoDich === "nhan" && (
                     <td className="border border-slate-800 p-2 align-top text-xs">
                       {d.khongTiepNhan ? `⚠ Không tiếp nhận — ${d.lyDoKhongTiepNhan || "(chưa ghi lý do)"}` : "Đã tiếp nhận"}
@@ -11628,7 +11638,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
               {phien.loaiGiaoDich === "nhan" && <th className="text-left p-3">Tiếp nhận</th>}
               {phien.laLuuTru && <th className="text-left p-3">Mức án cao nhất</th>}
               {phien.laLuuTru && <th className="text-left p-3">Thời hạn bảo quản</th>}
-              <th className="text-left p-3">Lý do giao nhận</th>
+              {/* Ẩn ở phiên "Nộp hồ sơ lưu trữ" (2026-07-22, theo yêu cầu người dùng "cho gọn") —
+                  không có ý nghĩa với luồng nộp lưu trữ, xem ghi chú tương tự ở DongGiaoNhan. */}
+              {!phien.laLuuTru && <th className="text-left p-3">Lý do giao nhận</th>}
               <th className="text-left p-3">Người nhận thực tế</th>
               <th className="text-left p-3">Số bút lục / Số tập</th>
               <th className="text-left p-3">Thời điểm</th>
@@ -11637,7 +11649,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
           </thead>
           <tbody>
             {dsQuet.length === 0 && (
-              <tr><td colSpan={8 + (phien.laLuuTru ? 2 : 0) + (phien.loaiGiaoDich === "nhan" ? 1 : 0) + (phien.trangThai === "dang_mo" ? 1 : 0)} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
+              <tr><td colSpan={7 + (phien.laLuuTru ? 2 : 0) + (!phien.laLuuTru ? 1 : 0) + (phien.loaiGiaoDich === "nhan" ? 1 : 0) + (phien.trangThai === "dang_mo" ? 1 : 0)} className="p-4 text-slate-400 text-center">Chưa quét mã nào trong phiên này.</td></tr>
             )}
             {dsQuet.map((d, i) => (
               <DongGiaoNhan key={d.id} stt={dsQuet.length - i} dong={d} dsCanBo={dsCanBo}
