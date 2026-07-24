@@ -10460,11 +10460,20 @@ function CongTac({ checked, onChange, nhan, mauBat = "bg-emerald-600" }) {
   );
 }
 
+// Ngưỡng cảnh báo "Số tập hồ sơ" (2026-07-22, theo yêu cầu người dùng) — hồ sơ thực tế thường
+// không quá 50 tập, vượt ngưỡng này KHÔNG chặn lưu (có thể đúng thực tế với vụ án lớn), chỉ hiện
+// cảnh báo để người nhập tự soát lại có gõ nhầm hay không.
+const NGUONG_CANH_BAO_SO_TAP_HO_SO = 50;
+
 function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hienThoiHan, onYeuCauSua, onDangKyLuu, onKetThucSua }) {
   const [ksv, setKsv] = useState(dong.nguoiGiao || "");
   const [dtv, setDtv] = useState(dong.nguoiNhan || "");
   const [nguoiNhanThucTe, setNguoiNhanThucTe] = useState(dong.nguoiNhanThucTe || "");
   const [soButLuc, setSoButLuc] = useState(dong.soButLuc || "");
+  // "Số tập hồ sơ" (2026-07-22) — CÙNG Ý NGHĨA "ghi tay lúc giao/nhận, không phải số liệu nghiệp
+  // vụ" như soButLuc ngay trên, đặt NGAY DƯỚI ô Số bút lục trong cùng 1 ô bảng (không tách cột
+  // riêng) — để trống mặc định, không bắt buộc.
+  const [soTapHoSo, setSoTapHoSo] = useState(dong.soTapHoSo || "");
   // Mức án — chỉ áp dụng khi vụ Đã xét xử, sửa ngay tại đây để tự tính lại Thời hạn bảo quản
   // (xem CLAUDE.md "Nộp hồ sơ lưu trữ") thay vì phải mở riêng "Sửa thông tin vụ án". Tách riêng ô
   // Năm/Tháng (mucAnThang: số tháng lẻ 0-11) thay vì 1 checkbox "+6 tháng" cố định — mức án tù có
@@ -10504,7 +10513,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
   useEffect(() => {
     if (!dangSua) return;
     setKsv(dong.nguoiGiao || ""); setDtv(dong.nguoiNhan || ""); setNguoiNhanThucTe(dong.nguoiNhanThucTe || "");
-    setSoButLuc(dong.soButLuc || "");
+    setSoButLuc(dong.soButLuc || ""); setSoTapHoSo(dong.soTapHoSo || "");
     setMucAnLoai(dong.mucAnLoai || "nam"); setMucAnNam(dong.mucAnNam != null ? String(dong.mucAnNam) : "");
     setMucAnThang(dong.mucAnThang != null ? String(dong.mucAnThang) : "");
     setKhongTiepNhan(!!dong.khongTiepNhan); setLyDoKhongTiepNhan(dong.lyDoKhongTiepNhan || "");
@@ -10528,7 +10537,7 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
     }
     const patch = {
       nguoiGiao: ksv.trim(), nguoiNhan: dtv.trim(), nguoiNhanThucTe: nguoiNhanThucTe.trim(),
-      soButLuc: soButLuc.trim(),
+      soButLuc: soButLuc.trim(), soTapHoSo: soTapHoSo.trim(),
       khongTiepNhan, lyDoKhongTiepNhan: khongTiepNhan ? lyDoKhongTiepNhan.trim() : "",
     };
     if (hienThoiHan && dong.trangThaiVu === "da_xet_xu") {
@@ -10723,7 +10732,18 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
               <input value={nguoiNhanThucTe} onChange={e => setNguoiNhanThucTe(e.target.value)} list="ds-canbo-gnhs" className={oInput} placeholder="Ghi rõ nếu khác ĐTV" />
             </td>
             <td className="p-2" onClick={e => e.stopPropagation()}>
+              <div className="text-[10px] text-slate-400 mb-0.5">Số bút lục</div>
               <input value={soButLuc} onChange={e => setSoButLuc(e.target.value)} className={oInput} placeholder="VD: 245" />
+              <div className="text-[10px] text-amber-600 mt-1.5 mb-0.5">Số tập hồ sơ</div>
+              <input type="number" min="0" step="1" value={soTapHoSo}
+                     onChange={e => setSoTapHoSo(e.target.value)}
+                     className={oInput + " border-amber-300 bg-amber-50 text-amber-800"}
+                     placeholder="VD: 3" />
+              {Number(soTapHoSo) > NGUONG_CANH_BAO_SO_TAP_HO_SO && (
+                <div className="text-[10px] text-red-600 mt-0.5">
+                  ⚠ Vượt {NGUONG_CANH_BAO_SO_TAP_HO_SO} tập, kiểm tra lại có gõ nhầm không.
+                </div>
+              )}
             </td>
           </>
         ) : (
@@ -10731,7 +10751,12 @@ function DongGiaoNhan({ stt, dong, dsCanBo, khoaSua, dangSua, onSua, onXoa, hien
             <td className="p-3">{dong.nguoiGiao || "—"}</td>
             <td className="p-3">{dong.nguoiNhan || "—"}</td>
             <td className="p-3">{dong.nguoiNhanThucTe || <span className="text-slate-300">—</span>}</td>
-            <td className="p-3">{dong.soButLuc || <span className="text-slate-300">—</span>}</td>
+            <td className="p-3">
+              <div>{dong.soButLuc || <span className="text-slate-300">—</span>}</div>
+              <div className="text-amber-700 text-xs mt-0.5">
+                Tập: {dong.soTapHoSo || <span className="text-slate-300">—</span>}
+              </div>
+            </td>
           </>
         )}
         <td className="p-3 text-xs text-slate-400 whitespace-nowrap">{fmtNgayGio(dong.thoiDiemGhi)}</td>
@@ -10798,7 +10823,7 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
               {phien.laLuuTru && <th className="border border-slate-800 p-2 w-20">Thời hạn bảo quản</th>}
               <th className="border border-slate-800 p-2 w-20">KSV</th>
               <th className="border border-slate-800 p-2 w-20">ĐTV</th>
-              <th className="border border-slate-800 p-2 w-16">Số bút lục</th>
+              <th className="border border-slate-800 p-2 w-16">Số bút lục / Số tập</th>
               <th className="border border-slate-800 p-2 w-28">Người nhận thực tế / Ký tên</th>
             </tr>
           </thead>
@@ -10835,7 +10860,10 @@ function BienBanGiaoNhanIn({ phien, dsQuet, onDong }) {
                   )}
                   <td className="border border-slate-800 p-2 align-top">{d.nguoiGiao || "—"}</td>
                   <td className="border border-slate-800 p-2 align-top">{d.nguoiNhan || "—"}</td>
-                  <td className="border border-slate-800 p-2 align-top text-center">{d.soButLuc || ""}</td>
+                  <td className="border border-slate-800 p-2 align-top text-center">
+                    <div>{d.soButLuc || ""}</div>
+                    {d.soTapHoSo && <div className="text-slate-500">Tập: {d.soTapHoSo}</div>}
+                  </td>
                   <td className="border border-slate-800 p-2 align-top">{d.nguoiNhanThucTe || ""}</td>
                 </tr>
               );
@@ -10976,6 +11004,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
       phienGiaoNhanId: phien.id, loaiGiaoDich: phien.loaiGiaoDich, tenVu: vuAn.tenVu || "",
       soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
       nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "", soButLuc: "",
+      soTapHoSo: "",
       trangThaiVu: vuAn.trangThai || "dang_giai_quyet",
       soQdGiaiQuyet: fieldSoQd ? (vuAn[fieldSoQd] || "") : "",
       ngayQuyetDinh: vuAn.ngayQuyetDinh || null,
@@ -11156,6 +11185,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
         const parts = [fmtNgayGio(r.thoiDiemGhi)];
         if (r.nguoiNhanThucTe) parts.push(`Người nhận: ${r.nguoiNhanThucTe}`);
         if (r.soButLuc) parts.push(`Bút lục: ${r.soButLuc}`);
+        if (r.soTapHoSo) parts.push(`Số tập: ${r.soTapHoSo}`);
         if (r.nguoiThucHien) parts.push(`Quét: ${r.nguoiThucHien}`);
         return parts.join(" — ");
       };
@@ -11503,7 +11533,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
               <th className="text-left p-3">KSV</th>
               <th className="text-left p-3">ĐTV</th>
               <th className="text-left p-3">Người nhận thực tế</th>
-              <th className="text-left p-3">Số bút lục</th>
+              <th className="text-left p-3">Số bút lục / Số tập</th>
               <th className="text-left p-3">Thời điểm</th>
               {phien.trangThai === "dang_mo" && <th className="text-left p-3"></th>}
             </tr>
