@@ -445,8 +445,8 @@ function _collection(name) {
 // "bican" tham chiếu "vuan"/"kybaocao" — phải insert đúng thứ tự PHỤ THUỘC TRƯỚC, không phải thứ
 // tự "bảng nào gặp trước trong ops[]" như bản đầu (gây lỗi 23503 FK violation thật, phát hiện qua
 // Playwright test ThemVuAnForm — xem SUPABASE_MIGRATION.md). Bảng không có trong danh sách này
-// (không nên xảy ra với 8 bảng hiện có) rơi xuống cuối, insert sau cùng.
-const _TABLE_INSERT_ORDER = ["kybaocao", "canbo", "danhMucToiDanh", "vuan", "bican", "phienGiaoNhan", "lichsuChuyenGiaiDoan"];
+// (không nên xảy ra với các bảng hiện có) rơi xuống cuối, insert sau cùng.
+const _TABLE_INSERT_ORDER = ["kybaocao", "canbo", "danhMucToiDanh", "vuan", "bican", "phienGiaoNhan", "lichsuChuyenGiaiDoan", "dotNopLuuKho", "hoSoNopLuuKho"];
 function _sapXepTheoPhuThuoc(mapBangRows) {
   return [...mapBangRows.entries()].sort((a, b) => {
     const ia = _TABLE_INSERT_ORDER.indexOf(a[0]);

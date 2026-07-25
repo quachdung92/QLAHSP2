@@ -319,5 +319,46 @@ create index "lichsuChuyenGiaiDoan_phienGiaoNhanId_idx"
 create index "lichsuChuyenGiaiDoan_thoiDiemGhi_idx"
   on "lichsuChuyenGiaiDoan" ("thoiDiemGhi" desc);  -- phục vụ "Nhật ký thao tác" limit(300)
 
+-- ----------------------------------------------------------------------------
+-- dotNopLuuKho / hoSoNopLuuKho (2026-07-23) — tính năng "Nộp lưu kho", ĐỘC LẬP với "Nộp hồ sơ lưu
+-- trữ" trong Giao nhận hồ sơ (đó là luồng KSV/ĐTV nộp cho bộ phận lưu trữ để thống kê, ghi qua
+-- "lichsuChuyenGiaiDoan"/"giao_nhan_ho_so"; đây là luồng lưu trữ→Kho, đánh số lưu trữ cố định).
+-- Xem chi tiết đầy đủ trong supabase/add_nop_luu_kho_2026-07-23.sql — file này chỉ ghi lại CẤU
+-- TRÚC BẢNG cho lần deploy schema tiếp theo (nguồn sự thật), không lặp lại toàn bộ ghi chú.
+-- ----------------------------------------------------------------------------
+create table "dotNopLuuKho" (
+  "id"                   text primary key default gen_random_uuid()::text,
+  "tenDot"               text not null,
+  "trangThai"            text not null default 'dang_mo' check ("trangThai" in ('dang_mo','da_chot')),
+  "boLocThangNam"        jsonb,
+  "ngayTao"              timestamptz not null default now(),
+  "nguoiTao"             text,
+  "ngayChot"             timestamptz,
+  "nguoiChot"            text,
+  "ngayMoKhoaGanNhat"    timestamptz,
+  "nguoiMoKhoaGanNhat"   text
+);
+create index "dotNopLuuKho_trangThai_idx" on "dotNopLuuKho" ("trangThai");
+
+create table "hoSoNopLuuKho" (
+  "id"                    text primary key default gen_random_uuid()::text,
+  "dotId"                 text not null references "dotNopLuuKho"("id"),
+  "maVuAn"                text not null references "vuan"("id"),
+  "soThuTu"               numeric not null,   -- khoá sort ổn định — chèn thêm dùng số thập phân (14.1, 14.2...)
+  "nhanSo"                text not null,      -- nhãn hiển thị "14"/"14A"/"14B"
+  "tenVu"                 text,               -- snapshot lúc thêm vào đợt (không phải nguồn sự thật)
+  "hinhThucGiaiQuyet"     text,
+  "ngayGiaiQuyet"         timestamptz,
+  "ksvChinh"              text,
+  "thoiHanBaoQuan"        text,
+  "thoiDiemQuetXacNhan"   timestamptz,        -- null = chưa quét đưa lên Kho
+  "ngayTao"               timestamptz not null default now(),
+  "nguoiTao"              text,
+
+  constraint "hoSoNopLuuKho_dot_vu_unique" unique ("dotId", "maVuAn")
+);
+create index "hoSoNopLuuKho_dotId_soThuTu_idx" on "hoSoNopLuuKho" ("dotId", "soThuTu");
+create index "hoSoNopLuuKho_maVuAn_idx" on "hoSoNopLuuKho" ("maVuAn");
+
 -- Bảng "meta" (sentinel "có vụ mới") ĐÃ XOÁ — xem ghi chú 5 ở đầu file, không còn code nào đọc/
 -- ghi collection này sau khi chạy checklist "rà lại tinh chỉnh vì Firebase".
