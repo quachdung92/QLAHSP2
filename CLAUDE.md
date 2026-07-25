@@ -2,6 +2,81 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tính năng mới: "Nộp lưu kho" (2026-07-23/26, nhánh `nop-luu-kho`, `qlahs-sup.html`)
+
+Theo yêu cầu người dùng — module hoàn toàn mới, **ĐỘC LẬP với "Nộp hồ sơ lưu trữ"** đã có trong
+Giao nhận hồ sơ (đó là luồng KSV/ĐTV nộp hồ sơ CHO bộ phận lưu trữ để thống kê, ghi qua
+`lichsuChuyenGiaiDoan`/`giao_nhan_ho_so`). Module này là luồng của CHÍNH bộ phận lưu trữ: gom hồ sơ
+đã giải quyết (Tạm đình chỉ/Đình chỉ/Đã xét xử), sắp xếp + đánh **số lưu trữ cố định**, khoá/mở
+khoá, rồi nộp cả đợt lên Kho lưu trữ chính thức — không tái dùng `phienGiaoNhan`/
+`lichsuChuyenGiaiDoan` (2 quy trình nghiệp vụ khác nhau: KSV→lưu trữ vs lưu trữ→Kho, tránh lẫn dữ
+liệu). Được thiết kế qua vài vòng hỏi-đáp làm rõ nghiệp vụ với người dùng trước khi code (xem lịch
+sử hội thoại) — 3 quyết định quan trọng đã chốt: **STT reset về 1 mỗi đợt** (không liên tục xuyên
+suốt), **gộp chung 1 sổ** (không tách theo giai đoạn ĐT/TT/XX), **quét QR lúc đưa lên Kho ghi
+thẳng vào bảng riêng của module này** (không tạo/nối phiên Giao nhận hồ sơ).
+
+**2 bảng Postgres mới** (`supabase/add_nop_luu_kho_2026-07-23.sql`, đã ALTER lên Supabase thật):
+- `dotNopLuuKho` — 1 đợt nộp lưu, `trangThai` `dang_mo`/`da_chot` (khoá/mở khoá **2 chiều thật**,
+  khác `kybaocao.trangThai=da_chot` hiện có vốn là khoá 1 chiều không mở lại được).
+- `hoSoNopLuuKho` — 1 vụ trong 1 đợt, `soThuTu` (numeric, khoá sort ổn định — chèn thêm dùng số
+  thập phân `1.001`/`1.002`... để KHÔNG renumber toàn bộ) + `nhanSo` (nhãn hiển thị "1"/"1A"/"1B"),
+  snapshot vài field từ `vuan` lúc thêm vào đợt (đỡ join lại mỗi lần hiển thị), `thoiDiemQuetXacNhan`
+  (null = chưa đưa lên Kho).
+
+**Hạ tầng quan trọng phát hiện lúc code — `db.batch().commit()` đi qua RPC `batch_commit` có
+DANH SÁCH TRẮNG bảng CỨNG trong thân hàm** (khác `.doc().set()/.update()/.get()/.where()` — những
+API đó generic theo tên bảng, gọi thẳng PostgREST). Thêm bảng mới KHÔNG tự ghi được qua `batch()`
+nếu không `CREATE OR REPLACE FUNCTION "batch_commit"` với whitelist đã thêm 2 bảng mới — đã làm
+trong cùng file migration, kèm cập nhật `_TABLE_INSERT_ORDER` (JS) và `supabase/rls.sql`/
+`supabase/schema.sql` (nguồn sự thật) cho khớp. Nếu thêm bảng mới cần dùng `db.batch()` sau này,
+nhớ luôn kiểm tra bước này — dễ bị bỏ sót vì `.doc().set()` đơn lẻ vẫn hoạt động bình thường không
+báo lỗi gì, chỉ riêng `batch()` mới cần.
+
+**Kiến trúc màn hình** (`NopLuuKhoModule`, đặt trong `qlahs-sup.html` ngay sau `GiaoNhanHoSoModule`):
+`ManChonDot` (chọn/tạo đợt) → `ManChiTietDot` (router theo `dot.trangThai` + `dsHoSo.length`) →
+`ManChuanBiDanhSach` (lọc theo tháng/năm giải quyết + tuỳ chọn mở rộng kỳ trước chưa nộp/thống kê
+thiếu, loại vụ ĐÃ có trong bất kỳ đợt nào từ trước, khối "Tình trạng nộp theo KSV" đếm
+đã-nộp/chưa-nộp + drill-down danh sách cụ thể) → `ManXemTruocChot` (xem trước đã sắp xếp, bấm Chốt
+sinh `soThuTu`/`nhanSo` + khoá đợt) → `ManSoLuuTru` (sổ: đã chốt = chỉ đọc + Mở khoá/Quét/In; đang
+mở khoá = sửa được — Chèn sau/Xoá/Tính lại toàn bộ). `dot`/`dsHoSo` đều subscribe Realtime riêng
+theo `dotId` (không tự tay đồng bộ state qua callback sau mỗi ghi — để 1 nguồn sự thật duy nhất,
+tránh lệch giữa state cha tự set tay và Realtime đẩy về).
+
+**Sắp xếp**: `sapXepDsNopLuuKho` — Thời hạn bảo quản (giảm dần, dùng `thoiHanBaoQuanSortKey`: Vĩnh
+viễn = Infinity, "NN năm" = NN, chưa xác định = xếp cuối cùng không suy đoán) → Hình thức giải
+quyết (`THU_TU_HINH_THUC_NOP_LUU_KHO`, thứ tự CỐ ĐỊNH tạm đình chỉ→đình chỉ→xét xử, KHÔNG phải
+alphabet) → tên KSV (`localeCompare`).
+
+**In ấn**: `InTagLuuTruModal` tái dùng nguyên lưới 6 ô/A4 (2 cột×3 hàng) đã có ở `InQRModal` chế độ
+"góc giấy", chỉ khác là mỗi ô là 1 HỒ SƠ KHÁC NHAU (không phải nhiều bản của cùng 1 vụ) nên chia
+trang theo nhóm 6 (`break-after: page`). `InSoLuuTruModal` tái dùng khổ A4 dọc + portal
+`#qr-print-root` như `BienBanGiaoNhanIn`.
+
+**Đã kiểm chứng đầy đủ bằng Playwright thật trên dữ liệu Supabase production thật** (`qlahs-sup.html`,
+project `eutatszoaseixchvjbtg`, 1280+ vụ đã giải quyết thật) — tạo 1 đợt test, lọc hẹp còn 2 vụ thật
+(tránh thao tác hàng loạt lên dữ liệu sản xuất), chạy trọn luồng: Chuẩn bị danh sách (xác nhận panel
+"Tình trạng nộp theo KSV" tính đúng số liệu thật theo từng KSV) → Sắp xếp & Xem trước (xác nhận sort
+đúng thứ tự 47 năm trước 33 năm) → Chốt (khoá đúng, sinh STT 1/2) → Quét tra cứu (hiện đúng thông
+tin) → Xác nhận lên Kho (cập nhật đúng trạng thái) → Mở khoá → Chèn sau (xác nhận nhãn "1A" đúng
+yêu cầu) → Tính lại toàn bộ STT (renumber đúng lại theo thời hạn bảo quản) → Xoá dòng → In tag (xác
+nhận nội dung portal đúng) → In sổ danh sách (xác nhận nội dung đúng). Đã dọn sạch dữ liệu test
+(xoá đợt + hồ sơ liên quan) và xác nhận 2 vụ án thật dùng để test KHÔNG bị đụng vào (module này chỉ
+ĐỌC "vuan", không bao giờ ghi). 0 lỗi console liên quan tới thay đổi này (ngoại trừ cảnh báo Babel
+kích thước file vô hại đã biết).
+
+**Ghi chú môi trường test (không phải bug)**: giữa lúc kiểm chứng, tool chụp màn hình
+(`computer`/screenshot) của trình duyệt test bị treo tạm thời trong khi `javascript_tool`/
+`read_console_messages`/`get_page_text`/`read_page` vẫn phản hồi bình thường — xác nhận đây là vấn
+đề riêng của cơ chế chụp màn hình trong môi trường test, không phải lỗi ứng dụng (DOM/React state
+vẫn đúng, không có vòng lặp render vô hạn) — đã chuyển hẳn sang kiểm chứng qua các tool còn hoạt
+động, không ảnh hưởng độ tin cậy của kết quả kiểm chứng.
+
+**Chưa làm / ngoài phạm vi lần này**: chưa merge nhánh `nop-luu-kho` vào `main` (đang chờ người
+dùng xác nhận trước khi merge/deploy, theo đúng thói quen đã thiết lập ở các tính năng trước —
+merge+deploy là hành động ảnh hưởng dữ liệu thật của 4 cán bộ, luôn hỏi trước). Chưa thêm mã QR
+thật vào `InTagLuuTruModal` (hiện chỉ có chữ — số lưu trữ/tên vụ/thời hạn bảo quản, đủ dùng để dán
+phân loại nhanh; có thể thêm `taoQrDataUrl(maVuAn)` sau nếu người dùng cần quét lại từ chính tag).
+
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:
