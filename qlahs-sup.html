@@ -11764,6 +11764,32 @@ function layVanDeCanBoSungNopLuuKho(v) {
   return vd;
 }
 
+// Tra "Số bút lục"/"Số tập hồ sơ" (2026-07-26, theo yêu cầu người dùng — cần in ra sổ để đối chiếu
+// với bìa hồ sơ giấy) — 2 field này KHÔNG có trên "vuan", chỉ được ghi tay ngay tại dòng lúc quét ở
+// Giao nhận hồ sơ (`DongGiaoNhan`, xem field cùng tên trên sự kiện "giao_nhan_ho_so"). Lấy từ đúng
+// lần "Nộp hồ sơ lưu trữ" GẦN NHẤT (loaiGiaoDich=="nhan" + phiên đó laLuuTru==true — cùng tiêu chí
+// đã dùng để tính "daNop") — nếu vụ được Nộp hồ sơ lưu trữ nhiều lần, lấy đúng lần mới nhất.
+// Dùng CHUNG cho `themVuThuCong` (thêm 1 vụ) và `chenVaoSau` (chèn 1 vụ vào sổ đã chốt) — cả 2 chỉ
+// xử lý ĐÚNG 1 vụ nên không cần chia lô như `taiDuLieu` (xử lý hàng nghìn vụ cùng lúc, có join
+// riêng hiệu quả hơn, xem trong hàm đó).
+async function layThongTinNopLuuTruMotVu(maVuAn) {
+  const giaoNhanDocs = await db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", maVuAn)
+    .where("loaiSuKien", "==", "giao_nhan_ho_so").where("loaiGiaoDich", "==", "nhan").get();
+  let daNop = false, soButLuc = "", soTapHoSo = "", msMoi = -1;
+  for (const d of giaoNhanDocs.docs) {
+    const data = d.data();
+    const phienId = data.phienGiaoNhanId;
+    if (!phienId) continue;
+    const phien = await db.collection("phienGiaoNhan").doc(phienId).get();
+    if (phien.exists && phien.data().laLuuTru) {
+      daNop = true;
+      const ms = data.thoiDiemGhi?.toMillis?.() || 0;
+      if (ms > msMoi) { msMoi = ms; soButLuc = data.soButLuc || ""; soTapHoSo = data.soTapHoSo || ""; }
+    }
+  }
+  return { daNop, soButLuc, soTapHoSo };
+}
+
 // ── Màn "Chuẩn bị danh sách" — lọc theo tháng/năm giải quyết + tuỳ chọn mở rộng kỳ trước ────────
 function ManChuanBiDanhSach({ onXemTruoc }) {
   const namNay = new Date().getFullYear();
@@ -11817,13 +11843,27 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
       const phienIds = [...new Set(giaoNhanDocs.map(d => d.data().phienGiaoNhanId).filter(Boolean))];
       const phienDocs = phienIds.length ? await chiaLoTruyVanIn("phienGiaoNhan", "id", phienIds) : [];
       const laLuuTruTheoPhien = new Map(phienDocs.map(d => [d.id, !!d.data().laLuuTru]));
-      const idsDaNop = new Set(
-        giaoNhanDocs.filter(d => laLuuTruTheoPhien.get(d.data().phienGiaoNhanId)).map(d => d.data().maVuAn)
-      );
+      // Số bút lục/Số tập (2026-07-26) — lấy kèm luôn trong CÙNG lượt duyệt giaoNhanDocs đã có sẵn
+      // để tính "daNop" (không query thêm) — giữ đúng lần "Nộp hồ sơ lưu trữ" GẦN NHẤT nếu 1 vụ có
+      // nhiều lần nộp (so `thoiDiemGhi` mới nhất), xem thêm giải thích ở `layThongTinNopLuuTruMotVu`
+      // (hàm đó dùng cho trường hợp xử lý 1 vụ đơn lẻ, ở đây xử lý hàng loạt nên viết riêng).
+      const nopLuuTruTheoVu = new Map(); // maVuAn -> { soButLuc, soTapHoSo, _ms }
+      giaoNhanDocs.forEach(d => {
+        const data = d.data();
+        if (!laLuuTruTheoPhien.get(data.phienGiaoNhanId)) return;
+        const ms = data.thoiDiemGhi?.toMillis?.() || 0;
+        const hienCo = nopLuuTruTheoVu.get(data.maVuAn);
+        if (!hienCo || ms > hienCo._ms) {
+          nopLuuTruTheoVu.set(data.maVuAn, { soButLuc: data.soButLuc || "", soTapHoSo: data.soTapHoSo || "", _ms: ms });
+        }
+      });
 
       const ketQua = ungVienTho
         .filter(v => !idsDaCoDot.has(v.id))
-        .map(v => ({ ...v, thoiHanBaoQuan: tinhThoiHanBaoQuanVu(v), daNop: idsDaNop.has(v.id) }));
+        .map(v => {
+          const nop = nopLuuTruTheoVu.get(v.id);
+          return { ...v, thoiHanBaoQuan: tinhThoiHanBaoQuanVu(v), daNop: !!nop, soButLuc: nop?.soButLuc || "", soTapHoSo: nop?.soTapHoSo || "" };
+        });
 
       setUngVien(ketQua);
       setDsChon(new Set(ketQua.map(v => v.id))); // mặc định chọn hết, bỏ chọn tay dòng nào chưa sẵn sàng
@@ -11920,18 +11960,10 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
         addToast(`Vụ "${v.tenVu || hienThiMa(v)}" đã có trong 1 đợt nộp lưu khác — không thêm được nữa.`, "error");
         return;
       }
-      // Tính "đã nộp" riêng cho đúng 1 vụ này — cùng logic join đã dùng lúc tải cả danh sách, chỉ
-      // thu hẹp còn 1 vụ nên không cần dùng chiaLoTruyVanIn theo lô.
-      const giaoNhanDocs = await db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", v.id)
-        .where("loaiSuKien", "==", "giao_nhan_ho_so").where("loaiGiaoDich", "==", "nhan").get();
-      let daNop = false;
-      for (const d of giaoNhanDocs.docs) {
-        const phienId = d.data().phienGiaoNhanId;
-        if (!phienId) continue;
-        const phien = await db.collection("phienGiaoNhan").doc(phienId).get();
-        if (phien.exists && phien.data().laLuuTru) { daNop = true; break; }
-      }
-      const vMoi = { ...v, thoiHanBaoQuan: tinhThoiHanBaoQuanVu(v), daNop };
+      // Tính "đã nộp" + Số bút lục/Số tập riêng cho đúng 1 vụ này (layThongTinNopLuuTruMotVu, đặt
+      // cạnh laySoQdGiaiQuyetNopLuuKho) — dùng chung với chenVaoSau ở ManSoLuuTru.
+      const { daNop, soButLuc, soTapHoSo } = await layThongTinNopLuuTruMotVu(v.id);
+      const vMoi = { ...v, thoiHanBaoQuan: tinhThoiHanBaoQuanVu(v), daNop, soButLuc, soTapHoSo };
       setUngVien(prev => [vMoi, ...prev]);
       setDsChon(prev => new Set(prev).add(v.id));
       addToast(`Đã thêm "${v.tenVu || "(chưa đặt tên)"}" vào danh sách.`);
@@ -11959,14 +11991,15 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
         const hRow = ws.addRow([
           "STT", "Mã vụ", "Tên vụ", "KSV", "Hình thức GQ",
           "Số QĐ KTVA", "Ngày QĐ KTVA", "Số QĐ GQ", "Ngày GQ",
-          "Thời hạn bảo quản", "Tình trạng nộp hồ sơ giấy", "Vấn đề cần bổ sung",
+          "Thời hạn bảo quản", "Tình trạng nộp hồ sơ giấy", "Số bút lục", "Số tập",
+          "Vấn đề cần bổ sung",
         ]);
         hRow.font = { bold: true };
         hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
         ws.columns = [
           { width: 6 }, { width: 13 }, { width: 32 }, { width: 18 }, { width: 14 },
           { width: 16 }, { width: 14 }, { width: 16 }, { width: 14 },
-          { width: 16 }, { width: 20 }, { width: 55 },
+          { width: 16 }, { width: 20 }, { width: 12 }, { width: 8 }, { width: 55 },
         ];
         // Sắp xếp cùng công thức với sổ chính thức (sapXepDsNopLuuKho) để KSV đối chiếu thuận tiện
         // với thứ tự sẽ dùng lúc chốt, dù đây chỉ là bản rà soát chưa chốt.
@@ -11978,10 +12011,11 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
             v.soQdKtva || "", fmtDate(v.ngayQdKtva), laySoQdGiaiQuyetNopLuuKho(v) || "", fmtDate(v.ngayQuyetDinh),
             v.thoiHanBaoQuan || "(chưa xác định)",
             v.daNop ? "Đã nộp" : "Chưa nộp",
+            v.soButLuc || "", v.soTapHoSo || "",
             vanDe.length > 0 ? vanDe.join("; ") : "",
           ]);
-          row.getCell(12).alignment = { wrapText: true };
-          if (vanDe.length > 0) row.getCell(12).font = { color: { argb: "FFB45309" } };
+          row.getCell(14).alignment = { wrapText: true };
+          if (vanDe.length > 0) row.getCell(14).font = { color: { argb: "FFB45309" } };
           if (!v.daNop) row.getCell(11).font = { color: { argb: "FFDC2626" }, bold: true };
         });
       };
@@ -12173,15 +12207,19 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
                   <th className="text-left p-2">Ngày GQ</th>
                   <th className="text-left p-2">Thời hạn bảo quản</th>
                   <th className="text-left p-2">Tình trạng nộp</th>
+                  {/* Số bút lục/Số tập (2026-07-26) — lấy từ lần "Nộp hồ sơ lưu trữ" gần nhất, chỉ
+                      có giá trị khi Tình trạng nộp = Đã nộp (không nộp thì chưa có gì để ghi). */}
+                  <th className="text-left p-2">Số bút lục</th>
+                  <th className="text-left p-2">Số tập</th>
                   <th className="text-left p-2">Vấn đề cần bổ sung</th>
                 </tr>
               </thead>
               <tbody>
                 {ungVien.length === 0 && (
-                  <tr><td colSpan={12} className="p-4 text-center text-slate-400">Không có vụ nào khớp điều kiện lọc.</td></tr>
+                  <tr><td colSpan={14} className="p-4 text-center text-slate-400">Không có vụ nào khớp điều kiện lọc.</td></tr>
                 )}
                 {ungVien.length > 0 && dsHienThi.length === 0 && (
-                  <tr><td colSpan={12} className="p-4 text-center text-slate-400">Không có vụ nào khớp bộ lọc/tìm kiếm hiện tại.</td></tr>
+                  <tr><td colSpan={14} className="p-4 text-center text-slate-400">Không có vụ nào khớp bộ lọc/tìm kiếm hiện tại.</td></tr>
                 )}
                 {dsHienThi.map(v => {
                   const vanDe = layVanDeCanBoSungNopLuuKho(v);
@@ -12202,6 +12240,8 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
                     <td className="p-2">
                       {v.daNop ? <Badge mau="bg-emerald-100 text-emerald-700">Đã nộp</Badge> : <Badge mau="bg-slate-200 text-slate-600">Chưa nộp</Badge>}
                     </td>
+                    <td className="p-2 whitespace-nowrap">{v.soButLuc || "—"}</td>
+                    <td className="p-2 whitespace-nowrap">{v.soTapHoSo || "—"}</td>
                     <td className="p-2 text-xs max-w-[220px]">
                       {vanDe.length > 0
                         ? <span className="text-amber-700" title={vanDe.join("; ")}>⚠ {vanDe.length} vấn đề</span>
@@ -12243,6 +12283,7 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
           soQdKtva: v.soQdKtva || "", ngayQdKtva: v.ngayQdKtva || null,
           soQuyetDinhGiaiQuyet: laySoQdGiaiQuyetNopLuuKho(v),
           ksvChinh: v.ksvChinh || "", thoiHanBaoQuan: v.thoiHanBaoQuan || "",
+          soButLuc: v.soButLuc || "", soTapHoSo: v.soTapHoSo || "",
           ngayTao: now, nguoiTao: nguoiThucHien,
         });
       });
@@ -12283,6 +12324,8 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
               <th className="text-left p-2">Số QĐ GQ</th>
               <th className="text-left p-2">Ngày GQ</th>
               <th className="text-left p-2">Thời hạn bảo quản</th>
+              <th className="text-left p-2">Số bút lục</th>
+              <th className="text-left p-2">Số tập</th>
               <th className="text-left p-2">Vấn đề cần bổ sung</th>
             </tr>
           </thead>
@@ -12301,6 +12344,8 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
                 <td className="p-2 whitespace-nowrap">{laySoQdGiaiQuyetNopLuuKho(v) || "—"}</td>
                 <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQuyetDinh)}</td>
                 <td className="p-2">{v.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{v.thoiHanBaoQuan}</span> : <span className="text-amber-600 text-xs">⚠ Chưa xác định</span>}</td>
+                <td className="p-2 whitespace-nowrap">{v.soButLuc || "—"}</td>
+                <td className="p-2 whitespace-nowrap">{v.soTapHoSo || "—"}</td>
                 <td className="p-2 text-xs max-w-[220px]">
                   {vanDe.length > 0
                     ? <span className="text-amber-700" title={vanDe.join("; ")}>⚠ {vanDe.length} vấn đề</span>
@@ -12359,6 +12404,10 @@ function InSoLuuTruModal({ dot, dsHoSo, onDong }) {
               <th className="border border-slate-800 p-2 w-16">Số QĐ GQ</th>
               <th className="border border-slate-800 p-2 w-16">Ngày GQ</th>
               <th className="border border-slate-800 p-2 w-16">Thời hạn bảo quản</th>
+              {/* Số bút lục/Số tập (2026-07-26, theo yêu cầu người dùng) — đối chiếu số trang/số
+                  tập ghi trên bìa hồ sơ giấy ngay lúc nộp lên Kho. */}
+              <th className="border border-slate-800 p-2 w-16">Số bút lục</th>
+              <th className="border border-slate-800 p-2 w-12">Số tập</th>
             </tr>
           </thead>
           <tbody>
@@ -12373,6 +12422,8 @@ function InSoLuuTruModal({ dot, dsHoSo, onDong }) {
                 <td className="border border-slate-800 p-2 text-center">{h.soQuyetDinhGiaiQuyet || ""}</td>
                 <td className="border border-slate-800 p-2 text-center">{fmtDate(h.ngayGiaiQuyet)}</td>
                 <td className="border border-slate-800 p-2 text-center font-bold">{h.thoiHanBaoQuan}</td>
+                <td className="border border-slate-800 p-2 text-center">{h.soButLuc || ""}</td>
+                <td className="border border-slate-800 p-2 text-center">{h.soTapHoSo || ""}</td>
               </tr>
             ))}
           </tbody>
@@ -12505,12 +12556,14 @@ function ManSoLuuTru({ dot, dsHoSo }) {
     const soThuTuMoi = dongGoc.soThuTu + (daChenSauGoc.length + 1) * 0.001;
     const nhanSoMoi = `${goc}${kyTu}`;
     try {
+      const { soButLuc, soTapHoSo } = await layThongTinNopLuuTruMotVu(vuAn.id);
       await db.collection("hoSoNopLuuKho").add({
         dotId: dot.id, maVuAn: vuAn.id, soThuTu: soThuTuMoi, nhanSo: nhanSoMoi,
         tenVu: vuAn.tenVu || "", hinhThucGiaiQuyet: vuAn.trangThai, ngayGiaiQuyet: vuAn.ngayQuyetDinh || null,
         soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
         soQuyetDinhGiaiQuyet: laySoQdGiaiQuyetNopLuuKho(vuAn),
         ksvChinh: vuAn.ksvChinh || "", thoiHanBaoQuan: tinhThoiHanBaoQuanVu(vuAn) || "",
+        soButLuc, soTapHoSo,
         ngayTao: new Date(), nguoiTao: auth.currentUser?.email || "",
       });
       addToast(`Đã chèn "${vuAn.tenVu}" — nhãn số ${nhanSoMoi}.`);
@@ -12533,10 +12586,34 @@ function ManSoLuuTru({ dot, dsHoSo }) {
     finally { setDangThaoTac(false); }
   };
 
-  const quetTraCuu = (ma) => {
+  // Quét liên tục (2026-07-26, theo yêu cầu người dùng) — vụ QUÉT NGAY TRƯỚC ĐÓ tự động được xác
+  // nhận "đã lên Kho" khi quét sang vụ KHÁC, không cần bấm nút "Xác nhận" mỗi lần — tiết kiệm thao
+  // tác đúng nhịp quét nhanh bằng đầu đọc QR (chỉ tự xác nhận nếu vụ đó CHƯA được xác nhận từ
+  // trước, tránh ghi đè lại `thoiDiemQuetXacNhan` cũ). Đồng thời cảnh báo "quét trùng" ở 2 tình
+  // huống: (1) quét lại ĐÚNG vụ đang hiển thị ngay lập tức (so `ketQuaQuet.maVuAn`, không phụ
+  // thuộc `dsHoSo` — tránh race vì `dsHoSo` qua Realtime có thể chưa kịp cập nhật ngay sau lần tự
+  // xác nhận vừa rồi); (2) quét 1 vụ ĐÃ có `thoiDiemQuetXacNhan` từ trước (phiên trước hoặc đã tự
+  // xác nhận từ lâu — dữ liệu này lấy thẳng từ `dsHoSo`, không racy vì đã tồn tại từ trước lần quét
+  // này).
+  const quetTraCuu = async (ma) => {
+    const maTrim = ma.trim();
     setDsQuetTemp("");
-    const found = dsHoSo.find(h => h.maVuAn === ma.trim());
-    setKetQuaQuet(found || { khongTim: true, ma: ma.trim() });
+
+    if (ketQuaQuet && !ketQuaQuet.khongTim && ketQuaQuet.maVuAn === maTrim) {
+      addToast(`"${ketQuaQuet.tenVu}" (Số ${ketQuaQuet.nhanSo}) vừa quét rồi — không quét trùng.`, "warn");
+      return;
+    }
+
+    if (ketQuaQuet && !ketQuaQuet.khongTim && !ketQuaQuet.thoiDiemQuetXacNhan) {
+      await xacNhanDaLenKho(ketQuaQuet);
+    }
+
+    const found = dsHoSo.find(h => h.maVuAn === maTrim);
+    if (!found) { setKetQuaQuet({ khongTim: true, ma: maTrim }); return; }
+    if (found.thoiDiemQuetXacNhan) {
+      addToast(`⚠ "${found.tenVu}" (Số ${found.nhanSo}) đã được xác nhận lên Kho từ trước (lúc ${fmtNgayGio(found.thoiDiemQuetXacNhan)}) — quét trùng.`, "warn");
+    }
+    setKetQuaQuet(found);
   };
 
   const xacNhanDaLenKho = async (h) => {
@@ -12596,6 +12673,9 @@ function ManSoLuuTru({ dot, dsHoSo }) {
                 QĐ KTVA: {ketQuaQuet.soQdKtva || "—"} — {fmtDate(ketQuaQuet.ngayQdKtva)}
                 {" — "}QĐ GQ: {ketQuaQuet.soQuyetDinhGiaiQuyet || "—"} — {fmtDate(ketQuaQuet.ngayGiaiQuyet)}
               </div>
+              <div className="text-xs text-slate-400 mt-0.5">
+                Bút lục: {ketQuaQuet.soButLuc || "—"} — Số tập: {ketQuaQuet.soTapHoSo || "—"}
+              </div>
               <div className="text-xl font-bold text-red-600 mt-2">{ketQuaQuet.thoiHanBaoQuan || "Chưa xác định thời hạn"}</div>
               {ketQuaQuet.thoiDiemQuetXacNhan ? (
                 <div className="text-xs text-emerald-600 mt-2">✓ Đã lên Kho lúc {fmtNgayGio(ketQuaQuet.thoiDiemQuetXacNhan)}</div>
@@ -12623,6 +12703,8 @@ function ManSoLuuTru({ dot, dsHoSo }) {
               <th className="text-left p-2 whitespace-nowrap">Số QĐ GQ</th>
               <th className="text-left p-2 whitespace-nowrap">Ngày GQ</th>
               <th className="text-left p-2">Thời hạn bảo quản</th>
+              <th className="text-left p-2">Số bút lục</th>
+              <th className="text-left p-2">Số tập</th>
               <th className="text-left p-2">Lên Kho</th>
               {!daChot && <th className="p-2"></th>}
             </tr>
@@ -12641,6 +12723,8 @@ function ManSoLuuTru({ dot, dsHoSo }) {
                   <td className="p-2 whitespace-nowrap">{h.soQuyetDinhGiaiQuyet || "—"}</td>
                   <td className="p-2 whitespace-nowrap">{fmtDate(h.ngayGiaiQuyet)}</td>
                   <td className="p-2">{h.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{h.thoiHanBaoQuan}</span> : "—"}</td>
+                  <td className="p-2 whitespace-nowrap">{h.soButLuc || "—"}</td>
+                  <td className="p-2 whitespace-nowrap">{h.soTapHoSo || "—"}</td>
                   <td className="p-2">{h.thoiDiemQuetXacNhan ? <span className="text-emerald-600 text-xs">✓ {fmtDate(h.thoiDiemQuetXacNhan)}</span> : <span className="text-slate-300 text-xs">—</span>}</td>
                   {!daChot && (
                     <td className="p-2 whitespace-nowrap">
@@ -12651,7 +12735,7 @@ function ManSoLuuTru({ dot, dsHoSo }) {
                 </tr>
                 {chenSauId === h.id && (
                   <tr className="bg-indigo-50/50">
-                    <td colSpan={12} className="p-3">
+                    <td colSpan={14} className="p-3">
                       <div className="text-xs text-slate-600 mb-1">Tìm vụ để chèn ngay sau số {h.nhanSo}:</div>
                       <input value={tuKhoaChen} onChange={e => timChen(e.target.value)} placeholder="Gõ tên vụ/mã vụ/KSV..." autoFocus
                              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-sm mb-2" />

@@ -61,6 +61,12 @@ create table "hoSoNopLuuKho" (
   "soQuyetDinhGiaiQuyet"  text,                                 -- snapshot số QĐ giải quyết (soBanAn/soQuyetDinhTamDinhChi/... tuỳ hinhThucGiaiQuyet, qua fieldSoQuyetDinhTrenVuAn)
   "ksvChinh"              text,
   "thoiHanBaoQuan"        text,                                 -- snapshot chuỗi đã tính sẵn (VD "19 năm"/"Vĩnh viễn")
+  -- Số bút lục/Số tập (2026-07-26, theo yêu cầu người dùng — cần in ra sổ để đối chiếu bìa hồ sơ
+  -- giấy). 2 field này KHÔNG có trên "vuan" — chỉ tồn tại trên sự kiện "giao_nhan_ho_so" (ghi tay
+  -- lúc Nộp hồ sơ lưu trữ, xem "lichsuChuyenGiaiDoan"."soButLuc"/"soTapHoSo"), snapshot từ đúng lần
+  -- nộp GẦN NHẤT (loaiGiaoDich=nhan + phiên đó laLuuTru=true) qua layThongTinNopLuuTruMotVu (JS).
+  "soButLuc"              text,
+  "soTapHoSo"             text,
   "thoiDiemQuetXacNhan"   timestamptz,                          -- null = chưa quét đưa lên Kho; set khi quét QR xác nhận (KHÔNG đụng "lichsuChuyenGiaiDoan")
   "ngayTao"               timestamptz not null default now(),
   "nguoiTao"              text,

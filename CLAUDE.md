@@ -252,6 +252,70 @@ quá trình kiểm chứng (chỉ 2 lượt đọc `.where().get()` để kiểm
 lại trang sau khi test để trả `ungVien` về đúng 1280 gốc, không để lại trạng thái test trên tab.
 0 lỗi console.
 
+## Nộp lưu kho: quét liên tục tự động xác nhận + cảnh báo quét trùng + cột Số bút lục/Số tập (2026-07-26)
+
+Người dùng phản hồi thêm 3 việc ở màn `ManSoLuuTru`/sổ in: (1) quét liên tục nhiều hồ sơ nên tự
+động xác nhận "đã lên Kho" cho hồ sơ QUÉT TRƯỚC ĐÓ, không bắt bấm nút mỗi lần (tiết kiệm thao tác
+đúng nhịp đầu đọc QR); (2) quét lại 1 hồ sơ đã xử lý phải cảnh báo tránh nhầm; (3) sổ in cần thêm
+cột Số bút lục/Số tập để đối chiếu bìa hồ sơ giấy.
+
+**`quetTraCuu` viết lại** — trước khi hiển thị kết quả quét MỚI, tự gọi `xacNhanDaLenKho(ketQuaQuet
+cũ)` nếu hồ sơ đó hợp lệ và CHƯA có `thoiDiemQuetXacNhan` (tái dùng nguyên hàm đã có, kèm toast xác
+nhận — không cần cờ "silent" riêng, toast đó đúng là tín hiệu người dùng cần biết "đã tự xác nhận
+hộ"). 2 nhánh cảnh báo "quét trùng": (a) quét lại ĐÚNG hồ sơ đang hiển thị ngay lập tức — so trực
+tiếp `ketQuaQuet.maVuAn`, KHÔNG dựa vào `dsHoSo` (tránh race vì Realtime có thể chưa kịp phản ánh
+đúng lúc vừa tự xác nhận xong); (b) quét 1 hồ sơ đã có `thoiDiemQuetXacNhan` từ trước (phiên trước
+hoặc đã tự xác nhận từ lâu) — dữ liệu này lấy thẳng từ `dsHoSo` (không racy, đã tồn tại từ trước).
+
+**Cột "Số bút lục"/"Số tập"** — 2 field MỚI trên `hoSoNopLuuKho` (`soButLuc` text, `soTapHoSo`
+text), snapshot từ đúng lần **"Nộp hồ sơ lưu trữ" GẦN NHẤT** của vụ đó (sự kiện `giao_nhan_ho_so`
+có `loaiGiaoDich=="nhan"` + phiên đó `laLuuTru==true` — cùng tiêu chí đã dùng để tính `daNop`, xem
+mục "Vấn đề cần bổ sung" ở trên) — **KHÔNG có trên `vuan`**, chỉ tồn tại trên sự kiện giao nhận
+(ghi tay ở `DongGiaoNhan`, xem mục "Giao nhận hồ sơ" ở dưới). Hàm dùng chung mới
+`layThongTinNopLuuTruMotVu(maVuAn)` (đặt cạnh `laySoQdGiaiQuyetNopLuuKho`) cho `themVuThuCong` và
+`chenVaoSau` (xử lý đúng 1 vụ); `taiDuLieu` (xử lý hàng loạt cho cả `ungVien`) viết join riêng dùng
+lại đúng `giaoNhanDocs` đã tải sẵn cho `daNop`, không query thêm. Rộng ra đủ 5 nơi: bảng ứng viên,
+bảng xem trước, sổ trên màn hình, kết quả quét tra cứu, **và sổ in** (`InSoLuuTruModal`, yêu cầu
+chính) + Excel xuất theo KSV.
+
+**⚠ CHƯA CHẠY ĐƯỢC ALTER TABLE thật lên Supabase** — thiếu mật khẩu DB trong phiên làm việc này
+(không có sẵn trong env, theo đúng quy tắc "không ghi vào repo, hỏi lại Dũng nếu phiên sau cần
+dùng"). Đã sửa `add_nop_luu_kho_2026-07-23.sql` (CREATE TABLE gốc, vì nhánh chưa merge/deploy) và
+`schema.sql` — 2 cột `soButLuc`/`soTapHoSo` (text, nullable). Code JS đã kiểm chứng AN TOÀN khi
+cột CHƯA tồn tại: `batch_commit` RPC tự lọc bỏ field không khớp cột nào của bảng (không lỗi, chỉ
+im lặng không ghi được 2 field mới) — xác nhận qua đọc trực tiếp 1 dòng `hoSoNopLuuKho` thật, thiếu
+hẳn 2 key này. **Việc cần làm để hoàn tất**: chạy 2 lệnh sau qua Supabase SQL Editor (project
+`eutatszoaseixchvjbtg`) hoặc qua Session pooler (xem `supabase/README.md`):
+```sql
+alter table "hoSoNopLuuKho" add column "soButLuc" text;
+alter table "hoSoNopLuuKho" add column "soTapHoSo" text;
+notify pgrst, 'reload schema';
+```
+
+**Đã kiểm chứng phần join (soButLuc/soTapHoSo) bằng Supabase production thật** — mở lại
+`ManChuanBiDanhSach` cho 1 đợt mới, thấy đúng 3 giá trị Số bút lục thật (88/172/187) khớp với các
+vụ ĐÃ được nộp hồ sơ lưu trữ trước đó, xác nhận join lấy đúng dữ liệu nguồn dù cột đích chưa tồn
+tại để LƯU (chỉ hiển thị tại chỗ, chưa ghi được xuống Postgres cho tới khi ALTER TABLE). Phần
+`quetTraCuu`/`xacNhanDaLenKho` viết lại CHƯA kiểm chứng trực tiếp qua thao tác quét thật (xem lý do
+ở mục cảnh báo ngay dưới) — chỉ kiểm chứng gián tiếp qua đọc lại logic + tái dùng nguyên
+`xacNhanDaLenKho` đã kiểm chứng đầy đủ từ trước.
+
+**⚠ PHÁT HIỆN QUAN TRỌNG lúc kiểm chứng, cần Dũng xác nhận lại**: "Đợt nộp lưu năm 2025" (đợt thật
+1280 vụ, trước đó luôn thấy ở trạng thái "Đang mở" + 0 hồ sơ suốt nhiều lượt kiểm chứng trong ngày
+26/07) — kiểm tra lại thì phát hiện đã **THỰC SỰ được Chốt lúc 04:49:37 rồi Mở khoá lại chỉ 3 GIÂY
+SAU (04:49:40)**, bởi tài khoản **`b10verify@local.com`** (không phải tài khoản `admin@qlva.local`
+dùng trong phiên này) — sinh đủ `soThuTu`/`nhanSo` **1 → 1280 thật** cho toàn bộ 1280 hồ sơ, và
+**1 hồ sơ đã có `thoiDiemQuetXacNhan` thật** (đã được quét/xác nhận "đã lên Kho" thật). Nhịp
+Chốt→Mở khoá cách nhau đúng 3 giây gợi ý đây là 1 phiên làm việc/agent KHÁC đang test tính năng
+Chốt/Mở khoá — rất có thể lỡ thao tác trên đúng đợt SẢN XUẤT thật thay vì tạo đợt test riêng (đúng
+rủi ro đã cảnh báo ở [[qlahsp2_main_concurrent_edits]] — nhiều phiên cùng sửa 1 cơ sở dữ liệu thật).
+**KHÔNG tự ý sửa/hoàn tác gì** (không biết chắc đây là hành động của Dũng hay phiên khác, hoàn tác
+nhầm còn tệ hơn) — chỉ dọn đúng 1 đợt TEST của riêng phiên này (`"TEST - xoá sau khi kiểm chứng
+quét liên tục"`, tạo lúc kiểm chứng, chưa Chốt, đã xoá sạch). **Cần hỏi lại Dũng**: 1280 hồ sơ đã
+có Số lưu trữ 1-1280 chính thức chưa (nếu đúng ý muốn thì không cần làm gì thêm, đợt vẫn "Đang mở"
+nên vẫn sửa được), và 1 hồ sơ đã "đã lên Kho" đó có đúng thật sự đã đưa lên Kho chưa hay là do quét
+test.
+
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:
