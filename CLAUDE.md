@@ -73,9 +73,25 @@ vẫn đúng, không có vòng lặp render vô hạn) — đã chuyển hẳn s
 
 **Chưa làm / ngoài phạm vi lần này**: chưa merge nhánh `nop-luu-kho` vào `main` (đang chờ người
 dùng xác nhận trước khi merge/deploy, theo đúng thói quen đã thiết lập ở các tính năng trước —
-merge+deploy là hành động ảnh hưởng dữ liệu thật của 4 cán bộ, luôn hỏi trước). Chưa thêm mã QR
-thật vào `InTagLuuTruModal` (hiện chỉ có chữ — số lưu trữ/tên vụ/thời hạn bảo quản, đủ dùng để dán
-phân loại nhanh; có thể thêm `taoQrDataUrl(maVuAn)` sau nếu người dùng cần quét lại từ chính tag).
+merge+deploy là hành động ảnh hưởng dữ liệu thật của 4 cán bộ, luôn hỏi trước).
+
+**Không cần mã QR trên tag** (đã hỏi lại, người dùng xác nhận CHỦ ĐỘNG không cần — đã có "In mã QR"
+riêng cho việc đó ở panel chi tiết vụ án, tag này chỉ cần dễ quan sát bằng mắt) — thay vào đó
+**"Số lưu trữ" là yếu tố quan trọng nhất trên tag, đã tăng độ nổi bật đáng kể** (2026-07-26): từ
+`text-3xl` màu chàm (30px) lên `text-8xl font-black text-slate-900` (96px, đậm 900, gần đen tuyền)
+— rõ nét kể cả khi in đen trắng/photo lại. Tên vụ/KSV giữ cỡ nhỏ, "Thời hạn bảo quản" tăng nhẹ lên
+`text-xl` (đứng thứ 2 về độ nổi bật, sau Số lưu trữ).
+
+**Bug đã sửa (2026-07-26) — "← Quay lại chỉnh sửa" ở màn xem trước làm MẤT SẠCH bộ lọc + lựa chọn
+đã tick**, phải làm lại từ đầu mỗi lần muốn bớt 1 vụ sau khi đã xem trước. Nguyên nhân:
+`ManChiTietDot` trước đây dùng conditional rendering kiểu `{cond && <ManChuanBiDanhSach/>}` — mỗi
+lần chuyển qua lại giữa "chuẩn bị" và "xem trước", component bị UNMOUNT rồi MOUNT LẠI, mất hết
+state nội bộ (bộ lọc tháng/năm, `dsChon`, `ungVien` đã tải). Đã sửa: `ManChuanBiDanhSach` giờ LUÔN
+được giữ mounted suốt giai đoạn "đợt đang mở, chưa có hồ sơ" — chỉ ẨN bằng `className="hidden"` khi
+đang xem trước, không gỡ khỏi cây React nữa — state nội bộ sống nguyên qua lại giữa 2 màn. Đã kiểm
+chứng bằng Playwright thật: lọc tháng 1/2025, bỏ tick 1 dòng, bấm Xem trước rồi Quay lại — xác nhận
+bộ lọc (tháng 1→1), danh sách 199 dòng, và đúng dòng đã bỏ tick trước đó vẫn giữ nguyên trạng thái
+chưa tick (không phải "chọn hết" mặc định).
 
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 

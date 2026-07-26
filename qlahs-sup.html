@@ -12085,11 +12085,15 @@ function InTagLuuTruModal({ dsHoSo, onDong }) {
                 <div key={i} className="border border-dashed border-slate-300 p-3 flex flex-col items-center justify-center text-center">
                   {h && (
                     <>
-                      <div className="text-xs text-slate-400">Số lưu trữ</div>
-                      <div className="text-3xl font-bold text-indigo-700">{h.nhanSo}</div>
-                      <div className="mt-1 text-sm font-medium break-words">{h.tenVu}</div>
-                      <div className="text-xs text-slate-400 mt-1">{h.ksvChinh}</div>
-                      <div className="mt-2 text-lg font-bold text-red-600">{h.thoiHanBaoQuan || "—"}</div>
+                      {/* Số lưu trữ là thứ QUAN TRỌNG NHẤT trên tag (theo yêu cầu người dùng —
+                          không cần thêm QR vì đã có "In mã QR" riêng cho việc đó, tag này chỉ cần
+                          dễ quan sát bằng mắt) — cỡ chữ to nhất, đậm nhất, màu đen thuần (không
+                          phải màu nhạt) để in ra rõ nét kể cả bản in đen trắng/photo lại. */}
+                      <div className="text-xs text-slate-500 uppercase tracking-wide font-medium">Số lưu trữ</div>
+                      <div className="text-8xl font-black text-slate-900 leading-none my-1">{h.nhanSo}</div>
+                      <div className="mt-3 text-sm font-medium break-words px-1">{h.tenVu}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">{h.ksvChinh}</div>
+                      <div className="mt-2 text-xl font-bold text-red-600">{h.thoiHanBaoQuan || "—"}</div>
                     </>
                   )}
                 </div>
@@ -12344,16 +12348,23 @@ function ManChiTietDot({ dot, dsHoSo, dangTaiHoSo, onDoiSelected }) {
     return <div className="max-w-6xl">{header}<div className="text-sm text-slate-400">Đang tải...</div></div>;
   }
 
-  if (dot.trangThai === "dang_mo" && dsHoSo.length === 0 && !dangXemTruoc) {
-    return <div className="max-w-6xl">{header}<ManChuanBiDanhSach onXemTruoc={setDangXemTruoc} /></div>;
-  }
-
-  if (dangXemTruoc) {
+  // Đang ở giai đoạn "chuẩn bị" (đợt mở, chưa có hồ sơ nào) — ManChuanBiDanhSach LUÔN được giữ
+  // MOUNTED suốt giai đoạn này, chỉ ẨN bằng CSS (className="hidden") khi đang xem trước, thay vì
+  // gỡ hẳn khỏi cây (conditional rendering kiểu cũ). Bug đã sửa (2026-07-26, theo phản hồi người
+  // dùng): trước đây "Quay lại chỉnh sửa" set dangXemTruoc=null làm ManChuanBiDanhSach bị UNMOUNT
+  // rồi MOUNT LẠI từ đầu — mất sạch bộ lọc tháng/năm + các dòng đã tick, phải làm lại toàn bộ. Giữ
+  // mounted thì state nội bộ (bộ lọc/dsChon/ungVien đã tải) sống nguyên qua lại giữa 2 màn.
+  if (dot.trangThai === "dang_mo" && dsHoSo.length === 0) {
     return (
       <div className="max-w-6xl">
         {header}
-        <ManXemTruocChot dot={dot} dsXemTruoc={dangXemTruoc} onQuayLai={() => setDangXemTruoc(null)}
-                          onXongChot={() => setDangXemTruoc(null)} />
+        <div className={dangXemTruoc ? "hidden" : ""}>
+          <ManChuanBiDanhSach onXemTruoc={setDangXemTruoc} />
+        </div>
+        {dangXemTruoc && (
+          <ManXemTruocChot dot={dot} dsXemTruoc={dangXemTruoc} onQuayLai={() => setDangXemTruoc(null)}
+                            onXongChot={() => setDangXemTruoc(null)} />
+        )}
       </div>
     );
   }
