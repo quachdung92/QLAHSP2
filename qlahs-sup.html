@@ -12264,10 +12264,44 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
   );
 }
 
+// Modal gõ lại mã xác nhận ngẫu nhiên trước khi thực hiện hành động quan trọng (2026-07-26, theo
+// yêu cầu người dùng — thêm an toàn cho "Chốt danh sách"/"Huỷ chốt hoàn toàn", 2 hành động dễ ảnh
+// hưởng hàng loạt hồ sơ nếu bấm nhầm) — tái dùng đúng pattern `taoMaXacNhanNgauNhien` đã có ở
+// `XoaVuAnModal` thay vì `window.confirm()` (dễ bấm "OK" theo phản xạ mà không đọc kỹ nội dung).
+function XacNhanMaModal({ tieuDe, canhBao, nhanNutXacNhan, dangXuLy, loi, onDong, onXacNhan }) {
+  const [maXacNhan] = useState(() => taoMaXacNhanNgauNhien());
+  const [xacNhan, setXacNhan] = useState("");
+  const xacNhanDung = xacNhan.trim().toUpperCase() === maXacNhan;
+
+  return (
+    <KhungModalHanhDong tieuDe={tieuDe}>
+      <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4 whitespace-pre-line">
+        {canhBao}
+      </div>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">
+        Gõ lại mã xác nhận <span className="font-mono font-bold text-base tracking-widest text-red-600">{maXacNhan}</span> để tiếp tục:
+      </label>
+      <input value={xacNhan} onChange={e => setXacNhan(e.target.value)} className={oInput + " mb-4 font-mono tracking-widest uppercase"}
+             autoFocus maxLength={4} disabled={dangXuLy} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} disabled={dangXuLy} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+          Huỷ
+        </button>
+        <button onClick={onXacNhan} disabled={!xacNhanDung || dangXuLy}
+                className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50">
+          {nhanNutXacNhan}
+        </button>
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
 // ── Màn xem trước đã sắp xếp + Chốt danh sách (sinh soThuTu/nhanSo, khoá đợt) ───────────────────
 function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
   const [dangChot, setDangChot] = useState(false);
   const [loi, setLoi] = useState("");
+  const [hienXacNhanChot, setHienXacNhanChot] = useState(false);
 
   const chot = async () => {
     setDangChot(true); setLoi("");
@@ -12358,7 +12392,7 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
         </table>
       </div>
       <div className="flex gap-2">
-        <button onClick={chot} disabled={dangChot}
+        <button onClick={() => setHienXacNhanChot(true)} disabled={dangChot}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
           {dangChot ? "Đang chốt..." : `Chốt danh sách (${dsXemTruoc.length} vụ)`}
         </button>
@@ -12366,6 +12400,17 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
           ← Quay lại chỉnh sửa
         </button>
       </div>
+      {hienXacNhanChot && (
+        <XacNhanMaModal
+          tieuDe="Xác nhận Chốt danh sách"
+          canhBao={`Sắp SINH SỐ LƯU TRỮ CỐ ĐỊNH cho ${dsXemTruoc.length} hồ sơ và KHOÁ đợt lại — số này sẽ dùng để ghi lên hồ sơ giấy, tránh bấm nhầm.`}
+          nhanNutXacNhan={dangChot ? "Đang chốt..." : "Xác nhận Chốt"}
+          dangXuLy={dangChot}
+          loi={loi}
+          onDong={() => { setHienXacNhanChot(false); setLoi(""); }}
+          onXacNhan={chot}
+        />
+      )}
     </div>
   );
 }
@@ -12806,6 +12851,9 @@ function ManSoLuuTru({ dot, dsHoSo }) {
   // ManSuaLaiDanhSachDaChot/ManXemTruocSuaDoi ngay phía trên.
   const [dangSuaLai, setDangSuaLai] = useState(false);
   const [dsXemTruocSua, setDsXemTruocSua] = useState(null);
+  // "Huỷ chốt hoàn toàn" — gõ mã xác nhận qua XacNhanMaModal, xem huyChotHoanToan bên dưới.
+  const [hienXacNhanHuyChot, setHienXacNhanHuyChot] = useState(false);
+  const [loiHuyChot, setLoiHuyChot] = useState("");
 
   const daChot = dot.trangThai === "da_chot";
 
@@ -12838,16 +12886,7 @@ function ManSoLuuTru({ dot, dsHoSo }) {
   // người dùng nêu: (1) đề phòng ấn nhầm nút "Chốt danh sách", (2) đang test cần bật/tắt qua lại
   // giữa 2 trạng thái "chuẩn bị"/"đã chốt" nhiều lần cho tiện, không muốn để lại STT/hồ sơ rác.
   const huyChotHoanToan = async () => {
-    const soDaLenKhoHienTai = dsHoSo.filter(h => h.thoiDiemQuetXacNhan).length;
-    const canhBaoLenKho = soDaLenKhoHienTai > 0
-      ? `\n\n⚠ Có ${soDaLenKhoHienTai} hồ sơ ĐÃ xác nhận lên Kho — trạng thái này sẽ MẤT LUÔN, không khôi phục lại được.`
-      : "";
-    if (!confirm(
-      `Huỷ chốt HOÀN TOÀN — xoá sạch ${dsHoSo.length} hồ sơ khỏi đợt (kể cả Số lưu trữ đã sinh) và ` +
-      `quay lại đúng màn "Chuẩn bị danh sách" như lúc CHƯA từng bấm Chốt?${canhBaoLenKho}\n\n` +
-      `KHÔNG THỂ HOÀN TÁC.`
-    )) return;
-    setDangThaoTac(true);
+    setDangThaoTac(true); setLoiHuyChot("");
     try {
       // Xoá theo lô tối đa 400 (giới hạn kích thước batch, cùng cỡ lô đã dùng ở cascade xoá vụ án).
       for (let i = 0; i < dsHoSo.length; i += 400) {
@@ -12859,8 +12898,13 @@ function ManSoLuuTru({ dot, dsHoSo }) {
         trangThai: "dang_mo", ngayChot: null, nguoiChot: null, ngayMoKhoaGanNhat: null, nguoiMoKhoaGanNhat: null,
       });
       addToast(`Đã huỷ chốt — xoá ${dsHoSo.length} hồ sơ, quay lại màn chuẩn bị danh sách.`);
-    } catch (err) { console.error(err); addToast("Lỗi khi huỷ chốt: " + err.message, "error"); }
-    finally { setDangThaoTac(false); }
+      setHienXacNhanHuyChot(false);
+    } catch (err) {
+      console.error(err);
+      setLoiHuyChot("Lỗi khi huỷ chốt: " + err.message);
+    } finally {
+      setDangThaoTac(false);
+    }
   };
 
   const xoaDong = async (id) => {
@@ -12973,7 +13017,7 @@ function ManSoLuuTru({ dot, dsHoSo }) {
             <button onClick={moKhoa} disabled={dangThaoTac} className="text-sm border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
               🔓 Mở khoá
             </button>
-            <button onClick={huyChotHoanToan} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
+            <button onClick={() => setHienXacNhanHuyChot(true)} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
               ↩ Huỷ chốt hoàn toàn
             </button>
           </>
@@ -12986,7 +13030,7 @@ function ManSoLuuTru({ dot, dsHoSo }) {
             <button onClick={() => setDangSuaLai(true)} disabled={dangThaoTac} className="text-sm border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
               ✎ Sửa lại danh sách
             </button>
-            <button onClick={huyChotHoanToan} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
+            <button onClick={() => setHienXacNhanHuyChot(true)} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
               ↩ Huỷ chốt hoàn toàn
             </button>
           </>
@@ -13099,6 +13143,22 @@ function ManSoLuuTru({ dot, dsHoSo }) {
 
       {hienInSo && <InSoLuuTruModal dot={dot} dsHoSo={dsHoSo} onDong={() => setHienInSo(false)} />}
       {hienInTag && <InTagLuuTruModal dsHoSo={dsHoSo.filter(h => dsChonIn.has(h.id))} onDong={() => setHienInTag(false)} />}
+      {hienXacNhanHuyChot && (
+        <XacNhanMaModal
+          tieuDe="Xác nhận Huỷ chốt hoàn toàn"
+          canhBao={
+            `Sẽ XOÁ SẠCH ${dsHoSo.length} hồ sơ khỏi đợt (mất hết Số lưu trữ đã sinh) và quay lại ` +
+            `đúng màn "Chuẩn bị danh sách" như chưa từng bấm Chốt.` +
+            (soDaLenKho > 0 ? `\n\n⚠ Có ${soDaLenKho} hồ sơ ĐÃ xác nhận lên Kho — trạng thái này sẽ MẤT LUÔN.` : "") +
+            `\n\nKHÔNG THỂ HOÀN TÁC.`
+          }
+          nhanNutXacNhan={dangThaoTac ? "Đang xử lý..." : "Xác nhận Huỷ chốt"}
+          dangXuLy={dangThaoTac}
+          loi={loiHuyChot}
+          onDong={() => { setHienXacNhanHuyChot(false); setLoiHuyChot(""); }}
+          onXacNhan={huyChotHoanToan}
+        />
+      )}
     </div>
   );
 }

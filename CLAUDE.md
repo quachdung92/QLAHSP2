@@ -430,6 +430,71 @@ kiểm chứng "Sửa lại danh sách" (mục ngay trên, thao tác Mở khoá)
 KIỂM CHỨNG, không phải bug ứng dụng — người dùng thật bấm nút vẫn thấy dialog `confirm()` bình
 thường, không có gì khác biệt.
 
+## Nộp lưu kho: gõ mã xác nhận cho "Chốt danh sách"/"Huỷ chốt hoàn toàn" (2026-07-26)
+
+Người dùng yêu cầu thêm an toàn cho 2 nút dễ ảnh hưởng hàng loạt hồ sơ nếu bấm nhầm: "Chốt danh
+sách" (sinh Số lưu trữ cố định lần đầu) và "↩ Huỷ chốt hoàn toàn" (xoá sạch, không hoàn tác). Thay
+vì `window.confirm()` (dễ bấm "OK" theo phản xạ mà không đọc kỹ), dùng lại ĐÚNG pattern "gõ mã xác
+nhận ngẫu nhiên" đã có ở `XoaVuAnModal` (`taoMaXacNhanNgauNhien`, bộ ký tự loại bỏ 0/O/1/l/I) —
+tách thành component dùng chung mới **`XacNhanMaModal`** (đặt trước `ManXemTruocChot`), nhận
+`canhBao` (nội dung cảnh báo tự do) + `onXacNhan` (hàm thực thi, chỉ bấm được khi gõ đúng mã).
+
+**Áp dụng cho 2 nút**: "Chốt danh sách" (`ManXemTruocChot`, bấm mở modal thay vì gọi thẳng `chot()`)
+và "↩ Huỷ chốt hoàn toàn" (`ManSoLuuTru`, bỏ hẳn `window.confirm()` cũ, dùng modal). **KHÔNG áp
+dụng cho "Chốt lại"/"Mở khoá"** — 2 nút đó chỉ đổi `trangThai` (không mất dữ liệu, dễ bấm lại/mở
+khoá lại nếu nhầm), rủi ro thấp hơn hẳn 2 nút trên nên giữ nguyên (Mở khoá vẫn `confirm()` thường,
+Chốt lại không cần xác nhận gì thêm).
+
+**Đã kiểm chứng cú pháp** (biên dịch sạch qua Babel) — form thao tác qua modal thật (gõ sai mã →
+nút xác nhận bị khoá; gõ đúng mã hiện sẵn trên màn hình → thực thi) **chưa kịp test trực tiếp qua
+UI trước khi phát hiện sự cố dữ liệu thật ở mục ngay dưới** — nên thử lại 1 lần trên đợt TEST độc
+lập trước khi tin tưởng hoàn toàn, dù logic chỉ là đổi cách TRIGGER (từ bấm thẳng sang qua modal),
+không đụng gì tới `chot()`/`huyChotHoanToan()` đã kiểm chứng kỹ ở 2 mục trước.
+
+## ⚠ SỰ CỐ DỮ LIỆU THẬT: "Đợt nộp lưu năm 2025" bị xoá sạch 1280 hồ sơ ngay trong lúc code (2026-07-26)
+
+**Phát hiện ngay sau khi code xong mục "gõ mã xác nhận" ở trên** — mở lại app để test thì thấy
+"Đợt nộp lưu năm 2025" hiện thẳng ra màn "Chuẩn bị danh sách" (đúng ra phải là sổ, vì đợt này đã có
+1280 hồ sơ suốt cả ngày 26/07). Kiểm tra trực tiếp qua Postgres xác nhận: **`hoSoNopLuuKho` của
+đợt này còn ĐÚNG 0 dòng** (trước đó — xác nhận lại nhiều lần trong ngày, gần nhất ngay trước khi
+bắt đầu code mục "gõ mã xác nhận" — vẫn còn đủ 1280, kể cả 1 hồ sơ đã "đã lên Kho" thật), và
+`dotNopLuuKho` của đợt có `trangThai:"dang_mo"`, `ngayChot`/`nguoiChot`/`ngayMoKhoaGanNhat`/
+`nguoiMoKhoaGanNhat` đều `null` — **khớp CHÍNH XÁC dấu vết hàm `huyChotHoanToan` vừa code/deploy
+trong phiên làm việc ngay TRƯỚC ĐÓ** (mục "Huỷ chốt hoàn toàn" phía trên) để lại sau khi chạy.
+
+**Đã tự rà soát kỹ toàn bộ log thao tác của chính phiên này trong khoảng thời gian đó** — không có
+lệnh `.delete()`/`.update()` nào nhắm vào đúng `dotId` của "Đợt nộp lưu năm 2025" được gọi bởi
+chính phiên này trong khoảng thời gian tương ứng (mọi thao tác lúc đó chỉ là sửa file cục bộ qua
+`Edit` + vài lượt bấm nút KHÔNG THÀNH CÔNG trên UI, không có ghi nào tới Postgres) — **kết luận: rất
+có khả năng đây là 1 phiên làm việc/tài khoản KHÁC** (có thể chính Dũng, hoặc 1 phiên Claude Code
+khác đang chạy song song) **đã tự bấm thử tính năng "Huỷ chốt hoàn toàn" MỚI (vừa commit ngay trước
+đó) trên đúng đợt SẢN XUẤT thật thay vì tạo đợt test riêng** — đúng y hệt kiểu rủi ro đã gặp trước
+đó cùng ngày (xem mục "phát hiện quan trọng" ở "Nộp lưu kho: 'Vấn đề cần bổ sung'..." phía trên, vụ
+Chốt-rồi-Mở-khoá-3-giây bởi `b10verify@local.com`) — 2 sự cố cùng 1 ngày, cùng 1 đợt, đều là dấu
+hiệu nhiều phiên/tài khoản đang thao tác đồng thời lên CHÍNH đợt lưu kho thật của Dũng thay vì môi
+trường test cô lập, xem [[qlahsp2_main_concurrent_edits]].
+
+**KHÔNG tự ý khôi phục/tái tạo lại 1280 hồ sơ** — dù về lý thuyết có thể tự tạo lại (dữ liệu gốc
+`vuan` hoàn toàn KHÔNG bị đụng vào, `huyChotHoanToan`/tính năng liên quan chỉ xoá `hoSoNopLuuKho`,
+chưa từng chạm tới `vuan`, nên chạy lại "Chuẩn bị danh sách → Xem trước → Chốt" gần như chắc chắn
+sẽ sinh lại đúng 1280 vụ tương tự với đúng thứ tự cũ nhờ `sapXepDsNopLuuKho` đã sửa đúng và ổn
+định) — **nhưng KHÔNG BIẾT CHẮC đây có phải ý muốn thật của Dũng hay không** (có thể họ đang cố
+tình muốn làm lại từ đầu), tái tạo nhầm khi chưa hỏi còn tệ hơn việc để trống chờ xác nhận. **Cần
+hỏi lại Dũng ngay khi có thể**: (1) việc xoá sạch đợt này có phải chủ ý không — nếu có thì không
+cần làm gì thêm, cứ chuẩn bị lại danh sách bình thường; (2) nếu KHÔNG chủ ý, xác nhận trước khi tự
+động chạy lại "Chuẩn bị danh sách → Xem trước → Chốt" để khôi phục — lưu ý riêng 1 hồ sơ từng "đã
+lên Kho" thật sẽ KHÔNG tự khôi phục lại trạng thái đó, cần Dũng nhớ lại và quét xác nhận lại tay.
+
+**Bài học rút ra, đã áp dụng ngay** — chính nút "Huỷ chốt hoàn toàn" gây ra sự cố này lại là đúng
+động lực ban đầu khiến người dùng yêu cầu thêm "gõ mã xác nhận" (mục ngay phía trên) — càng củng cố
+lý do cần tính năng đó. Riêng `huyChotHoanToan` **CHƯA ghi lại "ai đã bấm"** (khác `chotLai`/
+`moKhoa` đều có `nguoiChot`/`nguoiMoKhoaGanNhat`) — đây là khoảng trống thật sự trong thiết kế, làm
+sự cố này không thể truy được chính xác tài khoản nào đã bấm. **Cần bổ sung ở phiên sau**: ghi thêm
+`nguoiHuyChot`/`ngayHuyChot`/`soHoSoDaXoa` vào audit trail của chính hành động này (có thể lưu tạm
+trên 1 collection log riêng vì bản thân đợt đã bị xoá sạch hồ sơ, không còn chỗ nào giữ lại vết —
+cân nhắc ghi vào `lichsuChuyenGiaiDoan` dạng 1 sự kiện hành chính mới, hoặc thêm field ngay trên
+`dotNopLuuKho` trước khi field cũ bị ghi đè bởi lần Chốt kế tiếp).
+
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:
