@@ -278,19 +278,26 @@ lại đúng `giaoNhanDocs` đã tải sẵn cho `daNop`, không query thêm. R�
 bảng xem trước, sổ trên màn hình, kết quả quét tra cứu, **và sổ in** (`InSoLuuTruModal`, yêu cầu
 chính) + Excel xuất theo KSV.
 
-**⚠ CHƯA CHẠY ĐƯỢC ALTER TABLE thật lên Supabase** — thiếu mật khẩu DB trong phiên làm việc này
-(không có sẵn trong env, theo đúng quy tắc "không ghi vào repo, hỏi lại Dũng nếu phiên sau cần
-dùng"). Đã sửa `add_nop_luu_kho_2026-07-23.sql` (CREATE TABLE gốc, vì nhánh chưa merge/deploy) và
+**✅ ĐÃ CHẠY ALTER TABLE thật lên Supabase (2026-07-26, sau khi Dũng cung cấp mật khẩu DB)** — lúc
+code ban đầu thiếu mật khẩu (không có sẵn trong env, theo đúng quy tắc "không ghi vào repo"), đã
+sửa `add_nop_luu_kho_2026-07-23.sql` (CREATE TABLE gốc, vì lúc đó nhánh chưa merge/deploy) và
 `schema.sql` — 2 cột `soButLuc`/`soTapHoSo` (text, nullable). Code JS đã kiểm chứng AN TOÀN khi
 cột CHƯA tồn tại: `batch_commit` RPC tự lọc bỏ field không khớp cột nào của bảng (không lỗi, chỉ
 im lặng không ghi được 2 field mới) — xác nhận qua đọc trực tiếp 1 dòng `hoSoNopLuuKho` thật, thiếu
-hẳn 2 key này. **Việc cần làm để hoàn tất**: chạy 2 lệnh sau qua Supabase SQL Editor (project
-`eutatszoaseixchvjbtg`) hoặc qua Session pooler (xem `supabase/README.md`):
+hẳn 2 key này. Sau khi có mật khẩu, đã chạy đúng 2 lệnh sau qua Session pooler (script Node tạm
+trong scratchpad, dùng package `pg` cài tạm rồi gỡ ngay sau, mật khẩu chỉ truyền qua biến môi
+trường lúc chạy, không ghi vào file nào — đúng quy tắc `supabase/README.md`):
 ```sql
 alter table "hoSoNopLuuKho" add column "soButLuc" text;
 alter table "hoSoNopLuuKho" add column "soTapHoSo" text;
 notify pgrst, 'reload schema';
 ```
+Xác nhận qua `information_schema.columns`: cả 2 cột đã tồn tại đúng kiểu `text`. **Đã kiểm chứng
+thêm 1 vòng round-trip GHI THẬT qua UI** (đợt TEST riêng, 1 vụ có sẵn Số bút lục "88" từ trước) —
+Chuẩn bị danh sách → Xem trước → Chốt (qua đúng modal gõ mã xác nhận) → đọc thẳng lại document
+`hoSoNopLuuKho` vừa tạo qua Postgres → xác nhận `soButLuc: "88"` đã LƯU THẬT (khác lần kiểm chứng
+trước chỉ xác nhận HIỂN THỊ đúng, chưa xác nhận LƯU được). Đã dọn sạch đợt TEST ngay sau đó. Từ nay
+tính năng "Số bút lục"/"Số tập" hoạt động đầy đủ trên production, không còn phần nào dang dở.
 
 **Đã kiểm chứng phần join (soButLuc/soTapHoSo) bằng Supabase production thật** — mở lại
 `ManChuanBiDanhSach` cho 1 đợt mới, thấy đúng 3 giá trị Số bút lục thật (88/172/187) khớp với các
