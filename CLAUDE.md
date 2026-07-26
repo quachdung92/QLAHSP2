@@ -2,7 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Tính năng mới: "Nộp lưu kho" (2026-07-23/26, nhánh `nop-luu-kho`, `qlahs-sup.html`)
+## Tính năng "Nộp lưu kho" — ĐÃ MERGE VÀO `main` + ĐÃ DEPLOY LÊN PRODUCTION (2026-07-23/26, `qlahs-sup.html`)
+
+**Trạng thái hiện tại (2026-07-26)**: đã merge nhánh `nop-luu-kho` vào `main` (11 commit, không xung
+đột) và deploy thật lên `qlahsp2.web.app` qua `./deploy.sh prod` — tính năng đang CHẠY THẬT, 4 cán
+bộ dùng được ngay. 2 cột `soButLuc`/`soTapHoSo` trên `hoSoNopLuuKho` đã `ALTER TABLE` xong trên
+Supabase thật (xem mục riêng cuối phần "Nộp lưu kho" bên dưới). Không còn phần nào dang dở của
+tính năng này — các dòng "CHƯA merge/deploy" xuất hiện rải rác trong các mục con bên dưới là ghi
+chú tại THỜI ĐIỂM VIẾT (lúc đó đúng là chưa), giữ nguyên làm lịch sử phát triển, KHÔNG còn đúng với
+hiện tại — đọc dòng trạng thái này ở đầu mục làm nguồn sự thật mới nhất.
 
 Theo yêu cầu người dùng — module hoàn toàn mới, **ĐỘC LẬP với "Nộp hồ sơ lưu trữ"** đã có trong
 Giao nhận hồ sơ (đó là luồng KSV/ĐTV nộp hồ sơ CHO bộ phận lưu trữ để thống kê, ghi qua
@@ -71,9 +79,10 @@ kích thước file vô hại đã biết).
 vẫn đúng, không có vòng lặp render vô hạn) — đã chuyển hẳn sang kiểm chứng qua các tool còn hoạt
 động, không ảnh hưởng độ tin cậy của kết quả kiểm chứng.
 
-**Chưa làm / ngoài phạm vi lần này**: chưa merge nhánh `nop-luu-kho` vào `main` (đang chờ người
-dùng xác nhận trước khi merge/deploy, theo đúng thói quen đã thiết lập ở các tính năng trước —
-merge+deploy là hành động ảnh hưởng dữ liệu thật của 4 cán bộ, luôn hỏi trước).
+**Cập nhật (2026-07-26, cuối ngày)**: đã merge `nop-luu-kho` vào `main` + deploy `qlahsp2.web.app`
+theo đúng yêu cầu người dùng, sau khi đã kiểm chứng đầy đủ toàn bộ tính năng — xem dòng trạng thái
+ở đầu mục "Nộp lưu kho" (đầu file) để biết tình hình mới nhất, dòng "chưa merge" ở trên chỉ còn giá
+trị lịch sử tại thời điểm viết.
 
 **Không cần mã QR trên tag** (đã hỏi lại, người dùng xác nhận CHỦ ĐỘNG không cần — đã có "In mã QR"
 riêng cho việc đó ở panel chi tiết vụ án, tag này chỉ cần dễ quan sát bằng mắt) — thay vào đó
@@ -107,10 +116,14 @@ ghi các số này, không phải tên vụ, dễ đối chiếu nhầm nếu ch
 **3 cột mới trên `hoSoNopLuuKho`** (`soQdKtva` text, `ngayQdKtva` timestamptz,
 `soQuyetDinhGiaiQuyet` text) — snapshot lúc thêm vào đợt (Chốt hoặc Chèn sau), giống các field
 snapshot khác đã có. Đã ALTER TABLE thêm 3 cột này lên Supabase thật, sửa trực tiếp CREATE TABLE
-trong `add_nop_luu_kho_2026-07-23.sql` (KHÔNG tạo file migration mới — tính năng này vẫn đang trên
-nhánh riêng CHƯA merge/deploy, nên coi là chỉnh sửa tiếp bản thiết kế đang làm dở, khác hẳn nguyên
-tắc "không sửa lại file migration đã chạy" áp dụng cho bảng ĐÃ có dữ liệu thật/đã lên production —
-xem `batch_commit_2026-07-20.sql` để so sánh cách xử lý khi bảng đã thật sự ổn định).
+trong `add_nop_luu_kho_2026-07-23.sql` (KHÔNG tạo file migration mới — LÚC ĐÓ tính năng này vẫn
+đang trên nhánh riêng CHƯA merge/deploy nên coi là chỉnh sửa tiếp bản thiết kế đang làm dở, khác
+hẳn nguyên tắc "không sửa lại file migration đã chạy" áp dụng cho bảng ĐÃ có dữ liệu thật/đã lên
+production — xem `batch_commit_2026-07-20.sql` để so sánh cách xử lý khi bảng đã thật sự ổn định).
+**⚠ Từ 2026-07-26 trở đi, `hoSoNopLuuKho`/`dotNopLuuKho` ĐÃ ổn định (merge vào `main` + deploy
+production + có dữ liệu thật)** — nguyên tắc "sửa trực tiếp file migration" ở trên KHÔNG còn áp
+dụng nữa; mọi thay đổi schema tiếp theo cho 2 bảng này phải theo đúng quy tắc chung (tạo file
+migration mới, không sửa lại `add_nop_luu_kho_2026-07-23.sql`), giống mọi bảng ổn định khác.
 
 Thêm cột vào: bảng ứng viên (`ManChuanBiDanhSach`), bảng xem trước (`ManXemTruocChot`), sổ trên màn
 hình + kết quả quét tra cứu (`ManSoLuuTru`), và **in sổ** (`InSoLuuTruModal`, quan trọng nhất vì đây
