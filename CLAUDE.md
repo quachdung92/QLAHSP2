@@ -95,9 +95,10 @@ chưa tick (không phải "chọn hết" mặc định).
 
 **Xác nhận lại sort đúng yêu cầu + thêm cột Số/Ngày QĐ KTVA + Số/Ngày QĐ giải quyết (2026-07-26)**
 — người dùng nhắc lại tiêu chí sort (thời hạn → hình thức GQ gộp nhóm → cùng KSV đứng cạnh nhau);
-rà lại `sapXepDsNopLuuKho` xác nhận ĐÃ ĐÚNG từ đầu (so sánh có thứ tự ưu tiên, chỉ xét tiêu chí sau
-khi tiêu chí trước bằng nhau — tự động thoả cả 2 yêu cầu "gộp nhóm" và "cùng KSV cạnh nhau"), không
-cần sửa gì, chỉ ghi rõ thêm comment giải thích. Yêu cầu chính là thêm cột **Số QĐ KTVA/Ngày QĐ
+rà lại `sapXepDsNopLuuKho` lúc đó **kết luận NHẦM là "ĐÃ ĐÚNG từ đầu"** (chỉ test bằng 2 giá trị thời
+hạn hữu hạn khác nhau "47 năm"/"33 năm", không test trường hợp 2 dòng cùng "Vĩnh viễn") — **kết luận
+này SAI, đã bị người dùng phát hiện lại bằng ảnh chụp thật ngay sau đó, xem mục sửa bug ngay dưới
+đây**. Yêu cầu chính lúc này là thêm cột **Số QĐ KTVA/Ngày QĐ
 KTVA** (từ `vuan.soQdKtva`/`ngayQdKtva`) và **Số QĐ giải quyết** (qua `fieldSoQuyetDinhTrenVuAn`,
 field mới `laySoQdGiaiQuyetNopLuuKho`) + **Ngày GQ** (đã có sẵn ở màn chuẩn bị, còn thiếu ở màn xem
 trước/sổ) — "để biết còn thiếu vụ nào" khi đối chiếu sổ điện tử với bìa hồ sơ giấy (bìa hồ sơ luôn
@@ -124,6 +125,80 @@ năm trước 33 năm, sổ sau khi chốt, và sổ in khổ ngang). Quét tra 
 kết quả ngay sau khi gõ+Enter) — hoá ra chỉ là kiểm tra lại quá sớm trước khi React kịp render, gọi
 lại `read_page`/`get_page_text` sau đó xác nhận kết quả hiện đúng đầy đủ (Số/Ngày QĐ KTVA + QĐ GQ),
 không phải bug thật. Đã dọn sạch dữ liệu test sau khi kiểm chứng. 0 lỗi console liên quan.
+
+## Bug thật đã sửa: sắp xếp nộp lưu kho ra lộn xộn khi nhiều dòng cùng "Vĩnh viễn" (2026-07-26)
+
+Ngay sau mục ở trên (lúc đó kết luận NHẦM "đã đúng từ đầu") — người dùng gửi ảnh chụp màn "Xem
+trước" thật: 15 dòng cùng "Vĩnh viễn" nhưng cột Hình thức GQ (Đình chỉ/Tạm đình chỉ/Đã xét xử) xen
+kẽ lộn xộn, KHÔNG gộp nhóm — chứng minh trực tiếp bản sửa trước sai. Người dùng cũng nói rõ lại
+thuật toán mong muốn bằng 5 bước: (1) gộp theo thời hạn bảo quản, (2) trong đó gộp theo hình thức
+giải quyết, (3) trong đó gộp theo KSV, (4) trong đó sắp theo thứ tự thời gian ngày giải quyết,
+(5) lặp lại — tức **thêm hẳn 1 tiêu chí thứ 4 (ngày giải quyết) chưa từng có trước đó**.
+
+**Nguyên nhân thật**: `thoiHanBaoQuanSortKey("Vĩnh viễn")` trả về `Infinity`. Bản so sánh cũ tính
+`kb - ka` (trừ trực tiếp) rồi `if (diff !== 0) return diff` — khi CẢ 2 dòng đều "Vĩnh viễn",
+`Infinity - Infinity = NaN` trong JS, và **`NaN !== 0` luôn là `true`** — comparator trả về `NaN`
+(bị `Array.sort` hiểu là "không đổi vị trí nhưng không dừng lại đúng") NGAY TỪ tiêu chí đầu tiên,
+bỏ qua hẳn tiêu chí hình thức/KSV phía sau dù code 2 tiêu chí đó không hề sai. Đây đúng là lý do
+lần kiểm chứng trước (chỉ so "47 năm" và "33 năm", đều là số hữu hạn, không bao giờ ra `NaN`) không
+phát hiện được lỗi — **bài học: test comparator phải thử cả trường hợp 2 giá trị đầu-tiêu-chí BẰNG
+NHAU (đặc biệt giá trị đặc biệt như `Infinity`), không chỉ thử các giá trị khác nhau**.
+
+**Đã sửa** `sapXepDsNopLuuKho`: thay phép trừ bằng so sánh tường minh `ka !== kb` (không có phép
+tính số học nào có thể ra `NaN`), và thêm hẳn tiêu chí thứ 4 — `layNgayGiaiQuyetMsNopLuuKho(v)`
+(đọc `v.ngayQuyetDinh ?? v.ngayGiaiQuyet` — 2 tên field khác nhau giữa object "vuan" gốc và
+"hoSoNopLuuKho" đã snapshot, chịu được cả Timestamp/Date/chuỗi ISO) — áp dụng SAU tiêu chí KSV,
+đúng thứ tự 4 bước người dùng mô tả.
+
+**Đã kiểm chứng lại bằng dữ liệu Supabase production thật, KHÔNG dùng dữ liệu giả** — đúng đợt
+"Đợt nộp lưu năm 2025" người dùng đang chuẩn bị thật (1280 vụ, trạng thái "Đang mở", chưa Chốt):
+bấm "Sắp xếp & Xem trước" (chỉ tính toán phía client, KHÔNG ghi Firestore/Supabase — an toàn đọc)
+rồi đọc trực tiếp DOM bảng xem trước — xác nhận: mọi dòng "Vĩnh viễn" gộp lên đầu; trong đó "Tạm
+đình chỉ" gộp liền một khối (đúng thứ tự cố định); trong khối đó, "Đặng Văn Sỹ" (24 dòng liền
+nhau) rồi mới tới "Đào Việt Dũng" (14+ dòng liền nhau) — không còn xen kẽ; NGÀY GIẢI QUYẾT trong
+từng nhóm KSV tăng dần đúng thứ tự thời gian (VD nhóm Đặng Văn Sỹ: 04/04/2025 → 16/05/2025 →
+22/05/2025 → ... → 06/10/2025). Đã bấm "← Quay lại chỉnh sửa" ngay sau đó, KHÔNG bấm "Chốt" —
+không có ghi nào vào dữ liệu thật trong lúc kiểm chứng.
+
+## Nộp lưu kho: "Vấn đề cần bổ sung" + Excel xuất theo KSV để rà soát trước khi chốt (2026-07-26)
+
+Cùng lúc với bug sort ở trên, người dùng yêu cầu thêm 2 phần: (1) 1 chỉ báo "vấn đề cần bổ sung"
+cho từng hồ sơ, (2) xuất Excel danh sách chia theo TỪNG KSV với đầy đủ thông tin, để mỗi KSV tự
+kiểm tra/rà soát và báo cáo lại bộ phận lưu trữ TRƯỚC KHI chốt danh sách chính thức (khác hẳn sổ
+lưu trữ chính thức in ra SAU khi chốt — đây là bản nháp để phát hiện thiếu sót sớm).
+
+**`layVanDeCanBoSungNopLuuKho(v)`** (đặt cạnh `laySoQdGiaiQuyetNopLuuKho`) — trả về mảng chuỗi mô
+tả từng chỗ thiếu: thiếu thời hạn bảo quản (phân biệt rõ "thiếu mức án" nếu là Đã xét xử, vì
+`tinhThoiHanBaoQuanVu` tự trả `null` khi thiếu `mucAnLoai` — gộp chung vào đúng 1 dòng, không tách
+riêng "thiếu mức án" thành tiêu chí khác), thiếu số QĐ giải quyết, thiếu số/ngày QĐ KTVA, ngày giải
+quyết là ngày ƯỚC TÍNH (cờ `ngayQuyetDinhUocTinh` từ Import Excel — xem mục "Import Excel: resolve
+'Mã ĐL'..." không, đúng ra xem mục ngày ước tính ở phần "Giao nhận hồ sơ" cũ), và chưa nộp hồ sơ
+giấy cho bộ phận lưu trữ (`v.daNop === false`). Hiện thành cột **"Vấn đề cần bổ sung"** mới ở cả
+bảng ứng viên (`ManChuanBiDanhSach`) lẫn bảng xem trước (`ManXemTruocChot`) — gọn thành
+`⚠ N vấn đề`/`✓ Đủ dữ liệu`, chi tiết đầy đủ nằm trong `title` (tooltip hover).
+
+**Nút "⬇ Xuất Excel theo KSV để rà soát"** (`ManChuanBiDanhSach`, cạnh "Chọn tất cả"/"Bỏ chọn tất
+cả") — xuất TOÀN BỘ `ungVien` (không riêng phần đang tick `dsChon` — KSV cần soát cả những vụ lưu
+trữ lỡ bỏ tick, không chỉ phần đã chọn). ExcelJS, 1 sheet "Tổng hợp" (tất cả) + 1 sheet riêng cho
+mỗi KSV (tên sheet khử ký tự Excel cấm `* ? : \ / [ ]` + cắt 31 ký tự + khử trùng tên nếu 2 KSV
+trùng nhau sau khi cắt) + 1 sheet gộp `"(chưa gán KSV)"`. Mỗi sheet dùng lại đúng
+`sapXepDsNopLuuKho` để thứ tự khớp với sổ chính thức sau này (dễ đối chiếu), 12 cột (STT/Mã vụ/Tên
+vụ/KSV/Hình thức GQ/Số+Ngày QĐ KTVA/Số+Ngày QĐ GQ/Thời hạn bảo quản/Tình trạng nộp/Vấn đề cần bổ
+sung — cột cuối nối chuỗi `vanDe.join("; ")`, tô màu đỏ đậm nếu "Chưa nộp", tô cam nếu có vấn đề).
+
+**Đã kiểm chứng bằng Supabase production thật** — không tải file thật xuống đĩa (môi trường test
+không mở lại file tải về được), thay vào đó chặn `URL.createObjectURL` để bắt lấy đúng `Blob` vừa
+sinh ra, nạp lại bằng `new ExcelJS.Workbook().xlsx.load(...)` NGAY TRONG TRÌNH DUYỆT để đọc lại cấu
+trúc thật (không phải suy đoán từ code) — trên "Đợt nộp lưu năm 2025" (1280 vụ, 35 KSV thật): xác
+nhận đúng **37 sheet** (Tổng hợp + 35 KSV + 1 "(chưa gán KSV)"), header 12 cột đúng thứ tự, dữ liệu
+từng dòng đúng (đối chiếu 2 dòng đầu sheet "Đặng Văn Sỹ" khớp y hệt dữ liệu đã thấy ở bảng xem
+trước lúc kiểm chứng bug sort), cột "Vấn đề cần bổ sung" nối đúng nhiều lý do bằng `"; "`. File
+~193KB cho 1280+ dòng × 37 sheet (không nhúng ảnh QR nên nhẹ, không lặp lại rủi ro treo tab đã gặp
+ở "Tải toàn bộ lịch sử giao nhận" khi có hàng nghìn ảnh QR). 0 lỗi console.
+
+**Chưa làm**: chưa tự tay tải file thật xuống đĩa rồi mở bằng Excel thật để xem bằng mắt (chỉ xác
+nhận cấu trúc qua đọc lại bằng ExcelJS trong trình duyệt) — nên thử tải 1 lần trên `qlahs-sup.html`
+thật và mở bằng Excel trước khi coi đây là đã kiểm chứng tuyệt đối 100%.
 
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 

@@ -11696,19 +11696,46 @@ function thoiHanBaoQuanSortKey(str) {
 // ksvChinh — dùng CHUNG cho cả object "vuan" gốc (lúc xem trước) lẫn "hoSoNopLuuKho" đã snapshot
 // (lúc "Tính lại toàn bộ") vì cả 2 đều có đủ 3 field này (hoSoNopLuuKho.hinhThucGiaiQuyet đóng vai
 // trò "trangThai").
-// (2026-07-26, xác nhận lại theo phản hồi người dùng) — đây LÀ ĐÚNG 1 sort có thứ tự ưu tiên rõ
-// ràng, không phải sort riêng lẻ từng cột: chỉ xét tới tiêu chí SAU khi tiêu chí TRƯỚC bằng nhau
-// (`if (x !== 0) return x`), nên tự động đảm bảo "xếp hết cùng 1 thời hạn/hình thức rồi mới sang
-// nhóm tiếp theo" và "cùng tên KSV thì luôn đứng cạnh nhau trong đúng nhóm (thời hạn, hình thức)
-// đó" — không cần sửa gì thêm, đã kiểm chứng đúng qua Playwright thật (47 năm đứng trước 33 năm).
+// Đây LÀ ĐÚNG 1 sort có thứ tự ưu tiên rõ ràng (không phải sort riêng lẻ từng cột): chỉ xét tới
+// tiêu chí SAU khi tiêu chí TRƯỚC bằng nhau, nên tự động đảm bảo "xếp hết cùng 1 thời hạn/hình
+// thức rồi mới sang nhóm tiếp theo" và "cùng tên KSV thì luôn đứng cạnh nhau trong đúng nhóm (thời
+// hạn, hình thức) đó" — ĐÚNG VỀ MẶT THIẾT KẾ.
+//
+// Bug đã sửa (2026-07-26, người dùng phát hiện qua ảnh chụp thật — danh sách xem trước "lộn xộn"
+// dù cùng "Vĩnh viễn"): bản trước tính "hb" bằng PHÉP TRỪ TRỰC TIẾP 2 khoá `kb - ka`. Khi CẢ HAI
+// đều là "Vĩnh viễn" (khoá = Infinity theo thoiHanBaoQuanSortKey), phép trừ ra `Infinity - Infinity
+// = NaN` — mà `NaN !== 0` LUÔN đúng trong JS, nên `if (hb !== 0) return hb` trả về NaN NGAY, bỏ
+// qua hoàn toàn 2 tiêu chí phụ (hình thức GQ, tên KSV) phía dưới. Đây là lỗi RẤT DỄ gặp trên dữ
+// liệu thật vì "Vĩnh viễn" là giá trị cực kỳ phổ biến (mọi vụ Tạm đình chỉ/Đình chỉ VÀ mọi án ≥16
+// năm đều ra "Vĩnh viễn") — 2 dòng cùng "Vĩnh viễn" xảy ra thường xuyên hơn hẳn 2 dòng cùng đúng 1
+// mốc số năm cụ thể, nên bug lộ ra ngay trên dữ liệu thật dù test tay trước đó (chỉ thử "47 năm" và
+// "33 năm", 2 số hữu hạn khác nhau) không phát hiện được — bài học: khi test sort có giá trị dùng
+// `Infinity`, PHẢI test riêng cả trường hợp 2 phần tử CÙNG mang giá trị đó, không chỉ test các giá
+// trị hữu hạn khác nhau. Sửa bằng so sánh 3 nhánh tường minh (so trực tiếp `ka === kb`/`ka > kb`),
+// không trừ trực tiếp — an toàn với mọi tổ hợp hữu hạn/vô hạn.
+// Ngày giải quyết ra millis — dùng CHUNG cho object "vuan" gốc (field "ngayQuyetDinh") lẫn
+// "hoSoNopLuuKho" đã snapshot (field "ngayGiaiQuyet"), chịu được cả Timestamp/Date/chuỗi ISO.
+function layNgayGiaiQuyetMsNopLuuKho(v) {
+  const d = v.ngayQuyetDinh ?? v.ngayGiaiQuyet;
+  if (!d) return 0;
+  const dt = d.toDate ? d.toDate() : (d instanceof Date ? d : new Date(d));
+  return isNaN(dt) ? 0 : dt.getTime();
+}
+
+// 4 tiêu chí ưu tiên theo đúng yêu cầu người dùng: Thời hạn bảo quản (giảm dần) -> Hình thức giải
+// quyết (thứ tự cố định, gộp nhóm) -> tên KSV (cùng KSV đứng cạnh nhau) -> Ngày giải quyết (tăng
+// dần, trong CÙNG 1 nhóm KSV) — mỗi tiêu chí chỉ xét khi các tiêu chí TRƯỚC đã bằng nhau hết.
 function sapXepDsNopLuuKho(list) {
   return [...list].sort((a, b) => {
-    const hb = thoiHanBaoQuanSortKey(b.thoiHanBaoQuan) - thoiHanBaoQuanSortKey(a.thoiHanBaoQuan);
-    if (hb !== 0) return hb;
+    const ka = thoiHanBaoQuanSortKey(a.thoiHanBaoQuan);
+    const kb = thoiHanBaoQuanSortKey(b.thoiHanBaoQuan);
+    if (ka !== kb) return kb > ka ? 1 : -1; // giảm dần — b lớn hơn thì b đứng trước
     const tta = THU_TU_HINH_THUC_NOP_LUU_KHO[a.trangThai ?? a.hinhThucGiaiQuyet] ?? 99;
     const ttb = THU_TU_HINH_THUC_NOP_LUU_KHO[b.trangThai ?? b.hinhThucGiaiQuyet] ?? 99;
     if (tta !== ttb) return tta - ttb;
-    return (a.ksvChinh || "").localeCompare(b.ksvChinh || "");
+    const ksvCmp = (a.ksvChinh || "").localeCompare(b.ksvChinh || "");
+    if (ksvCmp !== 0) return ksvCmp;
+    return layNgayGiaiQuyetMsNopLuuKho(a) - layNgayGiaiQuyetMsNopLuuKho(b);
   });
 }
 
@@ -11717,6 +11744,24 @@ function sapXepDsNopLuuKho(list) {
 function laySoQdGiaiQuyetNopLuuKho(v) {
   const f = fieldSoQuyetDinhTrenVuAn(v.trangThai ?? v.hinhThucGiaiQuyet);
   return f ? (v[f] || "") : "";
+}
+
+// "Vấn đề cần bổ sung" (2026-07-26, theo yêu cầu người dùng) — liệt kê những chỗ dữ liệu còn thiếu
+// TRƯỚC khi chốt, để hiện ngay trên bảng Chuẩn bị/Xem trước VÀ đưa vào Excel xuất theo KSV, giúp
+// từng KSV biết chính xác cần bổ sung gì thay vì phải tự dò. Chỉ áp dụng cho object dạng "vuan" gốc
+// (ManChuanBiDanhSach/ManXemTruocChot) — CHƯA gồm trường hợp thiếu mức án riêng vì tinhThoiHanBaoQuanVu
+// đã tự trả null khi thiếu, gộp chung vào đúng 1 dòng "thời hạn bảo quản" cho gọn.
+function layVanDeCanBoSungNopLuuKho(v) {
+  const vd = [];
+  if (!v.thoiHanBaoQuan) {
+    vd.push(v.trangThai === "da_xet_xu" ? "Thiếu mức án (chưa tính được thời hạn bảo quản)" : "Chưa xác định thời hạn bảo quản");
+  }
+  if (!laySoQdGiaiQuyetNopLuuKho(v)) vd.push("Thiếu số QĐ giải quyết");
+  if (!v.soQdKtva) vd.push("Thiếu số QĐ KTVA");
+  if (!v.ngayQdKtva) vd.push("Thiếu ngày QĐ KTVA");
+  if (v.ngayQuyetDinhUocTinh) vd.push("Ngày giải quyết là ngày ƯỚC TÍNH — cần xác nhận lại");
+  if (v.daNop === false) vd.push("Chưa nộp hồ sơ giấy cho bộ phận lưu trữ");
+  return vd;
 }
 
 // ── Màn "Chuẩn bị danh sách" — lọc theo tháng/năm giải quyết + tuỳ chọn mở rộng kỳ trước ────────
@@ -11811,6 +11856,86 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
   const boChonTatCa = () => setDsChon(new Set());
   const dsDaChon = ungVien.filter(v => dsChon.has(v.id));
 
+  // Xuất Excel theo KSV (2026-07-26, theo yêu cầu người dùng) — để TỪNG KSV tự kiểm tra/rà soát và
+  // báo cáo lại bộ phận lưu trữ TRƯỚC khi chốt danh sách chính thức. Xuất TOÀN BỘ ungVien (không
+  // riêng dsChon đang tick) — KSV cần soát cả những vụ lưu trữ lỡ bỏ tick, không chỉ phần đã chọn.
+  const [dangXuatKsv, setDangXuatKsv] = useState(false);
+  const xuatExcelTheoKsv = async () => {
+    if (ungVien.length === 0) return;
+    setDangXuatKsv(true);
+    try {
+      const wb = new ExcelJS.Workbook();
+      const themSheetDsVu = (tenSheet, ds) => {
+        const ws = wb.addWorksheet(tenSheet);
+        ws.views = [{ state: "frozen", ySplit: 1 }];
+        const hRow = ws.addRow([
+          "STT", "Mã vụ", "Tên vụ", "KSV", "Hình thức GQ",
+          "Số QĐ KTVA", "Ngày QĐ KTVA", "Số QĐ GQ", "Ngày GQ",
+          "Thời hạn bảo quản", "Tình trạng nộp hồ sơ giấy", "Vấn đề cần bổ sung",
+        ]);
+        hRow.font = { bold: true };
+        hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+        ws.columns = [
+          { width: 6 }, { width: 13 }, { width: 32 }, { width: 18 }, { width: 14 },
+          { width: 16 }, { width: 14 }, { width: 16 }, { width: 14 },
+          { width: 16 }, { width: 20 }, { width: 55 },
+        ];
+        // Sắp xếp cùng công thức với sổ chính thức (sapXepDsNopLuuKho) để KSV đối chiếu thuận tiện
+        // với thứ tự sẽ dùng lúc chốt, dù đây chỉ là bản rà soát chưa chốt.
+        sapXepDsNopLuuKho(ds).forEach((v, i) => {
+          const vanDe = layVanDeCanBoSungNopLuuKho(v);
+          const row = ws.addRow([
+            i + 1, hienThiMa(v), v.tenVu || "", v.ksvChinh || "(chưa gán KSV)",
+            NHAN_TRANG_THAI[v.trangThai] || v.trangThai,
+            v.soQdKtva || "", fmtDate(v.ngayQdKtva), laySoQdGiaiQuyetNopLuuKho(v) || "", fmtDate(v.ngayQuyetDinh),
+            v.thoiHanBaoQuan || "(chưa xác định)",
+            v.daNop ? "Đã nộp" : "Chưa nộp",
+            vanDe.length > 0 ? vanDe.join("; ") : "",
+          ]);
+          row.getCell(12).alignment = { wrapText: true };
+          if (vanDe.length > 0) row.getCell(12).font = { color: { argb: "FFB45309" } };
+          if (!v.daNop) row.getCell(11).font = { color: { argb: "FFDC2626" }, bold: true };
+        });
+      };
+
+      themSheetDsVu("Tổng hợp", ungVien);
+
+      const theoKsvMap = new Map();
+      ungVien.forEach(v => {
+        const k = v.ksvChinh || "(chưa gán KSV)";
+        if (!theoKsvMap.has(k)) theoKsvMap.set(k, []);
+        theoKsvMap.get(k).push(v);
+      });
+      const tenSheetDaDung = new Set(["Tổng hợp"]);
+      [...theoKsvMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([ksv, ds]) => {
+        // Tên sheet Excel: tối đa 31 ký tự, không chứa * ? : \ / [ ] — cắt bớt + khử trùng nếu 2 KSV
+        // trùng tên sau khi cắt (hiếm, nhưng không được để mất sheet do trùng tên).
+        let ten = ksv.replace(/[*?:\\/\[\]]/g, "").trim().slice(0, 31) || "KSV";
+        let dem = 2;
+        while (tenSheetDaDung.has(ten)) { ten = `${ksv.slice(0, 27)} (${dem})`.slice(0, 31); dem++; }
+        tenSheetDaDung.add(ten);
+        themSheetDsVu(ten, ds);
+      });
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `QLVA_RaSoatNopLuuKho_${toInputDateNhanh(new Date())}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      addToast(`Đã xuất ${ungVien.length} vụ, chia theo ${theoKsvMap.size} KSV để rà soát.`);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi xuất Excel: " + err.message, "error");
+    } finally {
+      setDangXuatKsv(false);
+    }
+  };
+
   return (
     <div>
       <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4">
@@ -11881,7 +12006,11 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
           <div className="flex items-center justify-between p-3 border-b border-slate-100">
             <div className="text-sm text-slate-500">{ungVien.length} vụ — đã chọn {dsChon.size}</div>
-            <div className="flex gap-3">
+            <div className="flex gap-3 items-center">
+              <button onClick={xuatExcelTheoKsv} disabled={dangXuatKsv || ungVien.length === 0}
+                      className="text-xs text-emerald-700 hover:underline disabled:opacity-50" title="Xuất để từng KSV tự kiểm tra, rà soát và báo lại bộ phận lưu trữ trước khi chốt danh sách">
+                {dangXuatKsv ? "Đang xuất..." : "⬇ Xuất Excel theo KSV để rà soát"}
+              </button>
               <button onClick={chonTatCa} className="text-xs text-indigo-600 hover:underline">Chọn tất cả</button>
               <button onClick={boChonTatCa} className="text-xs text-slate-500 hover:underline">Bỏ chọn tất cả</button>
             </div>
@@ -11904,13 +12033,16 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
                   <th className="text-left p-2">Ngày GQ</th>
                   <th className="text-left p-2">Thời hạn bảo quản</th>
                   <th className="text-left p-2">Tình trạng nộp</th>
+                  <th className="text-left p-2">Vấn đề cần bổ sung</th>
                 </tr>
               </thead>
               <tbody>
                 {ungVien.length === 0 && (
-                  <tr><td colSpan={11} className="p-4 text-center text-slate-400">Không có vụ nào khớp điều kiện lọc.</td></tr>
+                  <tr><td colSpan={12} className="p-4 text-center text-slate-400">Không có vụ nào khớp điều kiện lọc.</td></tr>
                 )}
-                {ungVien.map(v => (
+                {ungVien.map(v => {
+                  const vanDe = layVanDeCanBoSungNopLuuKho(v);
+                  return (
                   <tr key={v.id} className="border-t border-slate-100">
                     <td className="p-2 text-center"><input type="checkbox" checked={dsChon.has(v.id)} onChange={() => toggleChon(v.id)} /></td>
                     <td className="p-2 text-xs text-slate-500 whitespace-nowrap">{hienThiMa(v)}</td>
@@ -11927,8 +12059,14 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
                     <td className="p-2">
                       {v.daNop ? <Badge mau="bg-emerald-100 text-emerald-700">Đã nộp</Badge> : <Badge mau="bg-slate-200 text-slate-600">Chưa nộp</Badge>}
                     </td>
+                    <td className="p-2 text-xs max-w-[220px]">
+                      {vanDe.length > 0
+                        ? <span className="text-amber-700" title={vanDe.join("; ")}>⚠ {vanDe.length} vấn đề</span>
+                        : <span className="text-emerald-600">✓ Đủ dữ liệu</span>}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -12000,10 +12138,13 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
               <th className="text-left p-2">Số QĐ GQ</th>
               <th className="text-left p-2">Ngày GQ</th>
               <th className="text-left p-2">Thời hạn bảo quản</th>
+              <th className="text-left p-2">Vấn đề cần bổ sung</th>
             </tr>
           </thead>
           <tbody>
-            {dsXemTruoc.map((v, i) => (
+            {dsXemTruoc.map((v, i) => {
+              const vanDe = layVanDeCanBoSungNopLuuKho(v);
+              return (
               <tr key={v.id} className="border-t border-slate-100">
                 <td className="p-2 text-slate-500">{i + 1}</td>
                 <td className="p-2 text-xs text-slate-500 whitespace-nowrap">{hienThiMa(v)}</td>
@@ -12015,8 +12156,14 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
                 <td className="p-2 whitespace-nowrap">{laySoQdGiaiQuyetNopLuuKho(v) || "—"}</td>
                 <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQuyetDinh)}</td>
                 <td className="p-2">{v.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{v.thoiHanBaoQuan}</span> : <span className="text-amber-600 text-xs">⚠ Chưa xác định</span>}</td>
+                <td className="p-2 text-xs max-w-[220px]">
+                  {vanDe.length > 0
+                    ? <span className="text-amber-700" title={vanDe.join("; ")}>⚠ {vanDe.length} vấn đề</span>
+                    : <span className="text-emerald-600">✓ Đủ dữ liệu</span>}
+                </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
