@@ -296,9 +296,14 @@ notify pgrst, 'reload schema';
 `ManChuanBiDanhSach` cho 1 đợt mới, thấy đúng 3 giá trị Số bút lục thật (88/172/187) khớp với các
 vụ ĐÃ được nộp hồ sơ lưu trữ trước đó, xác nhận join lấy đúng dữ liệu nguồn dù cột đích chưa tồn
 tại để LƯU (chỉ hiển thị tại chỗ, chưa ghi được xuống Postgres cho tới khi ALTER TABLE). Phần
-`quetTraCuu`/`xacNhanDaLenKho` viết lại CHƯA kiểm chứng trực tiếp qua thao tác quét thật (xem lý do
-ở mục cảnh báo ngay dưới) — chỉ kiểm chứng gián tiếp qua đọc lại logic + tái dùng nguyên
-`xacNhanDaLenKho` đã kiểm chứng đầy đủ từ trước.
+`quetTraCuu`/`xacNhanDaLenKho` viết lại lúc đó CHƯA kiểm chứng trực tiếp qua thao tác quét thật, chỉ
+kiểm chứng gián tiếp qua đọc lại logic — **đã kiểm chứng đầy đủ qua UI thật SAU ĐÓ** (đợt TEST
+riêng, 2 vụ, gõ mã QR + Enter qua input thật, chặn `addToast` để bắt đúng nội dung toast): quét vụ
+1 rồi quét sang vụ 2 → vụ 1 tự động có "✓ <ngày>" ở cột Lên Kho (không cần bấm nút); quét lại ĐÚNG
+vụ 2 đang hiển thị → toast cảnh báo đúng "... vừa quét rồi — không quét trùng."; quét lại vụ 1 (đã
+tự xác nhận từ trước, không phải vụ đang hiển thị) → toast đúng thứ tự: tự xác nhận vụ 2 (đang hiển
+thị, chưa xác nhận) trước, RỒI mới cảnh báo "... đã được xác nhận lên Kho từ trước — quét trùng."
+cho vụ 1. Cả 3 tình huống đúng như thiết kế. Đã dọn sạch đợt TEST sau khi kiểm chứng.
 
 **⚠ PHÁT HIỆN QUAN TRỌNG lúc kiểm chứng, cần Dũng xác nhận lại**: "Đợt nộp lưu năm 2025" (đợt thật
 1280 vụ, trước đó luôn thấy ở trạng thái "Đang mở" + 0 hồ sơ suốt nhiều lượt kiểm chứng trong ngày
@@ -445,13 +450,26 @@ dụng cho "Chốt lại"/"Mở khoá"** — 2 nút đó chỉ đổi `trangThai
 khoá lại nếu nhầm), rủi ro thấp hơn hẳn 2 nút trên nên giữ nguyên (Mở khoá vẫn `confirm()` thường,
 Chốt lại không cần xác nhận gì thêm).
 
-**Đã kiểm chứng cú pháp** (biên dịch sạch qua Babel) — form thao tác qua modal thật (gõ sai mã →
-nút xác nhận bị khoá; gõ đúng mã hiện sẵn trên màn hình → thực thi) **chưa kịp test trực tiếp qua
-UI trước khi phát hiện sự cố dữ liệu thật ở mục ngay dưới** — nên thử lại 1 lần trên đợt TEST độc
-lập trước khi tin tưởng hoàn toàn, dù logic chỉ là đổi cách TRIGGER (từ bấm thẳng sang qua modal),
-không đụng gì tới `chot()`/`huyChotHoanToan()` đã kiểm chứng kỹ ở 2 mục trước.
+**Đã kiểm chứng đầy đủ qua UI thật trên đợt TEST độc lập** (tạo đợt, chọn 2 vụ thật, Xem trước, bấm
+"Chốt danh sách") — modal hiện đúng mã ngẫu nhiên (VD "A7SB"); nút "Xác nhận Chốt" `disabled=true`
+khi ô trống, VẪN `disabled=true` khi gõ mã SAI ("WRNG"), chuyển `disabled=false` NGAY khi gõ đúng
+"A7SB"; bấm xác nhận → đợt chuyển đúng "Đã chốt (khoá)" với 2 hồ sơ, sinh đúng STT. Đã dọn sạch đợt
+TEST ngay sau đó.
 
-## ⚠ SỰ CỐ DỮ LIỆU THẬT: "Đợt nộp lưu năm 2025" bị xoá sạch 1280 hồ sơ ngay trong lúc code (2026-07-26)
+## Nộp lưu kho: xác nhận sự cố "Đợt nộp lưu năm 2025" ngày 2026-07-26 là THAO TÁC CHỦ Ý của người dùng
+
+Mục ⚠ SỰ CỐ ngay dưới đây (viết lúc phát hiện, để nguyên làm lịch sử điều tra) ban đầu nghi ngờ đây
+là 1 phiên khác lỡ bấm nhầm trên dữ liệu thật. **Người dùng đã xác nhận trực tiếp ngay sau đó: "tôi
+ấn hủy chốt để quay lại bước cũ đấy"** — tức CHÍNH Dũng chủ động dùng đúng nút "↩ Huỷ chốt hoàn
+toàn" (vừa build xong) để quay lại màn chuẩn bị danh sách, không phải sự cố/thao tác nhầm. Không
+cần khôi phục gì — đúng ý muốn, họ tự chuẩn bị lại danh sách khi cần.
+
+**Bài học vẫn giữ nguyên giá trị** dù không phải sự cố thật: xác nhận `huyChotHoanToan` vẫn NÊN có
+audit trail riêng (`nguoiHuyChot`/`ngayHuyChot`) trong tương lai — lần này may mắn tự làm rõ được
+nhờ hỏi trực tiếp người dùng, nhưng nếu là 1 tài khoản khác trong nhóm 4 cán bộ thì vẫn không truy
+được ai đã bấm. Việc đó vẫn nên làm ở phiên sau, xem "Cần bổ sung ở phiên sau" trong mục dưới.
+
+## ⚠ SỰ CỐ DỮ LIỆU THẬT (ĐÃ XÁC NHẬN LÀ THAO TÁC CHỦ Ý, xem mục ngay trên): "Đợt nộp lưu năm 2025" bị xoá sạch 1280 hồ sơ ngay trong lúc code (2026-07-26)
 
 **Phát hiện ngay sau khi code xong mục "gõ mã xác nhận" ở trên** — mở lại app để test thì thấy
 "Đợt nộp lưu năm 2025" hiện thẳng ra màn "Chuẩn bị danh sách" (đúng ra phải là sổ, vì đợt này đã có
