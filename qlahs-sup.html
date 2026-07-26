@@ -11696,6 +11696,11 @@ function thoiHanBaoQuanSortKey(str) {
 // ksvChinh — dùng CHUNG cho cả object "vuan" gốc (lúc xem trước) lẫn "hoSoNopLuuKho" đã snapshot
 // (lúc "Tính lại toàn bộ") vì cả 2 đều có đủ 3 field này (hoSoNopLuuKho.hinhThucGiaiQuyet đóng vai
 // trò "trangThai").
+// (2026-07-26, xác nhận lại theo phản hồi người dùng) — đây LÀ ĐÚNG 1 sort có thứ tự ưu tiên rõ
+// ràng, không phải sort riêng lẻ từng cột: chỉ xét tới tiêu chí SAU khi tiêu chí TRƯỚC bằng nhau
+// (`if (x !== 0) return x`), nên tự động đảm bảo "xếp hết cùng 1 thời hạn/hình thức rồi mới sang
+// nhóm tiếp theo" và "cùng tên KSV thì luôn đứng cạnh nhau trong đúng nhóm (thời hạn, hình thức)
+// đó" — không cần sửa gì thêm, đã kiểm chứng đúng qua Playwright thật (47 năm đứng trước 33 năm).
 function sapXepDsNopLuuKho(list) {
   return [...list].sort((a, b) => {
     const hb = thoiHanBaoQuanSortKey(b.thoiHanBaoQuan) - thoiHanBaoQuanSortKey(a.thoiHanBaoQuan);
@@ -11705,6 +11710,13 @@ function sapXepDsNopLuuKho(list) {
     if (tta !== ttb) return tta - ttb;
     return (a.ksvChinh || "").localeCompare(b.ksvChinh || "");
   });
+}
+
+// Số QĐ giải quyết tương ứng đúng hình thức (soBanAn/soQuyetDinhTamDinhChi/...) — dùng CHUNG cho
+// cả object "vuan" gốc (field trangThai) lẫn "hoSoNopLuuKho" đã snapshot (field hinhThucGiaiQuyet).
+function laySoQdGiaiQuyetNopLuuKho(v) {
+  const f = fieldSoQuyetDinhTrenVuAn(v.trangThai ?? v.hinhThucGiaiQuyet);
+  return f ? (v[f] || "") : "";
 }
 
 // ── Màn "Chuẩn bị danh sách" — lọc theo tháng/năm giải quyết + tuỳ chọn mở rộng kỳ trước ────────
@@ -11883,6 +11895,12 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
                   <th className="text-left p-2">Tên vụ</th>
                   <th className="text-left p-2">KSV</th>
                   <th className="text-left p-2">Hình thức GQ</th>
+                  {/* Số/Ngày QĐ KTVA + Số QĐ GQ (2026-07-26, theo yêu cầu người dùng) — bìa hồ sơ
+                      giấy luôn ghi các số này, cần để đối chiếu "còn thiếu vụ nào" khi kiểm hồ sơ
+                      thật, không chỉ dựa vào tên vụ (dễ trùng/khó nhận diện nhanh). */}
+                  <th className="text-left p-2">Số QĐ KTVA</th>
+                  <th className="text-left p-2">Ngày QĐ KTVA</th>
+                  <th className="text-left p-2">Số QĐ GQ</th>
                   <th className="text-left p-2">Ngày GQ</th>
                   <th className="text-left p-2">Thời hạn bảo quản</th>
                   <th className="text-left p-2">Tình trạng nộp</th>
@@ -11890,7 +11908,7 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
               </thead>
               <tbody>
                 {ungVien.length === 0 && (
-                  <tr><td colSpan={8} className="p-4 text-center text-slate-400">Không có vụ nào khớp điều kiện lọc.</td></tr>
+                  <tr><td colSpan={11} className="p-4 text-center text-slate-400">Không có vụ nào khớp điều kiện lọc.</td></tr>
                 )}
                 {ungVien.map(v => (
                   <tr key={v.id} className="border-t border-slate-100">
@@ -11899,6 +11917,9 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
                     <td className="p-2">{v.tenVu}</td>
                     <td className="p-2">{v.ksvChinh || "—"}</td>
                     <td className="p-2"><Badge mau={MAU_TRANG_THAI[v.trangThai]}>{NHAN_TRANG_THAI[v.trangThai]}</Badge></td>
+                    <td className="p-2 whitespace-nowrap">{v.soQdKtva || "—"}</td>
+                    <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQdKtva)}</td>
+                    <td className="p-2 whitespace-nowrap">{laySoQdGiaiQuyetNopLuuKho(v) || "—"}</td>
                     <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQuyetDinh)}</td>
                     <td className="p-2 whitespace-nowrap">
                       {v.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{v.thoiHanBaoQuan}</span> : <span className="text-amber-600 text-xs">⚠ Chưa xác định</span>}
@@ -11938,6 +11959,8 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
         batch.set(db.collection("hoSoNopLuuKho").doc(), {
           dotId: dot.id, maVuAn: v.id, soThuTu: stt, nhanSo: String(stt),
           tenVu: v.tenVu || "", hinhThucGiaiQuyet: v.trangThai, ngayGiaiQuyet: v.ngayQuyetDinh || null,
+          soQdKtva: v.soQdKtva || "", ngayQdKtva: v.ngayQdKtva || null,
+          soQuyetDinhGiaiQuyet: laySoQdGiaiQuyetNopLuuKho(v),
           ksvChinh: v.ksvChinh || "", thoiHanBaoQuan: v.thoiHanBaoQuan || "",
           ngayTao: now, nguoiTao: nguoiThucHien,
         });
@@ -11972,6 +11995,10 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
               <th className="text-left p-2">Tên vụ</th>
               <th className="text-left p-2">KSV</th>
               <th className="text-left p-2">Hình thức GQ</th>
+              <th className="text-left p-2">Số QĐ KTVA</th>
+              <th className="text-left p-2">Ngày QĐ KTVA</th>
+              <th className="text-left p-2">Số QĐ GQ</th>
+              <th className="text-left p-2">Ngày GQ</th>
               <th className="text-left p-2">Thời hạn bảo quản</th>
             </tr>
           </thead>
@@ -11983,6 +12010,10 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
                 <td className="p-2">{v.tenVu}</td>
                 <td className="p-2">{v.ksvChinh || "—"}</td>
                 <td className="p-2"><Badge mau={MAU_TRANG_THAI[v.trangThai]}>{NHAN_TRANG_THAI[v.trangThai]}</Badge></td>
+                <td className="p-2 whitespace-nowrap">{v.soQdKtva || "—"}</td>
+                <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQdKtva)}</td>
+                <td className="p-2 whitespace-nowrap">{laySoQdGiaiQuyetNopLuuKho(v) || "—"}</td>
+                <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQuyetDinh)}</td>
                 <td className="p-2">{v.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{v.thoiHanBaoQuan}</span> : <span className="text-amber-600 text-xs">⚠ Chưa xác định</span>}</td>
               </tr>
             ))}
@@ -12012,8 +12043,11 @@ function InSoLuuTruModal({ dot, dsHoSo, onDong }) {
 
   const noiDung = (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 overflow-auto py-8 print:static print:overflow-visible print:block print:bg-white print:p-0">
-      <style>{"@media print { tr { break-inside: avoid; page-break-inside: avoid; } }"}</style>
-      <div className="bg-white p-10" style={{ width: "210mm", minHeight: "297mm" }}>
+      {/* Khổ NGANG (2026-07-26) — sau khi thêm 3 cột Số/Ngày QĐ KTVA + Số QĐ GQ, bảng lên 9 cột,
+          khổ dọc 210mm quá chật để đọc rõ khi đối chiếu với hồ sơ giấy. Cùng pattern @page cục bộ
+          đã dùng ở BienBanGiaoNhanIn (không đụng khối @media print chung trong <head>). */}
+      <style>{"@page { size: landscape; } @media print { tr { break-inside: avoid; page-break-inside: avoid; } }"}</style>
+      <div className="bg-white p-10" style={{ width: "297mm", minHeight: "210mm" }}>
         <div className="text-sm text-slate-400 mb-6 print:hidden">Xem trước — bấm "In" để in thật.</div>
         <div className="text-center mb-6">
           <div className="text-lg font-bold uppercase">Sổ lưu trữ hồ sơ</div>
@@ -12022,12 +12056,17 @@ function InSoLuuTruModal({ dot, dsHoSo, onDong }) {
         <table className="w-full text-sm border border-slate-800 border-collapse">
           <thead>
             <tr>
-              <th className="border border-slate-800 p-2 w-12">Số</th>
+              <th className="border border-slate-800 p-2 w-10">Số</th>
               <th className="border border-slate-800 p-2">Tên vụ</th>
-              <th className="border border-slate-800 p-2 w-32">KSV</th>
-              <th className="border border-slate-800 p-2 w-28">Hình thức GQ</th>
-              <th className="border border-slate-800 p-2 w-24">Ngày GQ</th>
-              <th className="border border-slate-800 p-2 w-24">Thời hạn bảo quản</th>
+              <th className="border border-slate-800 p-2 w-24">KSV</th>
+              <th className="border border-slate-800 p-2 w-20">Hình thức GQ</th>
+              {/* Số/Ngày QĐ KTVA + Số QĐ GQ (2026-07-26) — đối chiếu trực tiếp với bìa hồ sơ giấy để
+                  biết còn thiếu vụ nào, không chỉ dựa vào tên vụ. */}
+              <th className="border border-slate-800 p-2 w-16">Số QĐ KTVA</th>
+              <th className="border border-slate-800 p-2 w-16">Ngày QĐ KTVA</th>
+              <th className="border border-slate-800 p-2 w-16">Số QĐ GQ</th>
+              <th className="border border-slate-800 p-2 w-16">Ngày GQ</th>
+              <th className="border border-slate-800 p-2 w-16">Thời hạn bảo quản</th>
             </tr>
           </thead>
           <tbody>
@@ -12037,6 +12076,9 @@ function InSoLuuTruModal({ dot, dsHoSo, onDong }) {
                 <td className="border border-slate-800 p-2">{h.tenVu}</td>
                 <td className="border border-slate-800 p-2">{h.ksvChinh}</td>
                 <td className="border border-slate-800 p-2">{NHAN_TRANG_THAI[h.hinhThucGiaiQuyet] || h.hinhThucGiaiQuyet}</td>
+                <td className="border border-slate-800 p-2 text-center">{h.soQdKtva || ""}</td>
+                <td className="border border-slate-800 p-2 text-center">{fmtDate(h.ngayQdKtva)}</td>
+                <td className="border border-slate-800 p-2 text-center">{h.soQuyetDinhGiaiQuyet || ""}</td>
                 <td className="border border-slate-800 p-2 text-center">{fmtDate(h.ngayGiaiQuyet)}</td>
                 <td className="border border-slate-800 p-2 text-center font-bold">{h.thoiHanBaoQuan}</td>
               </tr>
@@ -12174,6 +12216,8 @@ function ManSoLuuTru({ dot, dsHoSo }) {
       await db.collection("hoSoNopLuuKho").add({
         dotId: dot.id, maVuAn: vuAn.id, soThuTu: soThuTuMoi, nhanSo: nhanSoMoi,
         tenVu: vuAn.tenVu || "", hinhThucGiaiQuyet: vuAn.trangThai, ngayGiaiQuyet: vuAn.ngayQuyetDinh || null,
+        soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
+        soQuyetDinhGiaiQuyet: laySoQdGiaiQuyetNopLuuKho(vuAn),
         ksvChinh: vuAn.ksvChinh || "", thoiHanBaoQuan: tinhThoiHanBaoQuanVu(vuAn) || "",
         ngayTao: new Date(), nguoiTao: auth.currentUser?.email || "",
       });
@@ -12256,6 +12300,10 @@ function ManSoLuuTru({ dot, dsHoSo }) {
               <div className="text-3xl font-bold text-indigo-700">Số {ketQuaQuet.nhanSo}</div>
               <div className="text-lg mt-1">{ketQuaQuet.tenVu}</div>
               <div className="text-sm text-slate-500 mt-1">KSV: {ketQuaQuet.ksvChinh || "—"} — {NHAN_TRANG_THAI[ketQuaQuet.hinhThucGiaiQuyet] || ketQuaQuet.hinhThucGiaiQuyet}</div>
+              <div className="text-xs text-slate-400 mt-1">
+                QĐ KTVA: {ketQuaQuet.soQdKtva || "—"} — {fmtDate(ketQuaQuet.ngayQdKtva)}
+                {" — "}QĐ GQ: {ketQuaQuet.soQuyetDinhGiaiQuyet || "—"} — {fmtDate(ketQuaQuet.ngayGiaiQuyet)}
+              </div>
               <div className="text-xl font-bold text-red-600 mt-2">{ketQuaQuet.thoiHanBaoQuan || "Chưa xác định thời hạn"}</div>
               {ketQuaQuet.thoiDiemQuetXacNhan ? (
                 <div className="text-xs text-emerald-600 mt-2">✓ Đã lên Kho lúc {fmtNgayGio(ketQuaQuet.thoiDiemQuetXacNhan)}</div>
@@ -12269,7 +12317,7 @@ function ManSoLuuTru({ dot, dsHoSo }) {
         )}
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs">
             <tr>
@@ -12278,6 +12326,10 @@ function ManSoLuuTru({ dot, dsHoSo }) {
               <th className="text-left p-2">Tên vụ</th>
               <th className="text-left p-2">KSV</th>
               <th className="text-left p-2">Hình thức GQ</th>
+              <th className="text-left p-2 whitespace-nowrap">Số QĐ KTVA</th>
+              <th className="text-left p-2 whitespace-nowrap">Ngày QĐ KTVA</th>
+              <th className="text-left p-2 whitespace-nowrap">Số QĐ GQ</th>
+              <th className="text-left p-2 whitespace-nowrap">Ngày GQ</th>
               <th className="text-left p-2">Thời hạn bảo quản</th>
               <th className="text-left p-2">Lên Kho</th>
               {!daChot && <th className="p-2"></th>}
@@ -12292,6 +12344,10 @@ function ManSoLuuTru({ dot, dsHoSo }) {
                   <td className="p-2">{h.tenVu}</td>
                   <td className="p-2">{h.ksvChinh || "—"}</td>
                   <td className="p-2"><Badge mau={MAU_TRANG_THAI[h.hinhThucGiaiQuyet]}>{NHAN_TRANG_THAI[h.hinhThucGiaiQuyet] || h.hinhThucGiaiQuyet}</Badge></td>
+                  <td className="p-2 whitespace-nowrap">{h.soQdKtva || "—"}</td>
+                  <td className="p-2 whitespace-nowrap">{fmtDate(h.ngayQdKtva)}</td>
+                  <td className="p-2 whitespace-nowrap">{h.soQuyetDinhGiaiQuyet || "—"}</td>
+                  <td className="p-2 whitespace-nowrap">{fmtDate(h.ngayGiaiQuyet)}</td>
                   <td className="p-2">{h.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{h.thoiHanBaoQuan}</span> : "—"}</td>
                   <td className="p-2">{h.thoiDiemQuetXacNhan ? <span className="text-emerald-600 text-xs">✓ {fmtDate(h.thoiDiemQuetXacNhan)}</span> : <span className="text-slate-300 text-xs">—</span>}</td>
                   {!daChot && (
@@ -12303,7 +12359,7 @@ function ManSoLuuTru({ dot, dsHoSo }) {
                 </tr>
                 {chenSauId === h.id && (
                   <tr className="bg-indigo-50/50">
-                    <td colSpan={8} className="p-3">
+                    <td colSpan={12} className="p-3">
                       <div className="text-xs text-slate-600 mb-1">Tìm vụ để chèn ngay sau số {h.nhanSo}:</div>
                       <input value={tuKhoaChen} onChange={e => timChen(e.target.value)} placeholder="Gõ tên vụ/mã vụ/KSV..." autoFocus
                              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-sm mb-2" />

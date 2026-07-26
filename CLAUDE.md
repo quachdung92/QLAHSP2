@@ -93,6 +93,38 @@ chứng bằng Playwright thật: lọc tháng 1/2025, bỏ tick 1 dòng, bấm 
 bộ lọc (tháng 1→1), danh sách 199 dòng, và đúng dòng đã bỏ tick trước đó vẫn giữ nguyên trạng thái
 chưa tick (không phải "chọn hết" mặc định).
 
+**Xác nhận lại sort đúng yêu cầu + thêm cột Số/Ngày QĐ KTVA + Số/Ngày QĐ giải quyết (2026-07-26)**
+— người dùng nhắc lại tiêu chí sort (thời hạn → hình thức GQ gộp nhóm → cùng KSV đứng cạnh nhau);
+rà lại `sapXepDsNopLuuKho` xác nhận ĐÃ ĐÚNG từ đầu (so sánh có thứ tự ưu tiên, chỉ xét tiêu chí sau
+khi tiêu chí trước bằng nhau — tự động thoả cả 2 yêu cầu "gộp nhóm" và "cùng KSV cạnh nhau"), không
+cần sửa gì, chỉ ghi rõ thêm comment giải thích. Yêu cầu chính là thêm cột **Số QĐ KTVA/Ngày QĐ
+KTVA** (từ `vuan.soQdKtva`/`ngayQdKtva`) và **Số QĐ giải quyết** (qua `fieldSoQuyetDinhTrenVuAn`,
+field mới `laySoQdGiaiQuyetNopLuuKho`) + **Ngày GQ** (đã có sẵn ở màn chuẩn bị, còn thiếu ở màn xem
+trước/sổ) — "để biết còn thiếu vụ nào" khi đối chiếu sổ điện tử với bìa hồ sơ giấy (bìa hồ sơ luôn
+ghi các số này, không phải tên vụ, dễ đối chiếu nhầm nếu chỉ có tên).
+
+**3 cột mới trên `hoSoNopLuuKho`** (`soQdKtva` text, `ngayQdKtva` timestamptz,
+`soQuyetDinhGiaiQuyet` text) — snapshot lúc thêm vào đợt (Chốt hoặc Chèn sau), giống các field
+snapshot khác đã có. Đã ALTER TABLE thêm 3 cột này lên Supabase thật, sửa trực tiếp CREATE TABLE
+trong `add_nop_luu_kho_2026-07-23.sql` (KHÔNG tạo file migration mới — tính năng này vẫn đang trên
+nhánh riêng CHƯA merge/deploy, nên coi là chỉnh sửa tiếp bản thiết kế đang làm dở, khác hẳn nguyên
+tắc "không sửa lại file migration đã chạy" áp dụng cho bảng ĐÃ có dữ liệu thật/đã lên production —
+xem `batch_commit_2026-07-20.sql` để so sánh cách xử lý khi bảng đã thật sự ổn định).
+
+Thêm cột vào: bảng ứng viên (`ManChuanBiDanhSach`), bảng xem trước (`ManXemTruocChot`), sổ trên màn
+hình + kết quả quét tra cứu (`ManSoLuuTru`), và **in sổ** (`InSoLuuTruModal`, quan trọng nhất vì đây
+là bản dùng để đối chiếu tay với hồ sơ giấy) — sổ in từ 6 cột lên 9 cột nên **đổi từ khổ dọc 210mm
+sang khổ NGANG 297mm** (cùng pattern `@page` cục bộ đã dùng ở `BienBanGiaoNhanIn`) để đủ chỗ đọc rõ.
+Sổ trên màn hình cũng đổi từ `overflow-hidden` sang `overflow-x-auto` để không bị cắt mất cột khi
+màn hình hẹp hơn 12 cột.
+
+**Đã kiểm chứng bằng Playwright thật trên dữ liệu Supabase production thật** — tạo đợt test, lọc
+2 vụ thật, xác nhận đủ cột đúng dữ liệu ở cả 4 nơi (bảng ứng viên, xem trước — vẫn đúng thứ tự 47
+năm trước 33 năm, sổ sau khi chốt, và sổ in khổ ngang). Quét tra cứu ban đầu tưởng lỗi (không thấy
+kết quả ngay sau khi gõ+Enter) — hoá ra chỉ là kiểm tra lại quá sớm trước khi React kịp render, gọi
+lại `read_page`/`get_page_text` sau đó xác nhận kết quả hiện đúng đầy đủ (Số/Ngày QĐ KTVA + QĐ GQ),
+không phải bug thật. Đã dọn sạch dữ liệu test sau khi kiểm chứng. 0 lỗi console liên quan.
+
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:

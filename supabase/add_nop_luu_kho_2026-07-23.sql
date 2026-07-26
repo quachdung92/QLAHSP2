@@ -54,6 +54,11 @@ create table "hoSoNopLuuKho" (
   "tenVu"                 text,
   "hinhThucGiaiQuyet"     text,                                 -- snapshot vuan.trangThai lúc thêm (tam_dinh_chi/dinh_chi/da_xet_xu)
   "ngayGiaiQuyet"         timestamptz,                          -- snapshot vuan.ngayQuyetDinh
+  -- Số/ngày QĐ KTVA + số QĐ giải quyết (2026-07-26, theo yêu cầu người dùng "để biết còn thiếu vụ
+  -- nào" khi đối chiếu sổ với hồ sơ giấy — bìa hồ sơ giấy luôn ghi các số này, không phải tên vụ).
+  "soQdKtva"              text,                                 -- snapshot vuan.soQdKtva
+  "ngayQdKtva"            timestamptz,                          -- snapshot vuan.ngayQdKtva
+  "soQuyetDinhGiaiQuyet"  text,                                 -- snapshot số QĐ giải quyết (soBanAn/soQuyetDinhTamDinhChi/... tuỳ hinhThucGiaiQuyet, qua fieldSoQuyetDinhTrenVuAn)
   "ksvChinh"              text,
   "thoiHanBaoQuan"        text,                                 -- snapshot chuỗi đã tính sẵn (VD "19 năm"/"Vĩnh viễn")
   "thoiDiemQuetXacNhan"   timestamptz,                          -- null = chưa quét đưa lên Kho; set khi quét QR xác nhận (KHÔNG đụng "lichsuChuyenGiaiDoan")

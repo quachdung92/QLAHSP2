@@ -349,6 +349,9 @@ create table "hoSoNopLuuKho" (
   "tenVu"                 text,               -- snapshot lúc thêm vào đợt (không phải nguồn sự thật)
   "hinhThucGiaiQuyet"     text,
   "ngayGiaiQuyet"         timestamptz,
+  "soQdKtva"              text,
+  "ngayQdKtva"            timestamptz,
+  "soQuyetDinhGiaiQuyet"  text,
   "ksvChinh"              text,
   "thoiHanBaoQuan"        text,
   "thoiDiemQuetXacNhan"   timestamptz,        -- null = chưa quét đưa lên Kho
