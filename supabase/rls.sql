@@ -19,6 +19,8 @@ alter table "kybaocao" enable row level security;
 alter table "canbo" enable row level security;
 alter table "danhMucToiDanh" enable row level security;
 alter table "phienGiaoNhan" enable row level security;
+alter table "dotNopLuuKho" enable row level security;
+alter table "hoSoNopLuuKho" enable row level security;
 -- Bảng "meta" (sentinel) ĐÃ XOÁ — xem ghi chú 5 đầu schema.sql, không còn code nào dùng.
 
 -- boDemMaVu KHÔNG bật RLS ở đây theo kiểu "authenticated đọc/ghi được" — bảng này chỉ được đụng
@@ -32,7 +34,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['vuan','bican','lichsuChuyenGiaiDoan','kybaocao','canbo','danhMucToiDanh','phienGiaoNhan']
+  foreach t in array array['vuan','bican','lichsuChuyenGiaiDoan','kybaocao','canbo','danhMucToiDanh','phienGiaoNhan','dotNopLuuKho','hoSoNopLuuKho']
   loop
     execute format(
       'create policy "authenticated_read_write" on %I for all using (auth.role() = ''authenticated'') with check (auth.role() = ''authenticated'')',

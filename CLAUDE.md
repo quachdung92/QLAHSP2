@@ -2,6 +2,517 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tính năng mới: "Nộp lưu kho" (2026-07-23/26, nhánh `nop-luu-kho`, `qlahs-sup.html`)
+
+Theo yêu cầu người dùng — module hoàn toàn mới, **ĐỘC LẬP với "Nộp hồ sơ lưu trữ"** đã có trong
+Giao nhận hồ sơ (đó là luồng KSV/ĐTV nộp hồ sơ CHO bộ phận lưu trữ để thống kê, ghi qua
+`lichsuChuyenGiaiDoan`/`giao_nhan_ho_so`). Module này là luồng của CHÍNH bộ phận lưu trữ: gom hồ sơ
+đã giải quyết (Tạm đình chỉ/Đình chỉ/Đã xét xử), sắp xếp + đánh **số lưu trữ cố định**, khoá/mở
+khoá, rồi nộp cả đợt lên Kho lưu trữ chính thức — không tái dùng `phienGiaoNhan`/
+`lichsuChuyenGiaiDoan` (2 quy trình nghiệp vụ khác nhau: KSV→lưu trữ vs lưu trữ→Kho, tránh lẫn dữ
+liệu). Được thiết kế qua vài vòng hỏi-đáp làm rõ nghiệp vụ với người dùng trước khi code (xem lịch
+sử hội thoại) — 3 quyết định quan trọng đã chốt: **STT reset về 1 mỗi đợt** (không liên tục xuyên
+suốt), **gộp chung 1 sổ** (không tách theo giai đoạn ĐT/TT/XX), **quét QR lúc đưa lên Kho ghi
+thẳng vào bảng riêng của module này** (không tạo/nối phiên Giao nhận hồ sơ).
+
+**2 bảng Postgres mới** (`supabase/add_nop_luu_kho_2026-07-23.sql`, đã ALTER lên Supabase thật):
+- `dotNopLuuKho` — 1 đợt nộp lưu, `trangThai` `dang_mo`/`da_chot` (khoá/mở khoá **2 chiều thật**,
+  khác `kybaocao.trangThai=da_chot` hiện có vốn là khoá 1 chiều không mở lại được).
+- `hoSoNopLuuKho` — 1 vụ trong 1 đợt, `soThuTu` (numeric, khoá sort ổn định — chèn thêm dùng số
+  thập phân `1.001`/`1.002`... để KHÔNG renumber toàn bộ) + `nhanSo` (nhãn hiển thị "1"/"1A"/"1B"),
+  snapshot vài field từ `vuan` lúc thêm vào đợt (đỡ join lại mỗi lần hiển thị), `thoiDiemQuetXacNhan`
+  (null = chưa đưa lên Kho).
+
+**Hạ tầng quan trọng phát hiện lúc code — `db.batch().commit()` đi qua RPC `batch_commit` có
+DANH SÁCH TRẮNG bảng CỨNG trong thân hàm** (khác `.doc().set()/.update()/.get()/.where()` — những
+API đó generic theo tên bảng, gọi thẳng PostgREST). Thêm bảng mới KHÔNG tự ghi được qua `batch()`
+nếu không `CREATE OR REPLACE FUNCTION "batch_commit"` với whitelist đã thêm 2 bảng mới — đã làm
+trong cùng file migration, kèm cập nhật `_TABLE_INSERT_ORDER` (JS) và `supabase/rls.sql`/
+`supabase/schema.sql` (nguồn sự thật) cho khớp. Nếu thêm bảng mới cần dùng `db.batch()` sau này,
+nhớ luôn kiểm tra bước này — dễ bị bỏ sót vì `.doc().set()` đơn lẻ vẫn hoạt động bình thường không
+báo lỗi gì, chỉ riêng `batch()` mới cần.
+
+**Kiến trúc màn hình** (`NopLuuKhoModule`, đặt trong `qlahs-sup.html` ngay sau `GiaoNhanHoSoModule`):
+`ManChonDot` (chọn/tạo đợt) → `ManChiTietDot` (router theo `dot.trangThai` + `dsHoSo.length`) →
+`ManChuanBiDanhSach` (lọc theo tháng/năm giải quyết + tuỳ chọn mở rộng kỳ trước chưa nộp/thống kê
+thiếu, loại vụ ĐÃ có trong bất kỳ đợt nào từ trước, khối "Tình trạng nộp theo KSV" đếm
+đã-nộp/chưa-nộp + drill-down danh sách cụ thể) → `ManXemTruocChot` (xem trước đã sắp xếp, bấm Chốt
+sinh `soThuTu`/`nhanSo` + khoá đợt) → `ManSoLuuTru` (sổ: đã chốt = chỉ đọc + Mở khoá/Quét/In; đang
+mở khoá = sửa được — Chèn sau/Xoá/Tính lại toàn bộ). `dot`/`dsHoSo` đều subscribe Realtime riêng
+theo `dotId` (không tự tay đồng bộ state qua callback sau mỗi ghi — để 1 nguồn sự thật duy nhất,
+tránh lệch giữa state cha tự set tay và Realtime đẩy về).
+
+**Sắp xếp**: `sapXepDsNopLuuKho` — Thời hạn bảo quản (giảm dần, dùng `thoiHanBaoQuanSortKey`: Vĩnh
+viễn = Infinity, "NN năm" = NN, chưa xác định = xếp cuối cùng không suy đoán) → Hình thức giải
+quyết (`THU_TU_HINH_THUC_NOP_LUU_KHO`, thứ tự CỐ ĐỊNH tạm đình chỉ→đình chỉ→xét xử, KHÔNG phải
+alphabet) → tên KSV (`localeCompare`).
+
+**In ấn**: `InTagLuuTruModal` tái dùng nguyên lưới 6 ô/A4 (2 cột×3 hàng) đã có ở `InQRModal` chế độ
+"góc giấy", chỉ khác là mỗi ô là 1 HỒ SƠ KHÁC NHAU (không phải nhiều bản của cùng 1 vụ) nên chia
+trang theo nhóm 6 (`break-after: page`). `InSoLuuTruModal` tái dùng khổ A4 dọc + portal
+`#qr-print-root` như `BienBanGiaoNhanIn`.
+
+**Đã kiểm chứng đầy đủ bằng Playwright thật trên dữ liệu Supabase production thật** (`qlahs-sup.html`,
+project `eutatszoaseixchvjbtg`, 1280+ vụ đã giải quyết thật) — tạo 1 đợt test, lọc hẹp còn 2 vụ thật
+(tránh thao tác hàng loạt lên dữ liệu sản xuất), chạy trọn luồng: Chuẩn bị danh sách (xác nhận panel
+"Tình trạng nộp theo KSV" tính đúng số liệu thật theo từng KSV) → Sắp xếp & Xem trước (xác nhận sort
+đúng thứ tự 47 năm trước 33 năm) → Chốt (khoá đúng, sinh STT 1/2) → Quét tra cứu (hiện đúng thông
+tin) → Xác nhận lên Kho (cập nhật đúng trạng thái) → Mở khoá → Chèn sau (xác nhận nhãn "1A" đúng
+yêu cầu) → Tính lại toàn bộ STT (renumber đúng lại theo thời hạn bảo quản) → Xoá dòng → In tag (xác
+nhận nội dung portal đúng) → In sổ danh sách (xác nhận nội dung đúng). Đã dọn sạch dữ liệu test
+(xoá đợt + hồ sơ liên quan) và xác nhận 2 vụ án thật dùng để test KHÔNG bị đụng vào (module này chỉ
+ĐỌC "vuan", không bao giờ ghi). 0 lỗi console liên quan tới thay đổi này (ngoại trừ cảnh báo Babel
+kích thước file vô hại đã biết).
+
+**Ghi chú môi trường test (không phải bug)**: giữa lúc kiểm chứng, tool chụp màn hình
+(`computer`/screenshot) của trình duyệt test bị treo tạm thời trong khi `javascript_tool`/
+`read_console_messages`/`get_page_text`/`read_page` vẫn phản hồi bình thường — xác nhận đây là vấn
+đề riêng của cơ chế chụp màn hình trong môi trường test, không phải lỗi ứng dụng (DOM/React state
+vẫn đúng, không có vòng lặp render vô hạn) — đã chuyển hẳn sang kiểm chứng qua các tool còn hoạt
+động, không ảnh hưởng độ tin cậy của kết quả kiểm chứng.
+
+**Chưa làm / ngoài phạm vi lần này**: chưa merge nhánh `nop-luu-kho` vào `main` (đang chờ người
+dùng xác nhận trước khi merge/deploy, theo đúng thói quen đã thiết lập ở các tính năng trước —
+merge+deploy là hành động ảnh hưởng dữ liệu thật của 4 cán bộ, luôn hỏi trước).
+
+**Không cần mã QR trên tag** (đã hỏi lại, người dùng xác nhận CHỦ ĐỘNG không cần — đã có "In mã QR"
+riêng cho việc đó ở panel chi tiết vụ án, tag này chỉ cần dễ quan sát bằng mắt) — thay vào đó
+**"Số lưu trữ" là yếu tố quan trọng nhất trên tag, đã tăng độ nổi bật đáng kể** (2026-07-26): từ
+`text-3xl` màu chàm (30px) lên `text-8xl font-black text-slate-900` (96px, đậm 900, gần đen tuyền)
+— rõ nét kể cả khi in đen trắng/photo lại. Tên vụ/KSV giữ cỡ nhỏ, "Thời hạn bảo quản" tăng nhẹ lên
+`text-xl` (đứng thứ 2 về độ nổi bật, sau Số lưu trữ).
+
+**Bug đã sửa (2026-07-26) — "← Quay lại chỉnh sửa" ở màn xem trước làm MẤT SẠCH bộ lọc + lựa chọn
+đã tick**, phải làm lại từ đầu mỗi lần muốn bớt 1 vụ sau khi đã xem trước. Nguyên nhân:
+`ManChiTietDot` trước đây dùng conditional rendering kiểu `{cond && <ManChuanBiDanhSach/>}` — mỗi
+lần chuyển qua lại giữa "chuẩn bị" và "xem trước", component bị UNMOUNT rồi MOUNT LẠI, mất hết
+state nội bộ (bộ lọc tháng/năm, `dsChon`, `ungVien` đã tải). Đã sửa: `ManChuanBiDanhSach` giờ LUÔN
+được giữ mounted suốt giai đoạn "đợt đang mở, chưa có hồ sơ" — chỉ ẨN bằng `className="hidden"` khi
+đang xem trước, không gỡ khỏi cây React nữa — state nội bộ sống nguyên qua lại giữa 2 màn. Đã kiểm
+chứng bằng Playwright thật: lọc tháng 1/2025, bỏ tick 1 dòng, bấm Xem trước rồi Quay lại — xác nhận
+bộ lọc (tháng 1→1), danh sách 199 dòng, và đúng dòng đã bỏ tick trước đó vẫn giữ nguyên trạng thái
+chưa tick (không phải "chọn hết" mặc định).
+
+**Xác nhận lại sort đúng yêu cầu + thêm cột Số/Ngày QĐ KTVA + Số/Ngày QĐ giải quyết (2026-07-26)**
+— người dùng nhắc lại tiêu chí sort (thời hạn → hình thức GQ gộp nhóm → cùng KSV đứng cạnh nhau);
+rà lại `sapXepDsNopLuuKho` lúc đó **kết luận NHẦM là "ĐÃ ĐÚNG từ đầu"** (chỉ test bằng 2 giá trị thời
+hạn hữu hạn khác nhau "47 năm"/"33 năm", không test trường hợp 2 dòng cùng "Vĩnh viễn") — **kết luận
+này SAI, đã bị người dùng phát hiện lại bằng ảnh chụp thật ngay sau đó, xem mục sửa bug ngay dưới
+đây**. Yêu cầu chính lúc này là thêm cột **Số QĐ KTVA/Ngày QĐ
+KTVA** (từ `vuan.soQdKtva`/`ngayQdKtva`) và **Số QĐ giải quyết** (qua `fieldSoQuyetDinhTrenVuAn`,
+field mới `laySoQdGiaiQuyetNopLuuKho`) + **Ngày GQ** (đã có sẵn ở màn chuẩn bị, còn thiếu ở màn xem
+trước/sổ) — "để biết còn thiếu vụ nào" khi đối chiếu sổ điện tử với bìa hồ sơ giấy (bìa hồ sơ luôn
+ghi các số này, không phải tên vụ, dễ đối chiếu nhầm nếu chỉ có tên).
+
+**3 cột mới trên `hoSoNopLuuKho`** (`soQdKtva` text, `ngayQdKtva` timestamptz,
+`soQuyetDinhGiaiQuyet` text) — snapshot lúc thêm vào đợt (Chốt hoặc Chèn sau), giống các field
+snapshot khác đã có. Đã ALTER TABLE thêm 3 cột này lên Supabase thật, sửa trực tiếp CREATE TABLE
+trong `add_nop_luu_kho_2026-07-23.sql` (KHÔNG tạo file migration mới — tính năng này vẫn đang trên
+nhánh riêng CHƯA merge/deploy, nên coi là chỉnh sửa tiếp bản thiết kế đang làm dở, khác hẳn nguyên
+tắc "không sửa lại file migration đã chạy" áp dụng cho bảng ĐÃ có dữ liệu thật/đã lên production —
+xem `batch_commit_2026-07-20.sql` để so sánh cách xử lý khi bảng đã thật sự ổn định).
+
+Thêm cột vào: bảng ứng viên (`ManChuanBiDanhSach`), bảng xem trước (`ManXemTruocChot`), sổ trên màn
+hình + kết quả quét tra cứu (`ManSoLuuTru`), và **in sổ** (`InSoLuuTruModal`, quan trọng nhất vì đây
+là bản dùng để đối chiếu tay với hồ sơ giấy) — sổ in từ 6 cột lên 9 cột nên **đổi từ khổ dọc 210mm
+sang khổ NGANG 297mm** (cùng pattern `@page` cục bộ đã dùng ở `BienBanGiaoNhanIn`) để đủ chỗ đọc rõ.
+Sổ trên màn hình cũng đổi từ `overflow-hidden` sang `overflow-x-auto` để không bị cắt mất cột khi
+màn hình hẹp hơn 12 cột.
+
+**Đã kiểm chứng bằng Playwright thật trên dữ liệu Supabase production thật** — tạo đợt test, lọc
+2 vụ thật, xác nhận đủ cột đúng dữ liệu ở cả 4 nơi (bảng ứng viên, xem trước — vẫn đúng thứ tự 47
+năm trước 33 năm, sổ sau khi chốt, và sổ in khổ ngang). Quét tra cứu ban đầu tưởng lỗi (không thấy
+kết quả ngay sau khi gõ+Enter) — hoá ra chỉ là kiểm tra lại quá sớm trước khi React kịp render, gọi
+lại `read_page`/`get_page_text` sau đó xác nhận kết quả hiện đúng đầy đủ (Số/Ngày QĐ KTVA + QĐ GQ),
+không phải bug thật. Đã dọn sạch dữ liệu test sau khi kiểm chứng. 0 lỗi console liên quan.
+
+## Bug thật đã sửa: sắp xếp nộp lưu kho ra lộn xộn khi nhiều dòng cùng "Vĩnh viễn" (2026-07-26)
+
+Ngay sau mục ở trên (lúc đó kết luận NHẦM "đã đúng từ đầu") — người dùng gửi ảnh chụp màn "Xem
+trước" thật: 15 dòng cùng "Vĩnh viễn" nhưng cột Hình thức GQ (Đình chỉ/Tạm đình chỉ/Đã xét xử) xen
+kẽ lộn xộn, KHÔNG gộp nhóm — chứng minh trực tiếp bản sửa trước sai. Người dùng cũng nói rõ lại
+thuật toán mong muốn bằng 5 bước: (1) gộp theo thời hạn bảo quản, (2) trong đó gộp theo hình thức
+giải quyết, (3) trong đó gộp theo KSV, (4) trong đó sắp theo thứ tự thời gian ngày giải quyết,
+(5) lặp lại — tức **thêm hẳn 1 tiêu chí thứ 4 (ngày giải quyết) chưa từng có trước đó**.
+
+**Nguyên nhân thật**: `thoiHanBaoQuanSortKey("Vĩnh viễn")` trả về `Infinity`. Bản so sánh cũ tính
+`kb - ka` (trừ trực tiếp) rồi `if (diff !== 0) return diff` — khi CẢ 2 dòng đều "Vĩnh viễn",
+`Infinity - Infinity = NaN` trong JS, và **`NaN !== 0` luôn là `true`** — comparator trả về `NaN`
+(bị `Array.sort` hiểu là "không đổi vị trí nhưng không dừng lại đúng") NGAY TỪ tiêu chí đầu tiên,
+bỏ qua hẳn tiêu chí hình thức/KSV phía sau dù code 2 tiêu chí đó không hề sai. Đây đúng là lý do
+lần kiểm chứng trước (chỉ so "47 năm" và "33 năm", đều là số hữu hạn, không bao giờ ra `NaN`) không
+phát hiện được lỗi — **bài học: test comparator phải thử cả trường hợp 2 giá trị đầu-tiêu-chí BẰNG
+NHAU (đặc biệt giá trị đặc biệt như `Infinity`), không chỉ thử các giá trị khác nhau**.
+
+**Đã sửa** `sapXepDsNopLuuKho`: thay phép trừ bằng so sánh tường minh `ka !== kb` (không có phép
+tính số học nào có thể ra `NaN`), và thêm hẳn tiêu chí thứ 4 — `layNgayGiaiQuyetMsNopLuuKho(v)`
+(đọc `v.ngayQuyetDinh ?? v.ngayGiaiQuyet` — 2 tên field khác nhau giữa object "vuan" gốc và
+"hoSoNopLuuKho" đã snapshot, chịu được cả Timestamp/Date/chuỗi ISO) — áp dụng SAU tiêu chí KSV,
+đúng thứ tự 4 bước người dùng mô tả.
+
+**Đã kiểm chứng lại bằng dữ liệu Supabase production thật, KHÔNG dùng dữ liệu giả** — đúng đợt
+"Đợt nộp lưu năm 2025" người dùng đang chuẩn bị thật (1280 vụ, trạng thái "Đang mở", chưa Chốt):
+bấm "Sắp xếp & Xem trước" (chỉ tính toán phía client, KHÔNG ghi Firestore/Supabase — an toàn đọc)
+rồi đọc trực tiếp DOM bảng xem trước — xác nhận: mọi dòng "Vĩnh viễn" gộp lên đầu; trong đó "Tạm
+đình chỉ" gộp liền một khối (đúng thứ tự cố định); trong khối đó, "Đặng Văn Sỹ" (24 dòng liền
+nhau) rồi mới tới "Đào Việt Dũng" (14+ dòng liền nhau) — không còn xen kẽ; NGÀY GIẢI QUYẾT trong
+từng nhóm KSV tăng dần đúng thứ tự thời gian (VD nhóm Đặng Văn Sỹ: 04/04/2025 → 16/05/2025 →
+22/05/2025 → ... → 06/10/2025). Đã bấm "← Quay lại chỉnh sửa" ngay sau đó, KHÔNG bấm "Chốt" —
+không có ghi nào vào dữ liệu thật trong lúc kiểm chứng.
+
+## Nộp lưu kho: "Vấn đề cần bổ sung" + Excel xuất theo KSV để rà soát trước khi chốt (2026-07-26)
+
+Cùng lúc với bug sort ở trên, người dùng yêu cầu thêm 2 phần: (1) 1 chỉ báo "vấn đề cần bổ sung"
+cho từng hồ sơ, (2) xuất Excel danh sách chia theo TỪNG KSV với đầy đủ thông tin, để mỗi KSV tự
+kiểm tra/rà soát và báo cáo lại bộ phận lưu trữ TRƯỚC KHI chốt danh sách chính thức (khác hẳn sổ
+lưu trữ chính thức in ra SAU khi chốt — đây là bản nháp để phát hiện thiếu sót sớm).
+
+**`layVanDeCanBoSungNopLuuKho(v)`** (đặt cạnh `laySoQdGiaiQuyetNopLuuKho`) — trả về mảng chuỗi mô
+tả từng chỗ thiếu: thiếu thời hạn bảo quản (phân biệt rõ "thiếu mức án" nếu là Đã xét xử, vì
+`tinhThoiHanBaoQuanVu` tự trả `null` khi thiếu `mucAnLoai` — gộp chung vào đúng 1 dòng, không tách
+riêng "thiếu mức án" thành tiêu chí khác), thiếu số QĐ giải quyết, thiếu số/ngày QĐ KTVA, ngày giải
+quyết là ngày ƯỚC TÍNH (cờ `ngayQuyetDinhUocTinh` từ Import Excel — xem mục "Import Excel: resolve
+'Mã ĐL'..." không, đúng ra xem mục ngày ước tính ở phần "Giao nhận hồ sơ" cũ), và chưa nộp hồ sơ
+giấy cho bộ phận lưu trữ (`v.daNop === false`). Hiện thành cột **"Vấn đề cần bổ sung"** mới ở cả
+bảng ứng viên (`ManChuanBiDanhSach`) lẫn bảng xem trước (`ManXemTruocChot`) — gọn thành
+`⚠ N vấn đề`/`✓ Đủ dữ liệu`, chi tiết đầy đủ nằm trong `title` (tooltip hover).
+
+**Nút "⬇ Xuất Excel theo KSV để rà soát"** (`ManChuanBiDanhSach`, cạnh "Chọn tất cả"/"Bỏ chọn tất
+cả") — xuất TOÀN BỘ `ungVien` (không riêng phần đang tick `dsChon` — KSV cần soát cả những vụ lưu
+trữ lỡ bỏ tick, không chỉ phần đã chọn). ExcelJS, 1 sheet "Tổng hợp" (tất cả) + 1 sheet riêng cho
+mỗi KSV (tên sheet khử ký tự Excel cấm `* ? : \ / [ ]` + cắt 31 ký tự + khử trùng tên nếu 2 KSV
+trùng nhau sau khi cắt) + 1 sheet gộp `"(chưa gán KSV)"`. Mỗi sheet dùng lại đúng
+`sapXepDsNopLuuKho` để thứ tự khớp với sổ chính thức sau này (dễ đối chiếu), 12 cột (STT/Mã vụ/Tên
+vụ/KSV/Hình thức GQ/Số+Ngày QĐ KTVA/Số+Ngày QĐ GQ/Thời hạn bảo quản/Tình trạng nộp/Vấn đề cần bổ
+sung — cột cuối nối chuỗi `vanDe.join("; ")`, tô màu đỏ đậm nếu "Chưa nộp", tô cam nếu có vấn đề).
+
+**Đã kiểm chứng bằng Supabase production thật** — không tải file thật xuống đĩa (môi trường test
+không mở lại file tải về được), thay vào đó chặn `URL.createObjectURL` để bắt lấy đúng `Blob` vừa
+sinh ra, nạp lại bằng `new ExcelJS.Workbook().xlsx.load(...)` NGAY TRONG TRÌNH DUYỆT để đọc lại cấu
+trúc thật (không phải suy đoán từ code) — trên "Đợt nộp lưu năm 2025" (1280 vụ, 35 KSV thật): xác
+nhận đúng **37 sheet** (Tổng hợp + 35 KSV + 1 "(chưa gán KSV)"), header 12 cột đúng thứ tự, dữ liệu
+từng dòng đúng (đối chiếu 2 dòng đầu sheet "Đặng Văn Sỹ" khớp y hệt dữ liệu đã thấy ở bảng xem
+trước lúc kiểm chứng bug sort), cột "Vấn đề cần bổ sung" nối đúng nhiều lý do bằng `"; "`. File
+~193KB cho 1280+ dòng × 37 sheet (không nhúng ảnh QR nên nhẹ, không lặp lại rủi ro treo tab đã gặp
+ở "Tải toàn bộ lịch sử giao nhận" khi có hàng nghìn ảnh QR). 0 lỗi console.
+
+**Chưa làm**: chưa tự tay tải file thật xuống đĩa rồi mở bằng Excel thật để xem bằng mắt (chỉ xác
+nhận cấu trúc qua đọc lại bằng ExcelJS trong trình duyệt) — nên thử tải 1 lần trên `qlahs-sup.html`
+thật và mở bằng Excel trước khi coi đây là đã kiểm chứng tuyệt đối 100%.
+
+## Nộp lưu kho: tìm/lọc + chọn hàng loạt theo bộ lọc + "+ Thêm vụ" thủ công (2026-07-26)
+
+Ngay sau 2 mục trên, người dùng phản hồi thêm 3 việc trên chính "Đợt nộp lưu năm 2025" thật (1280
+vụ — quá nhiều để rà tay từng dòng): (1) bảng ứng viên cần tìm/lọc để tích/bỏ tích hàng loạt, (2)
+nút "add" để bổ sung 1 vụ cụ thể nếu bị thiếu khỏi danh sách, (3) hỏi lại "tính năng quét QR nộp
+lưu kho của tôi đâu rồi" — mục (3) hoá ra KHÔNG phải bug, xem giải thích riêng cuối mục này.
+
+**Tìm/lọc bảng ứng viên** (`ManChuanBiDanhSach`) — thêm 1 ô tìm tự do (khớp mã vụ/tên vụ/KSV/số QĐ
+KTVA) + 3 dropdown (KSV/Hình thức GQ/Tình trạng nộp), lọc thuần phía CLIENT trên `ungVien` đã tải
+sẵn (`dsHienThi`, `useMemo`, không query thêm). **Đổi hẳn ý nghĩa "Chọn tất cả"/"Bỏ chọn tất cả"**
+— trước đây luôn áp dụng cho TOÀN BỘ `ungVien`, giờ chỉ áp dụng cho ĐÚNG PHẦN ĐANG HIỂN THỊ
+(`dsHienThi`) — lọc hẹp lại rồi bấm 1 trong 2 nút chỉ tick/bỏ tick đúng phần đó, KHÔNG đụng tới lựa
+chọn đã có sẵn ở các dòng đang bị lọc ẩn đi (dùng `setDsChon(s => { const m = new Set(s); ... })`,
+không reset toàn bộ Set). Nhãn nút tự đổi thành "... (đang hiện)" khi có bộ lọc đang áp dụng, header
+bảng hiện thêm "đang hiện N" để tránh nhầm N đang hiện với tổng `ungVien.length`.
+
+**Nút "+ Thêm vụ"** (cùng khu toolbar) — mở panel tìm 1 vụ CỤ THỂ trong TOÀN BỘ vụ đã giải quyết
+(gọi lại `dongBoColdCacheVuAnDaGiaiQuyet()`, không giới hạn theo khoảng tháng/năm đang lọc ở màn
+chuẩn bị — đúng nhu cầu "vụ bị thiếu" nghĩa là KHÔNG nằm trong bộ lọc mặc định), loại các vụ ĐÃ có
+trong `ungVien`. Bấm 1 kết quả (`themVuThuCong`): kiểm tra lại 1 lần nữa qua Postgres xem vụ đã nằm
+trong đợt nộp lưu KHÁC chưa (`hoSoNopLuuKho.where("maVuAn","==",id)`, chặn nếu có — số lưu trữ là cố
+định, không cho trùng), tính `daNop` riêng cho đúng 1 vụ này (cùng logic join
+`lichsuChuyenGiaiDoan`+`phienGiaoNhan.laLuuTru` đã dùng lúc tải cả danh sách, thu hẹp còn 1 vụ nên
+không cần chia lô), rồi đẩy thẳng vào STATE `ungVien`/`dsChon` (tự động tick chọn) — **CHƯA ghi gì
+vào Postgres**, giống mọi vụ khác ở màn "chuẩn bị", chỉ thật sự ghi khi bấm "Chốt danh sách" ở màn
+sau.
+
+**"Quét QR nộp lưu kho" — KHÔNG phải bug, tính năng đã có sẵn từ trước (`quetTraCuu` trong
+`ManSoLuuTru`, xem mục "Tính năng mới: Nộp lưu kho" đầu file) nhưng CHỈ hiện SAU KHI đã Chốt ít
+nhất 1 lần** (`ManChiTietDot` router: `dot.trangThai === "dang_mo" && dsHoSo.length === 0` vẫn còn
+ở màn `ManChuanBiDanhSach`/`ManXemTruocChot`; chỉ khi `dsHoSo.length > 0` — tức đã Chốt — mới sang
+`ManSoLuuTru` có ô "Quét QR tra cứu / xác nhận lên Kho" hiện to rõ **Số {nhanSo}** và
+**{thoiHanBaoQuan}** đúng như mô tả). Lý do hợp lý về nghiệp vụ: Số lưu trữ (`nhanSo`) chỉ được
+SINH RA lúc Chốt, quét trước đó sẽ không có gì để tra. "Đợt nộp lưu năm 2025" thật của người dùng
+vẫn đang "Đang mở" (chưa Chốt lần nào) nên chưa tới được màn đó — **KHÔNG tự ý bấm Chốt lên dữ liệu
+thật thay người dùng** (đây là hành động sinh số cố định + khoá đợt, ảnh hưởng cách đánh số 1280+
+hồ sơ thật, cần người dùng tự bấm sau khi đã ưng ý với danh sách). Đã thêm 1 câu gợi ý vào banner
+cảnh báo màu vàng ở `ManXemTruocChot` (ngay trước khi Chốt) nhắc rõ "màn tiếp theo sẽ có ô Quét QR
+tra cứu" để không bị hỏi lại câu này lần sau.
+
+**Đã kiểm chứng bằng Supabase production thật** trên chính "Đợt nộp lưu năm 2025" (1280 vụ) —
+lọc theo KSV "Đặng Văn Sỹ" ra đúng 29 dòng (khớp số "Đã nộp 20/29" ở panel Tình trạng nộp theo
+KSV); bấm "Bỏ chọn tất cả (đang hiện)" → tổng đã chọn giảm đúng 1280→1251 (= 29), 0 dòng nào trong
+bảng lọc còn tick; bấm lại "Chọn tất cả (đang hiện)" → khôi phục đúng 1280. "+ Thêm vụ" tìm
+"Nguyễn Văn" ra nhiều kết quả hợp lệ (đều đã giải quyết, chưa có trong `ungVien`) — bấm thêm 1 kết
+quả (`QLVA_E01.53_2401_0054`), xác nhận tổng `ungVien` tăng đúng 1280→1281 VÀ tự động được tick
+(tổng đã chọn cũng 1281), dòng mới hiện đầy đủ dữ liệu đúng ở bảng (KSV/Hình thức GQ/Số-ngày QĐ
+KTVA/Số QĐ GQ/Thời hạn bảo quản/Vấn đề cần bổ sung). Không có ghi nào vào Postgres trong toàn bộ
+quá trình kiểm chứng (chỉ 2 lượt đọc `.where().get()` để kiểm tra trùng đợt/tính `daNop`) — đã tải
+lại trang sau khi test để trả `ungVien` về đúng 1280 gốc, không để lại trạng thái test trên tab.
+0 lỗi console.
+
+## Nộp lưu kho: quét liên tục tự động xác nhận + cảnh báo quét trùng + cột Số bút lục/Số tập (2026-07-26)
+
+Người dùng phản hồi thêm 3 việc ở màn `ManSoLuuTru`/sổ in: (1) quét liên tục nhiều hồ sơ nên tự
+động xác nhận "đã lên Kho" cho hồ sơ QUÉT TRƯỚC ĐÓ, không bắt bấm nút mỗi lần (tiết kiệm thao tác
+đúng nhịp đầu đọc QR); (2) quét lại 1 hồ sơ đã xử lý phải cảnh báo tránh nhầm; (3) sổ in cần thêm
+cột Số bút lục/Số tập để đối chiếu bìa hồ sơ giấy.
+
+**`quetTraCuu` viết lại** — trước khi hiển thị kết quả quét MỚI, tự gọi `xacNhanDaLenKho(ketQuaQuet
+cũ)` nếu hồ sơ đó hợp lệ và CHƯA có `thoiDiemQuetXacNhan` (tái dùng nguyên hàm đã có, kèm toast xác
+nhận — không cần cờ "silent" riêng, toast đó đúng là tín hiệu người dùng cần biết "đã tự xác nhận
+hộ"). 2 nhánh cảnh báo "quét trùng": (a) quét lại ĐÚNG hồ sơ đang hiển thị ngay lập tức — so trực
+tiếp `ketQuaQuet.maVuAn`, KHÔNG dựa vào `dsHoSo` (tránh race vì Realtime có thể chưa kịp phản ánh
+đúng lúc vừa tự xác nhận xong); (b) quét 1 hồ sơ đã có `thoiDiemQuetXacNhan` từ trước (phiên trước
+hoặc đã tự xác nhận từ lâu) — dữ liệu này lấy thẳng từ `dsHoSo` (không racy, đã tồn tại từ trước).
+
+**Cột "Số bút lục"/"Số tập"** — 2 field MỚI trên `hoSoNopLuuKho` (`soButLuc` text, `soTapHoSo`
+text), snapshot từ đúng lần **"Nộp hồ sơ lưu trữ" GẦN NHẤT** của vụ đó (sự kiện `giao_nhan_ho_so`
+có `loaiGiaoDich=="nhan"` + phiên đó `laLuuTru==true` — cùng tiêu chí đã dùng để tính `daNop`, xem
+mục "Vấn đề cần bổ sung" ở trên) — **KHÔNG có trên `vuan`**, chỉ tồn tại trên sự kiện giao nhận
+(ghi tay ở `DongGiaoNhan`, xem mục "Giao nhận hồ sơ" ở dưới). Hàm dùng chung mới
+`layThongTinNopLuuTruMotVu(maVuAn)` (đặt cạnh `laySoQdGiaiQuyetNopLuuKho`) cho `themVuThuCong` và
+`chenVaoSau` (xử lý đúng 1 vụ); `taiDuLieu` (xử lý hàng loạt cho cả `ungVien`) viết join riêng dùng
+lại đúng `giaoNhanDocs` đã tải sẵn cho `daNop`, không query thêm. Rộng ra đủ 5 nơi: bảng ứng viên,
+bảng xem trước, sổ trên màn hình, kết quả quét tra cứu, **và sổ in** (`InSoLuuTruModal`, yêu cầu
+chính) + Excel xuất theo KSV.
+
+**⚠ CHƯA CHẠY ĐƯỢC ALTER TABLE thật lên Supabase** — thiếu mật khẩu DB trong phiên làm việc này
+(không có sẵn trong env, theo đúng quy tắc "không ghi vào repo, hỏi lại Dũng nếu phiên sau cần
+dùng"). Đã sửa `add_nop_luu_kho_2026-07-23.sql` (CREATE TABLE gốc, vì nhánh chưa merge/deploy) và
+`schema.sql` — 2 cột `soButLuc`/`soTapHoSo` (text, nullable). Code JS đã kiểm chứng AN TOÀN khi
+cột CHƯA tồn tại: `batch_commit` RPC tự lọc bỏ field không khớp cột nào của bảng (không lỗi, chỉ
+im lặng không ghi được 2 field mới) — xác nhận qua đọc trực tiếp 1 dòng `hoSoNopLuuKho` thật, thiếu
+hẳn 2 key này. **Việc cần làm để hoàn tất**: chạy 2 lệnh sau qua Supabase SQL Editor (project
+`eutatszoaseixchvjbtg`) hoặc qua Session pooler (xem `supabase/README.md`):
+```sql
+alter table "hoSoNopLuuKho" add column "soButLuc" text;
+alter table "hoSoNopLuuKho" add column "soTapHoSo" text;
+notify pgrst, 'reload schema';
+```
+
+**Đã kiểm chứng phần join (soButLuc/soTapHoSo) bằng Supabase production thật** — mở lại
+`ManChuanBiDanhSach` cho 1 đợt mới, thấy đúng 3 giá trị Số bút lục thật (88/172/187) khớp với các
+vụ ĐÃ được nộp hồ sơ lưu trữ trước đó, xác nhận join lấy đúng dữ liệu nguồn dù cột đích chưa tồn
+tại để LƯU (chỉ hiển thị tại chỗ, chưa ghi được xuống Postgres cho tới khi ALTER TABLE). Phần
+`quetTraCuu`/`xacNhanDaLenKho` viết lại lúc đó CHƯA kiểm chứng trực tiếp qua thao tác quét thật, chỉ
+kiểm chứng gián tiếp qua đọc lại logic — **đã kiểm chứng đầy đủ qua UI thật SAU ĐÓ** (đợt TEST
+riêng, 2 vụ, gõ mã QR + Enter qua input thật, chặn `addToast` để bắt đúng nội dung toast): quét vụ
+1 rồi quét sang vụ 2 → vụ 1 tự động có "✓ <ngày>" ở cột Lên Kho (không cần bấm nút); quét lại ĐÚNG
+vụ 2 đang hiển thị → toast cảnh báo đúng "... vừa quét rồi — không quét trùng."; quét lại vụ 1 (đã
+tự xác nhận từ trước, không phải vụ đang hiển thị) → toast đúng thứ tự: tự xác nhận vụ 2 (đang hiển
+thị, chưa xác nhận) trước, RỒI mới cảnh báo "... đã được xác nhận lên Kho từ trước — quét trùng."
+cho vụ 1. Cả 3 tình huống đúng như thiết kế. Đã dọn sạch đợt TEST sau khi kiểm chứng.
+
+**⚠ PHÁT HIỆN QUAN TRỌNG lúc kiểm chứng, cần Dũng xác nhận lại**: "Đợt nộp lưu năm 2025" (đợt thật
+1280 vụ, trước đó luôn thấy ở trạng thái "Đang mở" + 0 hồ sơ suốt nhiều lượt kiểm chứng trong ngày
+26/07) — kiểm tra lại thì phát hiện đã **THỰC SỰ được Chốt lúc 04:49:37 rồi Mở khoá lại chỉ 3 GIÂY
+SAU (04:49:40)**, bởi tài khoản **`b10verify@local.com`** (không phải tài khoản `admin@qlva.local`
+dùng trong phiên này) — sinh đủ `soThuTu`/`nhanSo` **1 → 1280 thật** cho toàn bộ 1280 hồ sơ, và
+**1 hồ sơ đã có `thoiDiemQuetXacNhan` thật** (đã được quét/xác nhận "đã lên Kho" thật). Nhịp
+Chốt→Mở khoá cách nhau đúng 3 giây gợi ý đây là 1 phiên làm việc/agent KHÁC đang test tính năng
+Chốt/Mở khoá — rất có thể lỡ thao tác trên đúng đợt SẢN XUẤT thật thay vì tạo đợt test riêng (đúng
+rủi ro đã cảnh báo ở [[qlahsp2_main_concurrent_edits]] — nhiều phiên cùng sửa 1 cơ sở dữ liệu thật).
+**KHÔNG tự ý sửa/hoàn tác gì** (không biết chắc đây là hành động của Dũng hay phiên khác, hoàn tác
+nhầm còn tệ hơn) — chỉ dọn đúng 1 đợt TEST của riêng phiên này (`"TEST - xoá sau khi kiểm chứng
+quét liên tục"`, tạo lúc kiểm chứng, chưa Chốt, đã xoá sạch). **Cần hỏi lại Dũng**: 1280 hồ sơ đã
+có Số lưu trữ 1-1280 chính thức chưa (nếu đúng ý muốn thì không cần làm gì thêm, đợt vẫn "Đang mở"
+nên vẫn sửa được), và 1 hồ sơ đã "đã lên Kho" đó có đúng thật sự đã đưa lên Kho chưa hay là do quét
+test.
+
+## Nộp lưu kho: thay "Tính lại toàn bộ STT" bằng luồng xem-trước-rồi-áp-dụng (2026-07-26)
+
+Người dùng phản hồi trực tiếp về nút "Tính lại toàn bộ số thứ tự" cũ (đã có sẵn ở `ManSoLuuTru` từ
+đầu — ghi thẳng `soThuTu`/`nhanSo` mới cho MỌI hồ sơ ngay khi bấm, không có bước xem trước): muốn
+sửa/chỉnh đợt đã chốt thì tốt nhất là **quay lại đúng luồng "chuẩn bị danh sách → xem trước" quen
+thuộc**, chỉ cần thêm 1 cột "STT đã chốt" (số cũ) để tự so sánh trước khi quyết định thêm/chèn/đổi
+thứ tự — và **yêu cầu này thay thế hẳn** nút "Tính lại toàn bộ" (đã xoá, không giữ song song 2 cơ
+chế làm cùng 1 việc).
+
+**2 màn mới, đặt ngay trước `ManSoLuuTru`**: `ManSuaLaiDanhSachDaChot` (tương đương
+`ManChuanBiDanhSach` nhưng dành cho đợt ĐÃ CÓ hồ sơ) → `ManXemTruocSuaDoi` (tương đương
+`ManXemTruocChot` nhưng ghi UPDATE/INSERT/DELETE thay vì chỉ INSERT). Khác biệt quan trọng nhất so
+với `ManChuanBiDanhSach`: **nguồn ứng viên ban đầu là CHÍNH `dsHoSo` đã có** (không phải query lại
+theo khoảng tháng/năm) — đảm bảo KHÔNG BAO GIỜ làm "rơi mất" 1 hồ sơ đã lưu chỉ vì nó nằm ngoài
+khoảng ngày mặc định (VD hồ sơ được thêm thủ công từ trước qua "+ Thêm vụ" với ngày giải quyết xa
+ngoài phạm vi lọc gốc). Thêm hồ sơ MỚI hoàn toàn dùng lại đúng cơ chế "+ Thêm vụ" (tìm không giới
+hạn ngày) — **cố tình KHÔNG dùng chung code với `ManChuanBiDanhSach`** (2 component phục vụ 2 mục
+đích/2 hình dạng dữ liệu nguồn khác nhau — thêm nhiều prop điều kiện vào 1 component sẽ làm nó khó
+đọc hơn là chấp nhận trùng lặp 1 đoạn ngắn).
+
+**KHÔNG hiện cột "Mã vụ"** ở cả 2 màn mới (khác `ManChuanBiDanhSach`) — theo đúng quy ước đã có sẵn
+của mọi màn "sổ" (`ManSoLuuTru` chính, `InSoLuuTruModal`): `hoSoNopLuuKho` không snapshot
+`maNganhCap`/`maNoiSinh` nên `hienThiMa()` sẽ ra rỗng cho các dòng lấy từ `dsHoSo` — chỉ dùng
+`hienThiMa()` được ở panel "+ Thêm vụ" (kết quả tìm là object "vuan" đầy đủ, có sẵn field đó).
+
+**Ghi khi "Áp dụng thay đổi"** — với mỗi hồ sơ trong danh sách đã sắp xếp lại: có `_hoSoId` (đã có
+sẵn trong đợt từ trước) → `batch.update(doc(_hoSoId), {...})`, CHỈ patch đúng field liệt kê
+(`soThuTu`/`nhanSo`/snapshot...) — **KHÔNG đụng `thoiDiemQuetXacNhan`/`ngayTao`/`nguoiTao`** (giữ
+nguyên trạng thái "đã lên Kho" dù số đổi, và giữ đúng lịch sử tạo ban đầu); không có `_hoSoId` (mới
+thêm) → `batch.set(doc(), {...})`, giống hệt `chot()`. Hồ sơ có trong `dsHoSoCu` (đợt trước khi sửa)
+nhưng KHÔNG còn trong danh sách cuối (bị bỏ tick) → `batch.delete` — banner cảnh báo rõ tên các hồ
+sơ sẽ bị xoá TRƯỚC khi bấm Áp dụng, đúng tinh thần "không âm thầm mất dữ liệu".
+
+**Cột "STT đã chốt" (`sttDaChot`)** hiện ở cả 2 màn — màn "sửa lại" hiện cạnh checkbox (số cũ hoặc
+badge "Mới" nếu là hồ sơ vừa thêm), màn "xem trước" hiện CẠNH cột "STT mới" (vị trí `i+1` sau khi
+sắp xếp lại) để so sánh trực tiếp — tô màu hổ phách nếu số thực sự đổi (`sttDaChot !== String(i+1)`)
+để dễ nhận ra ngay những dòng bị ảnh hưởng, thay vì phải dò cả bảng.
+
+**Đã kiểm chứng bằng Supabase production thật** — trên chính "Đợt nộp lưu năm 2025" (1280 vụ, xem
+mục "phát hiện quan trọng" ngay trên: đợt này ĐÃ chốt thật rồi mở khoá lại, router tự động chuyển
+đúng sang `ManSoLuuTru` thay vì `ManChuanBiDanhSach` — xác nhận điều kiện `dsHoSo.length > 0` hoạt
+động đúng như thiết kế). Bấm "✎ Sửa lại danh sách" → đúng 1280 vụ hiện ra, cột "STT đã chốt" khớp
+1-1280 thật; bấm "Xem trước thay đổi" → cột "STT mới" trùng khớp "STT đã chốt" ở mọi dòng đã xem
+(đúng kỳ vọng, vì thứ tự chưa hề đổi — chưa thêm/bớt gì); "+ Thêm vụ" tìm lại đúng
+"QLVA_E01.53_2401_0054" (Nguyễn Văn Nam, vẫn chưa nằm trong đợt nào — xác nhận qua kết quả tìm ra
+đúng 1 dòng). **CHỦ ĐỘNG KHÔNG bấm "Áp dụng thay đổi"** trên đợt thật này (dù sẽ là no-op về mặt số
+liệu, vẫn là 1 lượt ghi hàng loạt 1280 document thật không cần thiết cho việc kiểm chứng) — thoát ra
+bằng "← Quay lại chỉnh sửa" rồi "Huỷ, quay lại sổ", xác nhận đợt trở về ĐÚNG trạng thái ban đầu
+(1280 vụ — 1/1280 đã lên Kho), không có ghi nào xảy ra trong suốt quá trình test. 0 lỗi console.
+
+**Đã bấm "Áp dụng thay đổi" thật, trên đợt TEST độc lập** (không phải đợt thật — đúng như "Chưa làm"
+đã ghi lúc đầu, quay lại làm ngay sau đó): tạo "TEST - kiem chung sua lai danh sach da chot", thêm
+3 vụ thật qua "+ Thêm vụ" (Công ty CP G20, Nguyễn Đức An, Nghiêm Thu Hằng), Chốt (sinh đúng STT
+1/2/3) — **gặp 1 giới hạn môi trường test**: nút "Mở khoá" dùng `window.confirm()` thật, native
+dialog này CHẶN ĐỨNG mọi `javascript_tool`/`computer` sau đó (treo 30s, kể cả `screenshot`) — không
+có API dismiss dialog qua các tool hiện có; workaround: `navigate` sang 1 URL khác (`https://
+example.com`) để trình duyệt tự đóng dialog, tab bị đá sang origin khác nên phải mở tab mới rồi
+`db.collection("dotNopLuuKho").doc(id).update({trangThai:"dang_mo",...})` thẳng để bỏ qua nút (bản
+thân `moKhoa()` không đổi, chỉ là hạn chế của môi trường kiểm chứng, không phải bug — ĐÃ CÓ TỪ
+TRƯỚC, không phải do đợt sửa lần này gây ra).
+Sau khi mở khoá: bấm "✎ Sửa lại danh sách" → bỏ tick "Nguyễn Đức An" + thêm "Nguyễn Văn Nam" qua
+"+ Thêm vụ" → "Xem trước thay đổi" xác nhận đúng: dòng "Công ty CP G20" giữ STT mới=1=STT đã chốt
+(không đổi), "Nghiêm Thu Hằng" STT đã chốt=3 → STT mới=2 (dồn lên vì có 1 dòng bị xoá), "Nguyễn Văn
+Nam" hiện badge "Mới" ở cột STT đã chốt, banner cảnh báo đúng tên "Nguyễn Đức An" sẽ bị xoá → bấm
+"Áp dụng thay đổi" → xác nhận trực tiếp qua Postgres: hồ sơ "Nguyễn Đức An" đã bị XOÁ hẳn (0 kết
+quả `where maVuAn`), 2 hồ sơ còn lại đúng `soThuTu`/`nhanSo` mới.
+**Kiểm tra riêng phần quan trọng nhất — "Đã lên Kho" phải sống sót qua lần sửa**: đặt tay
+`thoiDiemQuetXacNhan` cho dòng "Công ty CP G20" (giả lập đã quét xác nhận), sửa lại danh sách 1 lần
+nữa (bỏ tiếp "Nguyễn Văn Nam", ép STT đổi lại), Áp dụng, rồi đọc thẳng lại ĐÚNG document đó qua
+Postgres — xác nhận **`thoiDiemQuetXacNhan` vẫn giữ nguyên giá trị đã đặt VÀ document giữ nguyên
+đúng `id` cũ** (không bị xoá-tạo-lại) — đúng thiết kế `batch.update()` chỉ patch field liệt kê.
+Đã dọn sạch hoàn toàn đợt TEST (2 hồ sơ còn lại + chính `dotNopLuuKho`) ngay sau khi kiểm chứng,
+xác nhận lại "Đợt nộp lưu năm 2025" thật vẫn nguyên 1280 hồ sơ, không hề bị đụng vào trong suốt quá
+trình test này. 0 lỗi console liên quan tới thay đổi này.
+
+## Nộp lưu kho: thêm "Huỷ chốt hoàn toàn" — quay lại ĐÚNG trạng thái trước khi Chốt (2026-07-26)
+
+Người dùng làm rõ lại ý muốn ngay sau mục "Sửa lại danh sách" ở trên: không phải muốn 1 công cụ
+SỬA có kiểm soát (giữ nguyên phần không đổi) mà muốn **quay lại HẲN trạng thái CHÍNH XÁC như lúc
+CHƯA từng bấm "Chốt danh sách"** — 2 lý do: (1) đề phòng ấn nhầm nút Chốt, (2) đang giai đoạn test,
+cần bật/tắt qua lại giữa 2 trạng thái "chuẩn bị"/"đã chốt" nhiều lần cho tiện, không muốn để lại
+STT/hồ sơ rác mỗi lần thử. Đây là tính năng THỨ 2, khác hẳn "Sửa lại danh sách" (vẫn giữ nguyên,
+không thay thế) — 1 cái là sửa có kiểm soát, 1 cái là undo toàn bộ về vạch xuất phát.
+
+**`huyChotHoanToan`** (`ManSoLuuTru`) — nút **"↩ Huỷ chốt hoàn toàn"** (đỏ, cảnh báo rõ số hồ sơ sẽ
+mất + cảnh báo riêng nếu có hồ sơ đã "đã lên Kho" sẽ mất trạng thái đó luôn) hiện ở CẢ 2 nhánh
+trạng thái (`daChot`/`!daChot`) — không bắt phải Mở khoá trước mới huỷ được, đúng nhu cầu "ấn nhầm
+Chốt thì sửa ngay lập tức" mà không cần thêm 1 bước trung gian. Khi xác nhận: xoá TOÀN BỘ
+`hoSoNopLuuKho` của đợt (theo lô tối đa 400/batch, cùng cỡ lô cascade xoá vụ án đã dùng ở
+`XoaVuAnModal`) + reset `dotNopLuuKho` về **CHÍNH XÁC** trạng thái lúc mới tạo: `trangThai:
+"dang_mo"`, `ngayChot`/`nguoiChot`/`ngayMoKhoaGanNhat`/`nguoiMoKhoaGanNhat` đều về `null` (không chỉ
+đổi `trangThai` — xoá sạch luôn MỌI dấu vết từng Chốt/Mở khoá, đúng nghĩa "chưa từng bấm Chốt" chứ
+không phải chỉ "đang mở khoá"). `dsHoSo.length` về 0 sau khi xoá → router (`ManChiTietDot`) TỰ ĐỘNG
+quay lại đúng `ManChuanBiDanhSach` (không cần code thêm gì ở router, tận dụng điều kiện đã có).
+
+**Đã kiểm chứng bằng Supabase production thật, thao tác qua ĐÚNG nút thật (không phải giả lập tay)**
+— tạo đợt TEST, chốt 3 vụ thật, bấm "↩ Huỷ chốt hoàn toàn": **ghi đè tạm `window.confirm` để tự
+động chấp nhận** (môi trường test không có cách dismiss dialog `confirm()` thật — xem ghi chú môi
+trường ở mục dưới — nhưng vẫn bắt được ĐÚNG NỘI DUNG cảnh báo hiện ra trước khi tự chấp nhận, xác
+nhận UI/logic gọi đúng), xác nhận qua Postgres: `hoSoNopLuuKho` của đợt còn **đúng 0** dòng,
+`dotNopLuuKho` có `trangThai:"dang_mo"` và cả 4 field `ngayChot`/`nguoiChot`/`ngayMoKhoaGanNhat`/
+`nguoiMoKhoaGanNhat` đều `null` — và trên UI, đợt tự động hiện lại ĐÚNG màn "Chuẩn bị danh sách"
+(form lọc tháng/năm) như chưa từng Chốt. Đã khôi phục `window.confirm` gốc và xoá sạch đợt TEST
+ngay sau đó, xác nhận lại "Đợt nộp lưu năm 2025" thật vẫn nguyên 1280 hồ sơ. 0 lỗi console.
+
+**Ghi chú môi trường test (không phải bug)**: `window.confirm()` thật (native browser dialog) chặn
+đứng MỌI lệnh điều khiển trình duyệt test tiếp theo (kể cả `screenshot`) cho tới khi dialog được
+đóng — môi trường test không có API dismiss dialog trực tiếp, chỉ có cách vòng qua bằng
+`navigate` sang 1 URL khác (trình duyệt tự đóng dialog khi điều hướng đi) rồi quay lại, hoặc ghi đè
+tạm `window.confirm` TRƯỚC khi bấm nút (như đã làm ở trên) — đã gặp và xử lý y hệt cách này khi
+kiểm chứng "Sửa lại danh sách" (mục ngay trên, thao tác Mở khoá). Đây là hạn chế CỦA MÔI TRƯỜNG
+KIỂM CHỨNG, không phải bug ứng dụng — người dùng thật bấm nút vẫn thấy dialog `confirm()` bình
+thường, không có gì khác biệt.
+
+## Nộp lưu kho: gõ mã xác nhận cho "Chốt danh sách"/"Huỷ chốt hoàn toàn" (2026-07-26)
+
+Người dùng yêu cầu thêm an toàn cho 2 nút dễ ảnh hưởng hàng loạt hồ sơ nếu bấm nhầm: "Chốt danh
+sách" (sinh Số lưu trữ cố định lần đầu) và "↩ Huỷ chốt hoàn toàn" (xoá sạch, không hoàn tác). Thay
+vì `window.confirm()` (dễ bấm "OK" theo phản xạ mà không đọc kỹ), dùng lại ĐÚNG pattern "gõ mã xác
+nhận ngẫu nhiên" đã có ở `XoaVuAnModal` (`taoMaXacNhanNgauNhien`, bộ ký tự loại bỏ 0/O/1/l/I) —
+tách thành component dùng chung mới **`XacNhanMaModal`** (đặt trước `ManXemTruocChot`), nhận
+`canhBao` (nội dung cảnh báo tự do) + `onXacNhan` (hàm thực thi, chỉ bấm được khi gõ đúng mã).
+
+**Áp dụng cho 2 nút**: "Chốt danh sách" (`ManXemTruocChot`, bấm mở modal thay vì gọi thẳng `chot()`)
+và "↩ Huỷ chốt hoàn toàn" (`ManSoLuuTru`, bỏ hẳn `window.confirm()` cũ, dùng modal). **KHÔNG áp
+dụng cho "Chốt lại"/"Mở khoá"** — 2 nút đó chỉ đổi `trangThai` (không mất dữ liệu, dễ bấm lại/mở
+khoá lại nếu nhầm), rủi ro thấp hơn hẳn 2 nút trên nên giữ nguyên (Mở khoá vẫn `confirm()` thường,
+Chốt lại không cần xác nhận gì thêm).
+
+**Đã kiểm chứng đầy đủ qua UI thật trên đợt TEST độc lập** (tạo đợt, chọn 2 vụ thật, Xem trước, bấm
+"Chốt danh sách") — modal hiện đúng mã ngẫu nhiên (VD "A7SB"); nút "Xác nhận Chốt" `disabled=true`
+khi ô trống, VẪN `disabled=true` khi gõ mã SAI ("WRNG"), chuyển `disabled=false` NGAY khi gõ đúng
+"A7SB"; bấm xác nhận → đợt chuyển đúng "Đã chốt (khoá)" với 2 hồ sơ, sinh đúng STT. Đã dọn sạch đợt
+TEST ngay sau đó.
+
+## Nộp lưu kho: xác nhận sự cố "Đợt nộp lưu năm 2025" ngày 2026-07-26 là THAO TÁC CHỦ Ý của người dùng
+
+Mục ⚠ SỰ CỐ ngay dưới đây (viết lúc phát hiện, để nguyên làm lịch sử điều tra) ban đầu nghi ngờ đây
+là 1 phiên khác lỡ bấm nhầm trên dữ liệu thật. **Người dùng đã xác nhận trực tiếp ngay sau đó: "tôi
+ấn hủy chốt để quay lại bước cũ đấy"** — tức CHÍNH Dũng chủ động dùng đúng nút "↩ Huỷ chốt hoàn
+toàn" (vừa build xong) để quay lại màn chuẩn bị danh sách, không phải sự cố/thao tác nhầm. Không
+cần khôi phục gì — đúng ý muốn, họ tự chuẩn bị lại danh sách khi cần.
+
+**Bài học vẫn giữ nguyên giá trị** dù không phải sự cố thật: xác nhận `huyChotHoanToan` vẫn NÊN có
+audit trail riêng (`nguoiHuyChot`/`ngayHuyChot`) trong tương lai — lần này may mắn tự làm rõ được
+nhờ hỏi trực tiếp người dùng, nhưng nếu là 1 tài khoản khác trong nhóm 4 cán bộ thì vẫn không truy
+được ai đã bấm. Việc đó vẫn nên làm ở phiên sau, xem "Cần bổ sung ở phiên sau" trong mục dưới.
+
+## ⚠ SỰ CỐ DỮ LIỆU THẬT (ĐÃ XÁC NHẬN LÀ THAO TÁC CHỦ Ý, xem mục ngay trên): "Đợt nộp lưu năm 2025" bị xoá sạch 1280 hồ sơ ngay trong lúc code (2026-07-26)
+
+**Phát hiện ngay sau khi code xong mục "gõ mã xác nhận" ở trên** — mở lại app để test thì thấy
+"Đợt nộp lưu năm 2025" hiện thẳng ra màn "Chuẩn bị danh sách" (đúng ra phải là sổ, vì đợt này đã có
+1280 hồ sơ suốt cả ngày 26/07). Kiểm tra trực tiếp qua Postgres xác nhận: **`hoSoNopLuuKho` của
+đợt này còn ĐÚNG 0 dòng** (trước đó — xác nhận lại nhiều lần trong ngày, gần nhất ngay trước khi
+bắt đầu code mục "gõ mã xác nhận" — vẫn còn đủ 1280, kể cả 1 hồ sơ đã "đã lên Kho" thật), và
+`dotNopLuuKho` của đợt có `trangThai:"dang_mo"`, `ngayChot`/`nguoiChot`/`ngayMoKhoaGanNhat`/
+`nguoiMoKhoaGanNhat` đều `null` — **khớp CHÍNH XÁC dấu vết hàm `huyChotHoanToan` vừa code/deploy
+trong phiên làm việc ngay TRƯỚC ĐÓ** (mục "Huỷ chốt hoàn toàn" phía trên) để lại sau khi chạy.
+
+**Đã tự rà soát kỹ toàn bộ log thao tác của chính phiên này trong khoảng thời gian đó** — không có
+lệnh `.delete()`/`.update()` nào nhắm vào đúng `dotId` của "Đợt nộp lưu năm 2025" được gọi bởi
+chính phiên này trong khoảng thời gian tương ứng (mọi thao tác lúc đó chỉ là sửa file cục bộ qua
+`Edit` + vài lượt bấm nút KHÔNG THÀNH CÔNG trên UI, không có ghi nào tới Postgres) — **kết luận: rất
+có khả năng đây là 1 phiên làm việc/tài khoản KHÁC** (có thể chính Dũng, hoặc 1 phiên Claude Code
+khác đang chạy song song) **đã tự bấm thử tính năng "Huỷ chốt hoàn toàn" MỚI (vừa commit ngay trước
+đó) trên đúng đợt SẢN XUẤT thật thay vì tạo đợt test riêng** — đúng y hệt kiểu rủi ro đã gặp trước
+đó cùng ngày (xem mục "phát hiện quan trọng" ở "Nộp lưu kho: 'Vấn đề cần bổ sung'..." phía trên, vụ
+Chốt-rồi-Mở-khoá-3-giây bởi `b10verify@local.com`) — 2 sự cố cùng 1 ngày, cùng 1 đợt, đều là dấu
+hiệu nhiều phiên/tài khoản đang thao tác đồng thời lên CHÍNH đợt lưu kho thật của Dũng thay vì môi
+trường test cô lập, xem [[qlahsp2_main_concurrent_edits]].
+
+**KHÔNG tự ý khôi phục/tái tạo lại 1280 hồ sơ** — dù về lý thuyết có thể tự tạo lại (dữ liệu gốc
+`vuan` hoàn toàn KHÔNG bị đụng vào, `huyChotHoanToan`/tính năng liên quan chỉ xoá `hoSoNopLuuKho`,
+chưa từng chạm tới `vuan`, nên chạy lại "Chuẩn bị danh sách → Xem trước → Chốt" gần như chắc chắn
+sẽ sinh lại đúng 1280 vụ tương tự với đúng thứ tự cũ nhờ `sapXepDsNopLuuKho` đã sửa đúng và ổn
+định) — **nhưng KHÔNG BIẾT CHẮC đây có phải ý muốn thật của Dũng hay không** (có thể họ đang cố
+tình muốn làm lại từ đầu), tái tạo nhầm khi chưa hỏi còn tệ hơn việc để trống chờ xác nhận. **Cần
+hỏi lại Dũng ngay khi có thể**: (1) việc xoá sạch đợt này có phải chủ ý không — nếu có thì không
+cần làm gì thêm, cứ chuẩn bị lại danh sách bình thường; (2) nếu KHÔNG chủ ý, xác nhận trước khi tự
+động chạy lại "Chuẩn bị danh sách → Xem trước → Chốt" để khôi phục — lưu ý riêng 1 hồ sơ từng "đã
+lên Kho" thật sẽ KHÔNG tự khôi phục lại trạng thái đó, cần Dũng nhớ lại và quét xác nhận lại tay.
+
+**Bài học rút ra, đã áp dụng ngay** — chính nút "Huỷ chốt hoàn toàn" gây ra sự cố này lại là đúng
+động lực ban đầu khiến người dùng yêu cầu thêm "gõ mã xác nhận" (mục ngay phía trên) — càng củng cố
+lý do cần tính năng đó. Riêng `huyChotHoanToan` **CHƯA ghi lại "ai đã bấm"** (khác `chotLai`/
+`moKhoa` đều có `nguoiChot`/`nguoiMoKhoaGanNhat`) — đây là khoảng trống thật sự trong thiết kế, làm
+sự cố này không thể truy được chính xác tài khoản nào đã bấm. **Cần bổ sung ở phiên sau**: ghi thêm
+`nguoiHuyChot`/`ngayHuyChot`/`soHoSoDaXoa` vào audit trail của chính hành động này (có thể lưu tạm
+trên 1 collection log riêng vì bản thân đợt đã bị xoá sạch hồ sơ, không còn chỗ nào giữ lại vết —
+cân nhắc ghi vào `lichsuChuyenGiaiDoan` dạng 1 sự kiện hành chính mới, hoặc thêm field ngay trên
+`dotNopLuuKho` trước khi field cũ bị ghi đè bởi lần Chốt kế tiếp).
+
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:
