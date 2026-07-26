@@ -12830,6 +12830,39 @@ function ManSoLuuTru({ dot, dsHoSo }) {
     finally { setDangThaoTac(false); }
   };
 
+  // Huỷ chốt HOÀN TOÀN (2026-07-26, theo yêu cầu người dùng) — KHÁC hẳn "Sửa lại danh sách" ở trên
+  // (sửa có kiểm soát, giữ nguyên phần không đổi) — đây là quay lại ĐÚNG NGUYÊN TRẠNG như lúc CHƯA
+  // BAO GIỜ bấm Chốt: xoá sạch toàn bộ hoSoNopLuuKho của đợt (mất hết Số lưu trữ đã sinh) + xoá dấu
+  // vết ngayChot/nguoiChot/ngayMoKhoaGanNhat/nguoiMoKhoaGanNhat trên chính đợt — đưa dsHoSo.length
+  // về 0 nên router (`ManChiTietDot`) tự động quay lại `ManChuanBiDanhSach`. Dùng cho 2 tình huống
+  // người dùng nêu: (1) đề phòng ấn nhầm nút "Chốt danh sách", (2) đang test cần bật/tắt qua lại
+  // giữa 2 trạng thái "chuẩn bị"/"đã chốt" nhiều lần cho tiện, không muốn để lại STT/hồ sơ rác.
+  const huyChotHoanToan = async () => {
+    const soDaLenKhoHienTai = dsHoSo.filter(h => h.thoiDiemQuetXacNhan).length;
+    const canhBaoLenKho = soDaLenKhoHienTai > 0
+      ? `\n\n⚠ Có ${soDaLenKhoHienTai} hồ sơ ĐÃ xác nhận lên Kho — trạng thái này sẽ MẤT LUÔN, không khôi phục lại được.`
+      : "";
+    if (!confirm(
+      `Huỷ chốt HOÀN TOÀN — xoá sạch ${dsHoSo.length} hồ sơ khỏi đợt (kể cả Số lưu trữ đã sinh) và ` +
+      `quay lại đúng màn "Chuẩn bị danh sách" như lúc CHƯA từng bấm Chốt?${canhBaoLenKho}\n\n` +
+      `KHÔNG THỂ HOÀN TÁC.`
+    )) return;
+    setDangThaoTac(true);
+    try {
+      // Xoá theo lô tối đa 400 (giới hạn kích thước batch, cùng cỡ lô đã dùng ở cascade xoá vụ án).
+      for (let i = 0; i < dsHoSo.length; i += 400) {
+        const batch = db.batch();
+        dsHoSo.slice(i, i + 400).forEach(h => batch.delete(db.collection("hoSoNopLuuKho").doc(h.id)));
+        await batch.commit();
+      }
+      await db.collection("dotNopLuuKho").doc(dot.id).update({
+        trangThai: "dang_mo", ngayChot: null, nguoiChot: null, ngayMoKhoaGanNhat: null, nguoiMoKhoaGanNhat: null,
+      });
+      addToast(`Đã huỷ chốt — xoá ${dsHoSo.length} hồ sơ, quay lại màn chuẩn bị danh sách.`);
+    } catch (err) { console.error(err); addToast("Lỗi khi huỷ chốt: " + err.message, "error"); }
+    finally { setDangThaoTac(false); }
+  };
+
   const xoaDong = async (id) => {
     if (!confirm("Xoá hồ sơ này khỏi đợt?")) return;
     try { await db.collection("hoSoNopLuuKho").doc(id).delete(); }
@@ -12936,17 +12969,25 @@ function ManSoLuuTru({ dot, dsHoSo }) {
     <div>
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {daChot ? (
-          <button onClick={moKhoa} disabled={dangThaoTac} className="text-sm border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
-            🔓 Mở khoá
-          </button>
+          <>
+            <button onClick={moKhoa} disabled={dangThaoTac} className="text-sm border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
+              🔓 Mở khoá
+            </button>
+            <button onClick={huyChotHoanToan} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
+              ↩ Huỷ chốt hoàn toàn
+            </button>
+          </>
         ) : (
           <>
             <button onClick={chotLai} disabled={dangThaoTac}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50">
               🔒 Chốt lại
             </button>
-            <button onClick={() => setDangSuaLai(true)} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
+            <button onClick={() => setDangSuaLai(true)} disabled={dangThaoTac} className="text-sm border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
               ✎ Sửa lại danh sách
+            </button>
+            <button onClick={huyChotHoanToan} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
+              ↩ Huỷ chốt hoàn toàn
             </button>
           </>
         )}

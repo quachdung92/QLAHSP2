@@ -391,6 +391,45 @@ Postgres — xác nhận **`thoiDiemQuetXacNhan` vẫn giữ nguyên giá trị 
 xác nhận lại "Đợt nộp lưu năm 2025" thật vẫn nguyên 1280 hồ sơ, không hề bị đụng vào trong suốt quá
 trình test này. 0 lỗi console liên quan tới thay đổi này.
 
+## Nộp lưu kho: thêm "Huỷ chốt hoàn toàn" — quay lại ĐÚNG trạng thái trước khi Chốt (2026-07-26)
+
+Người dùng làm rõ lại ý muốn ngay sau mục "Sửa lại danh sách" ở trên: không phải muốn 1 công cụ
+SỬA có kiểm soát (giữ nguyên phần không đổi) mà muốn **quay lại HẲN trạng thái CHÍNH XÁC như lúc
+CHƯA từng bấm "Chốt danh sách"** — 2 lý do: (1) đề phòng ấn nhầm nút Chốt, (2) đang giai đoạn test,
+cần bật/tắt qua lại giữa 2 trạng thái "chuẩn bị"/"đã chốt" nhiều lần cho tiện, không muốn để lại
+STT/hồ sơ rác mỗi lần thử. Đây là tính năng THỨ 2, khác hẳn "Sửa lại danh sách" (vẫn giữ nguyên,
+không thay thế) — 1 cái là sửa có kiểm soát, 1 cái là undo toàn bộ về vạch xuất phát.
+
+**`huyChotHoanToan`** (`ManSoLuuTru`) — nút **"↩ Huỷ chốt hoàn toàn"** (đỏ, cảnh báo rõ số hồ sơ sẽ
+mất + cảnh báo riêng nếu có hồ sơ đã "đã lên Kho" sẽ mất trạng thái đó luôn) hiện ở CẢ 2 nhánh
+trạng thái (`daChot`/`!daChot`) — không bắt phải Mở khoá trước mới huỷ được, đúng nhu cầu "ấn nhầm
+Chốt thì sửa ngay lập tức" mà không cần thêm 1 bước trung gian. Khi xác nhận: xoá TOÀN BỘ
+`hoSoNopLuuKho` của đợt (theo lô tối đa 400/batch, cùng cỡ lô cascade xoá vụ án đã dùng ở
+`XoaVuAnModal`) + reset `dotNopLuuKho` về **CHÍNH XÁC** trạng thái lúc mới tạo: `trangThai:
+"dang_mo"`, `ngayChot`/`nguoiChot`/`ngayMoKhoaGanNhat`/`nguoiMoKhoaGanNhat` đều về `null` (không chỉ
+đổi `trangThai` — xoá sạch luôn MỌI dấu vết từng Chốt/Mở khoá, đúng nghĩa "chưa từng bấm Chốt" chứ
+không phải chỉ "đang mở khoá"). `dsHoSo.length` về 0 sau khi xoá → router (`ManChiTietDot`) TỰ ĐỘNG
+quay lại đúng `ManChuanBiDanhSach` (không cần code thêm gì ở router, tận dụng điều kiện đã có).
+
+**Đã kiểm chứng bằng Supabase production thật, thao tác qua ĐÚNG nút thật (không phải giả lập tay)**
+— tạo đợt TEST, chốt 3 vụ thật, bấm "↩ Huỷ chốt hoàn toàn": **ghi đè tạm `window.confirm` để tự
+động chấp nhận** (môi trường test không có cách dismiss dialog `confirm()` thật — xem ghi chú môi
+trường ở mục dưới — nhưng vẫn bắt được ĐÚNG NỘI DUNG cảnh báo hiện ra trước khi tự chấp nhận, xác
+nhận UI/logic gọi đúng), xác nhận qua Postgres: `hoSoNopLuuKho` của đợt còn **đúng 0** dòng,
+`dotNopLuuKho` có `trangThai:"dang_mo"` và cả 4 field `ngayChot`/`nguoiChot`/`ngayMoKhoaGanNhat`/
+`nguoiMoKhoaGanNhat` đều `null` — và trên UI, đợt tự động hiện lại ĐÚNG màn "Chuẩn bị danh sách"
+(form lọc tháng/năm) như chưa từng Chốt. Đã khôi phục `window.confirm` gốc và xoá sạch đợt TEST
+ngay sau đó, xác nhận lại "Đợt nộp lưu năm 2025" thật vẫn nguyên 1280 hồ sơ. 0 lỗi console.
+
+**Ghi chú môi trường test (không phải bug)**: `window.confirm()` thật (native browser dialog) chặn
+đứng MỌI lệnh điều khiển trình duyệt test tiếp theo (kể cả `screenshot`) cho tới khi dialog được
+đóng — môi trường test không có API dismiss dialog trực tiếp, chỉ có cách vòng qua bằng
+`navigate` sang 1 URL khác (trình duyệt tự đóng dialog khi điều hướng đi) rồi quay lại, hoặc ghi đè
+tạm `window.confirm` TRƯỚC khi bấm nút (như đã làm ở trên) — đã gặp và xử lý y hệt cách này khi
+kiểm chứng "Sửa lại danh sách" (mục ngay trên, thao tác Mở khoá). Đây là hạn chế CỦA MÔI TRƯỜNG
+KIỂM CHỨNG, không phải bug ứng dụng — người dùng thật bấm nút vẫn thấy dialog `confirm()` bình
+thường, không có gì khác biệt.
+
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:
