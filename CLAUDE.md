@@ -316,6 +316,81 @@ có Số lưu trữ 1-1280 chính thức chưa (nếu đúng ý muốn thì khô
 nên vẫn sửa được), và 1 hồ sơ đã "đã lên Kho" đó có đúng thật sự đã đưa lên Kho chưa hay là do quét
 test.
 
+## Nộp lưu kho: thay "Tính lại toàn bộ STT" bằng luồng xem-trước-rồi-áp-dụng (2026-07-26)
+
+Người dùng phản hồi trực tiếp về nút "Tính lại toàn bộ số thứ tự" cũ (đã có sẵn ở `ManSoLuuTru` từ
+đầu — ghi thẳng `soThuTu`/`nhanSo` mới cho MỌI hồ sơ ngay khi bấm, không có bước xem trước): muốn
+sửa/chỉnh đợt đã chốt thì tốt nhất là **quay lại đúng luồng "chuẩn bị danh sách → xem trước" quen
+thuộc**, chỉ cần thêm 1 cột "STT đã chốt" (số cũ) để tự so sánh trước khi quyết định thêm/chèn/đổi
+thứ tự — và **yêu cầu này thay thế hẳn** nút "Tính lại toàn bộ" (đã xoá, không giữ song song 2 cơ
+chế làm cùng 1 việc).
+
+**2 màn mới, đặt ngay trước `ManSoLuuTru`**: `ManSuaLaiDanhSachDaChot` (tương đương
+`ManChuanBiDanhSach` nhưng dành cho đợt ĐÃ CÓ hồ sơ) → `ManXemTruocSuaDoi` (tương đương
+`ManXemTruocChot` nhưng ghi UPDATE/INSERT/DELETE thay vì chỉ INSERT). Khác biệt quan trọng nhất so
+với `ManChuanBiDanhSach`: **nguồn ứng viên ban đầu là CHÍNH `dsHoSo` đã có** (không phải query lại
+theo khoảng tháng/năm) — đảm bảo KHÔNG BAO GIỜ làm "rơi mất" 1 hồ sơ đã lưu chỉ vì nó nằm ngoài
+khoảng ngày mặc định (VD hồ sơ được thêm thủ công từ trước qua "+ Thêm vụ" với ngày giải quyết xa
+ngoài phạm vi lọc gốc). Thêm hồ sơ MỚI hoàn toàn dùng lại đúng cơ chế "+ Thêm vụ" (tìm không giới
+hạn ngày) — **cố tình KHÔNG dùng chung code với `ManChuanBiDanhSach`** (2 component phục vụ 2 mục
+đích/2 hình dạng dữ liệu nguồn khác nhau — thêm nhiều prop điều kiện vào 1 component sẽ làm nó khó
+đọc hơn là chấp nhận trùng lặp 1 đoạn ngắn).
+
+**KHÔNG hiện cột "Mã vụ"** ở cả 2 màn mới (khác `ManChuanBiDanhSach`) — theo đúng quy ước đã có sẵn
+của mọi màn "sổ" (`ManSoLuuTru` chính, `InSoLuuTruModal`): `hoSoNopLuuKho` không snapshot
+`maNganhCap`/`maNoiSinh` nên `hienThiMa()` sẽ ra rỗng cho các dòng lấy từ `dsHoSo` — chỉ dùng
+`hienThiMa()` được ở panel "+ Thêm vụ" (kết quả tìm là object "vuan" đầy đủ, có sẵn field đó).
+
+**Ghi khi "Áp dụng thay đổi"** — với mỗi hồ sơ trong danh sách đã sắp xếp lại: có `_hoSoId` (đã có
+sẵn trong đợt từ trước) → `batch.update(doc(_hoSoId), {...})`, CHỈ patch đúng field liệt kê
+(`soThuTu`/`nhanSo`/snapshot...) — **KHÔNG đụng `thoiDiemQuetXacNhan`/`ngayTao`/`nguoiTao`** (giữ
+nguyên trạng thái "đã lên Kho" dù số đổi, và giữ đúng lịch sử tạo ban đầu); không có `_hoSoId` (mới
+thêm) → `batch.set(doc(), {...})`, giống hệt `chot()`. Hồ sơ có trong `dsHoSoCu` (đợt trước khi sửa)
+nhưng KHÔNG còn trong danh sách cuối (bị bỏ tick) → `batch.delete` — banner cảnh báo rõ tên các hồ
+sơ sẽ bị xoá TRƯỚC khi bấm Áp dụng, đúng tinh thần "không âm thầm mất dữ liệu".
+
+**Cột "STT đã chốt" (`sttDaChot`)** hiện ở cả 2 màn — màn "sửa lại" hiện cạnh checkbox (số cũ hoặc
+badge "Mới" nếu là hồ sơ vừa thêm), màn "xem trước" hiện CẠNH cột "STT mới" (vị trí `i+1` sau khi
+sắp xếp lại) để so sánh trực tiếp — tô màu hổ phách nếu số thực sự đổi (`sttDaChot !== String(i+1)`)
+để dễ nhận ra ngay những dòng bị ảnh hưởng, thay vì phải dò cả bảng.
+
+**Đã kiểm chứng bằng Supabase production thật** — trên chính "Đợt nộp lưu năm 2025" (1280 vụ, xem
+mục "phát hiện quan trọng" ngay trên: đợt này ĐÃ chốt thật rồi mở khoá lại, router tự động chuyển
+đúng sang `ManSoLuuTru` thay vì `ManChuanBiDanhSach` — xác nhận điều kiện `dsHoSo.length > 0` hoạt
+động đúng như thiết kế). Bấm "✎ Sửa lại danh sách" → đúng 1280 vụ hiện ra, cột "STT đã chốt" khớp
+1-1280 thật; bấm "Xem trước thay đổi" → cột "STT mới" trùng khớp "STT đã chốt" ở mọi dòng đã xem
+(đúng kỳ vọng, vì thứ tự chưa hề đổi — chưa thêm/bớt gì); "+ Thêm vụ" tìm lại đúng
+"QLVA_E01.53_2401_0054" (Nguyễn Văn Nam, vẫn chưa nằm trong đợt nào — xác nhận qua kết quả tìm ra
+đúng 1 dòng). **CHỦ ĐỘNG KHÔNG bấm "Áp dụng thay đổi"** trên đợt thật này (dù sẽ là no-op về mặt số
+liệu, vẫn là 1 lượt ghi hàng loạt 1280 document thật không cần thiết cho việc kiểm chứng) — thoát ra
+bằng "← Quay lại chỉnh sửa" rồi "Huỷ, quay lại sổ", xác nhận đợt trở về ĐÚNG trạng thái ban đầu
+(1280 vụ — 1/1280 đã lên Kho), không có ghi nào xảy ra trong suốt quá trình test. 0 lỗi console.
+
+**Đã bấm "Áp dụng thay đổi" thật, trên đợt TEST độc lập** (không phải đợt thật — đúng như "Chưa làm"
+đã ghi lúc đầu, quay lại làm ngay sau đó): tạo "TEST - kiem chung sua lai danh sach da chot", thêm
+3 vụ thật qua "+ Thêm vụ" (Công ty CP G20, Nguyễn Đức An, Nghiêm Thu Hằng), Chốt (sinh đúng STT
+1/2/3) — **gặp 1 giới hạn môi trường test**: nút "Mở khoá" dùng `window.confirm()` thật, native
+dialog này CHẶN ĐỨNG mọi `javascript_tool`/`computer` sau đó (treo 30s, kể cả `screenshot`) — không
+có API dismiss dialog qua các tool hiện có; workaround: `navigate` sang 1 URL khác (`https://
+example.com`) để trình duyệt tự đóng dialog, tab bị đá sang origin khác nên phải mở tab mới rồi
+`db.collection("dotNopLuuKho").doc(id).update({trangThai:"dang_mo",...})` thẳng để bỏ qua nút (bản
+thân `moKhoa()` không đổi, chỉ là hạn chế của môi trường kiểm chứng, không phải bug — ĐÃ CÓ TỪ
+TRƯỚC, không phải do đợt sửa lần này gây ra).
+Sau khi mở khoá: bấm "✎ Sửa lại danh sách" → bỏ tick "Nguyễn Đức An" + thêm "Nguyễn Văn Nam" qua
+"+ Thêm vụ" → "Xem trước thay đổi" xác nhận đúng: dòng "Công ty CP G20" giữ STT mới=1=STT đã chốt
+(không đổi), "Nghiêm Thu Hằng" STT đã chốt=3 → STT mới=2 (dồn lên vì có 1 dòng bị xoá), "Nguyễn Văn
+Nam" hiện badge "Mới" ở cột STT đã chốt, banner cảnh báo đúng tên "Nguyễn Đức An" sẽ bị xoá → bấm
+"Áp dụng thay đổi" → xác nhận trực tiếp qua Postgres: hồ sơ "Nguyễn Đức An" đã bị XOÁ hẳn (0 kết
+quả `where maVuAn`), 2 hồ sơ còn lại đúng `soThuTu`/`nhanSo` mới.
+**Kiểm tra riêng phần quan trọng nhất — "Đã lên Kho" phải sống sót qua lần sửa**: đặt tay
+`thoiDiemQuetXacNhan` cho dòng "Công ty CP G20" (giả lập đã quét xác nhận), sửa lại danh sách 1 lần
+nữa (bỏ tiếp "Nguyễn Văn Nam", ép STT đổi lại), Áp dụng, rồi đọc thẳng lại ĐÚNG document đó qua
+Postgres — xác nhận **`thoiDiemQuetXacNhan` vẫn giữ nguyên giá trị đã đặt VÀ document giữ nguyên
+đúng `id` cũ** (không bị xoá-tạo-lại) — đúng thiết kế `batch.update()` chỉ patch field liệt kê.
+Đã dọn sạch hoàn toàn đợt TEST (2 hồ sơ còn lại + chính `dotNopLuuKho`) ngay sau khi kiểm chứng,
+xác nhận lại "Đợt nộp lưu năm 2025" thật vẫn nguyên 1280 hồ sơ, không hề bị đụng vào trong suốt quá
+trình test này. 0 lỗi console liên quan tới thay đổi này.
+
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:

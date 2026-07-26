@@ -12492,6 +12492,305 @@ function InTagLuuTruModal({ dsHoSo, onDong }) {
   return ReactDOM.createPortal(noiDung, document.getElementById("qr-print-root"));
 }
 
+// ── Sửa lại danh sách của đợt ĐÃ TỪNG CHỐT (2026-07-26, theo yêu cầu người dùng) — thay thế nút
+// "Tính lại toàn bộ số thứ tự" cũ (đổi số MÙ, không xem trước được gì) bằng cách quay lại ĐÚNG
+// luồng "chuẩn bị danh sách → xem trước" quen thuộc, chỉ thêm 1 cột "STT đã chốt" để người dùng tự
+// so sánh cũ/mới rồi mới quyết định thêm/chèn/đổi thứ tự. KHÁC `ManChuanBiDanhSach` (tạo đợt MỚI,
+// tải ứng viên theo khoảng tháng/năm): ở đây nguồn ban đầu là CHÍNH `dsHoSo` đã có (không phụ thuộc
+// khoảng ngày nào) — đảm bảo KHÔNG bao giờ "làm rơi mất" 1 hồ sơ đã lưu chỉ vì nó nằm ngoài khoảng
+// ngày mặc định. Thêm hồ sơ MỚI hoàn toàn qua "+ Thêm vụ" (tìm không giới hạn ngày, cùng cơ chế đã
+// có ở `ManChuanBiDanhSach`, không dùng chung code để tránh phải thêm nhiều prop điều kiện vào 1
+// component đang phục vụ 2 mục đích khác nhau — xem thêm lý do ở CLAUDE.md).
+// KHÔNG hiện cột "Mã vụ" (khác `ManChuanBiDanhSach`) — theo đúng quy ước đã có của mọi màn "sổ"
+// (`ManSoLuuTru` chính, `InSoLuuTruModal`): `hoSoNopLuuKho` không snapshot `maNganhCap`/`maNoiSinh`
+// nên `hienThiMa()` sẽ ra rỗng cho các dòng lấy từ `dsHoSo` — chỉ dùng `hienThiMa()` được ở panel
+// "+ Thêm vụ" (kết quả tìm là object "vuan" đầy đủ, có sẵn field đó).
+function ManSuaLaiDanhSachDaChot({ dot, dsHoSo, onXemTruoc, onHuy }) {
+  const [ungVien, setUngVien] = useState(() => dsHoSo.map(h => ({
+    id: h.maVuAn, _hoSoId: h.id, sttDaChot: h.nhanSo,
+    tenVu: h.tenVu, ksvChinh: h.ksvChinh, trangThai: h.hinhThucGiaiQuyet, ngayQuyetDinh: h.ngayGiaiQuyet,
+    soQdKtva: h.soQdKtva, ngayQdKtva: h.ngayQdKtva, soQuyetDinhGiaiQuyet: h.soQuyetDinhGiaiQuyet,
+    thoiHanBaoQuan: h.thoiHanBaoQuan, soButLuc: h.soButLuc, soTapHoSo: h.soTapHoSo,
+  })));
+  const [dsChon, setDsChon] = useState(() => new Set(dsHoSo.map(h => h.maVuAn)));
+  const [tuKhoaLoc, setTuKhoaLoc] = useState("");
+  const [hienThemVu, setHienThemVu] = useState(false);
+  const [tuKhoaThemVu, setTuKhoaThemVu] = useState("");
+  const [ketQuaThemVu, setKetQuaThemVu] = useState([]);
+  const [dangThemVu, setDangThemVu] = useState(false);
+
+  const dsHienThi = useMemo(() => {
+    const k = tuKhoaLoc.trim().toLowerCase();
+    if (!k) return ungVien;
+    return ungVien.filter(v =>
+      (v.tenVu || "").toLowerCase().includes(k) || (v.ksvChinh || "").toLowerCase().includes(k)
+      || (v.soQdKtva || "").toLowerCase().includes(k)
+    );
+  }, [ungVien, tuKhoaLoc]);
+
+  const toggleChon = (id) => setDsChon(s => { const m = new Set(s); m.has(id) ? m.delete(id) : m.add(id); return m; });
+
+  const timThemVu = async (tk) => {
+    setTuKhoaThemVu(tk);
+    if (!tk.trim()) { setKetQuaThemVu([]); return; }
+    const k = tk.trim().toLowerCase();
+    const docs = await dongBoColdCacheVuAnDaGiaiQuyet();
+    const idsHienCo = new Set(ungVien.map(v => v.id));
+    const ketQua = docs.filter(v =>
+      !v.daXoa && ["tam_dinh_chi", "dinh_chi", "da_xet_xu"].includes(v.trangThai) && !idsHienCo.has(v.id)
+      && ((v.tenVu || "").toLowerCase().includes(k) || (hienThiMa(v) || "").toLowerCase().includes(k)
+          || (v.ksvChinh || "").toLowerCase().includes(k) || (v.soQdKtva || "").toLowerCase().includes(k))
+    ).slice(0, 15);
+    setKetQuaThemVu(ketQua);
+  };
+
+  const themVuThuCong = async (v) => {
+    setDangThemVu(true);
+    try {
+      // Chặn nếu vụ đã nằm trong 1 đợt KHÁC (đợt CHÍNH nó đang sửa thì không thể trùng vì đã bị
+      // loại khỏi kết quả tìm qua idsHienCo ở trên).
+      const existed = await db.collection("hoSoNopLuuKho").where("maVuAn", "==", v.id).get();
+      const oDotKhac = existed.docs.some(d => d.data().dotId !== dot.id);
+      if (oDotKhac) {
+        addToast(`Vụ "${v.tenVu || hienThiMa(v)}" đã có trong 1 đợt nộp lưu khác — không thêm được nữa.`, "error");
+        return;
+      }
+      const { daNop, soButLuc, soTapHoSo } = await layThongTinNopLuuTruMotVu(v.id);
+      const vMoi = {
+        id: v.id, _hoSoId: null, sttDaChot: null,
+        tenVu: v.tenVu || "", ksvChinh: v.ksvChinh || "", trangThai: v.trangThai, ngayQuyetDinh: v.ngayQuyetDinh || null,
+        soQdKtva: v.soQdKtva || "", ngayQdKtva: v.ngayQdKtva || null, soQuyetDinhGiaiQuyet: laySoQdGiaiQuyetNopLuuKho(v),
+        thoiHanBaoQuan: tinhThoiHanBaoQuanVu(v) || "", soButLuc, soTapHoSo,
+      };
+      setUngVien(prev => [vMoi, ...prev]);
+      setDsChon(prev => new Set(prev).add(v.id));
+      addToast(`Đã thêm "${v.tenVu || "(chưa đặt tên)"}" vào danh sách.`);
+      setHienThemVu(false); setTuKhoaThemVu(""); setKetQuaThemVu([]);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi thêm vụ: " + err.message, "error");
+    } finally {
+      setDangThemVu(false);
+    }
+  };
+
+  const dsDaChon = ungVien.filter(v => dsChon.has(v.id));
+  const soBiXoa = dsHoSo.filter(h => !dsChon.has(h.maVuAn)).length;
+
+  return (
+    <div>
+      <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs rounded-lg p-3 mb-4">
+        Đang sửa lại danh sách của đợt ĐÃ TỪNG CHỐT — cột "STT đã chốt" cho biết số cũ của từng hồ
+        sơ để bạn tự cân nhắc trước khi thêm/chèn/đổi thứ tự. Bấm "Xem trước thay đổi" để so sánh số
+        cũ/mới trước khi áp dụng thật — CHƯA ghi gì cho tới lúc đó.
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
+        <div className="flex items-center justify-between p-3 border-b border-slate-100 flex-wrap gap-2">
+          <div className="text-sm text-slate-500">
+            {ungVien.length} vụ — đã chọn {dsChon.size}
+            {soBiXoa > 0 && <span className="text-amber-700 font-medium"> — ⚠ {soBiXoa} sẽ bị XOÁ khỏi sổ</span>}
+          </div>
+          <button onClick={() => setHienThemVu(s => !s)} className="text-xs text-indigo-600 hover:underline">+ Thêm vụ</button>
+        </div>
+
+        {hienThemVu && (
+          <div className="p-3 border-b border-slate-100 bg-indigo-50/40">
+            <div className="text-xs text-slate-600 mb-1">Tìm 1 vụ cụ thể để bổ sung vào sổ (đã giải quyết, chưa có trong đợt khác):</div>
+            <input value={tuKhoaThemVu} onChange={e => timThemVu(e.target.value)} placeholder="Gõ mã vụ/tên vụ/KSV/số QĐ KTVA..." autoFocus
+                   className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm mb-2" />
+            {ketQuaThemVu.length > 0 && (
+              <div className="max-h-48 overflow-auto border border-slate-200 rounded-lg bg-white">
+                {ketQuaThemVu.map(v => (
+                  <button key={v.id} onClick={() => themVuThuCong(v)} disabled={dangThemVu}
+                          className="block w-full text-left px-2 py-1.5 hover:bg-indigo-50 text-sm border-b border-slate-50 last:border-0 disabled:opacity-50">
+                    <span className="font-medium">{v.tenVu || "(chưa đặt tên)"}</span> — {hienThiMa(v)} — {v.ksvChinh || "—"} — {NHAN_TRANG_THAI[v.trangThai]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {tuKhoaThemVu.trim() && ketQuaThemVu.length === 0 && (
+              <div className="text-xs text-slate-400">Không tìm thấy vụ khớp (hoặc đã có sẵn trong danh sách).</div>
+            )}
+          </div>
+        )}
+
+        <div className="p-3 border-b border-slate-100 bg-slate-50/60">
+          <input value={tuKhoaLoc} onChange={e => setTuKhoaLoc(e.target.value)}
+                 placeholder="Tìm tên vụ/KSV/số QĐ KTVA..."
+                 className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm" />
+        </div>
+
+        <div className="max-h-[420px] overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs sticky top-0">
+              <tr>
+                <th className="p-2 w-8"></th>
+                <th className="text-left p-2">STT đã chốt</th>
+                <th className="text-left p-2">Tên vụ</th>
+                <th className="text-left p-2">KSV</th>
+                <th className="text-left p-2">Hình thức GQ</th>
+                <th className="text-left p-2">Số QĐ KTVA</th>
+                <th className="text-left p-2">Ngày QĐ KTVA</th>
+                <th className="text-left p-2">Số QĐ GQ</th>
+                <th className="text-left p-2">Ngày GQ</th>
+                <th className="text-left p-2">Thời hạn bảo quản</th>
+                <th className="text-left p-2">Số bút lục</th>
+                <th className="text-left p-2">Số tập</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dsHienThi.length === 0 && (
+                <tr><td colSpan={12} className="p-4 text-center text-slate-400">Không có vụ nào khớp tìm kiếm.</td></tr>
+              )}
+              {dsHienThi.map(v => (
+                <tr key={v.id} className="border-t border-slate-100">
+                  <td className="p-2 text-center"><input type="checkbox" checked={dsChon.has(v.id)} onChange={() => toggleChon(v.id)} /></td>
+                  <td className="p-2">{v.sttDaChot ? <span className="font-bold text-slate-700">{v.sttDaChot}</span> : <Badge mau="bg-indigo-100 text-indigo-700">Mới</Badge>}</td>
+                  <td className="p-2">{v.tenVu}</td>
+                  <td className="p-2">{v.ksvChinh || "—"}</td>
+                  <td className="p-2"><Badge mau={MAU_TRANG_THAI[v.trangThai]}>{NHAN_TRANG_THAI[v.trangThai]}</Badge></td>
+                  <td className="p-2 whitespace-nowrap">{v.soQdKtva || "—"}</td>
+                  <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQdKtva)}</td>
+                  <td className="p-2 whitespace-nowrap">{v.soQuyetDinhGiaiQuyet || "—"}</td>
+                  <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQuyetDinh)}</td>
+                  <td className="p-2">{v.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{v.thoiHanBaoQuan}</span> : <span className="text-amber-600 text-xs">⚠ Chưa xác định</span>}</td>
+                  <td className="p-2 whitespace-nowrap">{v.soButLuc || "—"}</td>
+                  <td className="p-2 whitespace-nowrap">{v.soTapHoSo || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="flex gap-2">
+        <button onClick={() => onXemTruoc(sapXepDsNopLuuKho(dsDaChon))} disabled={dsDaChon.length === 0}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+          Xem trước thay đổi ({dsDaChon.length} vụ)
+        </button>
+        <button onClick={onHuy} className="text-sm text-slate-500 px-3 py-2 hover:text-slate-700">Huỷ, quay lại sổ</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Xem trước thay đổi trước khi áp dụng (sau "Sửa lại danh sách" ở trên) — cột "STT đã chốt" đặt
+// cạnh "STT mới" (vị trí i+1 sau khi sắp xếp lại) để so sánh trực tiếp, thay thế hoàn toàn hành vi
+// "Tính lại toàn bộ" cũ (ghi ngay không xem trước). Ghi UPDATE cho hồ sơ đã có sẵn (`_hoSoId` khác
+// null — giữ NGUYÊN id doc, KHÔNG đụng `thoiDiemQuetXacNhan`/`ngayTao`/`nguoiTao` vì `update()` chỉ
+// patch đúng field liệt kê), INSERT cho hồ sơ mới thêm (`_hoSoId` null), DELETE cho hồ sơ có trong
+// `dsHoSoCu` nhưng không còn trong `dsXemTruoc` (bị bỏ tick ở màn trước).
+function ManXemTruocSuaDoi({ dot, dsHoSoCu, dsXemTruoc, onQuayLai, onXongSua }) {
+  const [dangGhi, setDangGhi] = useState(false);
+  const [loi, setLoi] = useState("");
+
+  const idsMoi = useMemo(() => new Set(dsXemTruoc.map(v => v.id)), [dsXemTruoc]);
+  const dsSeBiXoa = useMemo(() => dsHoSoCu.filter(h => !idsMoi.has(h.maVuAn)), [dsHoSoCu, idsMoi]);
+
+  const apDung = async () => {
+    setDangGhi(true); setLoi("");
+    try {
+      const batch = db.batch();
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      dsXemTruoc.forEach((v, i) => {
+        const stt = i + 1;
+        const data = {
+          dotId: dot.id, maVuAn: v.id, soThuTu: stt, nhanSo: String(stt),
+          tenVu: v.tenVu || "", hinhThucGiaiQuyet: v.trangThai, ngayGiaiQuyet: v.ngayQuyetDinh || null,
+          soQdKtva: v.soQdKtva || "", ngayQdKtva: v.ngayQdKtva || null,
+          soQuyetDinhGiaiQuyet: v.soQuyetDinhGiaiQuyet || "",
+          ksvChinh: v.ksvChinh || "", thoiHanBaoQuan: v.thoiHanBaoQuan || "",
+          soButLuc: v.soButLuc || "", soTapHoSo: v.soTapHoSo || "",
+        };
+        if (v._hoSoId) {
+          batch.update(db.collection("hoSoNopLuuKho").doc(v._hoSoId), data);
+        } else {
+          batch.set(db.collection("hoSoNopLuuKho").doc(), { ...data, ngayTao: now, nguoiTao: nguoiThucHien });
+        }
+      });
+      dsSeBiXoa.forEach(h => batch.delete(db.collection("hoSoNopLuuKho").doc(h.id)));
+      await batch.commit();
+      addToast(`Đã áp dụng danh sách mới — ${dsXemTruoc.length} hồ sơ${dsSeBiXoa.length ? `, xoá ${dsSeBiXoa.length}` : ""}.`);
+      onXongSua();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi áp dụng: " + err.message);
+    } finally {
+      setDangGhi(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mb-4">
+        So sánh cột "STT đã chốt" (số cũ) với cột "STT mới" (vị trí hiện tại) trước khi áp dụng — số
+        cũ đã ghi tay ngoài bìa hồ sơ sẽ ĐỔI THEO nếu vị trí thay đổi. "Đã lên Kho" (nếu có) được
+        GIỮ NGUYÊN, không mất khi đổi số.
+        {dsSeBiXoa.length > 0 && (
+          <div className="mt-2 font-medium">
+            ⚠ {dsSeBiXoa.length} hồ sơ sẽ bị XOÁ khỏi sổ (đã bỏ tick ở màn trước): {dsSeBiXoa.map(h => h.tenVu || h.nhanSo).join("; ")}
+          </div>
+        )}
+      </div>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-500 text-xs">
+            <tr>
+              <th className="text-left p-2 w-14">STT mới</th>
+              <th className="text-left p-2 w-20">STT đã chốt</th>
+              <th className="text-left p-2">Tên vụ</th>
+              <th className="text-left p-2">KSV</th>
+              <th className="text-left p-2">Hình thức GQ</th>
+              <th className="text-left p-2">Số QĐ KTVA</th>
+              <th className="text-left p-2">Ngày QĐ KTVA</th>
+              <th className="text-left p-2">Số QĐ GQ</th>
+              <th className="text-left p-2">Ngày GQ</th>
+              <th className="text-left p-2">Thời hạn bảo quản</th>
+              <th className="text-left p-2">Số bút lục</th>
+              <th className="text-left p-2">Số tập</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dsXemTruoc.map((v, i) => {
+              const doi = v.sttDaChot && v.sttDaChot !== String(i + 1);
+              return (
+              <tr key={v.id} className="border-t border-slate-100">
+                <td className="p-2 text-slate-700 font-bold">{i + 1}</td>
+                <td className={`p-2 ${doi ? "text-amber-700 font-medium" : "text-slate-400"}`}>
+                  {v.sttDaChot || <Badge mau="bg-indigo-100 text-indigo-700">Mới</Badge>}
+                </td>
+                <td className="p-2">{v.tenVu}</td>
+                <td className="p-2">{v.ksvChinh || "—"}</td>
+                <td className="p-2"><Badge mau={MAU_TRANG_THAI[v.trangThai]}>{NHAN_TRANG_THAI[v.trangThai]}</Badge></td>
+                <td className="p-2 whitespace-nowrap">{v.soQdKtva || "—"}</td>
+                <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQdKtva)}</td>
+                <td className="p-2 whitespace-nowrap">{v.soQuyetDinhGiaiQuyet || "—"}</td>
+                <td className="p-2 whitespace-nowrap">{fmtDate(v.ngayQuyetDinh)}</td>
+                <td className="p-2">{v.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{v.thoiHanBaoQuan}</span> : <span className="text-amber-600 text-xs">⚠ Chưa xác định</span>}</td>
+                <td className="p-2 whitespace-nowrap">{v.soButLuc || "—"}</td>
+                <td className="p-2 whitespace-nowrap">{v.soTapHoSo || "—"}</td>
+              </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={apDung} disabled={dangGhi}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+          {dangGhi ? "Đang áp dụng..." : `Áp dụng thay đổi (${dsXemTruoc.length} vụ)`}
+        </button>
+        <button onClick={onQuayLai} disabled={dangGhi} className="text-sm text-slate-500 px-3 py-2 hover:text-slate-700">
+          ← Quay lại chỉnh sửa
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Sổ lưu trữ (đã chốt = chỉ đọc + quét/in; đang mở khoá = sửa được: xoá/chèn/tính lại) ────────
 function ManSoLuuTru({ dot, dsHoSo }) {
   const [dangThaoTac, setDangThaoTac] = useState(false);
@@ -12503,6 +12802,10 @@ function ManSoLuuTru({ dot, dsHoSo }) {
   const [dsChonIn, setDsChonIn] = useState(() => new Set());
   const [hienInTag, setHienInTag] = useState(false);
   const [hienInSo, setHienInSo] = useState(false);
+  // "Sửa lại danh sách" (2026-07-26) — thay thế "Tính lại toàn bộ số thứ tự" cũ, xem
+  // ManSuaLaiDanhSachDaChot/ManXemTruocSuaDoi ngay phía trên.
+  const [dangSuaLai, setDangSuaLai] = useState(false);
+  const [dsXemTruocSua, setDsXemTruocSua] = useState(null);
 
   const daChot = dot.trangThai === "da_chot";
 
@@ -12571,21 +12874,6 @@ function ManSoLuuTru({ dot, dsHoSo }) {
     } catch (err) { console.error(err); addToast("Lỗi khi chèn: " + err.message, "error"); }
   };
 
-  const tinhLaiToanBo = async () => {
-    if (!confirm("Tính lại TOÀN BỘ số thứ tự từ đầu? Số cũ (có thể đã ghi tay ngoài bìa hồ sơ) sẽ ĐỔI HẾT theo thứ tự sắp xếp mới. Không thể hoàn tác.")) return;
-    setDangThaoTac(true);
-    try {
-      const sorted = sapXepDsNopLuuKho(dsHoSo);
-      const batch = db.batch();
-      sorted.forEach((h, i) => {
-        batch.update(db.collection("hoSoNopLuuKho").doc(h.id), { soThuTu: i + 1, nhanSo: String(i + 1) });
-      });
-      await batch.commit();
-      addToast("Đã tính lại toàn bộ số thứ tự.");
-    } catch (err) { console.error(err); addToast("Lỗi khi tính lại: " + err.message, "error"); }
-    finally { setDangThaoTac(false); }
-  };
-
   // Quét liên tục (2026-07-26, theo yêu cầu người dùng) — vụ QUÉT NGAY TRƯỚC ĐÓ tự động được xác
   // nhận "đã lên Kho" khi quét sang vụ KHÁC, không cần bấm nút "Xác nhận" mỗi lần — tiết kiệm thao
   // tác đúng nhịp quét nhanh bằng đầu đọc QR (chỉ tự xác nhận nếu vụ đó CHƯA được xác nhận từ
@@ -12630,6 +12918,20 @@ function ManSoLuuTru({ dot, dsHoSo }) {
   const soLuong = dsHoSo.length;
   const soDaLenKho = dsHoSo.filter(h => h.thoiDiemQuetXacNhan).length;
 
+  if (dsXemTruocSua) {
+    return (
+      <ManXemTruocSuaDoi dot={dot} dsHoSoCu={dsHoSo} dsXemTruoc={dsXemTruocSua}
+                          onQuayLai={() => setDsXemTruocSua(null)}
+                          onXongSua={() => { setDsXemTruocSua(null); setDangSuaLai(false); }} />
+    );
+  }
+  if (dangSuaLai) {
+    return (
+      <ManSuaLaiDanhSachDaChot dot={dot} dsHoSo={dsHoSo} onXemTruoc={setDsXemTruocSua}
+                                onHuy={() => setDangSuaLai(false)} />
+    );
+  }
+
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -12643,8 +12945,8 @@ function ManSoLuuTru({ dot, dsHoSo }) {
                     className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50">
               🔒 Chốt lại
             </button>
-            <button onClick={tinhLaiToanBo} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
-              Tính lại toàn bộ số thứ tự
+            <button onClick={() => setDangSuaLai(true)} disabled={dangThaoTac} className="text-sm border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-3 py-1.5 disabled:opacity-50">
+              ✎ Sửa lại danh sách
             </button>
           </>
         )}
