@@ -200,6 +200,58 @@ trước lúc kiểm chứng bug sort), cột "Vấn đề cần bổ sung" nố
 nhận cấu trúc qua đọc lại bằng ExcelJS trong trình duyệt) — nên thử tải 1 lần trên `qlahs-sup.html`
 thật và mở bằng Excel trước khi coi đây là đã kiểm chứng tuyệt đối 100%.
 
+## Nộp lưu kho: tìm/lọc + chọn hàng loạt theo bộ lọc + "+ Thêm vụ" thủ công (2026-07-26)
+
+Ngay sau 2 mục trên, người dùng phản hồi thêm 3 việc trên chính "Đợt nộp lưu năm 2025" thật (1280
+vụ — quá nhiều để rà tay từng dòng): (1) bảng ứng viên cần tìm/lọc để tích/bỏ tích hàng loạt, (2)
+nút "add" để bổ sung 1 vụ cụ thể nếu bị thiếu khỏi danh sách, (3) hỏi lại "tính năng quét QR nộp
+lưu kho của tôi đâu rồi" — mục (3) hoá ra KHÔNG phải bug, xem giải thích riêng cuối mục này.
+
+**Tìm/lọc bảng ứng viên** (`ManChuanBiDanhSach`) — thêm 1 ô tìm tự do (khớp mã vụ/tên vụ/KSV/số QĐ
+KTVA) + 3 dropdown (KSV/Hình thức GQ/Tình trạng nộp), lọc thuần phía CLIENT trên `ungVien` đã tải
+sẵn (`dsHienThi`, `useMemo`, không query thêm). **Đổi hẳn ý nghĩa "Chọn tất cả"/"Bỏ chọn tất cả"**
+— trước đây luôn áp dụng cho TOÀN BỘ `ungVien`, giờ chỉ áp dụng cho ĐÚNG PHẦN ĐANG HIỂN THỊ
+(`dsHienThi`) — lọc hẹp lại rồi bấm 1 trong 2 nút chỉ tick/bỏ tick đúng phần đó, KHÔNG đụng tới lựa
+chọn đã có sẵn ở các dòng đang bị lọc ẩn đi (dùng `setDsChon(s => { const m = new Set(s); ... })`,
+không reset toàn bộ Set). Nhãn nút tự đổi thành "... (đang hiện)" khi có bộ lọc đang áp dụng, header
+bảng hiện thêm "đang hiện N" để tránh nhầm N đang hiện với tổng `ungVien.length`.
+
+**Nút "+ Thêm vụ"** (cùng khu toolbar) — mở panel tìm 1 vụ CỤ THỂ trong TOÀN BỘ vụ đã giải quyết
+(gọi lại `dongBoColdCacheVuAnDaGiaiQuyet()`, không giới hạn theo khoảng tháng/năm đang lọc ở màn
+chuẩn bị — đúng nhu cầu "vụ bị thiếu" nghĩa là KHÔNG nằm trong bộ lọc mặc định), loại các vụ ĐÃ có
+trong `ungVien`. Bấm 1 kết quả (`themVuThuCong`): kiểm tra lại 1 lần nữa qua Postgres xem vụ đã nằm
+trong đợt nộp lưu KHÁC chưa (`hoSoNopLuuKho.where("maVuAn","==",id)`, chặn nếu có — số lưu trữ là cố
+định, không cho trùng), tính `daNop` riêng cho đúng 1 vụ này (cùng logic join
+`lichsuChuyenGiaiDoan`+`phienGiaoNhan.laLuuTru` đã dùng lúc tải cả danh sách, thu hẹp còn 1 vụ nên
+không cần chia lô), rồi đẩy thẳng vào STATE `ungVien`/`dsChon` (tự động tick chọn) — **CHƯA ghi gì
+vào Postgres**, giống mọi vụ khác ở màn "chuẩn bị", chỉ thật sự ghi khi bấm "Chốt danh sách" ở màn
+sau.
+
+**"Quét QR nộp lưu kho" — KHÔNG phải bug, tính năng đã có sẵn từ trước (`quetTraCuu` trong
+`ManSoLuuTru`, xem mục "Tính năng mới: Nộp lưu kho" đầu file) nhưng CHỈ hiện SAU KHI đã Chốt ít
+nhất 1 lần** (`ManChiTietDot` router: `dot.trangThai === "dang_mo" && dsHoSo.length === 0` vẫn còn
+ở màn `ManChuanBiDanhSach`/`ManXemTruocChot`; chỉ khi `dsHoSo.length > 0` — tức đã Chốt — mới sang
+`ManSoLuuTru` có ô "Quét QR tra cứu / xác nhận lên Kho" hiện to rõ **Số {nhanSo}** và
+**{thoiHanBaoQuan}** đúng như mô tả). Lý do hợp lý về nghiệp vụ: Số lưu trữ (`nhanSo`) chỉ được
+SINH RA lúc Chốt, quét trước đó sẽ không có gì để tra. "Đợt nộp lưu năm 2025" thật của người dùng
+vẫn đang "Đang mở" (chưa Chốt lần nào) nên chưa tới được màn đó — **KHÔNG tự ý bấm Chốt lên dữ liệu
+thật thay người dùng** (đây là hành động sinh số cố định + khoá đợt, ảnh hưởng cách đánh số 1280+
+hồ sơ thật, cần người dùng tự bấm sau khi đã ưng ý với danh sách). Đã thêm 1 câu gợi ý vào banner
+cảnh báo màu vàng ở `ManXemTruocChot` (ngay trước khi Chốt) nhắc rõ "màn tiếp theo sẽ có ô Quét QR
+tra cứu" để không bị hỏi lại câu này lần sau.
+
+**Đã kiểm chứng bằng Supabase production thật** trên chính "Đợt nộp lưu năm 2025" (1280 vụ) —
+lọc theo KSV "Đặng Văn Sỹ" ra đúng 29 dòng (khớp số "Đã nộp 20/29" ở panel Tình trạng nộp theo
+KSV); bấm "Bỏ chọn tất cả (đang hiện)" → tổng đã chọn giảm đúng 1280→1251 (= 29), 0 dòng nào trong
+bảng lọc còn tick; bấm lại "Chọn tất cả (đang hiện)" → khôi phục đúng 1280. "+ Thêm vụ" tìm
+"Nguyễn Văn" ra nhiều kết quả hợp lệ (đều đã giải quyết, chưa có trong `ungVien`) — bấm thêm 1 kết
+quả (`QLVA_E01.53_2401_0054`), xác nhận tổng `ungVien` tăng đúng 1280→1281 VÀ tự động được tick
+(tổng đã chọn cũng 1281), dòng mới hiện đầy đủ dữ liệu đúng ở bảng (KSV/Hình thức GQ/Số-ngày QĐ
+KTVA/Số QĐ GQ/Thời hạn bảo quản/Vấn đề cần bổ sung). Không có ghi nào vào Postgres trong toàn bộ
+quá trình kiểm chứng (chỉ 2 lượt đọc `.where().get()` để kiểm tra trùng đợt/tính `daNop`) — đã tải
+lại trang sau khi test để trả `ungVien` về đúng 1280 gốc, không để lại trạng thái test trên tab.
+0 lỗi console.
+
 ## Giao nhận hồ sơ: thêm "Lý do giao nhận" + gọn KSV/ĐTV + Excel tách cột (2026-07-22, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng — 3 thay đổi độc lập cho module Giao nhận hồ sơ:

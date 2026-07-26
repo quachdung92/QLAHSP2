@@ -11852,9 +11852,97 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
   }, [ungVien]);
 
   const toggleChon = (id) => setDsChon(s => { const m = new Set(s); m.has(id) ? m.delete(id) : m.add(id); return m; });
-  const chonTatCa = () => setDsChon(new Set(ungVien.map(v => v.id)));
-  const boChonTatCa = () => setDsChon(new Set());
   const dsDaChon = ungVien.filter(v => dsChon.has(v.id));
+
+  // Tìm/lọc trong bảng ứng viên (2026-07-26, theo yêu cầu người dùng — 1280 vụ trong 1 đợt thật
+  // không thể rà tay từng dòng) — lọc phía CLIENT trên `ungVien` đã tải sẵn (không query thêm).
+  // "Chọn tất cả"/"Bỏ chọn tất cả" đổi sang áp dụng ĐÚNG PHẦN ĐANG HIỂN THỊ (`dsHienThi`, không
+  // phải toàn bộ `ungVien`) — cho phép lọc hẹp lại rồi tick/bỏ tick hàng loạt đúng phần đó mà
+  // KHÔNG đụng tới lựa chọn đã có sẵn ở các dòng đang bị lọc ẩn đi.
+  const [tuKhoaLoc, setTuKhoaLoc] = useState("");
+  const [locKsv, setLocKsv] = useState("tat_ca");
+  const [locHinhThuc, setLocHinhThuc] = useState("tat_ca");
+  const [locNop, setLocNop] = useState("tat_ca");
+
+  const dsKsvLoc = useMemo(() => [...new Set(ungVien.map(v => v.ksvChinh || "(chưa gán KSV)"))].sort((a, b) => a.localeCompare(b)), [ungVien]);
+
+  const dsHienThi = useMemo(() => {
+    const k = tuKhoaLoc.trim().toLowerCase();
+    return ungVien.filter(v => {
+      if (locKsv !== "tat_ca" && (v.ksvChinh || "(chưa gán KSV)") !== locKsv) return false;
+      if (locHinhThuc !== "tat_ca" && v.trangThai !== locHinhThuc) return false;
+      if (locNop === "da_nop" && !v.daNop) return false;
+      if (locNop === "chua_nop" && v.daNop) return false;
+      if (k && !(
+        (v.tenVu || "").toLowerCase().includes(k) ||
+        (hienThiMa(v) || "").toLowerCase().includes(k) ||
+        (v.ksvChinh || "").toLowerCase().includes(k) ||
+        (v.soQdKtva || "").toLowerCase().includes(k)
+      )) return false;
+      return true;
+    });
+  }, [ungVien, tuKhoaLoc, locKsv, locHinhThuc, locNop]);
+
+  const chonTatCa = () => setDsChon(s => { const m = new Set(s); dsHienThi.forEach(v => m.add(v.id)); return m; });
+  const boChonTatCa = () => setDsChon(s => { const m = new Set(s); dsHienThi.forEach(v => m.delete(v.id)); return m; });
+  const dangLoc = !!(tuKhoaLoc.trim() || locKsv !== "tat_ca" || locHinhThuc !== "tat_ca" || locNop !== "tat_ca");
+
+  // "+ Thêm vụ" (2026-07-26, theo yêu cầu người dùng) — bổ sung 1 vụ cụ thể bị thiếu khỏi danh sách
+  // ứng viên (VD ngoài khoảng tháng/năm đang lọc, hoặc dữ liệu ngày giải quyết trống nên bị bỏ sót
+  // ở bước tải). Chỉ thêm vào STATE của màn này (ungVien/dsChon) — CHƯA ghi gì vào Postgres, đúng
+  // như mọi vụ khác ở màn "chuẩn bị", chỉ thật sự ghi khi bấm "Chốt danh sách" ở màn sau.
+  const [hienThemVu, setHienThemVu] = useState(false);
+  const [tuKhoaThemVu, setTuKhoaThemVu] = useState("");
+  const [ketQuaThemVu, setKetQuaThemVu] = useState([]);
+  const [dangThemVu, setDangThemVu] = useState(false);
+
+  const timThemVu = async (tk) => {
+    setTuKhoaThemVu(tk);
+    if (!tk.trim()) { setKetQuaThemVu([]); return; }
+    const k = tk.trim().toLowerCase();
+    const docs = await dongBoColdCacheVuAnDaGiaiQuyet();
+    const idsHienCo = new Set(ungVien.map(v => v.id));
+    const ketQua = docs.filter(v =>
+      !v.daXoa && ["tam_dinh_chi", "dinh_chi", "da_xet_xu"].includes(v.trangThai) && !idsHienCo.has(v.id)
+      && ((v.tenVu || "").toLowerCase().includes(k) || (hienThiMa(v) || "").toLowerCase().includes(k)
+          || (v.ksvChinh || "").toLowerCase().includes(k) || (v.soQdKtva || "").toLowerCase().includes(k))
+    ).slice(0, 15);
+    setKetQuaThemVu(ketQua);
+  };
+
+  const themVuThuCong = async (v) => {
+    setDangThemVu(true);
+    try {
+      // Chặn thêm nếu vụ ĐÃ nằm trong 1 đợt nộp lưu khác (kể cả đợt đã chốt) — số lưu trữ là cố
+      // định, không cho xuất hiện/đánh số 2 lần, giống guard đã áp dụng lúc tải danh sách ban đầu.
+      const existed = await db.collection("hoSoNopLuuKho").where("maVuAn", "==", v.id).get();
+      if (!existed.empty) {
+        addToast(`Vụ "${v.tenVu || hienThiMa(v)}" đã có trong 1 đợt nộp lưu khác — không thêm được nữa.`, "error");
+        return;
+      }
+      // Tính "đã nộp" riêng cho đúng 1 vụ này — cùng logic join đã dùng lúc tải cả danh sách, chỉ
+      // thu hẹp còn 1 vụ nên không cần dùng chiaLoTruyVanIn theo lô.
+      const giaoNhanDocs = await db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", v.id)
+        .where("loaiSuKien", "==", "giao_nhan_ho_so").where("loaiGiaoDich", "==", "nhan").get();
+      let daNop = false;
+      for (const d of giaoNhanDocs.docs) {
+        const phienId = d.data().phienGiaoNhanId;
+        if (!phienId) continue;
+        const phien = await db.collection("phienGiaoNhan").doc(phienId).get();
+        if (phien.exists && phien.data().laLuuTru) { daNop = true; break; }
+      }
+      const vMoi = { ...v, thoiHanBaoQuan: tinhThoiHanBaoQuanVu(v), daNop };
+      setUngVien(prev => [vMoi, ...prev]);
+      setDsChon(prev => new Set(prev).add(v.id));
+      addToast(`Đã thêm "${v.tenVu || "(chưa đặt tên)"}" vào danh sách.`);
+      setHienThemVu(false); setTuKhoaThemVu(""); setKetQuaThemVu([]);
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi thêm vụ: " + err.message, "error");
+    } finally {
+      setDangThemVu(false);
+    }
+  };
 
   // Xuất Excel theo KSV (2026-07-26, theo yêu cầu người dùng) — để TỪNG KSV tự kiểm tra/rà soát và
   // báo cáo lại bộ phận lưu trữ TRƯỚC khi chốt danh sách chính thức. Xuất TOÀN BỘ ungVien (không
@@ -12005,16 +12093,68 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
       {!dangTai && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
           <div className="flex items-center justify-between p-3 border-b border-slate-100">
-            <div className="text-sm text-slate-500">{ungVien.length} vụ — đã chọn {dsChon.size}</div>
-            <div className="flex gap-3 items-center">
+            <div className="text-sm text-slate-500">
+              {ungVien.length} vụ{dangLoc ? ` — đang hiện ${dsHienThi.length}` : ""} — đã chọn {dsChon.size}
+            </div>
+            <div className="flex gap-3 items-center flex-wrap justify-end">
+              <button onClick={() => setHienThemVu(s => !s)} className="text-xs text-indigo-600 hover:underline">
+                + Thêm vụ
+              </button>
               <button onClick={xuatExcelTheoKsv} disabled={dangXuatKsv || ungVien.length === 0}
                       className="text-xs text-emerald-700 hover:underline disabled:opacity-50" title="Xuất để từng KSV tự kiểm tra, rà soát và báo lại bộ phận lưu trữ trước khi chốt danh sách">
                 {dangXuatKsv ? "Đang xuất..." : "⬇ Xuất Excel theo KSV để rà soát"}
               </button>
-              <button onClick={chonTatCa} className="text-xs text-indigo-600 hover:underline">Chọn tất cả</button>
-              <button onClick={boChonTatCa} className="text-xs text-slate-500 hover:underline">Bỏ chọn tất cả</button>
+              <button onClick={chonTatCa} className="text-xs text-indigo-600 hover:underline">Chọn tất cả{dangLoc ? " (đang hiện)" : ""}</button>
+              <button onClick={boChonTatCa} className="text-xs text-slate-500 hover:underline">Bỏ chọn tất cả{dangLoc ? " (đang hiện)" : ""}</button>
             </div>
           </div>
+
+          {hienThemVu && (
+            <div className="p-3 border-b border-slate-100 bg-indigo-50/40">
+              <div className="text-xs text-slate-600 mb-1">Tìm 1 vụ cụ thể để bổ sung vào danh sách (đã giải quyết, chưa có trong đợt nào):</div>
+              <input value={tuKhoaThemVu} onChange={e => timThemVu(e.target.value)} placeholder="Gõ mã vụ/tên vụ/KSV/số QĐ KTVA..." autoFocus
+                     className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm mb-2" />
+              {ketQuaThemVu.length > 0 && (
+                <div className="max-h-48 overflow-auto border border-slate-200 rounded-lg bg-white">
+                  {ketQuaThemVu.map(v => (
+                    <button key={v.id} onClick={() => themVuThuCong(v)} disabled={dangThemVu}
+                            className="block w-full text-left px-2 py-1.5 hover:bg-indigo-50 text-sm border-b border-slate-50 last:border-0 disabled:opacity-50">
+                      <span className="font-medium">{v.tenVu || "(chưa đặt tên)"}</span> — {hienThiMa(v)} — {v.ksvChinh || "—"} — {NHAN_TRANG_THAI[v.trangThai]}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {tuKhoaThemVu.trim() && ketQuaThemVu.length === 0 && (
+                <div className="text-xs text-slate-400">Không tìm thấy vụ khớp (hoặc đã có sẵn trong danh sách).</div>
+              )}
+            </div>
+          )}
+
+          <div className="p-3 border-b border-slate-100 flex flex-wrap gap-2 items-center bg-slate-50/60">
+            <input value={tuKhoaLoc} onChange={e => setTuKhoaLoc(e.target.value)}
+                   placeholder="Tìm mã vụ/tên vụ/KSV/số QĐ KTVA..."
+                   className="flex-1 min-w-[220px] border border-slate-300 rounded-lg px-2 py-1.5 text-sm" />
+            <select value={locKsv} onChange={e => setLocKsv(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="tat_ca">Tất cả KSV</option>
+              {dsKsvLoc.map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+            <select value={locHinhThuc} onChange={e => setLocHinhThuc(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="tat_ca">Mọi hình thức GQ</option>
+              <option value="tam_dinh_chi">Tạm đình chỉ</option>
+              <option value="dinh_chi">Đình chỉ</option>
+              <option value="da_xet_xu">Đã xét xử</option>
+            </select>
+            <select value={locNop} onChange={e => setLocNop(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="tat_ca">Mọi tình trạng nộp</option>
+              <option value="da_nop">Đã nộp</option>
+              <option value="chua_nop">Chưa nộp</option>
+            </select>
+            {dangLoc && (
+              <button onClick={() => { setTuKhoaLoc(""); setLocKsv("tat_ca"); setLocHinhThuc("tat_ca"); setLocNop("tat_ca"); }}
+                      className="text-xs text-slate-500 hover:underline">Bỏ lọc</button>
+            )}
+          </div>
+
           <div className="max-h-[420px] overflow-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-500 text-xs sticky top-0">
@@ -12040,7 +12180,10 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
                 {ungVien.length === 0 && (
                   <tr><td colSpan={12} className="p-4 text-center text-slate-400">Không có vụ nào khớp điều kiện lọc.</td></tr>
                 )}
-                {ungVien.map(v => {
+                {ungVien.length > 0 && dsHienThi.length === 0 && (
+                  <tr><td colSpan={12} className="p-4 text-center text-slate-400">Không có vụ nào khớp bộ lọc/tìm kiếm hiện tại.</td></tr>
+                )}
+                {dsHienThi.map(v => {
                   const vanDe = layVanDeCanBoSungNopLuuKho(v);
                   return (
                   <tr key={v.id} className="border-t border-slate-100">
@@ -12122,6 +12265,8 @@ function ManXemTruocChot({ dot, dsXemTruoc, onQuayLai, onXongChot }) {
       <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mb-4">
         Sau khi Chốt, số thứ tự (Số lưu trữ) sẽ được sinh ra và LÀ SỐ CỐ ĐỊNH cho đợt này. Vẫn mở
         khoá được sau đó để chèn thêm (không đổi số cũ) hoặc tính lại toàn bộ nếu thực sự cần.
+        Màn tiếp theo (sau Chốt) cũng có sẵn ô "Quét QR tra cứu" — quét mã vụ hiện ngay Số lưu trữ
+        và Thời hạn bảo quản, kèm nút xác nhận đưa hồ sơ lên Kho.
       </div>
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
