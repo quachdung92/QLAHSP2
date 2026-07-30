@@ -1046,6 +1046,13 @@ function moTaLoaiSuKien(suKien) {
     if (suKien.denGiaiDoan === "truy_to") return "Kết thúc điều tra";
     if (suKien.denGiaiDoan === "xet_xu") return "Chuyển toà xét xử";
   }
+  // "Hoàn thành" cũng chung chung — ghi rõ đúng hình thức (Đã xét xử/Chuyển đi/Tạm đình chỉ/Đình
+  // chỉ/Án huỷ, xem hinhThucHoanThanh trên chính sự kiện) thay vì tên loại sự kiện (2026-07-30,
+  // theo yêu cầu người dùng, cùng đợt sửa "Chuyển giai đoạn" ở trên). NHAN_TRANG_THAI dùng chung
+  // đúng bộ giá trị với hinhThucHoanThanh (cả 2 đều xuất phát từ TUY_CHON_HOAN_THANH).
+  if (suKien.loaiSuKien === "hoan_thanh") {
+    return NHAN_TRANG_THAI[suKien.hinhThucHoanThanh] || NHAN_SU_KIEN[suKien.loaiSuKien];
+  }
   return NHAN_SU_KIEN[suKien.loaiSuKien] || suKien.loaiSuKien;
 }
 
