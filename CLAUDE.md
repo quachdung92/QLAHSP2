@@ -597,6 +597,60 @@ nhận đúng qua cách trên (dựng lại chính xác cùng đoạn code với
 1 lần trên `qlahs-sup.html` thật và mở file bằng Excel để yên tâm tuyệt đối trước khi coi đây là
 đã kiểm chứng đầy đủ 100%.
 
+## Giao nhận hồ sơ: "Số tập hồ sơ", cảnh báo "đã giao lại", mở rộng Thời hạn bảo quản, sửa lỗi Giao không lưu được (2026-07-22, `qlahs-sup.html`)
+
+Chuỗi thay đổi độc lập trong CÙNG buổi làm việc với mục "Lý do giao nhận" ngay trên (session khác,
+merge lại với nhau — xem [[qlahsp2_main_concurrent_edits]] nếu cần biết thêm về rủi ro nhiều phiên
+cùng sửa `main`/dữ liệu thật đồng thời), theo yêu cầu người dùng qua nhiều lượt riêng biệt:
+
+**1. Sửa lỗi thật trên production — phiên "Giao hồ sơ" (không lưu trữ) không lưu được dòng nào có
+vụ "Đã xét xử".** `luu()` trong `DongGiaoNhan` yêu cầu `bcCaoNhat` (mức án bị can cao nhất, tính
+cho Thời hạn bảo quản) bất kể loại phiên, nhưng effect tải `bcCaoNhat` chỉ chạy khi `hienThoiHan`
+(= phiên "Nhận hồ sơ lưu trữ"). Ở phiên Giao/Nhận thường, `bcCaoNhat` mãi mãi `undefined` → lưu
+luôn thất bại, chặn cả "Lưu phiên"/"In phiên" kèm toast gây hiểu nhầm là thiếu lý do "Không tiếp
+nhận". Sửa: gate cả khối tính mức án trong `luu()` bằng `hienThoiHan` (khớp đúng điều kiện của
+effect tải dữ liệu).
+
+**2. Cảnh báo "đã giao lại" trên Excel "Tải toàn bộ lịch sử"** — 1 hồ sơ đã NHẬN nhưng sau đó lại
+được GIAO đi (ngày giao > ngày nhận) thì dòng đại diện (lần nhận gần nhất) không còn phản ánh đúng
+thực tế đang giữ hồ sơ. Thêm cột **"Cảnh báo"** (tô đỏ đậm khi có) ở 2 sheet Nhận/Nhận lưu trữ,
+hiện `"⚠ Đã giao lại ngày ..."` — đối chiếu qua TOÀN BỘ sự kiện `giao_nhan_ho_so` của cùng vụ án
+(gom 1 lần từ `rows` chưa lọc theo sheet), không chỉ trong phạm vi sheet đang xuất. Sheet Giao
+không có cột này (khái niệm không áp dụng).
+
+**3. Mở rộng bảng Thời hạn bảo quản: mức án tù dưới 3 năm cũng tính 19 năm.** Bảng gốc
+"thoi han bao quan.xlsx" (xem `BANG_THOI_HAN_BAO_QUAN_THEO_NAM`) chỉ phủ từ 3 năm trở lên, mức án
+thấp hơn trả về `null`. Theo yêu cầu người dùng "hình phạt tù đến dưới 3 năm 5 tháng thì thời hạn
+bảo quản là 19 năm" — thêm mốc floor-lookup `0: "19 năm"` (dùng chung giá trị với mốc `3` đã có,
+giữ nguyên mốc `3` để đối chiếu đúng bảng gốc, không xoá) — mở rộng dải áp dụng xuống ngay trên 0
+năm. Không đổi gì từ "3 năm 6 tháng" trở lên.
+
+**4. Trường mới "Số tập hồ sơ"** (`soTapHoSo`, cột mới trên `lichsuChuyenGiaiDoan`) — ghi tay,
+CÙNG NHÓM Ý NGHĨA với `soButLuc` (không bắt buộc, không ảnh hưởng số liệu báo cáo kỳ), đặt NGAY
+DƯỚI ô "Số bút lục" trong CÙNG 1 ô bảng (không tách cột riêng) — tô màu hổ phách + nhãn nhỏ để
+phân biệt 2 dòng. Hồ sơ thường không quá 50 tập (`NGUONG_CANH_BAO_SO_TAP_HO_SO`) — vượt ngưỡng vẫn
+lưu được bình thường, chỉ hiện cảnh báo đỏ nhắc kiểm tra lại có gõ nhầm không (không chặn). Có mặt
+ở cả 3 nơi: bảng phiên trên màn hình, Biên bản in A4, dòng "Lịch sử" trong Excel lịch sử.
+Sau đó theo yêu cầu tiếp "cho gọn": **cột "Lý do giao nhận" (mục ở phần trên) ẩn hẳn khi phiên
+`laLuuTru`** (Nộp hồ sơ lưu trữ) — không có ý nghĩa với luồng đó (đã có Hình thức giải quyết/Mức
+án/Thời hạn bảo quản đủ ngữ cảnh) — dùng lại đúng prop `hienThoiHan` có sẵn, không thêm prop mới.
+
+**Sự cố hạ tầng thật gặp phải — cột `soTapHoSo` thiếu ALTER TABLE, giống hệt bài học đã ghi ở mục
+"Lý do giao nhận" phía trên (Firestore vs Postgres schemaless khác nhau).** Deploy code xong,
+người dùng báo lỗi thật khi ghi qua UI: `"Could not find the 'soTapHoSo' column of
+'lichsuChuyenGiaiDoan' in the schema cache"`. Đã sửa bằng kết nối trực tiếp Postgres qua Session
+pooler (xem `supabase/README.md`): `alter table "lichsuChuyenGiaiDoan" add column if not exists
+"soTapHoSo" text not null default ''` + `notify pgrst, 'reload schema'`, cập nhật
+`supabase/schema.sql` cho khớp. **Đã kiểm chứng qua đúng đường REST API mà app dùng** (không chỉ
+tin kết nối Postgres trực tiếp) — gọi `GET /rest/v1/lichsuChuyenGiaiDoan?select=id,soTapHoSo` bằng
+anon key thật, nhận `200 OK` (không còn lỗi schema cache).
+
+**Mức độ kiểm chứng của toàn bộ mục này**: chỉ mới biên dịch qua `@babel/standalone` thật (cài tạm
+qua npm ngoài repo, gỡ sau khi test) để xác nhận không lỗi cú pháp JSX — **CHƯA kiểm chứng bằng
+Playwright/UI thật** cho các mục 1-4 (khác các mục khác trong file này thường có bước Playwright).
+Nên tự thao tác thử 1 lần qua UI thật (giao/nhận 1 vụ Đã xét xử ở phiên không lưu trữ để xác nhận
+mục 1 hết lỗi, tải Excel để xem cột Cảnh báo/Số tập hồ sơ) trước khi tin tưởng tuyệt đối.
+
 ## Bug đã sửa: Biểu B10 "Tồn kỳ này" theo tội danh dùng số LIVE khi kỳ chưa chốt (2026-07-21, `qlahs-sup.html`)
 
 Người dùng phát hiện qua file Biểu B10 tải về: đang trong giai đoạn nhập bổ sung dữ liệu nên để
