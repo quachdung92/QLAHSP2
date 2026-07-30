@@ -2,6 +2,37 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Gõ gộp "Số/Ngày" ở các ô Ngày chuyển giai đoạn/giải quyết (2026-07-30, `qlahs-sup.html`)
+
+Theo yêu cầu người dùng: gõ `"380/06.7.2026"` vào ô "Ngày ..." (chuyển giai đoạn, giải quyết...)
+sẽ tự tách và điền luôn cả 2 ô — Số quyết định = `"380"`, Ngày = `06/07/2026` — thay vì phải gõ tay
+lần lượt 2 ô riêng, tiết kiệm thao tác cho 1 cặp dữ liệu hay đi cùng nhau trong thực tế nghiệp vụ
+(số + ngày của cùng 1 văn bản).
+
+**Cơ chế**: tách `parseNgayLinhHoat` (logic parse ngày linh hoạt vốn nằm trong closure của
+`NhapNgay`) thành hàm top-level, thêm `tachSoVaNgayGop(s)` — chỉ tách khi có dấu `"/"` VÀ phần
+SAU dấu `"/"` ĐẦU TIÊN tự nó parse được thành 1 ngày ĐẦY ĐỦ ngày/tháng/năm (không chỉ 2 nhóm số) —
+nhờ điều kiện này, ngày gõ bình thường kiểu `"06/07/2026"` KHÔNG bị tách nhầm thành `"06"` +
+`"07/2026"` (phần sau chỉ 2 nhóm, parse thất bại → rơi về nhánh ngày thuần như cũ). `NhapNgay`
+nhận thêm prop **opt-in** `onTachSo` (chỉ truyền ở nơi có ô "Số quyết định" đi kèm) — không truyền
+thì hành vi giữ NGUYÊN như cũ, không ảnh hưởng các `NhapNgay` khác không có ô Số đi kèm (VD Hạn
+tạm giam, Ngày sinh, Ngày QĐ KTVA...).
+
+**Áp dụng cho toàn bộ 9 cặp Ngày+Số quyết định lặp lại xuyên suốt app** (cùng 1 UI pattern, áp
+dụng đồng bộ để tránh chỗ có chỗ không gây khó hiểu): `ChuyenGiaiDoanModal` (Ngày chuyển giai
+đoạn), `TraHoSoModal` (Ngày trả hồ sơ), `GiaHanDieuTraModal` (Hạn điều tra mới), `PhucHoiModal`
+(Ngày phục hồi), `HoanThanhVuAnModal` (Ngày quyết định — chính là "ngày giải quyết"),
+`TachVuAnModal` (Ngày tách), `NhapVuModal` (Ngày nhập vụ), `ThemVuAnForm` (khối "Vụ án đã có kết
+quả giải quyết", "Ngày giải quyết \*"), `SuaVuAnForm` (khối "Thông tin giải quyết", "Ngày giải
+quyết").
+
+**Kiểm chứng**: biên dịch qua `@babel/standalone` thật (cài tạm ngoài repo, gỡ sau khi test) —
+sạch cú pháp; test logic thuần `tachSoVaNgayGop` độc lập xác nhận đúng cả 2 trường hợp mẫu
+(`"380/06.7.2026"` và `"380/06/7/2026"` đều ra đúng `{so:"380", ngayIso:"2026-07-06"}"`) và không
+tách nhầm ngày thuần (`"06/07/2026"`, `"06.07.2026"` đều trả `null`, giữ hành vi cũ). **CHƯA kiểm
+chứng bằng Playwright/UI thật** — nên tự gõ thử 1 lần ở modal "Chuyển giai đoạn" hoặc "Hoàn thành
+vụ án" trước khi tin tưởng tuyệt đối.
+
 ## Tính năng "Nộp lưu kho" — ĐÃ MERGE VÀO `main` + ĐÃ DEPLOY LÊN PRODUCTION (2026-07-23/26, `qlahs-sup.html`)
 
 **Trạng thái hiện tại (2026-07-26)**: đã merge nhánh `nop-luu-kho` vào `main` (11 commit, không xung
