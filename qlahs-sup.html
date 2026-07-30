@@ -593,7 +593,47 @@ function parseExcelDate(v) {
 
 // Ô nhập ngày — luôn hiển thị dd/MM/yyyy, không phụ thuộc locale hệ điều hành/trình duyệt.
 // Tương thích 100% với <input type="date">: value/onChange dùng chuỗi "yyyy-MM-dd" (hoặc "").
-function NhapNgay({ value, onChange, className, ...props }) {
+// Tách khỏi NhapNgay (2026-07-30, theo yêu cầu người dùng "cho gõ gộp Số/Ngày") để dùng lại được ở
+// tachSoVaNgayGop ngay dưới — logic KHÔNG đổi so với bản gốc từng nằm trong closure của NhapNgay.
+function parseNgayLinhHoat(s) {
+  if (!s) return null;
+  s = s.trim();
+  let m;
+  // 8 chữ số liền: DDMMYYYY
+  m = s.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  // 6 chữ số liền: DDMMYY → 20YY
+  m = s.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (m) return `20${m[3]}-${m[2]}-${m[1]}`;
+  // Có dấu phân cách, năm đầy đủ: D/M/YYYY hoặc D.M.YYYY hoặc D-M-YYYY
+  m = s.match(/^(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  // Có dấu phân cách, năm ngắn: D/M/YY → 20YY
+  m = s.match(/^(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2})$/);
+  if (m) return `20${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  return null;
+}
+
+// Tách "Số/Ngày" gõ gộp trong 1 ô (VD "380/06.7.2026") thành 2 phần riêng — theo yêu cầu người
+// dùng cho các cặp ô "Ngày ..." + "Số quyết định" đi liền nhau ở các modal hành động nghiệp vụ
+// (Chuyển giai đoạn, Hoàn thành vụ án...), để gõ 1 lần thay vì bấm Tab qua lại 2 ô.
+// Chỉ tách khi: có dấu "/" NGAY SAU phần Số, VÀ phần còn lại (sau dấu "/" ĐẦU TIÊN) tự nó parse
+// được thành 1 ngày ĐẦY ĐỦ ngày/tháng/năm qua parseNgayLinhHoat — nếu không, coi cả chuỗi là ngày
+// thuần (giữ đúng hành vi cũ). Nhờ điều kiện này, 1 ngày gõ bình thường kiểu "06/07/2026" KHÔNG bị
+// tách nhầm thành "06" + "07/2026" (phần sau chỉ có 2 nhóm số, không đủ D/M/Y nên parse thất bại,
+// tự rơi về nhánh ngày thuần) — còn "380/06/7/2026" vẫn tách đúng vì phần sau dấu "/" ĐẦU TIÊN
+// ("06/7/2026") có đủ 3 nhóm số để parse thành ngày hợp lệ.
+function tachSoVaNgayGop(s) {
+  if (!s) return null;
+  const idx = s.indexOf("/");
+  if (idx <= 0) return null;
+  const so = s.slice(0, idx).trim();
+  const ngayIso = parseNgayLinhHoat(s.slice(idx + 1));
+  if (!so || !ngayIso) return null;
+  return { so, ngayIso };
+}
+
+function NhapNgay({ value, onChange, onTachSo, className, ...props }) {
   const toStr = (v) => {
     if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return "";
     const [y, m, d] = v.split("-");
@@ -603,23 +643,17 @@ function NhapNgay({ value, onChange, className, ...props }) {
   const fokusRef = useRef(false);
   const pickerRef = useRef(null);
   useEffect(() => { if (!fokusRef.current) setRaw(toStr(value)); }, [value]);
+  // `onTachSo` là opt-in (chỉ truyền ở các nơi có ô "Số quyết định" đi kèm) — không truyền thì
+  // hành vi giữ NGUYÊN như trước (chỉ parseNgayLinhHoat thuần, không dò định dạng gộp), tránh ảnh
+  // hưởng các NhapNgay khác trong app không liên quan tới cặp Số/Ngày (VD Hạn tạm giam, Ngày sinh).
   const parse = (s) => {
     if (!s) return "";
     s = s.trim();
-    let m;
-    // 8 chữ số liền: DDMMYYYY
-    m = s.match(/^(\d{2})(\d{2})(\d{4})$/);
-    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-    // 6 chữ số liền: DDMMYY → 20YY
-    m = s.match(/^(\d{2})(\d{2})(\d{2})$/);
-    if (m) return `20${m[3]}-${m[2]}-${m[1]}`;
-    // Có dấu phân cách, năm đầy đủ: D/M/YYYY hoặc D.M.YYYY hoặc D-M-YYYY
-    m = s.match(/^(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{4})$/);
-    if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
-    // Có dấu phân cách, năm ngắn: D/M/YY → 20YY
-    m = s.match(/^(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2})$/);
-    if (m) return `20${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
-    return null;
+    if (onTachSo) {
+      const gop = tachSoVaNgayGop(s);
+      if (gop) { onTachSo(gop.so); return gop.ngayIso; }
+    }
+    return parseNgayLinhHoat(s);
   };
   const handleChange = (e) => {
     const s = e.target.value;
@@ -641,7 +675,7 @@ function NhapNgay({ value, onChange, className, ...props }) {
     <span className="relative inline-flex items-center w-full">
       <input type="text" value={raw} onChange={handleChange}
         onFocus={() => { fokusRef.current = true; }}
-        onBlur={handleBlur} placeholder="ddmmyy hoặc dd/mm/yyyy"
+        onBlur={handleBlur} placeholder={onTachSo ? "dd/mm/yyyy hoặc Số/dd.mm.yyyy" : "ddmmyy hoặc dd/mm/yyyy"}
         className={`${className || ""} pr-7`} {...props} />
       <input type="date" ref={pickerRef} value={value || ""} onChange={handlePicker}
         tabIndex={-1}
@@ -3746,7 +3780,7 @@ function ChuyenGiaiDoanModal({ vuAn, onDong, onXong }) {
     <KhungModalHanhDong tieuDe={`Chuyển giai đoạn: ${NHAN_GIAI_DOAN[vuAn.coQuanThuLy]} → ${NHAN_GIAI_DOAN[denGiaiDoan]}`}>
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <label className="text-xs text-slate-500 block mb-1">Ngày chuyển giai đoạn</label>
-      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">{nhanSo}</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
@@ -3791,7 +3825,7 @@ function TraHoSoModal({ vuAn, onDong, onXong }) {
     <KhungModalHanhDong tieuDe={`Trả hồ sơ: ${NHAN_GIAI_DOAN[vuAn.coQuanThuLy]} → ${NHAN_GIAI_DOAN[denGiaiDoan]}`}>
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <label className="text-xs text-slate-500 block mb-1">Ngày trả hồ sơ</label>
-      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định trả hồ sơ điều tra bổ sung</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Lý do / ghi chú</label>
@@ -3837,7 +3871,7 @@ function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <div className="text-xs text-slate-500 mb-3">Hạn hiện hành: {fmtDate(vuAn.hanDieuTra)}</div>
       <label className="text-xs text-slate-500 block mb-1">Hạn điều tra mới</label>
-      <NhapNgay value={hanMoi} onChange={e => setHanMoi(e.target.value)} className={oInput + " mb-3"} />
+      <NhapNgay value={hanMoi} onChange={e => setHanMoi(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định gia hạn điều tra</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
@@ -3880,7 +3914,7 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
     <KhungModalHanhDong tieuDe="Phục hồi vụ án (từ Tạm đình chỉ)">
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <label className="text-xs text-slate-500 block mb-1">Ngày phục hồi</label>
-      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định phục hồi điều tra</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
@@ -4273,7 +4307,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
         </div>
       )}
       <label className="text-xs text-slate-500 block mb-1">Ngày quyết định</label>
-      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">{NHAN_SO_QUYET_DINH_HOAN_THANH[hinhThuc]}</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
@@ -4376,7 +4410,7 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
         <option value="khac">Khác</option>
       </select>
       <label className="text-xs text-slate-500 block mb-1">Ngày tách</label>
-      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định tách vụ</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
@@ -4505,7 +4539,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
         </div>
       )}
       <label className="text-xs text-slate-500 block mb-1">Ngày nhập vụ</label>
-      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} className={oInput + " mb-3"} />
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định nhập vụ</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
@@ -4863,7 +4897,8 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
                 )}
               </Truong>
               <Truong nhan="Ngày giải quyết *">
-                <NhapNgay value={ngayQuyetDinhKQ} onChange={e => setNgayQuyetDinhKQ(e.target.value)} className={oInput} />
+                <NhapNgay value={ngayQuyetDinhKQ} onChange={e => setNgayQuyetDinhKQ(e.target.value)}
+                          onTachSo={setSoQuyetDinhKQ} className={oInput} />
               </Truong>
               <Truong nhan={NHAN_SO_QUYET_DINH_HOAN_THANH[trangThaiKetQua]}>
                 <input value={soQuyetDinhKQ} onChange={e => setSoQuyetDinhKQ(e.target.value)} className={oInput} />
@@ -5183,7 +5218,8 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Truong nhan="Ngày giải quyết">
-                <NhapNgay value={ngayQuyetDinh} onChange={e => setNgayQuyetDinh(e.target.value)} className={oInput} />
+                <NhapNgay value={ngayQuyetDinh} onChange={e => setNgayQuyetDinh(e.target.value)}
+                          onTachSo={setSoQuyetDinhGQ} className={oInput} />
               </Truong>
               <Truong nhan={NHAN_SO_QUYET_DINH_HOAN_THANH[vuAn.trangThai] || "Số QĐ giải quyết"}>
                 <input value={soQuyetDinhGQ} onChange={e => setSoQuyetDinhGQ(e.target.value)} className={oInput} />
