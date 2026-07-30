@@ -1035,6 +1035,20 @@ const NHAN_SU_KIEN = {
   giao_nhan_ho_so: "Giao nhận hồ sơ",
 };
 
+// Nhãn hiển thị 1 sự kiện log trong "Lịch sử"/"Nhật ký thao tác" — hầu hết tra thẳng NHAN_SU_KIEN,
+// riêng "chuyen_giai_doan" cần nhãn CỤ THỂ theo đúng chiều chuyển thay vì chung chung "Chuyển giai
+// đoạn" (2026-07-30, theo yêu cầu người dùng) — hệ thống chỉ có đúng 2 chiều chuyển TIẾN khả dĩ
+// (Điều tra→Truy tố, Truy tố→Xét xử, xem THU_TU_GIAI_DOAN) nên liệt kê tường minh theo denGiaiDoan,
+// không cần suy luận gì thêm. Sự kiện cũ thiếu denGiaiDoan (hiếm, dữ liệu import rất cũ) rơi về
+// nhãn chung "Chuyển giai đoạn" như trước.
+function moTaLoaiSuKien(suKien) {
+  if (suKien.loaiSuKien === "chuyen_giai_doan") {
+    if (suKien.denGiaiDoan === "truy_to") return "Kết thúc điều tra";
+    if (suKien.denGiaiDoan === "xet_xu") return "Chuyển toà xét xử";
+  }
+  return NHAN_SU_KIEN[suKien.loaiSuKien] || suKien.loaiSuKien;
+}
+
 const MAU_GIAI_DOAN = { dieu_tra: "bg-blue-100 text-blue-700", truy_to: "bg-purple-100 text-purple-700", xet_xu: "bg-emerald-100 text-emerald-700" };
 const MAU_TRANG_THAI = {
   dang_giai_quyet: "bg-green-100 text-green-700", da_xet_xu: "bg-blue-100 text-blue-700", an_huy: "bg-red-100 text-red-700",
@@ -6670,7 +6684,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
                 {lichSu.map((ls, i) => (
                   <tr key={ls.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
                     <td className="p-2 text-slate-400 whitespace-nowrap">{fmtDate(ls.ngaySuKien)}</td>
-                    <td className="p-2"><Badge>{NHAN_SU_KIEN[ls.loaiSuKien] || ls.loaiSuKien}</Badge></td>
+                    <td className="p-2"><Badge>{moTaLoaiSuKien(ls)}</Badge></td>
                     <td className="p-2 text-slate-500 whitespace-nowrap">{ls.soQuyetDinh || "—"}</td>
                     <td className="p-2 text-slate-500">{ls.ghiChu || "—"}</td>
                   </tr>
@@ -8021,7 +8035,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                       {lichSu.map((ls, i) => (
                         <tr key={ls.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
                           <td className="p-2 text-slate-400 whitespace-nowrap">{fmtDate(ls.ngaySuKien)}</td>
-                          <td className="p-2"><Badge>{NHAN_SU_KIEN[ls.loaiSuKien] || ls.loaiSuKien}</Badge></td>
+                          <td className="p-2"><Badge>{moTaLoaiSuKien(ls)}</Badge></td>
                           <td className="p-2 text-slate-500 whitespace-nowrap">{ls.soQuyetDinh || "—"}</td>
                           <td className="p-2 text-slate-500">{ls.ghiChu || "—"}</td>
                         </tr>
@@ -13542,7 +13556,7 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
     <KhungModalHanhDong tieuDe="Sửa kỳ báo cáo cho sự kiện">
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
       <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600 mb-4">
-        <div className="font-medium">{NHAN_SU_KIEN[suKien.loaiSuKien] || suKien.loaiSuKien}</div>
+        <div className="font-medium">{moTaLoaiSuKien(suKien)}</div>
         <div className="text-slate-400 mt-0.5">{suKien.maVuAn} — {fmtDate(suKien.thoiDiemGhi)}</div>
       </div>
       <label className="text-xs text-slate-500 block mb-1">Kỳ báo cáo</label>
@@ -13687,7 +13701,7 @@ function NhatKyModule() {
                 <tr key={ls.id} className="border-t border-slate-100">
                   <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{fmtDate(ls.thoiDiemGhi)}</td>
                   <td className="p-3 text-xs">{ls.maVuAn}</td>
-                  <td className="p-3">{NHAN_SU_KIEN[ls.loaiSuKien] || ls.loaiSuKien}</td>
+                  <td className="p-3">{moTaLoaiSuKien(ls)}</td>
                   <td className="p-3 text-xs whitespace-nowrap">
                     {ls.kyThongKe ? (kyTenTheoId[ls.kyThongKe] || "(kỳ đã xoá)") : <span className="text-slate-400">—</span>}
                   </td>
