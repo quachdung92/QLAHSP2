@@ -2384,7 +2384,16 @@ function BackfillDieuLuatBCTool() {
       const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
 
       let soCapNhat = 0, soBo = 0, soLoi = 0, soSuyTuVu = 0;
-      const BATCH_SIZE = 400;
+      // BATCH_SIZE = 100, KHÔNG PHẢI 400 (2026-07-31, bug thật gặp phải trên production: "canceling
+      // statement due to statement timeout") — mỗi UPDATE "bican" kích hoạt trigger
+      // "bican_sync_vuan_trg" gọi RPC capNhatDieuLuatVaLoaiKhoiTo (vài câu SELECT/UPDATE mỗi lần).
+      // Bình thường (ghi rải rác nhiều vụ) không đáng kể, nhưng công cụ NÀY hay sửa NHIỀU bị can
+      // CÙNG 1 vụ liền nhau (VD 1 vụ 10 bị can cùng thiếu tội danh) — 400 UPDATE dồn vào ít vụ làm
+      // 1 lần gọi batch_commit vượt quá statement_timeout=8s của role "authenticated". Đã đo THẬT
+      // trên Postgres production (transaction thử rồi rollback, không đổi dữ liệu thật): 442 dòng
+      // lỗi thật (tập trung ở 45 vụ) mất >8s và bị Postgres huỷ giữa chừng — đúng lỗi người dùng
+      // gặp; 200 dòng cùng kiểu chỉ mất ~1.8s — hạ xuống 100 (mất ~1.3s) để có biên an toàn rộng.
+      const BATCH_SIZE = 100;
       let batch = db.batch(); let batchCount = 0;
 
       for (const doc of bcSnap.docs) {
@@ -2773,7 +2782,11 @@ function BackfillLoaiKhoiToTool() {
       });
 
       let soCapNhat = 0, soVuAnhHuong = 0;
-      const BATCH_SIZE = 400;
+      // BATCH_SIZE = 100 (2026-07-31) — cùng lý do đã sửa ở BackfillDieuLuatBCTool phía trên: công
+      // cụ này CŨNG update "bican" theo nhóm nhiều bị can/1 vụ liền nhau, cùng rủi ro vượt
+      // statement_timeout=8s của role "authenticated" do trigger bican_sync_vuan_trg — xem ghi chú
+      // đầy đủ + số đo thật ở BackfillDieuLuatBCTool.
+      const BATCH_SIZE = 100;
       let batch = db.batch(); let batchCount = 0;
       const commitNeu = async () => { if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; } };
 
