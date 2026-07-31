@@ -972,8 +972,19 @@ function chuanHoaMotToiDanh(tenGoc, dieuLuatGoc, dieuLuatCapVu, dmByTen, dmByDie
     const hit = dmByDieu[t.toLowerCase()];
     if (hit) return { ten: hit.tenToiDanh, dieuLuat: hit.dieuLuat, changed: true };
   } else if (t) {
-    const hit = dmByTen[chuanHoaTenToiDanh(t)];
-    if (hit) return { ten: t, dieuLuat: hit.dieuLuat, changed: true };
+    const hitTen = dmByTen[chuanHoaTenToiDanh(t)];
+    if (hitTen) return { ten: t, dieuLuat: hitTen.dieuLuat, changed: true };
+    // Bug thật đã sửa (2026-07-31, phát hiện qua audit Biểu B10 "tổng tồn < thực tế" trên dữ liệu
+    // thật) — 442 bị can/45 vụ có `toiDanh` bị lưu NHẦM thành chuỗi tham chiếu điều luật (VD "Điều
+    // 168 BLHS 2015") thay vì TÊN tội danh thật, `dieuLuatBC` rỗng. Tra theo TÊN ở trên chắc chắn
+    // thất bại (không tội danh nào tên là "điều 168 blhs 2015"), trước đây dừng lại luôn ở đó
+    // (changed=false) — khiến chạy lại công cụ "Chuẩn hoá" bao nhiêu lần cũng không tự sửa được.
+    // Thử thêm 1 bước: coi `t` có thể chính là tham chiếu điều luật, tra qua trichDieuLuatTuChuoi
+    // (rút số điều bằng regex rồi tra dmByDieu) — khớp thì SỬA LẠI cả `ten` (thay chuỗi rác bằng
+    // đúng tên tội danh) lẫn `dieuLuat`, không giữ nguyên `t` như nhánh tên khớp phía trên (vì `t`
+    // ở đây là rác, không phải tên hợp lệ cần giữ nguyên cách gõ của người dùng).
+    const hitDieu = trichDieuLuatTuChuoi(t, dmByTen, dmByDieu);
+    if (hitDieu.dieuLuat) return { ten: hitDieu.ten, dieuLuat: hitDieu.dieuLuat, changed: true };
   } else if ((dieuLuatCapVu || "").trim()) {
     const hit = trichDieuLuatTuChuoi(dieuLuatCapVu, dmByTen, dmByDieu);
     if (hit.dieuLuat) return { ten: hit.ten, dieuLuat: hit.dieuLuat, changed: true };
