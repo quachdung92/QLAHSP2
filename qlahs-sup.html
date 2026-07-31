@@ -8357,22 +8357,45 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // trên không đủ, giữ nguyên cho layMaDieuLuatBiCan (chỗ khác đang dùng, không đổi).
   const { dmByTen, dmByDieu } = taoDanhMucDayDu(danhMuc);
 
-  // Normalize tonCuoiKyTheoTD của kỳ trước: key cũ có thể là tên tội danh thay vì code chuẩn
+  // Cộng dồn 2 giá trị "tồn theo tội danh" (dạng {gd: {vuAn, biCan}}) — dùng khi 2 khoá thô khác
+  // nhau (VD "Điều 174 BLHS 2025" và "Tội lừa đảo chiếm đoạt tài sản") cùng chuẩn hoá về 1 key.
+  const gopTonTheoTD = (a, b) => {
+    const ket = { ...a };
+    for (const gd of THU_TU_GIAI_DOAN) {
+      ket[gd] = {
+        vuAn: (a?.[gd]?.vuAn || 0) + (b?.[gd]?.vuAn || 0),
+        biCan: (a?.[gd]?.biCan || 0) + (b?.[gd]?.biCan || 0),
+      };
+    }
+    return ket;
+  };
+
+  // Normalize tonCuoiKyTheoTD của kỳ trước: key cũ có thể là tên tội danh thay vì code chuẩn.
+  // Bug đã sửa (2026-07-30, phát hiện qua cảnh báo B10 "tổng tồn < thực tế" trên dữ liệu thật) —
+  // snapshot cũ có thể lưu CẢ 2 dạng khoá cho CÙNG 1 điều luật (VD 1 phần bị can đã có sẵn
+  // dieuLuatBC = "Điều 174 BLHS 2025" ngay lúc chốt, phần khác chỉ có toiDanh dạng tên thô "Tội lừa
+  // đảo chiếm đoạt tài sản" chưa tra được danh mục tại đúng thời điểm chốt đó) — cả 2 khoá cùng
+  // chuẩn hoá về "Điều 174 BLHS 2025" khi đọc lại ở đây, nhưng gán ghi đè `tonTD_truoc[normKey] = v`
+  // làm giá trị đến SAU xoá mất giá trị đến TRƯỚC hoàn toàn (không phải cộng dồn) — 1 vụ Điều 174
+  // đơn lẻ đã mất tới 54 vụ Điều tra/12 BC Truy tố/28 BC Xét xử trên dữ liệu thật, cộng với 6 điều
+  // luật khác bị y hệt đủ giải thích khoảng lệch lớn của cảnh báo. Sửa bằng cộng dồn thay vì ghi đè
+  // khi phát hiện trùng khoá sau chuẩn hoá — không mất dữ liệu dù snapshot cũ có bị trùng khoá.
   const tonTD_truocRaw = kyTruoc?.tonCuoiKyTheoTD || {};
   const tonTD_truoc = {};
   for (const [k, v] of Object.entries(tonTD_truocRaw)) {
     const normKey = trichDieuLuatTuChuoi(k, dmByTen, dmByDieu).dieuLuat || chuanHoaMaDieuLuat(k);
-    tonTD_truoc[normKey] = v;
+    tonTD_truoc[normKey] = tonTD_truoc[normKey] ? gopTonTheoTD(tonTD_truoc[normKey], v) : v;
   }
 
   // tonCuoiKyTheoTD của kỳ hiện tại — dùng cho "Tồn kỳ này" khi kỳ đã chốt (snapshot đúng thời điểm
   // chốt). Nếu chưa có (kỳ đang mở hoặc chưa chạy tinhLaiBaoCaoLuu) thì dùng live tonHienTai.
+  // Cùng bug/cách sửa như tonTD_truoc ngay trên (gộp thay vì ghi đè khi trùng khoá sau chuẩn hoá).
   const kyTonTD_raw = ky.tonCuoiKyTheoTD || null;
   const kyTonTD = kyTonTD_raw ? {} : null;
   if (kyTonTD_raw) {
     for (const [k, v] of Object.entries(kyTonTD_raw)) {
       const normKey = trichDieuLuatTuChuoi(k, dmByTen, dmByDieu).dieuLuat || chuanHoaMaDieuLuat(k);
-      kyTonTD[normKey] = v;
+      kyTonTD[normKey] = kyTonTD[normKey] ? gopTonTheoTD(kyTonTD[normKey], v) : v;
     }
   }
 
