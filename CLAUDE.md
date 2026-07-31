@@ -89,6 +89,28 @@ trên 1 vài bị can thật, xác nhận số lượng điền + cột Trình �
 auto-fill qua dropdown, xác nhận cờ `trinhDoUocTinh` tắt đúng; (4) xuất thử Biểu B10 xem cảnh báo
 mới "chưa xác nhận" hiện đúng ở cuối sheet.
 
+**Thêm công tắc BẬT/TẮT toàn bộ tính năng, MẶC ĐỊNH TẮT (2026-07-31, cùng ngày, theo yêu cầu người
+dùng ngay sau đó "cho cái tính năng này vào phần setting, tôi sẽ bật nếu cần thiết")** — trước đó
+tính năng LUÔN hoạt động (không tắt được). Thêm `KHOA_TU_DONG_DIEN_TRINHDO =
+"qlva_tudongdien_trinhdo"` lưu qua `localStorage` (đúng quy ước NHẤT QUÁN mọi "cài đặt" khác trong
+app — `qlva_blhsMacDinh`/`qlva_danhsach_cotAn`/`qlva_ky_sapxep`... — không có bảng "settings" chung
+nào trên Postgres, không phải ngoại lệ), hàm đọc nhanh `trinhDoAutoFillDangBat()` (dùng ở nơi lưu dữ
+liệu, không cần React state) + hook `useTuDongDienTrinhDo()` (dùng cho chính công tắc UI).
+
+**Gate ở ĐÚNG 1 chỗ duy nhất — ngay đầu `chonTrinhDoNgauNhien`**: nếu tắt, trả thẳng `{trinhDo: "",
+trinhDoUocTinh: false}` — y hệt hành vi TRƯỚC KHI có tính năng này, không cần thêm điều kiện riêng ở
+từng 1 trong 5 nơi gọi hàm (Import Excel, 3 form bị can, `BackfillTrinhDoTool`) — giảm rủi ro quên
+chặn 1 chỗ. Công tắc (component `CongTac` có sẵn, không viết switch mới) đặt ngay trong
+`BackfillTrinhDoTool` (đầu khối UI, phía trên nút "Chạy điền tự động") — nút này cũng tự
+`disabled` + tooltip "Bật công tắc ở trên trước khi chạy" khi tắt, dòng thông báo xám nhắc rõ trạng
+thái tắt không ảnh hưởng gì tới dữ liệu (Trình độ để trống vẫn để trống như trước).
+
+**Đã kiểm chứng**: thêm assertion #9-10 vào `test_trinhdo_random.js` (mock `localStorage` bằng
+object JS thường) — xác nhận `trinhDoAutoFillDangBat()` đúng `false` khi tắt, và
+`chonTrinhDoNgauNhien` trả đúng no-op `{trinhDo:"", trinhDoUocTinh:false}` khi tắt (không tự ý
+random) — 10/10 PASS (2 assertion mới + 8 assertion cũ vẫn đúng sau khi bật công tắc lên "on" đầu
+test). Compile-check lại toàn file — sạch.
+
 ## Nhánh `bieu10-kiemtra-tong-phantich-bican` — kiểm tra tổng khối "Phân tích bị can mới khởi tố" (2026-07-31, `qlahs-sup.html`, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: khối C7-C24 (Điều tra / "Phân tích số bị can là CÁ NHÂN mới khởi tố", xem

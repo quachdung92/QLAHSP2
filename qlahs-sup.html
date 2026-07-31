@@ -1933,11 +1933,30 @@ function layMucGiaoDuc(tenToiDanh) {
   return "trung_binh";
 }
 
+// Công tắc BẬT/TẮT toàn bộ tính năng (2026-07-31, theo yêu cầu người dùng) — MẶC ĐỊNH TẮT, người
+// dùng tự bật ở Cài đặt → Import Excel khi cần. Lưu qua localStorage, đúng quy ước NHẤT QUÁN của
+// mọi "cài đặt" khác trong app (`qlva_blhsMacDinh`, `qlva_danhsach_cotAn`, `qlva_ky_sapxep`...) —
+// KHÔNG có collection/bảng "settings" chung nào trên Postgres, không phải ngoại lệ khi dùng
+// localStorage ở đây. Đọc trực tiếp (không qua React state) ở mọi nơi auto-fill lúc lưu dữ liệu —
+// chỉ cần state React thật ở chính cái công tắc hiển thị trên UI (`useTuDongDienTrinhDo`).
+const KHOA_TU_DONG_DIEN_TRINHDO = "qlva_tudongdien_trinhdo";
+function trinhDoAutoFillDangBat() {
+  return localStorage.getItem(KHOA_TU_DONG_DIEN_TRINHDO) === "on";
+}
+function useTuDongDienTrinhDo() {
+  const [bat, setBatState] = useState(() => trinhDoAutoFillDangBat());
+  const setBat = (v) => { localStorage.setItem(KHOA_TU_DONG_DIEN_TRINHDO, v ? "on" : "off"); setBatState(v); };
+  return [bat, setBat];
+}
+
 // Chọn 1 trinhDo NGẪU NHIÊN có trọng số theo tuổi (bc.namSinh + namKTVA của vụ) + tội danh chính
 // (bc.toiDanh[0]) — CHỈ gọi khi bị can KHÔNG phải pháp nhân (kiểm ở nơi gọi, hàm này không tự lọc).
 // Luôn trả về 1 giá trị hợp lệ (không throw), kể cả khi thiếu Năm sinh (fallback nhóm "30_70", nhóm
-// phổ biến nhất).
+// phổ biến nhất). Gate NGAY ĐẦU hàm bằng `trinhDoAutoFillDangBat()` — khi TẮT, trả về y hệt hành vi
+// TRƯỚC KHI có tính năng này (trinhDo rỗng, không đánh dấu ước tính) — đặt gate ở ĐÚNG 1 chỗ này
+// (không lặp lại ở từng nơi gọi) để không lỡ quên chặn 1 trong 5 điểm gọi hàm này.
 function chonTrinhDoNgauNhien(bc, vu) {
+  if (!trinhDoAutoFillDangBat()) return { trinhDo: "", trinhDoUocTinh: false };
   const namKTVA = vu?.ngayQdKtva
     ? new Date(vu.ngayQdKtva.seconds ? vu.ngayQdKtva.seconds * 1000 : vu.ngayQdKtva).getFullYear()
     : new Date().getFullYear();
@@ -2931,8 +2950,10 @@ function BackfillLoaiKhoiToTool() {
 function BackfillTrinhDoTool() {
   const [state, setState] = useState("idle");
   const [info, setInfo] = useState("");
+  const [bat, setBat] = useTuDongDienTrinhDo();
 
   const run = async () => {
+    if (!bat) return; // an toàn — nút đã bị disabled, chặn thêm 1 lớp phòng gọi trực tiếp
     setState("loading"); setInfo("Đang tải dữ liệu...");
     try {
       const now = new Date();
@@ -2980,12 +3001,25 @@ function BackfillTrinhDoTool() {
         khi có hồ sơ đầy đủ. KHÔNG đụng tới bị can đã có sẵn Trình độ, KHÔNG áp dụng cho pháp nhân.
         An toàn khi chạy lại nhiều lần.
       </p>
+      {/* Công tắc BẬT/TẮT toàn bộ tính năng (2026-07-31, theo yêu cầu người dùng) — MẶC ĐỊNH TẮT.
+          Khi tắt, form Thêm/Sửa bị can + Import Excel giữ nguyên hành vi cũ (để trống nếu thiếu),
+          và nút "Chạy điền tự động" bên dưới bị khoá — xem chonTrinhDoNgauNhien/trinhDoAutoFillDangBat. */}
+      <div className="flex items-center gap-2 mb-3 p-2 bg-slate-50 rounded-lg border border-slate-200">
+        <CongTac checked={bat} onChange={setBat} nhan="Bật tính năng tự động điền Trình độ học vấn" />
+      </div>
+      {!bat && (
+        <div className="text-xs rounded p-2 mb-3 bg-slate-100 text-slate-500">
+          Tính năng đang TẮT — bật công tắc ở trên trước khi chạy. Khi tắt, ô Trình độ để trống lúc
+          thiếu dữ liệu vẫn giữ nguyên như trước (không tự điền).
+        </div>
+      )}
       {info && (
         <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
           {info}
         </div>
       )}
-      <button onClick={run} disabled={state === "loading"}
+      <button onClick={run} disabled={state === "loading" || !bat}
+              title={!bat ? "Bật công tắc ở trên trước khi chạy" : ""}
               className="px-3 py-1.5 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
         {state === "loading" ? "Đang chạy..." : "Chạy điền tự động"}
       </button>
