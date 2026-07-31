@@ -205,6 +205,9 @@ create table "bican" (
   "danToc"             text not null default 'Kinh',
   "quocTich"           text not null default 'Việt Nam',
   "trinhDo"            text default '' check ("trinhDo" in ('','khong_biet_chu','tieu_hoc','thcs','thpt','dh_tro_len')),
+  "trinhDoUocTinh"     boolean not null default false,  -- true = trinhDo do hệ thống TỰ ĐOÁN (random
+                                                          -- có trọng số theo tuổi+tội danh), chưa được
+                                                          -- cán bộ xác nhận — xem chonTrinhDoNgauNhien
   "taiPham"            text not null default 'khong' check ("taiPham" in ('khong','tai_pham','tai_pham_nguy_hiem')),
   "loaiBiCan"          text not null default 'ca_nhan' check ("loaiBiCan" in ('ca_nhan','phap_nhan')),
   "tenPhapNhan"        text not null default '',        -- chỉ khi loaiBiCan='phap_nhan'

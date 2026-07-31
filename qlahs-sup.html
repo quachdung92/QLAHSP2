@@ -1869,6 +1869,90 @@ function tinhNhomTuoi(namSinh, namKTVA) {
   return null;
 }
 
+// ====== Auto-điền Trình độ học vấn (ngẫu nhiên có trọng số) ======
+// Theo yêu cầu người dùng (2026-07-31): field `trinhDo` không có giá trị mặc định (khác `gioiTinh`
+// luôn mặc định "nam") nên thường bị bỏ trống khi nhập liệu thực tế — thay vì để trống (làm B10
+// đếm thiếu ở khối C14-C18), tự chọn 1 giá trị NGẪU NHIÊN có trọng số theo (nhóm tuổi × "mức giáo
+// dục" suy từ tội danh chính), đánh dấu `trinhDoUocTinh: true` để cán bộ biết đây là số DỰ ĐOÁN,
+// sửa lại khi có hồ sơ đầy đủ — xem CLAUDE.md mục "Auto-điền Trình độ học vấn" để biết bối cảnh đầy
+// đủ đã thống nhất với người dùng.
+
+// Bảng phân bố (%) — CHỈ LÀ ĐIỂM KHỞI ĐẦU HỢP LÝ theo mô tả thực tế của người dùng, KHÔNG PHẢI số
+// liệu thống kê chính thức: Tiểu học + Không biết chữ RẤT hiếm ("cả năm chỉ 1-2 trường hợp" — theo
+// đúng phản hồi người dùng), càng lớn tuổi 2 mức này nhích lên chút; "cao" (tội lừa đảo/kinh tế/
+// chức vụ...) đẩy về THPT/ĐH, "thấp" (trộm cắp/cướp giật...) đẩy về THCS. Sửa trực tiếp bảng này
+// nếu cần hiệu chỉnh sau này — không nằm rải rác trong logic.
+const PHAN_BO_TRINH_DO = {
+  "14_16": {
+    cao:        { khong_biet_chu: 0,   tieu_hoc: 1,   thcs: 60, thpt: 39, dh_tro_len: 0 },
+    trung_binh: { khong_biet_chu: 0,   tieu_hoc: 2,   thcs: 70, thpt: 28, dh_tro_len: 0 },
+    thap:       { khong_biet_chu: 0,   tieu_hoc: 3,   thcs: 78, thpt: 19, dh_tro_len: 0 },
+  },
+  "16_18": {
+    cao:        { khong_biet_chu: 0,   tieu_hoc: 1,   thcs: 40, thpt: 55, dh_tro_len: 4 },
+    trung_binh: { khong_biet_chu: 0,   tieu_hoc: 1,   thcs: 48, thpt: 49, dh_tro_len: 2 },
+    thap:       { khong_biet_chu: 0,   tieu_hoc: 2,   thcs: 58, thpt: 40, dh_tro_len: 0 },
+  },
+  "18_30": {
+    cao:        { khong_biet_chu: 0,   tieu_hoc: 0.5, thcs: 20, thpt: 50, dh_tro_len: 29.5 },
+    trung_binh: { khong_biet_chu: 0.2, tieu_hoc: 1,   thcs: 40, thpt: 45, dh_tro_len: 13.8 },
+    thap:       { khong_biet_chu: 0.5, tieu_hoc: 1.5, thcs: 58, thpt: 35, dh_tro_len: 5 },
+  },
+  "30_70": {
+    cao:        { khong_biet_chu: 0,   tieu_hoc: 0.5, thcs: 22, thpt: 48, dh_tro_len: 29.5 },
+    trung_binh: { khong_biet_chu: 0.5, tieu_hoc: 1.5, thcs: 44, thpt: 42, dh_tro_len: 12 },
+    thap:       { khong_biet_chu: 0.7, tieu_hoc: 2,   thcs: 60, thpt: 32, dh_tro_len: 5.3 },
+  },
+  ">70": {
+    cao:        { khong_biet_chu: 0.5, tieu_hoc: 2,   thcs: 30, thpt: 45, dh_tro_len: 22.5 },
+    trung_binh: { khong_biet_chu: 1.5, tieu_hoc: 3.5, thcs: 50, thpt: 37, dh_tro_len: 8 },
+    thap:       { khong_biet_chu: 2,   tieu_hoc: 4,   thcs: 62, thpt: 28, dh_tro_len: 4 },
+  },
+};
+
+// Danh sách từ khoá GỢI Ý (không phải bảng phân loại pháp lý chính thức) để suy "mức giáo dục" từ
+// tên tội danh chính — chỉ dùng để ước lượng thô cho việc random tạm, không ảnh hưởng tội danh/điều
+// luật thật của bị can (giữ nguyên, không bị đụng vào). Khớp theo chuỗi con, không phân biệt hoa/
+// thường. Danh sách dễ bổ sung/sửa sau — không cố gắng làm bảng phân loại pháp lý đầy đủ theo
+// chương BLHS (rủi ro sai sót cao hơn giá trị mang lại, vì đây chỉ là số dự đoán tạm).
+const TU_KHOA_GIAO_DUC_CAO = [
+  "lừa đảo", "lạm dụng tín nhiệm", "tham ô", "nhận hối lộ", "đưa hối lộ", "môi giới hối lộ",
+  "lợi dụng chức vụ", "lạm quyền", "buôn lậu", "trốn thuế", "làm giả", "rửa tiền", "thao túng",
+  "cho vay lãi nặng", "vi phạm quy định về kế toán", "vi phạm quy định về ngân hàng",
+  "vi phạm quy định về hoạt động chứng khoán",
+];
+const TU_KHOA_GIAO_DUC_THAP = [
+  "trộm cắp", "cướp giật", "cướp tài sản", "cưỡng đoạt", "công nhiên chiếm đoạt", "hủy hoại tài sản",
+  "cố ý gây thương tích", "gây rối trật tự công cộng", "đánh bạc", "tổ chức đánh bạc", "chứa chấp",
+  "tiêu thụ tài sản", "chống người thi hành công vụ",
+];
+function layMucGiaoDuc(tenToiDanh) {
+  const s = (tenToiDanh || "").toLowerCase();
+  if (TU_KHOA_GIAO_DUC_CAO.some(k => s.includes(k))) return "cao";
+  if (TU_KHOA_GIAO_DUC_THAP.some(k => s.includes(k))) return "thap";
+  return "trung_binh";
+}
+
+// Chọn 1 trinhDo NGẪU NHIÊN có trọng số theo tuổi (bc.namSinh + namKTVA của vụ) + tội danh chính
+// (bc.toiDanh[0]) — CHỈ gọi khi bị can KHÔNG phải pháp nhân (kiểm ở nơi gọi, hàm này không tự lọc).
+// Luôn trả về 1 giá trị hợp lệ (không throw), kể cả khi thiếu Năm sinh (fallback nhóm "30_70", nhóm
+// phổ biến nhất).
+function chonTrinhDoNgauNhien(bc, vu) {
+  const namKTVA = vu?.ngayQdKtva
+    ? new Date(vu.ngayQdKtva.seconds ? vu.ngayQdKtva.seconds * 1000 : vu.ngayQdKtva).getFullYear()
+    : new Date().getFullYear();
+  const nhom = tinhNhomTuoi(bc.namSinh, namKTVA) || "30_70";
+  const muc = layMucGiaoDuc(bc.toiDanh?.[0] || "");
+  const phanBo = PHAN_BO_TRINH_DO[nhom][muc];
+  const tong = Object.values(phanBo).reduce((s, v) => s + v, 0);
+  let r = Math.random() * tong;
+  for (const [trinhDo, trongSo] of Object.entries(phanBo)) {
+    r -= trongSo;
+    if (r <= 0) return { trinhDo, trinhDoUocTinh: true };
+  }
+  return { trinhDo: "thcs", trinhDoUocTinh: true }; // an toàn nếu lệch số thực hiếm gặp (r vẫn > 0)
+}
+
 // ====== Cache/listener Firestore dùng chung ======
 // Nhiều nơi trong app subscribe CÙNG 1 query (VD canbo, kybaocao, danhMucToiDanh) độc lập với
 // nhau — mỗi lần 1 component mount (mở form, chuyển tab) là 1 listener Firestore MỚI, tính phí
@@ -2838,6 +2922,77 @@ function BackfillLoaiKhoiToTool() {
   );
 }
 
+// Điền Trình độ học vấn NGẪU NHIÊN (có trọng số theo tuổi + loại tội danh, xem
+// chonTrinhDoNgauNhien) cho bị can cá nhân đang thiếu field `trinhDo` — field này không có giá trị
+// mặc định (khác gioiTinh) nên hay bị bỏ trống khi nhập liệu thực tế (2026-07-31, theo yêu cầu
+// người dùng). Đánh dấu `trinhDoUocTinh: true` để phân biệt với dữ liệu thật, hiện cảnh báo ở Bảng
+// dữ liệu Excel (tô đỏ + "⚠") và Biểu B10 (ghi chú cuối sheet). An toàn chạy lại nhiều lần — chỉ
+// điền bị can CHƯA có trinhDo, không đụng tới dữ liệu đã có (dù thật hay ước tính từ trước).
+function BackfillTrinhDoTool() {
+  const [state, setState] = useState("idle");
+  const [info, setInfo] = useState("");
+
+  const run = async () => {
+    setState("loading"); setInfo("Đang tải dữ liệu...");
+    try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const [bcSnap, vuSnap] = await Promise.all([
+        db.collection("bican").get(),
+        db.collection("vuan").get(),
+      ]);
+      const vuById = new Map(vuSnap.docs.map(d => [d.id, d.data()]));
+
+      let soCapNhat = 0;
+      // BATCH_SIZE = 100 — cùng lý do BackfillDieuLuatBCTool/BackfillLoaiKhoiToTool ngay trên: tránh
+      // statement_timeout=8s do trigger bican_sync_vuan_trg khi update nhiều "bican" liên tiếp.
+      const BATCH_SIZE = 100;
+      let batch = db.batch(); let batchCount = 0;
+      const commitNeu = async () => { if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; } };
+
+      for (const doc of bcSnap.docs) {
+        const bc = doc.data();
+        if (bc.trinhDo || bc.loaiBiCan === "phap_nhan") continue; // đã có dữ liệu hoặc pháp nhân — bỏ qua
+        const vu = vuById.get(bc.maVuAn) || {};
+        const { trinhDo, trinhDoUocTinh } = chonTrinhDoNgauNhien(bc, vu);
+        batch.update(doc.ref, { trinhDo, trinhDoUocTinh, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+        soCapNhat++; batchCount++;
+        await commitNeu();
+      }
+      if (batchCount > 0) await batch.commit();
+
+      setState("done");
+      setInfo(soCapNhat === 0
+        ? "Không có bị can nào thiếu Trình độ — không cần điền gì thêm."
+        : `Đã điền Trình độ (ước tính, theo tuổi + loại tội danh) cho ${soCapNhat} bị can. Vào "Bảng ` +
+          `dữ liệu" (Cài đặt) hoặc xuất Biểu B10 để xem/sửa lại khi có hồ sơ đầy đủ — các bị can này ` +
+          `sẽ tô đỏ + cảnh báo "⚠" ở cột Trình độ.`);
+    } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Tự điền Trình độ học vấn còn thiếu (ước tính)</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        "Trình độ" không có giá trị mặc định (khác Giới tính luôn mặc định "Nam") nên hay bị bỏ
+        trống khi nhập liệu thực tế. Công cụ này điền NGẪU NHIÊN có trọng số (theo độ tuổi + loại
+        tội danh chính) cho bị can cá nhân đang thiếu, đánh dấu rõ "chưa xác nhận" để tự sửa lại sau
+        khi có hồ sơ đầy đủ. KHÔNG đụng tới bị can đã có sẵn Trình độ, KHÔNG áp dụng cho pháp nhân.
+        An toàn khi chạy lại nhiều lần.
+      </p>
+      {info && (
+        <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
+          {info}
+        </div>
+      )}
+      <button onClick={run} disabled={state === "loading"}
+              className="px-3 py-1.5 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
+        {state === "loading" ? "Đang chạy..." : "Chạy điền tự động"}
+      </button>
+    </div>
+  );
+}
+
 // Điền/sửa soBiCan/biCanDaiDien (tomTatBiCan) trên toàn bộ vuan hiện có — cần cho dữ liệu TẠO
 // TRƯỚC khi có tính năng này (Tối ưu Firestore Đợt 3, 2026-07-18); vụ tạo/sửa bị can sau đó đã tự
 // có 2 field này qua chính các form/công cụ ghi bình thường. An toàn chạy lại nhiều lần (idempotent
@@ -3411,11 +3566,15 @@ function ImportExcelModule() {
           // fallback sang Điều luật cấp vụ (v.dieuLuat, cột Excel riêng) nếu ô Tội danh bỏ trống
           // hoàn toàn — dữ liệu import ra chuẩn ngay, không còn phải chạy lại "Chuẩn hóa" sau.
           const ket = chuanHoaMotToiDanh(bc.toiDanh, "", v.dieuLuat, dmByTen, dmByDieu);
+          // Mẫu Import Excel không có cột Trình độ học vấn — luôn tự điền ước tính (bị can import
+          // luôn là cá nhân, xem loaiBiCan: "ca_nhan" hardcode ngay dưới, không cần lọc pháp nhân).
+          const tdUT = chonTrinhDoNgauNhien({ namSinh: bc.namSinh, toiDanh: [ket.ten || bc.toiDanh || ""] }, v);
           batch.set(bcRef, {
             maVuAn: maNoiSinh, hoTen: bc.hoTen, namSinh: bc.namSinh,
             gioiTinh: bc.gioiTinh, toiDanh: ket.ten ? [ket.ten] : [""], dieuLuatBC: [ket.dieuLuat || ""],
             dangVien: bc.dangVien, dangVienGiuChucVu: false,
-            danToc: bc.danToc, quocTich: "Việt Nam", trinhDo: "", taiPham: "khong",
+            danToc: bc.danToc, quocTich: "Việt Nam",
+            trinhDo: tdUT.trinhDo, trinhDoUocTinh: tdUT.trinhDoUocTinh, taiPham: "khong",
             loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
             diaChi: bc.diaChi, bienPhapNganChan: bc.bienPhapNganChan, hanTamGiam: bc.hanTamGiam,
             ngayKhoiTo: v.ngayQdKtva, loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
@@ -3677,6 +3836,7 @@ function ImportExcelModule() {
       <BackfillDieuLuatBCTool />
       <CapNhatDieuLuatTuFileTool />
       <BackfillLoaiKhoiToTool />
+      <BackfillTrinhDoTool />
       <BackfillTomTatBiCanTool />
       <BackfillNgayQuyetDinhGiaoNhanTool />
       <TaiTaoTonTheoTDTool />
@@ -4768,13 +4928,23 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         const ngayKT = bc.ngayKhoiTo ? fromInputDate(bc.ngayKhoiTo) : null;
         const toiDanhSach = bc.toiDanh.map(s => s.trim()).filter(Boolean);
         const dieuLuatBCSach = toiDanhSach.map((_, ti) => (bc.dieuLuatBC || [])[ti] || "");
+        // Trình độ để trống (và không phải pháp nhân) → tự điền ước tính thay vì lưu rỗng.
+        let trinhDoFinal = bc.trinhDo || "", trinhDoUocTinhFinal = false;
+        if (!trinhDoFinal && bc.loaiBiCan !== "phap_nhan") {
+          const tdUT = chonTrinhDoNgauNhien(
+            { namSinh: bc.namSinh ? Number(bc.namSinh) : null, toiDanh: toiDanhSach },
+            { ngayQdKtva: ngayQd },
+          );
+          trinhDoFinal = tdUT.trinhDo;
+          trinhDoUocTinhFinal = true;
+        }
         batch.set(bcRef, {
           maVuAn: maNoiSinh, hoTen: bc.hoTen.trim(), namSinh: bc.namSinh ? Number(bc.namSinh) : null,
           gioiTinh: bc.gioiTinh, toiDanh: toiDanhSach.length ? toiDanhSach : [""],
           dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
           dangVien: bc.dangVien, dangVienGiuChucVu: bc.dangVien === "co" ? !!bc.dangVienGiuChucVu : false,
           danToc: bc.danToc.trim() || "Kinh", quocTich: bc.quocTich.trim() || "Việt Nam",
-          trinhDo: bc.trinhDo || "", taiPham: bc.taiPham || "khong",
+          trinhDo: trinhDoFinal, trinhDoUocTinh: trinhDoUocTinhFinal, taiPham: bc.taiPham || "khong",
           loaiBiCan: bc.loaiBiCan || "ca_nhan",
           tenPhapNhan: bc.loaiBiCan === "phap_nhan" ? bc.tenPhapNhan.trim() : "",
           maSoThue: bc.loaiBiCan === "phap_nhan" ? bc.maSoThue.trim() : "",
@@ -5392,6 +5562,10 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
   const [dangVien, setDangVien] = useState(biCan.dangVien || "khong");
   const [dangVienGiuChucVu, setDangVienGiuChucVu] = useState(!!biCan.dangVienGiuChucVu);
   const [trinhDo, setTrinhDo] = useState(biCan.trinhDo || "");
+  // Chỉ bật khi cán bộ THẬT SỰ tương tác với dropdown Trình độ trong phiên sửa này — dùng để phân
+  // biệt "đang hiện giá trị ước tính cũ chưa đụng tới" (giữ nguyên trinhDoUocTinh) với "vừa xác
+  // nhận/sửa lại giá trị" (trinhDoUocTinh=false) — xem `luu()`.
+  const [trinhDoDaSua, setTrinhDoDaSua] = useState(false);
   const [taiPham, setTaiPham] = useState(biCan.taiPham || "khong");
   const [loaiBiCan, setLoaiBiCan] = useState(biCan.loaiBiCan || "ca_nhan");
   const [tenPhapNhan, setTenPhapNhan] = useState(biCan.tenPhapNhan || "");
@@ -5421,11 +5595,22 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
       const nguoiThucHien = auth.currentUser?.email || "";
       const toiDanhSach = toiDanh.map(s => s.trim()).filter(Boolean);
       const dieuLuatBCSach = toiDanhSach.map((_, i) => dieuLuatBC[i] || "");
+      // Trình độ: nếu để trống lúc lưu (và không phải pháp nhân) thì tự điền ước tính thay vì lưu
+      // rỗng; nếu đã có giá trị VÀ cán bộ vừa tự tay chọn trong phiên này thì coi là đã xác nhận
+      // thật (trinhDoUocTinh=false); nếu có giá trị nhưng KHÔNG đụng tới (giá trị cũ) thì giữ
+      // nguyên cờ ước tính đã có từ trước.
+      let trinhDoFinal = trinhDo;
+      let trinhDoUocTinhFinal = trinhDoDaSua ? false : (biCan.trinhDoUocTinh ?? false);
+      if (!trinhDoFinal && loaiBiCan !== "phap_nhan") {
+        const tdUT = chonTrinhDoNgauNhien({ namSinh: namSinh ? Number(namSinh) : null, toiDanh: toiDanhSach }, vuAn);
+        trinhDoFinal = tdUT.trinhDo;
+        trinhDoUocTinhFinal = true;
+      }
       await db.collection("bican").doc(biCan.id).update({
         hoTen: hoTen.trim(), namSinh: namSinh ? Number(namSinh) : null, gioiTinh,
         danToc: danToc.trim() || "Kinh", quocTich: quocTich.trim() || "Việt Nam",
         dangVien, dangVienGiuChucVu: dangVien === "co" ? dangVienGiuChucVu : false,
-        trinhDo: trinhDo || "", taiPham: taiPham || "khong",
+        trinhDo: trinhDoFinal, trinhDoUocTinh: trinhDoUocTinhFinal, taiPham: taiPham || "khong",
         loaiBiCan: loaiBiCan || "ca_nhan",
         tenPhapNhan: loaiBiCan === "phap_nhan" ? tenPhapNhan.trim() : "",
         maSoThue: loaiBiCan === "phap_nhan" ? maSoThue.trim() : "",
@@ -5465,10 +5650,13 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         <Truong nhan="Dân tộc"><input value={danToc} onChange={e => setDanToc(e.target.value)} className={oInput} /></Truong>
         <Truong nhan="Quốc tịch"><input value={quocTich} onChange={e => setQuocTich(e.target.value)} className={oInput} /></Truong>
         <Truong nhan="Trình độ">
-          <select value={trinhDo} onChange={e => setTrinhDo(e.target.value)} className={oInput}>
+          <select value={trinhDo} onChange={e => { setTrinhDo(e.target.value); setTrinhDoDaSua(true); }} className={oInput}>
             <option value="">— chưa rõ —</option>
             {Object.entries(NHAN_TRINH_DO).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
           </select>
+          {biCan.trinhDoUocTinh && !trinhDoDaSua && (
+            <p className="text-xs text-amber-600 mt-1">⚠ Dự đoán tự động, chưa xác nhận.</p>
+          )}
         </Truong>
         <Truong nhan="Tái phạm">
           <select value={taiPham} onChange={e => setTaiPham(e.target.value)} className={oInput}>
@@ -5592,6 +5780,13 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
       const toiDanhSach = toiDanh.map(s => s.trim()).filter(Boolean);
       const dieuLuatBCSach = toiDanhSach.map((_, ti) => (dieuLuatBC)[ti] || "");
       const ngayKT = ngayKhoiTo ? fromInputDate(ngayKhoiTo) : null;
+      // Trình độ để trống (và không phải pháp nhân) → tự điền ước tính thay vì lưu rỗng.
+      let trinhDoFinal = trinhDo, trinhDoUocTinhFinal = false;
+      if (!trinhDoFinal && loaiBiCan !== "phap_nhan") {
+        const tdUT = chonTrinhDoNgauNhien({ namSinh: namSinh ? Number(namSinh) : null, toiDanh: toiDanhSach }, vuAn);
+        trinhDoFinal = tdUT.trinhDo;
+        trinhDoUocTinhFinal = true;
+      }
 
       const bcRef = db.collection("bican").doc();
       const batch = db.batch();
@@ -5601,7 +5796,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
         dangVien, dangVienGiuChucVu: dangVien === "co" ? dangVienGiuChucVu : false,
         danToc: danToc.trim() || "Kinh", quocTich: quocTich.trim() || "Việt Nam",
-        trinhDo: trinhDo || "", taiPham: taiPham || "khong",
+        trinhDo: trinhDoFinal, trinhDoUocTinh: trinhDoUocTinhFinal, taiPham: taiPham || "khong",
         loaiBiCan: loaiBiCan || "ca_nhan",
         tenPhapNhan: loaiBiCan === "phap_nhan" ? tenPhapNhan.trim() : "",
         maSoThue: loaiBiCan === "phap_nhan" ? maSoThue.trim() : "",
@@ -8802,6 +8997,15 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
         if (thieuTrinhDo.length) {
           canhBao.push(`${nhan}: ${thieuTrinhDo.length}/${cohort.length} bị can thiếu Trình độ học vấn ` +
             `nên không tính được vào khối trình độ (C14-C18) — tổng theo trình độ sẽ THẤP HƠN tổng cá nhân: ${gomDs(thieuTrinhDo)}`);
+        }
+        // Trình độ auto-điền (2026-07-31, "BackfillTrinhDoTool"/save-time auto-fill) khiến nhánh
+        // "thiếu Trình độ" ở trên gần như không còn bao giờ bắn — thay vào đó nhắc cán bộ đây là số
+        // DỰ ĐOÁN chưa xác nhận, khác hẳn dữ liệu thiếu (đã chặn không cho ra 0/rỗng, không lệch
+        // tổng), chỉ là ĐỘ TIN CẬY của con số cần được cán bộ tự kiểm tra lại dần.
+        const uocTinh = cohort.filter(bc => bc.trinhDoUocTinh);
+        if (uocTinh.length) {
+          canhBao.push(`${nhan}: ${uocTinh.length}/${cohort.length} bị can có Trình độ học vấn là ` +
+            `DỰ ĐOÁN tự động (chưa xác nhận) — nên kiểm tra lại khi có hồ sơ đầy đủ: ${gomDs(uocTinh)}`);
         }
       }
     };
@@ -14752,11 +14956,16 @@ function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
           </label>
         ) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
       </td>
-      <td {...oTd("trinhDo")}>
-        <select value={bc.trinhDo || ""} onChange={e => suaBiCanTruong(bc, { trinhDo: e.target.value })} className={oCellExcel}>
+      <td {...oTd("trinhDo")} title={bc.trinhDoUocTinh
+          ? "Trình độ học vấn là DỰ ĐOÁN tự động (theo độ tuổi + loại tội danh) — chưa xác nhận, sửa lại khi có thông tin thật."
+          : ""}>
+        <select value={bc.trinhDo || ""}
+                onChange={e => suaBiCanTruong(bc, { trinhDo: e.target.value, trinhDoUocTinh: false })}
+                className={`${oCellExcel} ${bc.trinhDoUocTinh ? "text-red-600 font-medium" : ""}`}>
           <option value="">— chưa rõ —</option>
           {Object.entries(NHAN_TRINH_DO).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
+        {bc.trinhDoUocTinh && <span className="text-red-600 text-xs">⚠</span>}
         <TayKeoFill onBatDau={() => keo.batDauKeo(index, "trinhDo", bc.trinhDo || "")} />
       </td>
       <td {...oTd("taiPham")}>
@@ -14869,6 +15078,10 @@ function BangBiCanCon({ vuAnId, danhMucTD, onVuAnCoTheDoi }) {
           toiDanh: [giaTri.ten, ...(bc.toiDanh || []).slice(1)],
           dieuLuatBC: [giaTri.dieuLuat, ...(bc.dieuLuatBC || []).slice(1)],
         });
+      } else if (field === "trinhDo") {
+        // Kéo-fill = cán bộ chủ động xác nhận giá trị này cho cả đoạn kéo qua — không còn là dự
+        // đoán tự động nữa, dù trước đó có đang là trinhDoUocTinh=true hay không.
+        batch.update(db.collection("bican").doc(bc.id), { trinhDo: giaTri, trinhDoUocTinh: false });
       } else {
         batch.update(db.collection("bican").doc(bc.id), { [field]: giaTri });
       }

@@ -2,6 +2,93 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Auto-điền "Trình độ học vấn" ngẫu nhiên có trọng số + cảnh báo "chưa xác nhận" (2026-07-31, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, CHƯA merge vào `main`)
+
+Tiếp theo mục kiểm tra tổng khối "Phân tích bị can mới khởi tố" ngay dưới đây — người dùng xác nhận
+`trinhDo` (Trình độ học vấn) thường xuyên bị thiếu trong thực tế nhập liệu (không có giá trị mặc
+định, khác `gioiTinh` luôn mặc định "nam"), và muốn 1 tính năng tự động điền giá trị NGẪU NHIÊN có
+trọng số (theo độ tuổi + loại tội danh) thay vì để trống, kèm cờ đánh dấu "chưa xác nhận" để tự sửa
+lại sau — đúng mô hình đã có sẵn cho `ngayQuyetDinhUocTinh` (ngày giải quyết ước tính khi Import
+Excel thiếu dữ liệu). Đã lên kế hoạch qua `EnterPlanMode` (2 câu hỏi làm rõ đã hỏi người dùng: phạm
+vi áp dụng — chọn "cả backfill dữ liệu cũ lẫn tự động cho dữ liệu mới"; và "loại tội phạm" dùng để
+tính trọng số — người dùng làm rõ là **loại tội danh cụ thể** (VD "lừa đảo" xu hướng trình độ cao,
+"trộm cắp" xu hướng thấp hơn), KHÔNG PHẢI `mucDoNghiemTrong` như đề xuất ban đầu của Claude — xem
+chi tiết plan tại `C:\Users\Quach Dung\.claude\plans\luminous-humming-lightning.md`).
+
+**Field mới trên `bican`**: `trinhDoUocTinh` (boolean) — `true` = giá trị `trinhDo` hiện tại là DỰ
+ĐOÁN tự động, chưa được cán bộ xác nhận. **⚠ CẦN ALTER TABLE trước khi hoạt động trên dữ liệu thật**
+— cột này CHƯA TỪNG tồn tại trên bảng `bican` (đã xác nhận qua `supabase/schema.sql`, bảng có CHECK
+constraint cứng), và phiên code này KHÔNG có mật khẩu DB nên chưa chạy ALTER thật được. Đã chuẩn bị
+sẵn `supabase/add_trinhdo_uoctinh_2026-07-31.sql` (`alter table "bican" add column if not exists
+"trinhDoUocTinh" boolean not null default false;` + `notify pgrst, 'reload schema'`) VÀ cập nhật
+`supabase/schema.sql` cho khớp — Dũng hoặc phiên có mật khẩu DB cần chạy file migration này qua
+Session pooler (xem `supabase/README.md`) TRƯỚC khi merge/deploy, nếu không mọi lượt ghi
+`trinhDoUocTinh` sẽ bị `batch_commit` RPC âm thầm bỏ qua (đúng bài học đã ghi nhiều lần ở các mục
+"Nộp lưu kho"/"Giao nhận hồ sơ" bên dưới — Postgres không tự tạo cột như Firestore).
+
+**Bảng trọng số `PHAN_BO_TRINH_DO`** (đặt cạnh `NHAN_TRINH_DO`) — 5 nhóm tuổi (khớp `tinhNhomTuoi`)
+× 3 "mức giáo dục" (`cao/trung_binh/thap`) → phân bố % cho 5 mức trình độ. Theo đúng hiệu chỉnh
+người dùng cho biết: Tiểu học + Không biết chữ RẤT hiếm ("cả năm chỉ 1-2 trường hợp"), càng lớn tuổi
+2 mức này nhích lên chút; "cao" đẩy về THPT/ĐH, "thấp" đẩy về THCS. **Chỉ là điểm khởi đầu hợp lý,
+KHÔNG phải số liệu thống kê chính thức** — đặt thành 1 hằng số duy nhất, dễ chỉnh nếu Dũng muốn đổi
+số sau này.
+
+**Bảng phân loại tội danh → mức giáo dục (`TU_KHOA_GIAO_DUC_CAO`/`TU_KHOA_GIAO_DUC_THAP`)** — vì hệ
+thống chưa có field phân loại kiểu này, dùng khớp TỪ KHOÁ thô trên `bc.toiDanh[0]` (không phân biệt
+hoa/thường, khớp chuỗi con) — "cao": lừa đảo/tham ô/nhận-đưa hối lộ/buôn lậu/trốn thuế/rửa tiền...;
+"thấp": trộm cắp/cướp giật/cưỡng đoạt/cố ý gây thương tích/đánh bạc...; còn lại mặc định
+"trung_binh". **Danh sách gợi ý ban đầu, không phải bảng phân loại pháp lý chính thức theo chương
+BLHS** — cố tình đơn giản vì đây chỉ là số dự đoán tạm.
+
+**Hàm dùng chung `chonTrinhDoNgauNhien(bc, vu)`** (đặt cạnh `tinhNhomTuoi`) — tính `namKTVA` từ
+`vu.ngayQdKtva` (fallback năm hiện tại), `nhom = tinhNhomTuoi(bc.namSinh, namKTVA) || "30_70"` (bị
+can thiếu cả Năm sinh vẫn ra kết quả, không bỏ qua), `muc` suy từ `bc.toiDanh[0]`, random-pick có
+trọng số từ `PHAN_BO_TRINH_DO[nhom][muc]`. Trả `{trinhDo, trinhDoUocTinh: true}`. KHÔNG tự lọc pháp
+nhân — nơi gọi phải tự kiểm tra `loaiBiCan !== "phap_nhan"` trước khi gọi (pháp nhân không có khái
+niệm trình độ, giữ nguyên `trinhDo: ""`).
+
+**Áp dụng ở 4 nơi ghi dữ liệu bị can**:
+1. `ghiVaoCoSoDuLieu` (Import Excel) — mẫu không có cột Trình độ nên LUÔN tự điền (bị can import
+   luôn là cá nhân, `loaiBiCan: "ca_nhan"` hardcode sẵn).
+2. `ThemBiCanForm`/`ThemVuAnForm` (bị can hoàn toàn mới) — nếu để trống lúc lưu (và không phải pháp
+   nhân) thì tự điền, ngược lại lưu đúng giá trị cán bộ chọn với `trinhDoUocTinh: false`.
+3. `SuaBiCanForm` (sửa bị can đã có) — thêm state `trinhDoDaSua` (chỉ bật khi cán bộ THẬT SỰ đổi
+   dropdown Trình độ trong phiên sửa này) để phân biệt "đang hiện giá trị ước tính cũ chưa đụng
+   tới" (giữ nguyên cờ cũ) với "vừa xác nhận/sửa lại" (`trinhDoUocTinh: false`) — kèm dòng chữ hổ
+   phách nhỏ "⚠ Giá trị hiện tại là DỰ ĐOÁN tự động, chưa xác nhận." khi áp dụng.
+4. `BangExcelModule`/`DongBiCanBangExcel` (công cụ sửa hàng loạt) — KHÔNG tự auto-fill (đã có công
+   cụ Backfill riêng lo phần này), chỉ: đổi `<select>` hoặc kéo-fill → `trinhDoUocTinh: false` (xác
+   nhận thật); hiện chữ đỏ + "⚠" + tooltip khi `bc.trinhDoUocTinh`. Kéo-fill xử lý riêng trong
+   `apDungGiaTri` (thêm nhánh `field === "trinhDo"`, giống cách `toiDanhChinh` đã có nhánh riêng).
+
+**Công cụ Backfill mới `BackfillTrinhDoTool`** (Cài đặt → Import Excel, cạnh `BackfillLoaiKhoiToTool`)
+— theo đúng khuôn mẫu (state idle/loading/done/error, `BATCH_SIZE=100` tránh statement_timeout do
+trigger `bican_sync_vuan_trg`, an toàn chạy lại nhiều lần). Chỉ điền bị can cá nhân đang thiếu
+`trinhDo`, không đụng dữ liệu đã có.
+
+**Cập nhật cảnh báo Biểu B10** (`kiemTraHoanChinhNhomBc`, khối "Phân tích bị can mới khởi tố" đã có
+từ trước) — thêm nhánh MỚI (chỉ ở Điều tra, khối Truy tố không có cột Trình độ): đếm bị can có
+`trinhDoUocTinh`, nếu >0 thì cảnh báo "N/M bị can có Trình độ học vấn là DỰ ĐOÁN tự động, chưa xác
+nhận" — nhánh "thiếu Trình độ" cũ VẪN GIỮ làm lưới an toàn (gần như không còn bắn sau khi auto-fill
+phủ kín).
+
+**Đã kiểm chứng**: test cô lập mới `test_trinhdo_random.js` (8 assertion, trích nguyên hàm/bảng từ
+file thật) — PHÁT HIỆN THẬT 3 lỗi làm tròn trong bảng đề xuất ban đầu (3 hàng cộng ra 99/99.5 thay
+vì 100: `18_30/thap`, `30_70/trung_binh`, `30_70/thap`) và đã sửa (tăng nhẹ `dh_tro_len` mỗi hàng);
+sau khi sửa: mọi hàng cộng đúng 100%, phân bố thực tế qua 10.000 lần lệch tối đa ~2% so với bảng
+khai báo (đúng như kỳ vọng thống kê), bị can thiếu cả Năm sinh vẫn ra giá trị hợp lệ (fallback
+"30_70"), `layMucGiaoDuc` phân loại đúng ví dụ người dùng nêu (lừa đảo→cao, trộm cắp→thấp), vị
+thành niên 14-16 tuổi không bao giờ ra "Đại học trở lên" qua 500 lần thử. Chạy lại 7 assertion cũ
+của `test_bican_completeness.js` — không có gì bị phá vỡ (2 assertion mới cho "thiếu Trình độ").
+Compile-check toàn file qua `@babel/core`+`@babel/preset-react` — sạch.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** (do cột `trinhDoUocTinh` chưa tồn tại trên DB thật,
+xem mục ALTER TABLE ở trên) — sau khi Dũng chạy migration, nên: (1) chạy thử `BackfillTrinhDoTool`
+trên 1 vài bị can thật, xác nhận số lượng điền + cột Trình độ ở Bảng dữ liệu Excel tô đỏ/tooltip
+đúng; (2) thêm 1 bị can mới để trống Trình độ, xác nhận tự điền đúng; (3) sửa lại 1 bị can vừa được
+auto-fill qua dropdown, xác nhận cờ `trinhDoUocTinh` tắt đúng; (4) xuất thử Biểu B10 xem cảnh báo
+mới "chưa xác nhận" hiện đúng ở cuối sheet.
+
 ## Nhánh `bieu10-kiemtra-tong-phantich-bican` — kiểm tra tổng khối "Phân tích bị can mới khởi tố" (2026-07-31, `qlahs-sup.html`, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: khối C7-C24 (Điều tra / "Phân tích số bị can là CÁ NHÂN mới khởi tố", xem
