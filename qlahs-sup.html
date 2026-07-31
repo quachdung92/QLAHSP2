@@ -9653,7 +9653,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         bcArr.forEach((bc, i) => rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]));
       }
     }
-    themSheetDanhSach(wb, tenSheet,
+    // Trả về worksheet (2026-07-31) — để nơi gọi thu thập lại sheet chi tiết, ẩn mặc định + tô màu
+    // tab theo giai đoạn (xem khối "Sheets chi tiết ẩn mặc định" phía dưới cùng hàm).
+    return themSheetDanhSach(wb, tenSheet,
       ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
       rows,
       [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12)], 0);
@@ -9666,7 +9668,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   function addSheetVuKy(tenSheet, vuArr, extraHeaders, extraFn) {
     const h = ["Kỳ TK", ...(extraHeaders || [])];
     const f = v => [tenKyBaoCao(v), ...((extraFn || (() => []))(v))];
-    addSheetVu(tenSheet, vuArr, h, f);
+    return addSheetVu(tenSheet, vuArr, h, f);
   }
 
   // ---- Sheet "Cân đối số liệu" — kiểm chứng cân bằng kế toán mỗi giai đoạn ----
@@ -9776,34 +9778,154 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     ].forEach(r => { const nr = wsCd.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; });
   }
 
+  // ---- "DS tồn ĐT/TT/XX" kéo lên NGAY SAU Cân đối số liệu (2026-07-31, theo yêu cầu người dùng) ----
+  // Trước đây 3 sheet này nằm CUỐI mỗi khối 13 sheet/giai đoạn (bị chôn ở vị trí 13/26/39) — kéo
+  // lên đầu để xem tồn hiện tại ngay không phải lướt qua nhiều sheet chi tiết. Vòng lặp riêng
+  // (tách khỏi vòng lặp chính bên dưới) để 3 sheet này được TẠO TRƯỚC — chỉ đổi THỨ TỰ, không đổi
+  // tên/nội dung sheet nên không ảnh hưởng gì tới công thức Cân đối số liệu/B10 đã tham chiếu theo
+  // TÊN (không phụ thuộc thứ tự vật lý trong workbook).
+  for (const gd of THU_TU_GIAI_DOAN) {
+    addSheetVu(`DS tồn ${GD_VIET_TAT[gd]}`, baoCao[gd].ds.tonHienTai || []);
+  }
+
+  // ---- 4 sheet "tổng hợp giải quyết theo giai đoạn" MỚI (2026-07-31, theo yêu cầu người dùng) ----
+  // Sheet HOÀN TOÀN MỚI, KHÔNG đụng/đổi tên bất kỳ sheet nào đã có — chỉ đọc lại đúng các mảng JS
+  // (baoCao[gd].ds.*) đã dùng để dựng các sheet "DS ..." chi tiết, gộp thành 1 view tổng quan mỗi
+  // giai đoạn, không phải tính toán mới/công thức mới nên không có rủi ro sai số liệu.
+  {
+    const MAU_TAB_GD = { dieu_tra: "FF3B82F6", truy_to: "FF8B5CF6", xet_xu: "FF10B981" }; // khớp MAU_GIAI_DOAN (UI)
+    const GQ_COLS_W = [6, 22, 16, 30, 18, 18, 26, 13, 16, 16, 14];
+    const rowVuGiaiQuyet = (ws, stt, nhan, vu, extra) => {
+      const r = ws.addRow([
+        stt, nhan, hienThiMa(vu), vu.tenVu || "", vu.ksvChinh || "", vu.dtvCbdt || "", vu.dieuLuat || "",
+        fmtDate(vu._log?.ngaySuKien), vu._log?.soQuyetDinh || "", extra || "", tenKyBaoCao(vu),
+      ]);
+      return r;
+    };
+    const GQ_HEADER = ["STT", "Hình thức", "Mã vụ", "Tên vụ", "KSV chính", "ĐTV/CBĐT", "Điều luật",
+      "Ngày sự kiện", "Số QĐ", "Mã vụ đích", "Kỳ TK"];
+
+    // 3 sheet "Giải quyết {gđ} trong kỳ" — mỗi hình thức 1 nhóm, riêng "Nhập vụ" gộp cuối, thu gọn
+    // sẵn qua Excel Outline (row.outlineLevel + hidden) — bấm [+] cạnh dòng tổng để mở, theo đúng
+    // yêu cầu người dùng "expand/collapse ở vụ được nhập" (Nhập vụ không phải kết quả pháp lý như
+    // các hình thức khác nên không nên chiếm chỗ mặc định, nhưng vẫn cần xem được khi cần).
+    for (const gd of THU_TU_GIAI_DOAN) {
+      const gs = GD_VIET_TAT[gd];
+      const d = baoCao[gd].ds;
+      const ws = wb.addWorksheet(`Giải quyết ${gs} trong kỳ`);
+      ws.properties.tabColor = { argb: MAU_TAB_GD[gd] };
+      // summaryBelow:false — dòng tổng "▸ Nhập vụ (...)" nằm TRÊN nhóm chi tiết, đúng thứ tự đọc
+      // tự nhiên trên-xuống-dưới (mặc định Excel là summary NẰM DƯỚI nhóm, ngược với mong muốn).
+      ws.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
+
+      const nhomChinh = [];
+      if (gd === "dieu_tra") nhomChinh.push({ nhan: "Kết thúc điều tra", vuArr: d.chuyenDi || [] });
+      if (gd === "truy_to") nhomChinh.push({ nhan: "Chuyển toà xét xử", vuArr: d.chuyenDi || [] });
+      if (gd === "xet_xu") nhomChinh.push({ nhan: "Đã xét xử", vuArr: d.hoanThanh?.da_xet_xu || [] });
+      if (gd !== "dieu_tra") {
+        nhomChinh.push({ nhan: gd === "truy_to" ? "Trả về ĐT bổ sung" : "Trả về TT bổ sung", vuArr: d.traDi || [] });
+      }
+      nhomChinh.push({ nhan: "Chuyển đi", vuArr: d.hoanThanh?.chuyen_di || [] });
+      nhomChinh.push({ nhan: "Tạm đình chỉ", vuArr: d.hoanThanh?.tam_dinh_chi || [] });
+      nhomChinh.push({ nhan: "Đình chỉ", vuArr: d.hoanThanh?.dinh_chi || [] });
+      nhomChinh.push({ nhan: "Án huỷ", vuArr: d.hoanThanh?.an_huy || [] });
+      const nhapVuArr = d.nhapVu || [];
+
+      // Khối đếm nhanh đầu sheet — liếc là ra số, không cần kéo hết bảng xuống đếm.
+      const tieuDe = ws.addRow([`TỔNG HỢP GIẢI QUYẾT ${NHAN_GIAI_DOAN[gd].toUpperCase()} TRONG KỲ`]);
+      tieuDe.font = { bold: true, size: 12 };
+      nhomChinh.forEach(n => ws.addRow([`${n.nhan}:`, `${n.vuArr.length} vụ`]));
+      ws.addRow([`Nhập vụ:`, `${nhapVuArr.length} vụ`]);
+      ws.addRow([]);
+
+      const hRow = ws.addRow(GQ_HEADER);
+      hRow.font = { bold: true };
+      hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+      const soHangTieuDe = ws.rowCount;
+      ws.views = [{ state: "frozen", ySplit: soHangTieuDe }];
+      GQ_COLS_W.forEach((w, i) => ws.getColumn(i + 1).width = w);
+
+      let stt = 1;
+      nhomChinh.forEach(n => n.vuArr.forEach(vu => rowVuGiaiQuyet(ws, stt++, n.nhan, vu)));
+
+      const rowTongNhap = rowVuGiaiQuyet(ws, stt++, `▸ Nhập vụ (${nhapVuArr.length} vụ)`, {});
+      rowTongNhap.getCell(2).font = { italic: true, color: { argb: "FF6366F1" } };
+      nhapVuArr.forEach(vu => {
+        const r = rowVuGiaiQuyet(ws, stt++, "Nhập vụ", vu, vu._log?.vuNhapVao || "");
+        r.outlineLevel = 1;
+        r.hidden = true;
+      });
+    }
+
+    // Sheet "Trả hồ sơ ĐT bổ sung trong kỳ" — gộp CẢ 2 chiều trả hồ sơ (viện trả từ Truy tố + toà
+    // trả từ Xét xử) vào 1 chỗ, cột "Từ giai đoạn" phân biệt — chỉ số chất lượng điều tra hay được
+    // xem riêng, tránh phải cộng tay từ 2 sheet "Giải quyết TT/XX trong kỳ" ở trên.
+    {
+      const ws = wb.addWorksheet("Trả hồ sơ ĐT bổ sung trong kỳ");
+      ws.properties.tabColor = { argb: "FFF59E0B" }; // hổ phách — không thuộc riêng giai đoạn nào
+      const nguonTraHoSo = [
+        { gd: "truy_to", nhan: "Truy tố → Điều tra" },
+        { gd: "xet_xu", nhan: "Xét xử → Truy tố" },
+      ];
+      const tieuDe = ws.addRow(["TỔNG HỢP TRẢ HỒ SƠ ĐIỀU TRA BỔ SUNG TRONG KỲ"]);
+      tieuDe.font = { bold: true, size: 12 };
+      nguonTraHoSo.forEach(n => ws.addRow([`${n.nhan}:`, `${(baoCao[n.gd].ds.traDi || []).length} vụ`]));
+      ws.addRow([]);
+      const header = ["STT", "Từ giai đoạn", "Mã vụ", "Tên vụ", "KSV chính", "ĐTV/CBĐT", "Điều luật",
+        "Ngày trả", "Số QĐ", "Kỳ TK"];
+      const hRow = ws.addRow(header);
+      hRow.font = { bold: true };
+      hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+      ws.views = [{ state: "frozen", ySplit: ws.rowCount }];
+      [6, 20, 16, 30, 18, 18, 26, 13, 16, 14].forEach((w, i) => ws.getColumn(i + 1).width = w);
+      let stt = 1;
+      nguonTraHoSo.forEach(n => (baoCao[n.gd].ds.traDi || []).forEach(vu => {
+        ws.addRow([stt++, n.nhan, hienThiMa(vu), vu.tenVu || "", vu.ksvChinh || "", vu.dtvCbdt || "",
+          vu.dieuLuat || "", fmtDate(vu._log?.ngaySuKien), vu._log?.soQuyetDinh || "", tenKyBaoCao(vu)]);
+      }));
+    }
+  }
+
+  // ---- Sheets chi tiết — ẨN MẶC ĐỊNH + tô màu tab theo giai đoạn (2026-07-31) ----
+  // Thu thập worksheet trả về từ addSheetVu/addSheetVuKy trong vòng lặp bên dưới, ẩn hết sau khi
+  // tạo xong (Cân đối số liệu/B10 vẫn đọc được sheet ẩn qua công thức bình thường — Excel chỉ ẩn
+  // TAB, không ẩn dữ liệu/công thức). Người dùng bấm chuột phải vào 1 tab bất kỳ → "Unhide..." để
+  // xem lại khi cần đối chiếu sâu — gần nhất với "expand/collapse" mà Excel cho phép ở CẤP SHEET
+  // (khác Outline dùng cho DÒNG ở các sheet "Giải quyết..." phía trên).
+  const MAU_TAB_GD_CHITIET = { dieu_tra: "FF3B82F6", truy_to: "FF8B5CF6", xet_xu: "FF10B981" };
+  const dsSheetChiTiet = [];
+
   for (const gd of THU_TU_GIAI_DOAN) {
     const gs = GD_VIET_TAT[gd];  // "ĐT" / "TT" / "XX"
     const d  = baoCao[gd].ds;
+    // Bọc addSheetVuKy để vừa tạo sheet như cũ vừa gom lại cho khối ẩn+tô màu bên dưới, không phải
+    // sửa từng lời gọi bên dưới.
+    const add = (...args) => dsSheetChiTiet.push({ ws: addSheetVuKy(...args), gd });
 
     // ── VÀO giai đoạn ──
     // Khởi tố trực tiếp (bao gồm tin báo, không bao gồm phục hồi)
-    addSheetVuKy(`DS khởi tố ${gs}`,
+    add(`DS khởi tố ${gs}`,
       (d.khoiToTrucTiep||[]).filter(v => v.nguon !== "phuc_hoi_dieu_tra"),
       ["Nguồn", "Ngày SK"],
       v => [NHAN_NGUON[v.nguon] || v.nguon || "Khởi tố mới", fmtDate(v._log?.ngaySuKien)]);
 
     // Phục hồi điều tra/truy tố/xét xử
-    addSheetVuKy(`DS phục hồi ${gs}`,
+    add(`DS phục hồi ${gs}`,
       (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
       ["Ngày phục hồi"], _ngaySK);
 
     // Vụ tách ra trong kỳ, đếm vụ tách = số dòng (mỗi dòng là 1 vụ mới xuất hiện)
-    addSheetVuKy(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);
+    add(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);
 
     // Chuyển đến từ giai đoạn trước (ĐT là giai đoạn đầu, không có chuyển đến)
     if (gd !== "dieu_tra") {
-      addSheetVuKy(`DS chuyển đến ${gs}`, d.chuyenDen||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
+      add(`DS chuyển đến ${gs}`, d.chuyenDen||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
     }
 
     // Trả hồ sơ trở về (XX là giai đoạn cuối, không bị trả về)
     // ĐT = viện trả DTBS; TT = toà trả TTBS
     if (gd !== "xet_xu") {
-      addSheetVuKy(`DS trả về ${gs}`, d.traVe||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
+      add(`DS trả về ${gs}`, d.traVe||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
     }
 
     // ── RA: chuyển giai đoạn tiến (từ giai đoạn này lên giai đoạn tiếp theo) ──
@@ -9811,39 +9933,45 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // cần thiết để cân đối RA của giai đoạn này mà không phải tra cứu sheet giai đoạn khác.
     if (gd !== "xet_xu") {
       const gsNext = gd === "dieu_tra" ? "TT" : "XX";
-      addSheetVuKy(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
+      add(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
     }
     // ── RA: trả hồ sơ (từ giai đoạn này về giai đoạn trước) ──
     // Lưu ý: cùng dữ liệu với "DS trả về {gsPrev}" nhưng từ góc nhìn giai đoạn nguồn.
     if (gd !== "dieu_tra") {
       const gsPrev = gd === "truy_to" ? "ĐT" : "TT";
-      addSheetVuKy(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
+      add(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
     }
 
     // ── RA: hoàn thành (kết thúc thụ lý) ──
-    addSheetVuKy(`DS đã xét xử ${gs}`,
+    add(`DS đã xét xử ${gs}`,
       d.hoanThanh?.da_xet_xu||[], ["Ngày XXT", "Số bản án"], _ngaySoQD);
 
-    addSheetVuKy(`DS chuyển đi ${gs}`,
+    add(`DS chuyển đi ${gs}`,
       d.hoanThanh?.chuyen_di||[], ["Ngày CĐ", "Số QĐ"], _ngaySoQD);
 
-    addSheetVuKy(`DS tạm đình chỉ ${gs}`,
+    add(`DS tạm đình chỉ ${gs}`,
       d.hoanThanh?.tam_dinh_chi||[], ["Ngày TĐC", "Số QĐ TĐC"], _ngaySoQD);
 
-    addSheetVuKy(`DS đình chỉ ${gs}`,
+    add(`DS đình chỉ ${gs}`,
       d.hoanThanh?.dinh_chi||[], ["Ngày ĐC", "Số QĐ ĐC"], _ngaySoQD);
 
-    addSheetVuKy(`DS án huỷ ${gs}`,
+    add(`DS án huỷ ${gs}`,
       d.hoanThanh?.an_huy||[], ["Ngày huỷ", "Số QĐ"], _ngaySoQD);
 
     // Nhập vụ — đếm vụ nhập = số dòng (mỗi dòng là 1 vụ bị nhập vào vụ khác)
-    addSheetVuKy(`DS nhập vụ ${gs}`, d.nhapVu||[],
+    add(`DS nhập vụ ${gs}`, d.nhapVu||[],
       ["Ngày nhập", "Mã vụ đích"],
       v => [fmtDate(v._log?.ngaySuKien), v._log?.vuNhapVao || ""]);
 
-    // ── TỒN cuối kỳ (live tại thời điểm xuất) — không có kỳ TK vì là trạng thái hiện tại ──
-    addSheetVu(`DS tồn ${gs}`, d.tonHienTai||[]);
+    // "DS tồn {gs}" ĐÃ tạo ở vòng lặp riêng phía trên (ngay sau Cân đối số liệu) — không tạo lại
+    // ở đây, và KHÔNG đưa vào dsSheetChiTiet vì sheet đó cố tình hiện sẵn, không ẩn.
   }
+
+  // Ẩn mặc định + tô màu tab theo giai đoạn cho toàn bộ sheet chi tiết vừa gom được ở trên.
+  dsSheetChiTiet.forEach(({ ws, gd }) => {
+    ws.state = "hidden";
+    ws.properties.tabColor = { argb: MAU_TAB_GD_CHITIET[gd] };
+  });
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
