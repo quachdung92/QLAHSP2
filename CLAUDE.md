@@ -37,10 +37,19 @@ tạo cảnh báo giả (false positive); bị can thuộc kỳ KHÁC (bổ sung
 của kỳ đang xem. 5/5 PASS. Cũng đã compile-check cú pháp toàn bộ file qua `@babel/core` +
 `@babel/preset-react` (tương đương `@babel/standalone@7.25.6` app đang dùng) — sạch, không lỗi.
 
-**CHƯA kiểm chứng bằng dữ liệu Supabase thật** — nên xuất thử Excel báo cáo tháng trên `qlahs-
-sup.html` với 1 kỳ có sẵn dữ liệu (đặc biệt nếu biết trước có bị can thiếu năm sinh/giới tính) để
-xác nhận cảnh báo mới hiện đúng ở cuối sheet "Biểu B10", và xuất thử 1 kỳ dữ liệu đầy đủ để xác nhận
-KHÔNG cảnh báo giả, trước khi merge nhánh này vào `main`.
+**Đã sửa sau khi người dùng test thật (2026-07-31) — bỏ hẳn nhánh cảnh báo "Giới tính không hợp
+lệ/để trống"**: người dùng phản hồi trực tiếp "bị can chủ yếu là nam, nếu ko tích nữ thì auto là
+nam" — đúng như code ghi ở mọi nơi (`gioiTinh: "nam"` mặc định ở form thêm/sửa bị can, và Import
+Excel `gioiTinhRaw === "nữ" ... ? "nu" : "nam"`): hệ thống KHÔNG có khái niệm "thiếu giới tính",
+không tích "Nữ" tự động là "Nam" — đây là dữ liệu HỢP LỆ, không phải khoảng trống cần bổ sung, khác
+hẳn Năm sinh (không có giá trị mặc định, để trống là thiếu thật). Bản đầu tiên coi 2 trường này
+giống nhau (đối xứng "Σ tuổi = Σ giới tính = tổng cá nhân") là SAI giả định — đã bỏ nhánh giới tính,
+chỉ còn giữ đúng 1 cảnh báo "thiếu Năm sinh". Cập nhật lại test cô lập theo đúng thay đổi (4/4 PASS)
++ compile-check lại toàn bộ file, sạch.
+
+**Vẫn CHƯA xuất thử Excel báo cáo tháng trên dữ liệu Supabase thật** để tận mắt xác nhận cảnh báo
+"thiếu Năm sinh" hiện đúng ở cuối sheet "Biểu B10" (có/không tuỳ dữ liệu kỳ đang xem) — nên làm
+trước khi merge nhánh này vào `main`.
 
 ## Bug thật đã sửa: cột "-BC" ở Xuất Excel báo cáo tháng ra số khổng lồ 1.048.576/bội số (2026-07-31, `qlahs-sup.html`)
 

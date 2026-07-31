@@ -8766,34 +8766,36 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // Lệch dương (tongTheoTD > tonThucTe): đúng thiết kế, không cảnh báo
   }
 
-  // ── Kiểm tra tổng khối "Phân tích bị can mới khởi tố" (C7-C24, Điều tra) — mỗi cột con (nhóm
-  // tuổi/giới tính...) chỉ tính trên CÁ NHÂN (loại trừ pháp nhân, xem demTuoi/demField ở trên), nên
-  // về nguyên tắc: Σ 5 nhóm tuổi (C9+C10+C11+C12+C13) = Σ theo giới tính (đủ "nam"+"nữ") = tổng cá
-  // nhân mới khởi tố (C7−C8, tính TRÊN TOÀN BỘ kỳ, không phân mảnh theo từng tội danh — 1 bị can
-  // luôn nằm ở đúng 1 dòng D nên cộng dồn qua các dòng không đổi kết quả). Nếu 1 bị can cá nhân
-  // thiếu Năm sinh (`tinhNhomTuoi` trả `null`) hoặc Giới tính không phải "nam"/"nu" (dữ liệu hỏng/
-  // trống — import Excel cũ hay gặp), người đó vẫn được đếm vào C7 nhưng KHÔNG rơi vào bucket tuổi/
-  // giới tính nào → 2 tổng trên sẽ THẤP HƠN tổng cá nhân mà không có cảnh báo gì nếu không kiểm tra
-  // riêng (cán bộ đối chiếu tay theo đúng cách cộng-dồn-phải-khớp-tổng này sẽ phát hiện lệch nhưng
-  // không tự biết vụ/bị can nào gây ra). Quét trực tiếp dữ liệu gốc (không suy từ vals[] đã tổng
-  // hợp) để liệt kê ĐÚNG bị can cần bổ sung, theo yêu cầu người dùng (2026-07-31).
+  // ── Kiểm tra tổng khối "Phân tích bị can mới khởi tố" (C7-C24, Điều tra) — cột "nhóm tuổi"
+  // (C9-C13) chỉ tính trên CÁ NHÂN (loại trừ pháp nhân, xem demTuoi ở trên), nên về nguyên tắc:
+  // Σ 5 nhóm tuổi (C9+C10+C11+C12+C13) = tổng cá nhân mới khởi tố (C7−C8, tính TRÊN TOÀN BỘ kỳ,
+  // không phân mảnh theo từng tội danh — 1 bị can luôn nằm ở đúng 1 dòng D nên cộng dồn qua các
+  // dòng không đổi kết quả). Nếu 1 bị can cá nhân thiếu Năm sinh, `tinhNhomTuoi` trả `null` — người
+  // đó vẫn được đếm vào C7 nhưng KHÔNG rơi vào bucket tuổi nào → tổng theo tuổi sẽ THẤP HƠN tổng cá
+  // nhân mà không có cảnh báo gì nếu không kiểm tra riêng (cán bộ đối chiếu tay theo đúng cách
+  // cộng-dồn-phải-khớp-tổng này sẽ phát hiện lệch nhưng không tự biết vụ/bị can nào gây ra). Quét
+  // trực tiếp dữ liệu gốc (không suy từ vals[] đã tổng hợp) để liệt kê ĐÚNG bị can cần bổ sung,
+  // theo yêu cầu người dùng (2026-07-31).
+  //
+  // CỐ Ý KHÔNG kiểm tra tương tự cho cột Giới tính (C19): B10 chỉ có 1 cột "Nữ", không có cột
+  // "Nam" riêng — vì hệ thống mặc định `gioiTinh = "nam"` ở MỌI nơi ghi dữ liệu (form thêm/sửa bị
+  // can, Import Excel — xem `gioiTinh: gioiTinhRaw === "nữ" ... ? "nu" : "nam"`), "không tích Nữ"
+  // tự động là "Nam", KHÔNG phải trạng thái thiếu dữ liệu — khác hẳn Năm sinh (không có giá trị mặc
+  // định, để trống thật sự là thiếu). Bản đầu tiên của khối này từng thêm cảnh báo "Giới tính không
+  // hợp lệ/để trống" song song với Năm sinh — người dùng phản hồi sau khi test thật: sai giả định,
+  // "bị can chủ yếu là nam, nếu không tích nữ thì auto là nam" — đã bỏ hẳn nhánh đó, không suy đoán
+  // lại một lần nữa.
   {
     const dtKtoCaNhan = bcTatCa(baoCao.dieu_tra.ds.khoiToTrucTiep || [])
       .filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id)) && bc.loaiBiCan !== "phap_nhan");
     const thieuTuoi = dtKtoCaNhan.filter(bc => !tinhNhomTuoi(bc.namSinh, bc._namKTVA));
-    const thieuGioiTinh = dtKtoCaNhan.filter(bc => bc.gioiTinh !== "nam" && bc.gioiTinh !== "nu");
-    const moTaBc = (bc) => `${bc.hoTen || "(chưa rõ tên)"} (vụ ${bc.maVuAn || "?"})`;
-    const gomDs = (arr) => arr.slice(0, 10).map(moTaBc).join(", ")
-      + (arr.length > 10 ? ` và ${arr.length - 10} người khác` : "");
     if (thieuTuoi.length) {
+      const moTaBc = (bc) => `${bc.hoTen || "(chưa rõ tên)"} (vụ ${bc.maVuAn || "?"})`;
+      const gomDs = (arr) => arr.slice(0, 10).map(moTaBc).join(", ")
+        + (arr.length > 10 ? ` và ${arr.length - 10} người khác` : "");
       canhBao.push(`Phân tích bị can mới khởi tố (Điều tra): ${thieuTuoi.length}/${dtKtoCaNhan.length} bị can ` +
         `thiếu Năm sinh nên không tính được vào nhóm tuổi (C9-C13) — tổng theo tuổi sẽ THẤP HƠN tổng ` +
         `cá nhân (C7−C8): ${gomDs(thieuTuoi)}`);
-    }
-    if (thieuGioiTinh.length) {
-      canhBao.push(`Phân tích bị can mới khởi tố (Điều tra): ${thieuGioiTinh.length}/${dtKtoCaNhan.length} bị can ` +
-        `có Giới tính không hợp lệ/để trống (không phải "Nam"/"Nữ") nên không cộng đủ vào tổng giới ` +
-        `tính (C19 + số Nam suy ra): ${gomDs(thieuGioiTinh)}`);
     }
   }
 
