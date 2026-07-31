@@ -2,6 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Nhánh `bieu10-kiemtra-tong-phantich-bican` — kiểm tra tổng khối "Phân tích bị can mới khởi tố" (2026-07-31, `qlahs-sup.html`, CHƯA merge vào `main`)
+
+Theo yêu cầu người dùng: khối C7-C24 (Điều tra / "Phân tích số bị can là CÁ NHÂN mới khởi tố", xem
+`bieu_B10_mo_ta.md` mục C7-C24) cần tự kiểm tra — cộng dồn các cột con (5 nhóm tuổi C9-C13, giới
+tính C19) phải khớp đúng tổng số bị can cá nhân mới khởi tố (C7−C8, trừ pháp nhân vì pháp nhân
+không có tuổi/giới tính — đúng theo tiêu đề "cá nhân" của khối này trong mẫu ngành). Đây chính là
+cách cán bộ thống kê đối chiếu tay theo mẫu B10 giấy: nếu cộng 5 ô tuổi mà không ra đúng tổng, nghĩa
+là có bị can bị "rơi" khỏi phân loại tuổi/giới tính do thiếu dữ liệu — nhưng trước đây không có cảnh
+báo gì cho biết CHÍNH XÁC bị can/vụ nào gây ra lệch.
+
+**Nguyên nhân lệch (không phải bug tính toán, mà là dữ liệu thiếu)**: `tinhNhomTuoi(namSinh,
+namKTVA)` trả `null` nếu bị can thiếu Năm sinh — người đó vẫn được đếm vào C7 (tổng) nhưng không rơi
+vào bucket tuổi nào trong C9-C13. Tương tự, cột giới tính B10 (theo đúng mẫu ngành) CHỈ có 1 cột
+"Nữ" (C19), không có cột "Nam" riêng — nếu 1 bị can có `gioiTinh` khác "nam"/"nu" (dữ liệu hỏng/
+trống, hay gặp ở dữ liệu import Excel cũ), người đó không được đếm là "Nữ" nhưng cũng không chắc là
+"Nam" — suy "Nam" bằng phép trừ (tổng − Nữ) sẽ ngầm coi người này là Nam dù dữ liệu thật không xác
+định, là 1 dạng sai âm thầm.
+
+**Đã thêm** (trong `tinhBieu10`, ngay trước khi hàm `return`): 1 khối kiểm tra riêng, quét trực tiếp
+toàn bộ bị can CÁ NHÂN mới khởi tố Điều tra trong đúng kỳ đang xem (dùng lại `bcKyKhoiToMap`/
+`_kyIdSet` đã có sẵn cho C7, KHÔNG phân mảnh theo từng tội danh D — kiểm tra tổng CẢ KỲ, không phải
+từng dòng B10 riêng lẻ), liệt kê cụ thể (tên bị can + mã vụ, tối đa 10 người rồi gộp "và N người
+khác") bị can nào thiếu Năm sinh hoặc có Giới tính không hợp lệ, đẩy vào mảng `canhBao` đã có sẵn
+của `tinhBieu10` — tự động hiện trong phần ghi chú cảnh báo cuối sheet "Biểu B10" khi xuất Excel
+(đúng chỗ các cảnh báo "vụ chưa xác định điều luật" đã hiện từ trước, cùng 1 cơ chế, không tạo thêm
+đường hiển thị mới). Thêm hàm dùng chung `bcTatCa` (giống `bcCoD` đã có nhưng KHÔNG lọc theo điều
+luật D — cần thiết vì kiểm tra này tổng hợp CẢ KỲ, không theo từng D).
+
+**Đã kiểm chứng logic bằng test cô lập** (`test_bican_completeness.js`, trích nguyên `tinhNhomTuoi`
++ logic mới, không viết lại) — 5 assertion: loại đúng bị can pháp nhân khỏi tổng cá nhân; phát hiện
+đúng 1 bị can thiếu năm sinh; phát hiện đúng 1 bị can thiếu giới tính; dữ liệu sạch hoàn toàn không
+tạo cảnh báo giả (false positive); bị can thuộc kỳ KHÁC (bổ sung sau vào vụ cũ) không lọt vào tổng
+của kỳ đang xem. 5/5 PASS. Cũng đã compile-check cú pháp toàn bộ file qua `@babel/core` +
+`@babel/preset-react` (tương đương `@babel/standalone@7.25.6` app đang dùng) — sạch, không lỗi.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** — nên xuất thử Excel báo cáo tháng trên `qlahs-
+sup.html` với 1 kỳ có sẵn dữ liệu (đặc biệt nếu biết trước có bị can thiếu năm sinh/giới tính) để
+xác nhận cảnh báo mới hiện đúng ở cuối sheet "Biểu B10", và xuất thử 1 kỳ dữ liệu đầy đủ để xác nhận
+KHÔNG cảnh báo giả, trước khi merge nhánh này vào `main`.
+
 ## Bug thật đã sửa: cột "-BC" ở Xuất Excel báo cáo tháng ra số khổng lồ 1.048.576/bội số (2026-07-31, `qlahs-sup.html`)
 
 Dũng phát hiện qua mở file thật bằng Excel (không phải qua kiểm chứng của Claude): sheet "Tổng hợp
