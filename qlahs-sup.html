@@ -9477,7 +9477,19 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   };
   // demBcSheet: đếm dòng BỊ CAN THẬT trong 1 sheet (cột M = Họ tên BC — loại bỏ dòng giả
   // "(Chưa có BC)" của vụ 0 bị can, xem BC_EMPTY).
-  const demBcSheet = (sn) => `COUNTIF('${sn}'!$M:$M,"<>(Chưa có BC)")`;
+  // Bug thật đã sửa (2026-07-31, phát hiện qua file thật mở bằng Excel — mọi ô "-BC" tính bằng
+  // công thức này ra số khổng lồ kiểu 1048576/2097152/... = bội số đúng của 1.048.576, giới hạn
+  // SỐ DÒNG TỐI ĐA của 1 sheet Excel). Nguyên nhân: `$M:$M` tham chiếu NGUYÊN CỘT không giới hạn
+  // dòng — tiêu chí "<>(Chưa có BC)" khớp ĐÚNG cả hàng tiêu đề (dòng 1, chữ "Họ tên BC") LẪN mọi ô
+  // TRỐNG phía dưới dữ liệu thật (blank ≠ "(Chưa có BC)" nên COUNTIF vẫn tính là khớp) — với hàng
+  // trăm nghìn dòng trống trong 1 cột 1.048.576 dòng, kết quả bị thổi phồng gần bằng chiều cao cả
+  // sheet. Trước đây KHÔNG phát hiện được vì mọi lần kiểm chứng qua ExcelJS chỉ ĐỌC LẠI giá trị
+  // "result" đã cache lúc ghi (đúng), không thực sự để Excel TÍNH LẠI công thức như khi mở file
+  // thật — chỉ lộ ra khi mở bằng Excel thật (Excel tự recalc lúc mở, ghi đè giá trị cache đúng
+  // bằng kết quả công thức sai). Sửa: giới hạn phạm vi từ dòng 2 (bỏ header) tới dòng 1.048.576
+  // (không cần biết chính xác dòng cuối có dữ liệu) + trừ đi COUNTBLANK cùng phạm vi để triệt tiêu
+  // đúng phần dòng trống bị đếm nhầm — không đổi ý nghĩa số liệu, chỉ sửa công thức cho khớp lại.
+  const demBcSheet = (sn) => `COUNTIF('${sn}'!$M$2:$M$1048576,"<>(Chưa có BC)")-COUNTBLANK('${sn}'!$M$2:$M$1048576)`;
   const demBcSheetM = (sheets) => sheets.map(demBcSheet).join("+") || "0";
   // demBcSheetKy: giống trên nhưng CHỈ đếm BC có cột "Kỳ TK BC" (AF) khớp kỳ đang tính báo cáo —
   // dùng riêng cho khối ĐT "mới" (Điều tra là giai đoạn duy nhất bị can bổ sung được vào vụ đã có
