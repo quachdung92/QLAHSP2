@@ -51,6 +51,29 @@ chỉ còn giữ đúng 1 cảnh báo "thiếu Năm sinh". Cập nhật lại te
 "thiếu Năm sinh" hiện đúng ở cuối sheet "Biểu B10" (có/không tuỳ dữ liệu kỳ đang xem) — nên làm
 trước khi merge nhánh này vào `main`.
 
+**Mở rộng thêm (2026-07-31, theo yêu cầu "xem file excel còn có thể improve gì")** — đối chiếu lại
+`bieu_B10_mo_ta.md` (đặc tả đầy đủ 72 cột) để tìm các khối "cộng dồn phải khớp tổng" TƯƠNG TỰ C7-C24
+chưa được kiểm tra:
+1. **Trình độ học vấn (C14-C18, cùng khối Điều tra)** — 5 mức (không biết chữ/tiểu học/THCS/THPT/ĐH
+   trở lên) cũng CHỈ tính trên cá nhân như nhóm tuổi, và field `trinhDo` **không có giá trị mặc định**
+   (`trinhDo: ""` ở mọi nơi tạo/sửa bị can lẫn Import Excel — khác hẳn `gioiTinh` luôn mặc định
+   "nam") — nên đây là 1 khoảng trống THẬT giống hệt Năm sinh, không phải giả định sai như Giới tính.
+   Đã thêm cảnh báo tương tự "thiếu Trình độ học vấn" khi bị can cá nhân có `trinhDo` rỗng.
+2. **Khối "Phân tích số bị can là cá nhân đã truy tố" (C43-C52, Truy tố)** — CÙNG cấu trúc 5 nhóm
+   tuổi (C43-C47) như Điều tra, nhưng bản đầu tiên CHỈ kiểm tra Điều tra, bỏ sót Truy tố. Đã mở
+   rộng kiểm tra Năm sinh sang cohort này (`baoCao.truy_to.ds.chuyenDi`, đã lọc kỳ sẵn ở cấp vụ nên
+   không cần lọc `bcKyKhoiToMap` như Điều tra). Truy tố KHÔNG lặp lại cột Trình độ theo đúng mẫu
+   ngành nên KHÔNG áp dụng nhánh kiểm tra đó ở đây.
+3. **Đã rà nhưng KHÔNG cần sửa**: (a) Xét xử (C60-C72) không có khối nhân khẩu học nào theo mẫu
+   ngành — không có gì để kiểm tra; (b) "Phân loại tội phạm" (C39-C42, mức độ nghiêm trọng của vụ ở
+   Truy tố) đã có fallback mặc định `v.mucDoNghiemTrong || "dac_biet_nghiem_trong"` NGAY TRONG công
+   thức đếm (`mdn`) — mọi vụ luôn rơi đúng 1 bucket, không có khoảng trống như trinhDo/namSinh, nên
+   không cần thêm cảnh báo; (c) Giới tính vẫn giữ nguyên KHÔNG kiểm tra (xem mục ngay trên).
+
+Gộp 2 khối kiểm tra (Điều tra + Truy tố) qua 1 hàm dùng chung `kiemTraHoanChinhNhomBc(cohort,
+kiemTrinhDo)` để không lặp code. Đã cập nhật test cô lập (7/7 PASS, thêm 2 assertion mới cho Truy
+tố + Trình độ) và compile-check lại toàn file — sạch.
+
 ## Bug thật đã sửa: cột "-BC" ở Xuất Excel báo cáo tháng ra số khổng lồ 1.048.576/bội số (2026-07-31, `qlahs-sup.html`)
 
 Dũng phát hiện qua mở file thật bằng Excel (không phải qua kiểm chứng của Claude): sheet "Tổng hợp
