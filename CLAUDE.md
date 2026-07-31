@@ -2,6 +2,54 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Bug thật đã sửa: cột "-BC" ở Xuất Excel báo cáo tháng ra số khổng lồ 1.048.576/bội số (2026-07-31, `qlahs-sup.html`)
+
+Dũng phát hiện qua mở file thật bằng Excel (không phải qua kiểm chứng của Claude): sheet "Tổng hợp
+báo cáo" và "Cân đối số liệu" — nhiều ô cột "-BC" (đếm số bị can) hiện số khổng lồ kiểu
+`1048576`/`2097152`/`4194304`/`5242880`/`2097249`/`1048570`... — đúng SỐ DÒNG TỐI ĐA của 1 sheet
+Excel (`2^20 = 1.048.576`) và các bội số/gần-bội-số của nó.
+
+**Nguyên nhân**: `demBcSheet` (helper đếm số dòng bị can THẬT trong 1 sheet, dùng ở ~10 chỗ tính
+cột "-BC") dùng công thức `COUNTIF('sheet'!$M:$M,"<>(Chưa có BC)")` — tham chiếu **nguyên cột**
+không giới hạn số dòng, kết hợp tiêu chí **"<>" (khác)**. Trong Excel, ô TRỐNG cũng thoả tiêu chí
+"khác 1 chuỗi không rỗng" — nên công thức này đếm luôn cả header (dòng 1) LẪN mọi ô trống ở hàng
+trăm nghìn dòng phía dưới dữ liệu thật cho tới hết cột (dòng 1.048.576), thổi phồng kết quả gần
+bằng chiều cao cả sheet; `demBcSheetM` cộng dồn công thức này qua nhiều sheet nên ra đúng các bội
+số quan sát được. Đây là bug ĐÃ TỒN TẠI TỪ TRƯỚC (không phải do đợt tái cấu trúc Excel gần đây gây
+ra — `demBcSheet` không đổi trong đợt đó), chỉ mới lộ ra khi có người thật mở bằng Excel thật.
+
+**Lý do KHÔNG phát hiện được qua mọi lần kiểm chứng ExcelJS trước đây (bài học quan trọng)**:
+ExcelJS ghi ô công thức dạng `{formula, result}` — khi ĐỌC LẠI để kiểm chứng, ExcelJS chỉ trả về
+`result` đã CACHE SẴN lúc ghi (do code JS tự tính đúng và nhét vào), KHÔNG BAO GIỜ thực sự tính
+lại công thức. Chỉ có Excel THẬT, lúc mở file (hoặc F9 recalc), mới tính lại công thức và lộ ra
+kết quả sai — mọi khẳng định "đã kiểm chứng bằng ExcelJS đọc lại workbook" trong lịch sử file này
+(xem nhiều mục "Xuất Excel..." ở trên) đều chỉ xác nhận ĐÚNG cấu trúc/giá trị JS đã tính, KHÔNG hề
+xác nhận công thức Excel tự nó đúng. Cần nhớ giới hạn này khi kiểm chứng bất kỳ sheet nào có dùng
+công thức Excel động (SUMIF/COUNTIF/COUNTIFS...) — nên mở thử bằng Excel thật ít nhất 1 lần, không
+chỉ tin tưởng đọc lại qua ExcelJS.
+
+**Đã sửa**: giới hạn phạm vi công thức về đúng `$M$2:$M$1048576` (bỏ dòng 1 header) + trừ đi
+`COUNTBLANK` cùng phạm vi để triệt tiêu chính xác phần dòng trống bị đếm nhầm (đại số:
+`COUNTIF(range,"<>X") = số dòng thật + số dòng trống`; `COUNTBLANK(range) = số dòng trống`; hiệu
+số = đúng số dòng thật, không đổi ý nghĩa số liệu):
+```js
+const demBcSheet = (sn) =>
+  `COUNTIF('${sn}'!$M$2:$M$1048576,"<>(Chưa có BC)")-COUNTBLANK('${sn}'!$M$2:$M$1048576)`;
+```
+Đã rà thêm `demBcSheetKy` (helper tương tự, dùng `COUNTIFS('sheet'!$AF:$AF,"<tên kỳ>")` — tiêu chí
+**BẰNG** 1 chuỗi tên kỳ cụ thể, không phải "<>") — **KHÔNG bị lỗi này**, vì ô trống không bao giờ
+"bằng" 1 chuỗi không rỗng, nên không cần sửa. Đã grep xác nhận `demBcSheet` là công thức DUY NHẤT
+trong toàn bộ file dùng tiêu chí "<>" (not-equal).
+
+**Mức độ kiểm chứng**: biên dịch qua `@babel/standalone@7.25.6` thật (cài tạm ngoài repo, gỡ ngay
+sau khi test) — sạch cú pháp. **CHƯA mở lại bằng Excel thật sau khi sửa** để xác nhận công thức
+mới tính đúng (đúng đúng bài học vừa rút ra ở trên — ExcelJS không kiểm chứng được việc này) — đã
+tự kiểm tra lại bằng đại số thay vì chạy thử, nhưng Dũng nên tải lại 1 báo cáo tháng bất kỳ, mở
+bằng Excel thật, xác nhận cột "-BC" ở "Tổng hợp báo cáo"/"Cân đối số liệu" ra số hợp lý (không còn
+số kiểu 1.048.576) và khớp đúng số dòng đếm tay được ở các sheet "DS..." tương ứng, trước khi coi
+đây là đã kiểm chứng đầy đủ 100%. Đã deploy lên cả `qlahs-sup.web.app` (test) và `qlahsp2.web.app`
+(production).
+
 ## Gõ gộp "Số/Ngày" ở các ô Ngày chuyển giai đoạn/giải quyết (2026-07-30, `qlahs-sup.html`)
 
 Theo yêu cầu người dùng: gõ `"380/06.7.2026"` vào ô "Ngày ..." (chuyển giai đoạn, giải quyết...)
