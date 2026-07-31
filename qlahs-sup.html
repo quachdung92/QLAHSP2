@@ -8311,6 +8311,30 @@ async function fetchKyKhoiToBiCan(vuIds) {
   return map;
 }
 
+// Helper: kỳ thống kê của sự kiện GẦN NHẤT đưa 1 vụ VÀO đúng giai đoạn `gd` hiện tại — dùng cho
+// cột "Kỳ TK phát sinh" ở sheet "DS tồn" (2026-07-31, theo yêu cầu người dùng: "DS tồn thì kỳ
+// thống kê báo cáo là kỳ thống kê phát sinh mới ở giai đoạn đó"). "Vào giai đoạn" gồm 4 nguồn
+// giống hệt tiêu chí "mới" đã dùng ở tinhBaoCaoKyTuLog (khoi_to_vu/tach_vu/chuyen_giai_doan/
+// tra_ho_so, denGiaiDoan=gd) — lấy đúng 1 sự kiện GẦN NHẤT (thoiDiemGhi lớn nhất) cho mỗi vụ, vì 1
+// vụ có thể bị trả đi trả lại nhiều lần qua cùng giai đoạn. Trả về Map<maVuAn, kyThongKe|null>.
+// CHỈ dùng riêng cho Excel export — KHÔNG đụng tới tinhTonHienTaiTheoGD (hàm dùng ở khắp nơi khác
+// trong app cho "Số tồn hiện tại" live, thêm truy vấn phụ vào đó sẽ làm chậm mọi nơi gọi).
+async function fetchKyVaoGiaiDoanTonHienTai(vuIds, gd) {
+  const map = new Map();
+  if (!vuIds.length) return map;
+  const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", vuIds,
+    q => q.where("loaiSuKien", "in", ["khoi_to_vu", "tach_vu", "chuyen_giai_doan", "tra_ho_so"]).where("denGiaiDoan", "==", gd));
+  const moiNhat = new Map(); // maVuAn -> { kyThongKe, thoiDiemGhi }
+  docs.forEach(d => {
+    const e = d.data();
+    const t = e.thoiDiemGhi?.toMillis?.() || 0;
+    const hienCo = moiNhat.get(e.maVuAn);
+    if (!hienCo || t > hienCo.thoiDiemGhi) moiNhat.set(e.maVuAn, { kyThongKe: e.kyThongKe || null, thoiDiemGhi: t });
+  });
+  moiNhat.forEach((v, maVuAn) => map.set(maVuAn, v.kyThongKe));
+  return map;
+}
+
 // SheetJS bản CDN đang dùng (miễn phí) KHÔNG ghi được style (đã kiểm chứng — mở file .xlsx xuất
 // ra ra thì cellXfs luôn rỗng dù có set cell.s). Báo cáo tháng cần wrap text mặc định cho dễ đọc
 // nên dùng riêng ExcelJS (script CDN riêng, xem <head>) chỉ cho hàm này — phần Import/Xuất Excel
@@ -9821,7 +9845,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // tên/nội dung sheet nên không ảnh hưởng gì tới công thức Cân đối số liệu/B10 đã tham chiếu theo
   // TÊN (không phụ thuộc thứ tự vật lý trong workbook).
   for (const gd of THU_TU_GIAI_DOAN) {
-    addSheetVu(`DS tồn ${GD_VIET_TAT[gd]}`, baoCao[gd].ds.tonHienTai || [], null, null, true);
+    const dsTon = baoCao[gd].ds.tonHienTai || [];
+    // Cột "Kỳ TK phát sinh" (2026-07-31, theo yêu cầu người dùng) — kỳ vụ MỚI VÀO đúng giai đoạn
+    // này (khác hẳn khái niệm "kỳ của báo cáo đang xem"/kyThongKe của sự kiện khác) — xem
+    // fetchKyVaoGiaiDoanTonHienTai để biết vì sao KHÔNG dùng chung tinhTonHienTaiTheoGD.
+    const kyVaoGDMap = await fetchKyVaoGiaiDoanTonHienTai(dsTon.map(v => v.id), gd);
+    addSheetVu(`DS tồn ${GD_VIET_TAT[gd]}`, dsTon,
+      ["Kỳ TK phát sinh"],
+      v => [kyById.get(kyVaoGDMap.get(v.id)) || kyVaoGDMap.get(v.id) || "(chưa gán)"],
+      true);
   }
 
   // ---- 4 sheet "tổng hợp giải quyết theo giai đoạn" MỚI (2026-07-31, theo yêu cầu người dùng) ----
@@ -9891,6 +9923,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         r.outlineLevel = 1;
         r.hidden = true;
       });
+      // Wrap text mặc định (2026-07-31, theo yêu cầu người dùng) — cùng pattern đã dùng ở Biểu
+      // B10/"Tồn theo ĐL (snapshot)", nhìn đủ thông tin (VD Tên vụ dài) mà không cần tự kéo rộng cột.
+      ws.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
     }
 
     // Sheet "Trả hồ sơ ĐT bổ sung trong kỳ" — gộp CẢ 2 chiều trả hồ sơ (viện trả từ Truy tố + toà
@@ -9919,6 +9954,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         ws.addRow([stt++, n.nhan, hienThiMa(vu), vu.tenVu || "", vu.ksvChinh || "", vu.dtvCbdt || "",
           vu.dieuLuat || "", fmtDate(vu._log?.ngaySuKien), vu._log?.soQuyetDinh || "", tenKyBaoCao(vu)]);
       }));
+      ws.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
     }
   }
 
