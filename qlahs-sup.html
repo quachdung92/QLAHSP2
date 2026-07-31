@@ -9650,10 +9650,17 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
     return _tkGetDL(bcChinh);
   };
-  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn) {
+  // `gomBiCanPhu` (2026-07-31, theo yêu cầu người dùng, opt-in — CHỈ áp dụng ở "DS tồn" khi gọi,
+  // các sheet khác dùng addSheetVu/addSheetVuKy giữ NGUYÊN hành vi cũ) — vụ nhiều bị can chỉ hiện
+  // SẴN dòng bị can ĐẦU TIÊN (đã có đủ thông tin vụ), các dòng bị can còn lại của CÙNG vụ đó thu
+  // gọn qua Excel Outline (giống khối "Nhập vụ" ở sheet "Giải quyết... trong kỳ") — bấm [+] cạnh
+  // dòng đầu để mở xem hết bị can, dễ quan sát danh sách tồn dài mà không phải cuộn qua hàng chục
+  // dòng cùng 1 vụ.
+  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn, gomBiCanPhu) {
     extraHeaders = extraHeaders || [];
     extraFn = extraFn || (() => []);
     const rows = [];
+    const rowsCanNhom = []; // song song rows[] — true = dòng bị can PHỤ (cần thu gọn khi gomBiCanPhu)
     for (const vu of vuArr) {
       const vuPart = vuBaseRow(vu);
       const extraPart = extraFn(vu);
@@ -9662,16 +9669,32 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       if (bcArr.length === 0) {
         // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, AF+=extraHeaders (cố định BC để B10 COUNTIFS dùng đúng cột)
         rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart]);
+        rowsCanNhom.push(false);
       } else {
-        bcArr.forEach((bc, i) => rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]));
+        bcArr.forEach((bc, i) => {
+          rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]);
+          rowsCanNhom.push(gomBiCanPhu ? i > 0 : false);
+        });
       }
     }
     // Trả về worksheet (2026-07-31) — để nơi gọi thu thập lại sheet chi tiết, ẩn mặc định + tô màu
     // tab theo giai đoạn (xem khối "Sheets chi tiết ẩn mặc định" phía dưới cùng hàm).
-    return themSheetDanhSach(wb, tenSheet,
+    const sheet = themSheetDanhSach(wb, tenSheet,
       ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
       rows,
       [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12)], 0);
+    if (gomBiCanPhu) {
+      // summaryBelow:false — dòng ĐẦU (đã có info vụ) nằm TRÊN, các dòng bị can phụ thu gọn NẰM
+      // DƯỚI — đúng thứ tự đọc trên-xuống-dưới tự nhiên, cùng cách đã dùng cho khối "Nhập vụ".
+      sheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
+      rowsCanNhom.forEach((canNhom, idx) => {
+        if (!canNhom) return;
+        const r = sheet.getRow(idx + 2); // +2: bù 1 dòng tiêu đề + rows[] 0-based -> Excel 1-based
+        r.outlineLevel = 1;
+        r.hidden = true;
+      });
+    }
+    return sheet;
   }
   const GD_VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
   const _ngaySK  = v => [fmtDate(v._log?.ngaySuKien)];
@@ -9798,7 +9821,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // tên/nội dung sheet nên không ảnh hưởng gì tới công thức Cân đối số liệu/B10 đã tham chiếu theo
   // TÊN (không phụ thuộc thứ tự vật lý trong workbook).
   for (const gd of THU_TU_GIAI_DOAN) {
-    addSheetVu(`DS tồn ${GD_VIET_TAT[gd]}`, baoCao[gd].ds.tonHienTai || []);
+    addSheetVu(`DS tồn ${GD_VIET_TAT[gd]}`, baoCao[gd].ds.tonHienTai || [], null, null, true);
   }
 
   // ---- 4 sheet "tổng hợp giải quyết theo giai đoạn" MỚI (2026-07-31, theo yêu cầu người dùng) ----
