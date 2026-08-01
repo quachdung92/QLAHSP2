@@ -30,7 +30,7 @@ jobs:
       # Postgres tạm CHỈ SỐNG TRONG job này — dùng để tự kiểm chứng dump phục hồi được, không phải
       # nơi lưu trữ lâu dài, không liên quan gì tới Supabase thật.
       verify_pg:
-        image: postgres:16
+        image: postgres:17 # khớp đúng version server Supabase thật (17.6) — xem bước cài client bên dưới
         env:
           POSTGRES_PASSWORD: verify_pw
           POSTGRES_DB: verify_db
@@ -42,8 +42,22 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - name: Cài postgresql-client + gnupg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client gnupg
+      - name: Cài postgresql-client 17 + gnupg
+        # Ubuntu mặc định chỉ có postgresql-client 16 trong repo — pg_dump TỪ CHỐI dump khi client
+        # cũ hơn server (Supabase thật chạy Postgres 17.6, đã gặp lỗi thật "aborting because of
+        # server version mismatch" khi dùng bản 16). Cài đúng bản 17 qua repo chính thức PGDG.
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates gnupg
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
       - name: pg_dump từ Supabase (qua Session pooler)
         env:
