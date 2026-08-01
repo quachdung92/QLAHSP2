@@ -2,6 +2,35 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Giữ Supabase Free luôn active — GitHub Actions tự ping mỗi 3 ngày (2026-08-01)
+
+Dũng nêu vấn đề: gói Supabase Free tự "pause" (tạm dừng) project nếu không có hoạt động khoảng 7
+ngày liên tục — lúc đó phải vào Dashboard bấm "Restore" thủ công mới dùng lại được, ảnh hưởng cả
+`qlahsp2.web.app` (production) lẫn `qlahs-sup.web.app` (test, cùng 1 project Supabase
+`eutatszoaseixchvjbtg`). Đã hỏi lựa chọn qua `AskUserQuestion` (GitHub Actions tự ping miễn phí
+vs nâng cấp Supabase Pro $25/tháng) — Dũng chọn phương án miễn phí.
+
+**Đã thêm** `.github/workflows/keep-supabase-alive.yml` — chạy theo lịch cron
+`0 3 */3 * *` (03:00 UTC, mỗi 3 ngày — an toàn dưới hẳn ngưỡng ~7 ngày pause) + có thể bấm chạy
+tay qua tab Actions (`workflow_dispatch`). Mỗi lần chạy gọi 1 `GET
+/rest/v1/vuan?select=id&limit=1` (đọc rất nhẹ, `limit=1`) bằng đúng `SUPABASE_ANON_KEY` đã có sẵn
+**công khai** trong `qlahs-sup.html` (dòng 67 — ai mở DevTools trên `qlahsp2.web.app` cũng xem
+được, không phải bí mật cần giấu) — cố tình hardcode thẳng trong file workflow thay vì tạo GitHub
+Secret, để Dũng không cần thao tác gì thêm trên GitHub (đỡ phải học cách cấu hình Secret).
+
+**Vì sao dùng anon key KHÔNG đăng nhập vẫn đủ để "giữ active"**: Row Level Security
+(`supabase/rls.sql`) chặn request chưa đăng nhập (`auth.role()` = `'anon'`, không phải
+`'authenticated'`) trả về dữ liệu thật — request luôn ra `200 []` (mảng rỗng, không phải lỗi
+401/403) — nhưng bản thân request VẪN được PostgREST/Supabase xử lý và ghi nhận là hoạt động của
+project, đủ để tránh auto-pause mà không cần lưu mật khẩu tài khoản admin thật vào GitHub (an toàn
+hơn, không có thông tin đăng nhập nhạy cảm nào trong repo).
+
+**Đã kiểm chứng bằng chính hạ tầng thật**: (1) test `curl` trực tiếp tới REST API thật trước khi
+viết workflow — xác nhận đúng `HTTP 200`/`[]`; (2) push workflow lên `main`, dùng `gh workflow run`
++ `gh run watch` kích hoạt chạy tay 1 lần thật trên GitHub Actions — xác nhận job "success", log
+đúng "HTTP status: 200". Không cần deploy gì thêm (workflow chạy trên hạ tầng GitHub, độc lập với
+Firebase Hosting) — sẽ tự chạy nền theo lịch, Dũng không cần làm gì thêm.
+
 ## Bug đã sửa: 3 sheet "Giải quyết {gđ} trong kỳ" + "Trả hồ sơ ĐT bổ sung trong kỳ" — khối đếm nhanh đầu sheet bị bó hẹp/kéo dài (2026-08-01, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
 
 Dũng phát hiện qua mở file thật bằng Excel (ảnh chụp báo cáo tháng 07/2026): sheet "Giải quyết ĐT
