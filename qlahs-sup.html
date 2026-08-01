@@ -2951,6 +2951,14 @@ function BackfillTrinhDoTool() {
   const [state, setState] = useState("idle");
   const [info, setInfo] = useState("");
   const [bat, setBat] = useTuDongDienTrinhDo();
+  // Chế độ chạy lại (2026-08-01, theo yêu cầu người dùng) — "chi_thieu" (mặc định, AN TOÀN hơn):
+  // chỉ điền bị can CHƯA có trinhDo, giữ nguyên mọi giá trị đã có (dù là ước tính lần trước hay đã
+  // xác nhận thật). "chay_lai_het": random LẠI cho mọi bị can đang ở trạng thái ƯỚC TÍNH (kể cả đã
+  // có giá trị từ lần chạy trước) — hữu ích khi Dũng vừa chỉnh lại bảng trọng số PHAN_BO_TRINH_DO
+  // và muốn số cũ cập nhật theo bảng mới. CẢ 2 chế độ đều KHÔNG BAO GIỜ đụng tới bị can có
+  // `trinhDoUocTinh === false` (giá trị THẬT do cán bộ tự xác nhận) — an toàn tuyệt đối cho dữ liệu
+  // đã xác nhận, bất kể chọn chế độ nào.
+  const [cheDo, setCheDo] = useState("chi_thieu");
 
   const run = async () => {
     if (!bat) return; // an toàn — nút đã bị disabled, chặn thêm 1 lớp phòng gọi trực tiếp
@@ -2973,7 +2981,11 @@ function BackfillTrinhDoTool() {
 
       for (const doc of bcSnap.docs) {
         const bc = doc.data();
-        if (bc.trinhDo || bc.loaiBiCan === "phap_nhan") continue; // đã có dữ liệu hoặc pháp nhân — bỏ qua
+        if (bc.loaiBiCan === "phap_nhan") continue; // pháp nhân — luôn bỏ qua
+        const canXuLy = cheDo === "chay_lai_het"
+          ? (!bc.trinhDo || bc.trinhDoUocTinh === true) // chưa có HOẶC đang là ước tính — random lại
+          : !bc.trinhDo;                                // chỉ bị can CHƯA có gì cả
+        if (!canXuLy) continue; // đã có giá trị THẬT (trinhDoUocTinh===false) — không đụng tới
         const vu = vuById.get(bc.maVuAn) || {};
         const { trinhDo, trinhDoUocTinh } = chonTrinhDoNgauNhien(bc, vu);
         batch.update(doc.ref, { trinhDo, trinhDoUocTinh, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
@@ -2984,10 +2996,13 @@ function BackfillTrinhDoTool() {
 
       setState("done");
       setInfo(soCapNhat === 0
-        ? "Không có bị can nào thiếu Trình độ — không cần điền gì thêm."
-        : `Đã điền Trình độ (ước tính, theo tuổi + loại tội danh) cho ${soCapNhat} bị can. Vào "Bảng ` +
-          `dữ liệu" (Cài đặt) hoặc xuất Biểu B10 để xem/sửa lại khi có hồ sơ đầy đủ — các bị can này ` +
-          `sẽ tô đỏ + cảnh báo "⚠" ở cột Trình độ.`);
+        ? (cheDo === "chay_lai_het"
+            ? "Không có bị can nào đang ở trạng thái ước tính để random lại."
+            : "Không có bị can nào thiếu Trình độ — không cần điền gì thêm.")
+        : `Đã điền Trình độ (ước tính, theo tuổi + loại tội danh) cho ${soCapNhat} bị can` +
+          (cheDo === "chay_lai_het" ? " (đã random LẠI toàn bộ bị can đang ước tính)" : "") +
+          `. Vào "Bảng dữ liệu" (Cài đặt) hoặc xuất Biểu B10 để xem/sửa lại khi có hồ sơ đầy đủ — ` +
+          `các bị can này sẽ tô đỏ + cảnh báo "⚠" ở cột Trình độ.`);
     } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
   };
 
@@ -2998,8 +3013,8 @@ function BackfillTrinhDoTool() {
         "Trình độ" không có giá trị mặc định (khác Giới tính luôn mặc định "Nam") nên hay bị bỏ
         trống khi nhập liệu thực tế. Công cụ này điền NGẪU NHIÊN có trọng số (theo độ tuổi + loại
         tội danh chính) cho bị can cá nhân đang thiếu, đánh dấu rõ "chưa xác nhận" để tự sửa lại sau
-        khi có hồ sơ đầy đủ. KHÔNG đụng tới bị can đã có sẵn Trình độ, KHÔNG áp dụng cho pháp nhân.
-        An toàn khi chạy lại nhiều lần.
+        khi có hồ sơ đầy đủ. KHÔNG áp dụng cho pháp nhân, và KHÔNG BAO GIỜ đụng tới bị can đã được
+        cán bộ TỰ XÁC NHẬN Trình độ thật (dù chọn chế độ nào bên dưới).
       </p>
       {/* Công tắc BẬT/TẮT toàn bộ tính năng (2026-07-31, theo yêu cầu người dùng) — MẶC ĐỊNH TẮT.
           Khi tắt, form Thêm/Sửa bị can + Import Excel giữ nguyên hành vi cũ (để trống nếu thiếu),
@@ -3013,6 +3028,22 @@ function BackfillTrinhDoTool() {
           thiếu dữ liệu vẫn giữ nguyên như trước (không tự điền).
         </div>
       )}
+      {/* 2 chế độ chạy (2026-08-01, theo yêu cầu người dùng) — mặc định "chi_thieu" (an toàn hơn,
+          giữ nguyên kết quả random lần trước), "chay_lai_het" dùng khi vừa chỉnh bảng trọng số
+          PHAN_BO_TRINH_DO và muốn số ước tính cũ cập nhật theo bảng mới. */}
+      <div className="mb-3 space-y-1.5 text-sm text-slate-700">
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input type="radio" name="trinhdo-chedo" className="mt-0.5" checked={cheDo === "chi_thieu"}
+                 onChange={() => setCheDo("chi_thieu")} />
+          <span>Chỉ điền bị can <b>còn thiếu</b> — giữ nguyên kết quả đã điền từ lần chạy trước</span>
+        </label>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input type="radio" name="trinhdo-chedo" className="mt-0.5" checked={cheDo === "chay_lai_het"}
+                 onChange={() => setCheDo("chay_lai_het")} />
+          <span>Chạy lại <b>toàn bộ</b> — random LẠI mọi bị can đang ở trạng thái ước tính (kể cả đã
+            điền từ trước); không đụng bị can đã xác nhận Trình độ thật</span>
+        </label>
+      </div>
       {info && (
         <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
           {info}

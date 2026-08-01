@@ -111,6 +111,28 @@ object JS thường) — xác nhận `trinhDoAutoFillDangBat()` đúng `false` k
 random) — 10/10 PASS (2 assertion mới + 8 assertion cũ vẫn đúng sau khi bật công tắc lên "on" đầu
 test). Compile-check lại toàn file — sạch.
 
+**Thêm 2 chế độ chạy cho `BackfillTrinhDoTool` (2026-08-01, theo yêu cầu người dùng "khi chạy lại
+phải đưa ra 2 option: giữ nguyên kết quả trước đây + chỉ cập nhật bị can còn thiếu, HOẶC chạy lại
+hết")** — trước đó công cụ chỉ có đúng 1 hành vi (bỏ qua mọi bị can đã có `trinhDo`, kể cả giá trị
+ước tính từ lần chạy trước), không có cách nào random LẠI các ước tính cũ nếu Dũng chỉnh sửa bảng
+trọng số `PHAN_BO_TRINH_DO` sau này. Thêm radio 2 lựa chọn (state `cheDo`, mặc định `"chi_thieu"` —
+AN TOÀN hơn, giữ nguyên hành vi cũ):
+- **"Chỉ điền bị can còn thiếu"** (mặc định) — `canXuLy = !bc.trinhDo` (y hệt hành vi cũ).
+- **"Chạy lại toàn bộ"** — `canXuLy = !bc.trinhDo || bc.trinhDoUocTinh === true` — random LẠI mọi bị
+  can đang ở trạng thái ƯỚC TÍNH (kể cả đã có giá trị từ lần chạy trước), tạo 1 lượt `chonTrinhDoNgauNhien`
+  mới cho từng người.
+
+**Bất biến quan trọng, ÁP DỤNG CHO CẢ 2 CHẾ ĐỘ**: tuyệt đối không đụng tới bị can có
+`trinhDoUocTinh === false` VÀ đã có `trinhDo` (tức giá trị THẬT do cán bộ tự xác nhận qua dropdown/
+kéo-fill) — dù chọn "chạy lại toàn bộ" cũng chỉ random lại đúng phần dữ liệu CHƯA được xác nhận,
+không có rủi ro ghi đè mất dữ liệu thật đã nhập tay. Pháp nhân luôn bị loại ở cả 2 chế độ.
+
+**Đã kiểm chứng**: thêm 8 assertion mới vào `test_trinhdo_random.js` (trích nguyên điều kiện
+`canXuLy` từ `run()`) — kiểm đủ 4 tổ hợp bị can (thiếu hoàn toàn/đã ước tính/đã xác nhận thật/pháp
+nhân) × 2 chế độ, xác nhận đúng: "chỉ thiếu" bỏ qua cả ước tính lẫn thật; "chạy lại hết" random lại
+đúng phần ước tính nhưng TUYỆT ĐỐI không đụng phần đã xác nhận thật — 18/18 PASS tổng cộng (10 cũ +
+8 mới). Compile-check lại toàn file — sạch.
+
 ## Nhánh `bieu10-kiemtra-tong-phantich-bican` — kiểm tra tổng khối "Phân tích bị can mới khởi tố" (2026-07-31, `qlahs-sup.html`, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: khối C7-C24 (Điều tra / "Phân tích số bị can là CÁ NHÂN mới khởi tố", xem
