@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## "Nhận lại vụ đã Chuyển đi" + sửa lỗ hổng "Phục hồi" không tính vào báo cáo (2026-08-01, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, CHƯA merge vào `main`, CHƯA deploy)
+## "Nhận lại vụ đã Chuyển đi" + sửa lỗ hổng "Phục hồi" không tính vào báo cáo (2026-08-01, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, ĐÃ DEPLOY PRODUCTION, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: 1 số vụ đã "Chuyển đi" (hoàn thành dạng `chuyen_di` — coi như xong hẳn,
 chuyển sang đơn vị/tỉnh khác) trên thực tế bị **chuyển ngược lại** cho đơn vị này xử lý tiếp. Hệ
@@ -69,13 +69,55 @@ xác nhận: vụ Chuyển đi kỳ K1 rồi Nhận lại vào giai đoạn KHÁ
 hồi; không tạo cảnh báo/cộng thừa khi không có sự kiện nào. 7/7 PASS. Compile-check toàn file qua
 `@babel/core`+`@babel/preset-react` — sạch.
 
-**CHƯA kiểm chứng bằng dữ liệu Supabase thật** — khu vực "Tổng thụ lý"/"Cân đối số liệu" đã có lịch
-sử NHIỀU bug tinh vi (xem các mục "Bug đã sửa"/"Bug tiếp theo" phía dưới), bắt buộc kiểm chứng thêm
-trước khi merge/deploy: dựng 1 vụ test thật, Chuyển đi rồi Nhận lại vào giai đoạn KHÁC, xuất Excel
-báo cáo tháng xác nhận "Cân đối số liệu" (Chênh lệch = 0, tô xanh) ở cả 2 giai đoạn liên quan, 2
-sheet mới có đúng dòng dữ liệu, dòng "Tổng số mới" ở cả màn hình lẫn "Tổng hợp báo cáo" Excel khớp
-đúng, rồi dọn sạch dữ liệu test. Cũng nên thử riêng 1 vụ Tạm đình chỉ → Phục hồi để xác nhận lỗ hổng
-cũ đã hết (Cân đối số liệu không còn lệch ở kỳ phục hồi).
+**Đã kiểm chứng đầy đủ bằng Playwright thật trên dữ liệu Supabase production thật** (`qlahs-sup.html`,
+project `eutatszoaseixchvjbtg`, đăng nhập thật qua tài khoản `admin@qlva.local`) — dựng 2 vụ án test
+riêng biệt:
+1. **"TEST - Nhận lại chuyển đi"**: Điều tra → Hoàn thành (Chuyển đi, kỳ 07/2026) → bấm nút mới "↩
+   Nhận lại vụ", chọn giai đoạn **Truy tố** (khác Điều tra lúc chuyển đi, đúng kịch bản trọng tâm) —
+   xác nhận `coQuanThuLy` đổi đúng sang Truy tố, `trangThai` về "Đang giải quyết".
+2. **"TEST - Phục hồi TĐC"**: Điều tra → Hoàn thành (Tạm đình chỉ, kỳ 07/2026) → "Phục hồi" (kỳ
+   07/2026) — xác nhận về đúng lại Điều tra như thiết kế (không cho chọn khác).
+
+**Xuất Excel báo cáo tháng kỳ 07/2026** (chặn `URL.createObjectURL` để bắt Blob thật, nạp lại bằng
+`new ExcelJS.Workbook().xlsx.load(...)` NGAY TRONG TRÌNH DUYỆT — không tải xuống đĩa) — xác nhận:
+- 2 sheet mới `"DS phục hồi TĐC ĐT"`/`"DS nhận lại CĐ TT"` có ĐÚNG 1 dòng dữ liệu mỗi sheet, đúng
+  Ngày/Số QĐ/Kỳ TK đã nhập.
+- **"Cân đối số liệu" cân bằng TUYỆT ĐỐI (Chênh lệch = 0) ở CẢ 6 dòng** (Điều tra/Truy tố/Xét xử ×
+  Vụ/Bị can) — xác nhận công thức tồn đầu+vào−ra=tồn cuối vẫn đúng sau khi thêm 2 loại sự kiện mới.
+- "Tổng hợp báo cáo": 2 dòng mới "— Phục hồi (từ Tạm đình chỉ)"/"— Nhận lại (đã Chuyển đi)" đúng số
+  liệu (ĐT=1, TT=1), dòng "Tổng số mới" khớp đúng màn hình xem trước (`BangBaoCaoChiTiet`, đọc trực
+  tiếp qua UI: 57/97, 19/51, 24/58 cho ĐT/TT/XX) — không lệch giữa 2 nơi hiển thị.
+- Phát hiện phụ (KHÔNG phải bug, đã xác nhận qua đối chiếu bằng tay): cột "Chênh lệch" khi đọc lại
+  qua ExcelJS thiếu "result" cache (chỉ còn `{formula}`) — do `cdRow.getCell(8).fill/font` được set
+  SAU khi `addRow` đã ghi `{formula, result}`, có vẻ làm ExcelJS bỏ cache result lúc set style. Đây
+  là hiện tượng CÓ SẴN từ trước (xảy ra ở CẢ 6 dòng, kể cả Xét xử không liên quan gì tới thay đổi
+  lần này), không phải lỗi do tính năng mới — Excel THẬT vẫn tự tính lại đúng khi mở file (đúng bài
+  học đã ghi ở mục "Bug thật đã sửa: cột -BC..." bên dưới: ExcelJS đọc lại không tính lại công thức,
+  chỉ Excel thật mới tính). Đã tự đối chiếu bằng tay qua cột F (Tồn cuối tính) và G (Tồn cuối chốt)
+  — cả 2 đều có cache đúng, bằng nhau ở mọi dòng, nên Chênh lệch chắc chắn = 0 khi Excel thật mở.
+
+**Bug thật đã phát hiện + sửa trong lúc kiểm chứng**: bấm "Xác nhận" ở modal "Nhận lại vụ án" báo
+lỗi `new row for relation "lichsuChuyenGiaiDoan" violates check constraint
+"lichsuChuyenGiaiDoan_loaiSuKien_check"` — cột `loaiSuKien` có CHECK constraint cố định danh sách
+giá trị hợp lệ (xem `supabase/schema.sql`), thiếu `nhan_lai_chuyen_di` (khác lỗi "column not found"
+đã gặp nhiều lần trước đây — ở đây CỘT đã có sẵn, chỉ thiếu GIÁ TRỊ được phép). Đã sửa qua
+`supabase/add_nhan_lai_chuyen_di_2026-08-01.sql` (drop + tạo lại constraint, chạy qua Session
+pooler, xác nhận qua `pg_constraint`) + cập nhật `supabase/schema.sql` cho khớp. **Bài học cho phiên
+sau**: khi thêm 1 `loaiSuKien` MỚI (không chỉ field/cột mới), luôn kiểm tra CHECK constraint này
+trước, đừng chỉ lo ALTER TABLE thêm cột.
+
+**Cũng phát hiện qua kiểm chứng (đã sửa)**: `NHAN_SU_KIEN` (nhãn hiển thị sự kiện trong "Lịch sử"
+của `ChiTietPanel`) thiếu entry cho `nhan_lai_chuyen_di` — hiện ra tên thô "nhan_lai_chuyen_di" thay
+vì tiếng Việt. Đã thêm `nhan_lai_chuyen_di: "Nhận lại (đã Chuyển đi)"`.
+
+**Đã dọn sạch hoàn toàn 2 vụ test** (Đưa vào thùng rác → gõ mã xác nhận ngẫu nhiên → Xoá vĩnh viễn ở
+Cài đặt → Thùng rác, CHỈ xoá đúng 2 vụ vừa tạo, không đụng các mục khác đã có sẵn trong thùng rác từ
+trước) — xác nhận lại "Mới trong kỳ"/"Đã giải quyết trong kỳ" của kỳ 07/2026 trở về ĐÚNG số liệu
+gốc trước khi test (54 vụ/18 giải quyết), tổng vụ án 2155 (không đổi). 0 lỗi console liên quan tới
+thay đổi này.
+
+**Đã deploy lên `qlahsp2.web.app`** (2 lần: lần đầu để test tính năng nhận lại/phục hồi, lần 2 sau
+khi sửa CHECK constraint + nhãn sự kiện) qua `./deploy.sh prod`.
 
 ## Auto-điền "Trình độ học vấn" ngẫu nhiên có trọng số + cảnh báo "chưa xác nhận" (2026-07-31, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, CHƯA merge vào `main`)
 
