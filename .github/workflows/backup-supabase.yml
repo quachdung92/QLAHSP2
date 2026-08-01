@@ -15,7 +15,7 @@ name: Backup Supabase hàng ngày
 
 on:
   schedule:
-    - cron: "0 2 * * *" # 02:00 UTC (09:00 sáng giờ VN) mỗi ngày
+    - cron: "0 19 * * *" # 19:00 UTC = 02:00 sáng giờ VN (UTC+7) mỗi ngày — giờ thấp điểm, tránh chạy giữa giờ làm việc
   workflow_dispatch:
     inputs:
       reason:
