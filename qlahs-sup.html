@@ -10382,10 +10382,24 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       const nhapVuArr = d.nhapVu || [];
 
       // Khối đếm nhanh đầu sheet — liếc là ra số, không cần kéo hết bảng xuống đếm.
+      // Bug đã sửa (2026-08-01): cột A rộng 6 (đủ cho "STT" ở bảng data bên dưới) nhưng khối đếm
+      // nhanh này ghi CHỮ DÀI (VD "TỔNG HỢP GIẢI QUYẾT ĐIỀU TRA TRONG KỲ") vào đúng cột A — cộng
+      // với wrapText:true áp dụng blanket cho MỌI ô, chữ dài bị bó hẹp trong cột rộng 6 làm dòng
+      // bị kéo cao bất thường, gần như 1 ký tự/dòng. Sửa bằng cách merge các dòng tiêu đề/đếm nhanh
+      // ngang qua nhiều cột (đủ chỗ hiện chữ, khỏi phụ thuộc wrapText) và giới hạn wrapText chỉ áp
+      // dụng cho bảng dữ liệu (từ dòng header trở xuống), không áp cho khối đếm nhanh phía trên.
       const tieuDe = ws.addRow([`TỔNG HỢP GIẢI QUYẾT ${NHAN_GIAI_DOAN[gd].toUpperCase()} TRONG KỲ`]);
       tieuDe.font = { bold: true, size: 12 };
-      nhomChinh.forEach(n => ws.addRow([`${n.nhan}:`, `${n.vuArr.length} vụ`]));
-      ws.addRow([`Nhập vụ:`, `${nhapVuArr.length} vụ`]);
+      ws.mergeCells(tieuDe.number, 1, tieuDe.number, GQ_HEADER.length);
+      tieuDe.getCell(1).alignment = { wrapText: false, vertical: "middle" };
+      const themDongDemNhanh = (nhan, soLuong) => {
+        const r = ws.addRow([`${nhan}:`, "", "", `${soLuong} vụ`]);
+        ws.mergeCells(r.number, 1, r.number, 3);
+        r.getCell(1).alignment = { wrapText: false, vertical: "middle" };
+        r.getCell(1).font = { bold: true };
+      };
+      nhomChinh.forEach(n => themDongDemNhanh(n.nhan, n.vuArr.length));
+      themDongDemNhanh("Nhập vụ", nhapVuArr.length);
       ws.addRow([]);
 
       const hRow = ws.addRow(GQ_HEADER);
@@ -10405,9 +10419,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         r.outlineLevel = 1;
         r.hidden = true;
       });
-      // Wrap text mặc định (2026-07-31, theo yêu cầu người dùng) — cùng pattern đã dùng ở Biểu
-      // B10/"Tồn theo ĐL (snapshot)", nhìn đủ thông tin (VD Tên vụ dài) mà không cần tự kéo rộng cột.
-      ws.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
+      // Wrap text mặc định cho bảng DỮ LIỆU (2026-07-31, theo yêu cầu người dùng) — cùng pattern đã
+      // dùng ở Biểu B10/"Tồn theo ĐL (snapshot)", nhìn đủ thông tin (VD Tên vụ dài) mà không cần tự
+      // kéo rộng cột. Chỉ áp dụng từ dòng header (soHangTieuDe) trở xuống — KHÔNG áp cho khối đếm
+      // nhanh phía trên (đã merge + tắt wrap riêng ở trên, xem bug fix 2026-08-01).
+      for (let rn = soHangTieuDe; rn <= ws.rowCount; rn++) {
+        ws.getRow(rn).eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; });
+      }
     }
 
     // Sheet "Trả hồ sơ ĐT bổ sung trong kỳ" — gộp CẢ 2 chiều trả hồ sơ (viện trả từ Truy tố + toà
@@ -10420,23 +10438,36 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         { gd: "truy_to", nhan: "Truy tố → Điều tra" },
         { gd: "xet_xu", nhan: "Xét xử → Truy tố" },
       ];
-      const tieuDe = ws.addRow(["TỔNG HỢP TRẢ HỒ SƠ ĐIỀU TRA BỔ SUNG TRONG KỲ"]);
-      tieuDe.font = { bold: true, size: 12 };
-      nguonTraHoSo.forEach(n => ws.addRow([`${n.nhan}:`, `${(baoCao[n.gd].ds.traDi || []).length} vụ`]));
-      ws.addRow([]);
       const header = ["STT", "Từ giai đoạn", "Mã vụ", "Tên vụ", "KSV chính", "ĐTV/CBĐT", "Điều luật",
         "Ngày trả", "Số QĐ", "Kỳ TK"];
+      // Cùng bug/cách sửa "khối đếm nhanh cột A quá hẹp" như 3 sheet "Giải quyết {gđ}" ở trên
+      // (2026-08-01) — merge tiêu đề/dòng đếm ngang qua nhiều cột, chỉ wrapText từ dòng header trở
+      // xuống, không áp cho khối đếm nhanh phía trên.
+      const tieuDe = ws.addRow(["TỔNG HỢP TRẢ HỒ SƠ ĐIỀU TRA BỔ SUNG TRONG KỲ"]);
+      tieuDe.font = { bold: true, size: 12 };
+      ws.mergeCells(tieuDe.number, 1, tieuDe.number, header.length);
+      tieuDe.getCell(1).alignment = { wrapText: false, vertical: "middle" };
+      nguonTraHoSo.forEach(n => {
+        const r = ws.addRow([`${n.nhan}:`, "", "", `${(baoCao[n.gd].ds.traDi || []).length} vụ`]);
+        ws.mergeCells(r.number, 1, r.number, 3);
+        r.getCell(1).alignment = { wrapText: false, vertical: "middle" };
+        r.getCell(1).font = { bold: true };
+      });
+      ws.addRow([]);
       const hRow = ws.addRow(header);
       hRow.font = { bold: true };
       hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-      ws.views = [{ state: "frozen", ySplit: ws.rowCount }];
+      const soHangTieuDe = ws.rowCount;
+      ws.views = [{ state: "frozen", ySplit: soHangTieuDe }];
       [6, 20, 16, 30, 18, 18, 26, 13, 16, 14].forEach((w, i) => ws.getColumn(i + 1).width = w);
       let stt = 1;
       nguonTraHoSo.forEach(n => (baoCao[n.gd].ds.traDi || []).forEach(vu => {
         ws.addRow([stt++, n.nhan, hienThiMa(vu), vu.tenVu || "", vu.ksvChinh || "", vu.dtvCbdt || "",
           vu.dieuLuat || "", fmtDate(vu._log?.ngaySuKien), vu._log?.soQuyetDinh || "", tenKyBaoCao(vu)]);
       }));
-      ws.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
+      for (let rn = soHangTieuDe; rn <= ws.rowCount; rn++) {
+        ws.getRow(rn).eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; });
+      }
     }
   }
 

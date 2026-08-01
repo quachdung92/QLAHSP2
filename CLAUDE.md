@@ -2,7 +2,43 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## "Nhận lại vụ đã Chuyển đi" + sửa lỗ hổng "Phục hồi" không tính vào báo cáo (2026-08-01, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, ĐÃ DEPLOY PRODUCTION, CHƯA merge vào `main`)
+## Bug đã sửa: 3 sheet "Giải quyết {gđ} trong kỳ" + "Trả hồ sơ ĐT bổ sung trong kỳ" — khối đếm nhanh đầu sheet bị bó hẹp/kéo dài (2026-08-01, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Dũng phát hiện qua mở file thật bằng Excel (ảnh chụp báo cáo tháng 07/2026): sheet "Giải quyết ĐT
+trong kỳ" (và tương tự TT/XX), dòng tiêu đề "TỔNG HỢP GIẢI QUYẾT ĐIỀU TRA TRONG KỲ" bị bó hẹp thành
+1 cột dọc, mỗi dòng chỉ 1 ký tự — dòng cao bất thường, không đọc được. Các dòng đếm nhanh phía dưới
+(VD "Kết thúc điều tra: 18 vụ") cũng bị ảnh hưởng tương tự.
+
+**Nguyên nhân**: 4 sheet này (2 nhóm: 3 sheet "Giải quyết {gs} trong kỳ" + 1 sheet "Trả hồ sơ ĐT bổ
+sung trong kỳ", cùng thêm vào 2026-07-31) ghi khối "đếm nhanh đầu sheet" (tiêu đề + các dòng
+"<nhãn>: N vụ") vào ĐÚNG cột A, nhưng cột A sau đó bị set width = 6 (`GQ_COLS_W[0]`/mảng tương tự) —
+kích thước chỉ đủ cho cột "STT" (số 1-2 chữ số) của bảng dữ liệu bên dưới, không đủ cho chữ dài như
+"TỔNG HỢP GIẢI QUYẾT ĐIỀU TRA TRONG KỲ" hay "Kết thúc điều tra:". Cộng thêm dòng cuối mỗi sheet áp
+`wrapText: true` cho **MỌI ô** (`ws.eachRow(...)`, kể cả khối đếm nhanh) — chữ dài bị ép wrap trong
+cột rộng 6, ra đúng hiện tượng "1 ký tự/dòng, dòng kéo cao" như ảnh chụp. Bug này chỉ ảnh hưởng 4
+sheet mới thêm gần đây (Biểu B10/TK tội danh/"Tồn theo ĐL" không dính, vì các sheet đó là bảng dữ
+liệu thuần, không có khối tiêu đề/đếm nhanh nào nằm riêng trong 1 cột hẹp).
+
+**Đã sửa**: (1) dòng tiêu đề merge ngang qua hết bề rộng bảng (`ws.mergeCells(hàng, 1, hàng,
+GQ_HEADER.length)`, tắt `wrapText`, căn giữa dọc); (2) mỗi dòng đếm nhanh ("<nhãn>: N vụ") merge 3
+cột đầu (A:C) cho nhãn, giữ số liệu ở cột riêng ngay sau — đủ chỗ hiện chữ dài kể cả khi cột A vẫn
+hẹp; (3) đổi `ws.eachRow(...)` (áp `wrapText` cho MỌI ô) thành vòng lặp chỉ từ dòng header bảng dữ
+liệu trở xuống (`for (let rn = soHangTieuDe; rn <= ws.rowCount; rn++)`) — khối đếm nhanh phía trên
+không còn bị wrapText nữa (đã merge đủ rộng nên không cần), bảng dữ liệu bên dưới giữ nguyên hành vi
+wrap cũ (đọc đủ thông tin Tên vụ dài mà không cần tự kéo rộng cột).
+
+**Đã kiểm chứng bằng dữ liệu Supabase production thật** — deploy thử lên `qlahs-sup.web.app`
+trước (site test riêng cùng backend Supabase thật), export báo cáo kỳ 07/2026 thật, chặn
+`URL.createObjectURL` để bắt Blob thật rồi nạp lại bằng `new ExcelJS.Workbook().xlsx.load(...)`
+NGAY TRONG TRÌNH DUYỆT (không tải xuống đĩa) — xác nhận cả 4 sheet: dòng tiêu đề merge đúng
+`A1:K1`/`A1:J1`, dòng đếm nhanh merge đúng `A2:C2`..., cột A vẫn rộng 6 (không đổi, không cần đổi
+vì đã merge) nhưng không còn ảnh hưởng gì tới khối đếm nhanh, header bảng dữ liệu (dòng 9) vẫn có
+`wrapText:true` như cũ. Đây là thao tác THUẦN ĐỌC (mở kỳ, xuất Excel) — không ghi gì vào Postgres,
+không cần dọn dữ liệu test. Compile-check toàn file qua `@babel/core`+`@babel/preset-react` — sạch.
+Đã deploy `qlahs-sup.web.app` (test) rồi `qlahsp2.web.app` (production) qua `./deploy.sh sup` rồi
+`./deploy.sh prod`.
+
+## "Nhận lại vụ đã Chuyển đi" + sửa lỗ hổng "Phục hồi" không tính vào báo cáo (2026-08-01, `qlahs-sup.html`, ĐÃ DEPLOY PRODUCTION, ĐÃ MERGE nhánh `bieu10-kiemtra-tong-phantich-bican` vào `main`)
 
 Theo yêu cầu người dùng: 1 số vụ đã "Chuyển đi" (hoàn thành dạng `chuyen_di` — coi như xong hẳn,
 chuyển sang đơn vị/tỉnh khác) trên thực tế bị **chuyển ngược lại** cho đơn vị này xử lý tiếp. Hệ
