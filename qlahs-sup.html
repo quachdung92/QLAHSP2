@@ -4171,8 +4171,14 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
       const nguoiThucHien = auth.currentUser?.email || "";
       const batch = db.batch();
       batch.update(db.collection("vuan").doc(vuAn.id), { trangThai: "dang_giai_quyet", ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      // denGiaiDoan (2026-08-01, sửa lỗ hổng phát hiện khi audit "Nhận lại vụ chuyển đi") — Phục
+      // hồi LUÔN ở lại đúng giai đoạn cũ (coQuanThuLy không đổi, không cho chọn khác), nhưng trước
+      // đây sự kiện "phuc_hoi" không hề gắn denGiaiDoan nên tinhBaoCaoKyTuLog không truy vấn được,
+      // khiến sự kiện phục hồi KHÔNG tính vào "Tổng thụ lý"/"Tồn cuối kỳ" của kỳ phục hồi — có thể
+      // làm "Cân đối số liệu" lệch nhẹ đúng ở kỳ đó. Thêm field còn thiếu, không đổi hành vi nào
+      // khác của modal này.
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
-        maVuAn: vuAn.id, loaiSuKien: "phuc_hoi", soQuyetDinh: soQuyetDinh.trim(),
+        maVuAn: vuAn.id, loaiSuKien: "phuc_hoi", denGiaiDoan: vuAn.coQuanThuLy, soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
@@ -4186,6 +4192,71 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
       <label className="text-xs text-slate-500 block mb-1">Ngày phục hồi</label>
       <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định phục hồi điều tra</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+// "Nhận lại vụ đã Chuyển đi" (2026-08-01) — vụ ở trangThai="chuyen_di" bị chuyển ngược lại cho đơn
+// vị này xử lý tiếp. KHÁC PhucHoiModal ở trên (luôn về đúng giai đoạn cũ, không cho chọn) — modal
+// này CHO CHỌN LẠI giai đoạn tiếp nhận (mặc định = coQuanThuLy hiện tại, vì "Chuyển đi" không hề
+// đổi field này — xem HoanThanhVuAnModal, hinhThuc="chuyen_di" không cập nhật coQuanThuLy) vì thực
+// tế nhận lại có thể vào giai đoạn khác lúc chuyển đi. Ghi sự kiện loaiSuKien="nhan_lai_chuyen_di"
+// (denGiaiDoan=giai đoạn chọn) để tinhBaoCaoKyTuLog tính đúng vào "Tổng thụ lý"/"Tồn cuối kỳ" của
+// giai đoạn đó — KHÔNG xoá sự kiện hoan_thanh(chuyen_di) gốc (giữ nguyên làm lịch sử, khác hẳn công
+// cụ sửa sai sót "Xoá hình thức giải quyết").
+function NhanLaiChuyenDiModal({ vuAn, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [giaiDoan, setGiaiDoan] = useState(vuAn.coQuanThuLy || "dieu_tra");
+  const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+
+  const luu = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày nhận lại."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), {
+        trangThai: "dang_giai_quyet", coQuanThuLy: giaiDoan,
+        noiChuyenDen: "", soQuyetDinhChuyenDi: "",
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "nhan_lai_chuyen_di", denGiaiDoan: giaiDoan,
+        soQuyetDinh: soQuyetDinh.trim(), ngaySuKien: fromInputDate(ngay), kyThongKe: kyId,
+        ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+      onXong();
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Nhận lại vụ án (đã Chuyển đi)">
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Giai đoạn tiếp tục xử lý</label>
+      <select value={giaiDoan} onChange={e => setGiaiDoan(e.target.value)} className={oInput + " mb-3"}>
+        {THU_TU_GIAI_DOAN.map(gd => <option key={gd} value={gd}>{NHAN_GIAI_DOAN[gd]}</option>)}
+      </select>
+      <p className="text-xs text-slate-400 -mt-2 mb-3">
+        Mặc định là giai đoạn vụ đang có sẵn ({NHAN_GIAI_DOAN[vuAn.coQuanThuLy] || vuAn.coQuanThuLy}) —
+        "Chuyển đi" không đổi giai đoạn, đổi lại ở đây nếu thực tế nhận về khác đi.
+      </p>
+      <label className="text-xs text-slate-500 block mb-1">Ngày nhận lại</label>
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Số quyết định tiếp nhận lại</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
@@ -6843,6 +6914,16 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
             {vuAn.trangThai === "tam_dinh_chi" && (
               <NutHanhDong nhan="Phục hồi" onClick={() => setModalMo("phuc_hoi")} />
             )}
+            {/* "Nhận lại vụ chuyển đi" (2026-08-01) — 1 số vụ đã "Chuyển đi" (coi như xong, chuyển
+                hẳn sang đơn vị khác) trên thực tế bị chuyển NGƯỢC LẠI cho đơn vị này. Trước đây
+                KHÔNG có cách nào chính thức nhận lại (chỉ có "Xoá hình thức giải quyết" — công cụ
+                sửa sai sót, không ghi log nghiệp vụ mới, không hỏi kỳ). Khác "Phục hồi" ở trên (luôn
+                về đúng giai đoạn cũ, không cho chọn) — modal này CHO CHỌN LẠI giai đoạn vì "Chuyển
+                đi" là ra khỏi hệ thống hẳn, giai đoạn tiếp nhận lại có thể khác giai đoạn lúc chuyển
+                đi tuỳ thực tế. Xem NhanLaiChuyenDiModal. */}
+            {vuAn.trangThai === "chuyen_di" && (
+              <NutHanhDong nhan="↩ Nhận lại vụ" onClick={() => setModalMo("nhan_lai_chuyen_di")} />
+            )}
             {/* Sửa lỗi chọn NHẦM hình thức giải quyết (VD "Đã xét xử" nhưng đúng ra là "Tạm đình
                 chỉ") — chỉ hiện cho 5 trạng thái do "Hoàn thành vụ án" tạo ra (FIELD_SO_QD_HOAN_THANH
                 có key tương ứng), KHÔNG áp dụng cho "Đã nhập vào vụ khác" (khác luồng, không có
@@ -7003,6 +7084,9 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
       )}
       {modalMo === "phuc_hoi" && (
         <PhucHoiModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {modalMo === "nhan_lai_chuyen_di" && (
+        <NhanLaiChuyenDiModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
       )}
       {modalMo === "hoan_thanh" && (
         <HoanThanhVuAnModal vuAnId={vuAn.id} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
@@ -7739,11 +7823,18 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     //     hồ sơ yêu cầu điều tra bổ sung).
     // Sự kiện khoi_to_vu/tach_vu tạo trước khi sửa công thức này không có denGiaiDoan (null) nên
     // sẽ không khớp where nào — cần backfill 1 lần cho dữ liệu cũ (xem ghi chú hạ tầng).
-    const [khoiToTrucTiepSnap, tachVuSnap, chuyenDenSnap, traVeSnap] = await Promise.all([
+    // phucHoiSnap/nhanLaiSnap (2026-08-01) — 2 sự kiện "vào" bổ sung, cùng mẫu tachVu/chuyenDen/
+    // traVe ở trên: "phuc_hoi" (PhucHoiModal, phục hồi vụ Tạm đình chỉ — trước đây KHÔNG hề được
+    // truy vấn ở đây, khiến kỳ có phục hồi thiếu "vào" tương ứng, Cân đối số liệu có thể lệch nhẹ)
+    // và "nhan_lai_chuyen_di" (NhanLaiChuyenDiModal, nhận lại vụ đã Chuyển đi — sự kiện HOÀN TOÀN
+    // MỚI). Cả 2 đều lọc theo denGiaiDoan như tachVu/chuyenDen/traVe.
+    const [khoiToTrucTiepSnap, tachVuSnap, chuyenDenSnap, traVeSnap, phucHoiSnap, nhanLaiSnap] = await Promise.all([
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "khoi_to_vu").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "tach_vu").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "chuyen_giai_doan").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "tra_ho_so").where("denGiaiDoan", "==", gd).get(),
+      db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "phuc_hoi").where("denGiaiDoan", "==", gd).get(),
+      db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "nhan_lai_chuyen_di").where("denGiaiDoan", "==", gd).get(),
     ]);
 
     const nguonDem = { an_khoi_to_moi: 0, tin_bao_khoi_to_len: 0, an_noi_khac_chuyen_den: 0, phuc_hoi_dieu_tra: 0 };
@@ -7756,8 +7847,10 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     // khoi_to_vu đó ĐÃ được thể hiện qua 4 dòng nguồn (án khởi tố mới/tin báo/...) ở trên rồi,
     // hiện thêm 1 dòng tổng riêng sẽ trùng lặp số liệu (nguon vẫn cộng đủ vào soMoi.tong).
     const soMoi = {
-      tong: khoiToTrucTiepSnap.size + tachVuSnap.size + chuyenDenSnap.size + traVeSnap.size,
+      tong: khoiToTrucTiepSnap.size + tachVuSnap.size + chuyenDenSnap.size + traVeSnap.size
+          + phucHoiSnap.size + nhanLaiSnap.size,
       chuyenDenTu: chuyenDenSnap.size, traVeTu: traVeSnap.size, tachVu: tachVuSnap.size,
+      phucHoi: phucHoiSnap.size, nhanLai: nhanLaiSnap.size,
       ...(gd === "dieu_tra" ? nguonDem : { khoiTaoTrucTiep: khoiToTrucTiepSnap.size }),
     };
 
@@ -7804,6 +7897,8 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     const dsTachVuArr = await vuAnTuLogDocs(tachVuSnap.docs);
     const dsChuyenDenArr = await vuAnTuLogDocs(chuyenDenSnap.docs);
     const dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs);
+    const dsPhucHoiArr = await vuAnTuLogDocs(phucHoiSnap.docs);
+    const dsNhanLaiArr = await vuAnTuLogDocs(nhanLaiSnap.docs);
     const dsChuyenDiArr = await vuAnTuLogDocs(chuyenDi.docs);
     const dsTraDiArr = await vuAnTuLogDocs(traDi.docs);
 
@@ -7827,7 +7922,8 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       const soGiaiQuyetVu = chuyenDi.size + traDi.size
         + Object.values(hoanThanhTheoGD).reduce((s, n) => s + n, 0) + soNhapVu;
       const bcMoi = tongBiCan(dsKhoiToTrucTiep) + tongBiCan(dsTachVuArr)
-        + tongBiCan(dsChuyenDenArr) + tongBiCan(dsTraVeArr);
+        + tongBiCan(dsChuyenDenArr) + tongBiCan(dsTraVeArr)
+        + tongBiCan(dsPhucHoiArr) + tongBiCan(dsNhanLaiArr);
       const bcGiaiQuyet = tongBiCan(dsChuyenDiArr) + tongBiCan(dsTraDiArr)
         + Object.values(dsHoanThanhTheoGD).reduce((s, arr) => s + tongBiCan(arr), 0)
         + tongBiCan(dsNhapVu);
@@ -7846,6 +7942,8 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
         tachVu: dsTachVuArr,
         chuyenDen: dsChuyenDenArr,
         traVe: dsTraVeArr,
+        phucHoi: dsPhucHoiArr,
+        nhanLai: dsNhanLaiArr,
         chuyenDi: dsChuyenDiArr,
         traDi: dsTraDiArr,
         hoanThanh: dsHoanThanhTheoGD,
@@ -8497,9 +8595,15 @@ function BangBaoCaoChiTiet({ baoCao }) {
             <H nhan="— Vụ tách ra (từ vụ khác, tách trong kỳ này)"
               lay={b => b.soMoi.tachVu}
               layDs={b => b.ds?.tachVu} />
+            <H nhan="— Phục hồi (từ Tạm đình chỉ)"
+              lay={b => b.soMoi.phucHoi}
+              layDs={b => b.ds?.phucHoi} />
+            <H nhan="— Nhận lại (đã Chuyển đi)"
+              lay={b => b.soMoi.nhanLai}
+              layDs={b => b.ds?.nhanLai} />
             <H nhan="Tổng số mới"
               lay={b => b.soMoi.tong}
-              layDs={b => [...(b.ds?.khoiToTrucTiep||[]), ...(b.ds?.tachVu||[]), ...(b.ds?.chuyenDen||[]), ...(b.ds?.traVe||[])]}
+              layDs={b => [...(b.ds?.khoiToTrucTiep||[]), ...(b.ds?.tachVu||[]), ...(b.ds?.chuyenDen||[]), ...(b.ds?.traVe||[]), ...(b.ds?.phucHoi||[]), ...(b.ds?.nhanLai||[])]}
               damNet />
             <HangBaoCaoTieuDe nhan="Đã giải quyết / ra khỏi giai đoạn" />
             <H nhan="— Chuyển giai đoạn (kết thúc giai đoạn này)" lay={b => b.chuyenDi} layDs={b => b.ds?.chuyenDi} />
@@ -8531,7 +8635,7 @@ function collectVuIdsFromBaoCao(baoCao) {
   const ids = new Set();
   for (const gd of THU_TU_GIAI_DOAN) {
     const d = baoCao[gd]?.ds || {};
-    ["khoiToTrucTiep","tachVu","chuyenDen","traVe","chuyenDi","traDi","nhapVu","tonHienTai"]
+    ["khoiToTrucTiep","tachVu","chuyenDen","traVe","phucHoi","nhanLai","chuyenDi","traDi","nhapVu","tonHienTai"]
       .forEach(k => (d[k] || []).forEach(v => ids.add(v.id)));
     for (const ht of HOAN_THANH_TRUONG_TONG) (d.hoanThanh?.[ht] || []).forEach(v => ids.add(v.id));
   }
@@ -8799,9 +8903,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const thuTu = dm?.thuTuHienThi ?? 10000;
 
     const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds, xx = baoCao.xet_xu.ds;
-    const dt_moi = [...(dt.khoiToTrucTiep||[]),...(dt.tachVu||[]),...(dt.chuyenDen||[]),...(dt.traVe||[])];
-    const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...(tt.chuyenDen||[]),...(tt.traVe||[])];
-    const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...(xx.chuyenDen||[]),...(xx.traVe||[])];
+    // + dt/tt/xx.phucHoi/nhanLai (2026-08-01) — 2 nguồn "vào" bổ sung (Phục hồi TĐC + Nhận lại vụ
+    // Chuyển đi, xem tinhBaoCaoKyTuLog), chỉ ảnh hưởng C3/C33/C60 "Tổng thụ lý" qua *_moi ở đây —
+    // KHÔNG đụng C6/C7 "Khởi tố mới" (vẫn chỉ dùng riêng dt.khoiToTrucTiep, xem dưới), giữ đúng 4
+    // nguồn cố định theo mẫu ngành B10 (bieu_B10_mo_ta.md mục 3.1).
+    const dt_moi = [...(dt.khoiToTrucTiep||[]),...(dt.tachVu||[]),...(dt.chuyenDen||[]),...(dt.traVe||[]),...(dt.phucHoi||[]),...(dt.nhanLai||[])];
+    const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...(tt.chuyenDen||[]),...(tt.traVe||[]),...(tt.phucHoi||[]),...(tt.nhanLai||[])];
+    const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...(xx.chuyenDen||[]),...(xx.traVe||[]),...(xx.phucHoi||[]),...(xx.nhanLai||[])];
 
     // ── Tồn kỳ trước / kỳ này ──
     // Tồn kỳ này: dùng snapshot kyTonTD khi đã chốt (đúng thời điểm). Kỳ CHƯA CHỐT (đang xem
@@ -9166,7 +9274,7 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
     const tonMoiMap = {}, tonRaMap = {};
     for (const gd of THU_TU_GIAI_DOAN) {
       const d = baoCao[gd].ds;
-      const moiList = [...(d.khoiToTrucTiep||[]), ...(d.tachVu||[]), ...(d.chuyenDen||[]), ...(d.traVe||[])];
+      const moiList = [...(d.khoiToTrucTiep||[]), ...(d.tachVu||[]), ...(d.chuyenDen||[]), ...(d.traVe||[]), ...(d.phucHoi||[]), ...(d.nhanLai||[])];
       const raList = [
         ...(d.chuyenDi||[]), ...(d.traDi||[]), ...(d.nhapVu||[]),
         ...HOAN_THANH_TRUONG_TONG.flatMap(ht => d.hoanThanh?.[ht] || []),
@@ -9318,7 +9426,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const vuGQMap  = new Map();   // vụ "ra" trong kỳ (giải quyết / chuyển đi / trả đi)
   for (const gd of THU_TU_GIAI_DOAN) {
     const d = baoCao[gd].ds;
-    [...(d.khoiToTrucTiep||[]),...(d.tachVu||[]),...(d.chuyenDen||[]),...(d.traVe||[])]
+    [...(d.khoiToTrucTiep||[]),...(d.tachVu||[]),...(d.chuyenDen||[]),...(d.traVe||[]),...(d.phucHoi||[]),...(d.nhanLai||[])]
       .forEach(v => { if (!vuMoiMap.has(v.id)) vuMoiMap.set(v.id, {...v, _gdMoi: gd}); });
     (d.tonHienTai||[]).forEach(v => { if (!vuTonMap.has(v.id)) vuTonMap.set(v.id, {...v, _gd: gd}); });
     [...(d.chuyenDi||[]),...(d.traDi||[]),...(d.nhapVu||[]),
@@ -9527,10 +9635,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     for (const sn of sheets) for (const kt of dsKyTen) parts.push(mkCfBc(sn, r, "AF", kt, ...extra));
     return parts.join("+") || "0";
   }
-  // Nhóm DS sheets theo vai trò — dùng cho B10 và TK tội danh
-  const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS vụ tách ĐT","DS trả về ĐT"];
-  const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"];
-  const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS vụ tách XX","DS chuyển đến XX"];
+  // Nhóm DS sheets theo vai trò — dùng cho B10 và TK tội danh. Thêm "DS phục hồi TĐC"/"DS nhận
+  // lại CĐ" (2026-08-01) — PHẢI khớp đúng tên + có mặt trong VAO_SHEETS_GD (khối "Cân đối số
+  // liệu" ở dưới) để "Tổng thụ lý" (C3/C33/C60) và "Cân đối số liệu" luôn tính TRÊN CÙNG 1 tập
+  // nguồn, không lệch nhau.
+  const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT"];
+  const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"];
+  const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX"];
   const DT_KTO = ["DS khởi tố ĐT","DS phục hồi ĐT"];   // khoiToTrucTiep ĐT (cho C7-C24)
   // "Tổng thụ lý" (C3/C4, C33/C34, C60/C61, xem bieu_B10_mo_ta.md mục 3.2) = Tồn kỳ trước (ô CÙNG
   // DÒNG, đã có sẵn — không phải DS sheet) + Σ(*_VAO ở trên) − Σ("DS nhập vụ"/"DS chuyển đi" của
@@ -9936,17 +10047,37 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
       };
     }),
+    // Phục hồi (từ Tạm đình chỉ) + Nhận lại (đã Chuyển đi) — 2 dòng MỚI (2026-08-01), KHÁC "Phục
+    // hồi điều tra" ở trên (dòng đó là nguồn Khởi tố mới chọn tay, đây là sự kiện log thật khi tái
+    // kích hoạt 1 vụ đã có sẵn — xem tinhBaoCaoKyTuLog).
+    _thRow("— Phục hồi (từ Tạm đình chỉ)", gd => {
+      const sn = `DS phục hồi TĐC ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.phucHoi || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.phucHoi ?? 0 },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    _thRow("— Nhận lại (đã Chuyển đi)", gd => {
+      const sn = `DS nhận lại CĐ ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.nhanLai || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.nhanLai ?? 0 },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
     // Tổng số mới = SUM tất cả VÀO sheets — BC = (khởi tố+phục hồi, lọc kỳ nếu ĐT) + phần còn lại.
     _thRow("Tổng số mới", gd => {
       const gs = _thGs(gd);
       const khoiToSheets = [`DS khởi tố ${gs}`, `DS phục hồi ${gs}`];
       const khacSheets = [
+        `DS phục hồi TĐC ${gs}`, `DS nhận lại CĐ ${gs}`,
         `DS vụ tách ${gs}`,
         ...(gd !== "dieu_tra" ? [`DS chuyển đến ${gs}`] : []),
         ...(gd !== "xet_xu" ? [`DS trả về ${gs}`] : []),
       ];
       const khoiToArr = baoCao[gd].ds.khoiToTrucTiep || [];
-      const khacArr = [...(baoCao[gd].ds.tachVu||[]), ...(baoCao[gd].ds.chuyenDen||[]), ...(baoCao[gd].ds.traVe||[])];
+      const khacArr = [...(baoCao[gd].ds.phucHoi||[]), ...(baoCao[gd].ds.nhanLai||[]), ...(baoCao[gd].ds.tachVu||[]), ...(baoCao[gd].ds.chuyenDen||[]), ...(baoCao[gd].ds.traVe||[])];
       const khoiToBcF = gd === "dieu_tra" ? demBcSheetKy(khoiToSheets, dsKyTenTrongBaoCao) : demBcSheetM(khoiToSheets);
       const khoiToBcR = gd === "dieu_tra" ? bcCountVuArrKy(khoiToArr) : bcCountVuArr(khoiToArr);
       return {
@@ -10080,10 +10211,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // Công thức: Tồn đầu + Vào - Ra = Tồn cuối (chốt)
   // Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ (kyThongKe=null) hoặc lỗi dữ liệu
   {
+    // "DS phục hồi TĐC {gs}"/"DS nhận lại CĐ {gs}" (2026-08-01) — 2 sheet MỚI, KHÁC hẳn "DS phục
+    // hồi {gs}" đã có sẵn (sheet đó lấy dữ liệu từ nguon==="phuc_hoi_dieu_tra", 1 trong 4 nguồn
+    // "Khởi tố mới" chính thức theo mẫu ngành — xem vaoArraysGd ngay dưới). 2 sheet mới này lấy
+    // dữ liệu thật từ sự kiện log `phuc_hoi` (PhucHoiModal, phục hồi vụ Tạm đình chỉ) và
+    // `nhan_lai_chuyen_di` (NhanLaiChuyenDiModal, nhận lại vụ đã Chuyển đi) — xem tinhBaoCaoKyTuLog.
     const VAO_SHEETS_GD = {
-      dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS vụ tách ĐT","DS trả về ĐT"],
-      truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"],
-      xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS vụ tách XX","DS chuyển đến XX"],
+      dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT"],
+      truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"],
+      xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX"],
     };
     const RA_SHEETS_GD = {
       dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
@@ -10101,6 +10237,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       const arrs = [
         (d.khoiToTrucTiep||[]).filter(v => v.nguon !== "phuc_hoi_dieu_tra"),
         (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
+        d.phucHoi||[], d.nhanLai||[],
         d.tachVu||[],
       ];
       if (gd !== "dieu_tra") arrs.push(d.chuyenDen||[]);
@@ -10330,6 +10467,12 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     add(`DS phục hồi ${gs}`,
       (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
       ["Ngày phục hồi"], _ngaySK);
+
+    // Phục hồi vụ Tạm đình chỉ (PhucHoiModal) + Nhận lại vụ đã Chuyển đi (NhanLaiChuyenDiModal) —
+    // 2 sheet MỚI (2026-08-01), KHÁC hẳn "DS phục hồi {gs}" ngay trên (đó là nguồn "Khởi tố mới"
+    // chọn tay lúc TẠO vụ mới, còn đây là sự kiện log thật khi TÁI KÍCH HOẠT 1 vụ đã có sẵn).
+    add(`DS phục hồi TĐC ${gs}`, d.phucHoi||[], ["Ngày phục hồi", "Số QĐ"], _ngaySoQD);
+    add(`DS nhận lại CĐ ${gs}`, d.nhanLai||[], ["Ngày nhận lại", "Số QĐ"], _ngaySoQD);
 
     // Vụ tách ra trong kỳ, đếm vụ tách = số dòng (mỗi dòng là 1 vụ mới xuất hiện)
     add(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);

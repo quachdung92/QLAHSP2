@@ -2,6 +2,81 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## "Nhận lại vụ đã Chuyển đi" + sửa lỗ hổng "Phục hồi" không tính vào báo cáo (2026-08-01, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, CHƯA merge vào `main`, CHƯA deploy)
+
+Theo yêu cầu người dùng: 1 số vụ đã "Chuyển đi" (hoàn thành dạng `chuyen_di` — coi như xong hẳn,
+chuyển sang đơn vị/tỉnh khác) trên thực tế bị **chuyển ngược lại** cho đơn vị này xử lý tiếp. Hệ
+thống trước đây KHÔNG có cách nào chính thức nhận lại — vụ ở `trangThai:"chuyen_di"` chỉ có 3 nút
+(In mã QR/Sửa thông tin/Xoá vụ án), khác "Tạm đình chỉ" đã có sẵn "Phục hồi". Đã lên kế hoạch qua
+`EnterPlanMode` (2 câu hỏi đã hỏi người dùng: giai đoạn nhận lại mặc định = giai đoạn cũ nhưng CHO
+SỬA LẠI; và có sửa luôn 1 lỗ hổng liên quan phát hiện khi audit hay không — người dùng chọn CÓ).
+
+**Phát hiện quan trọng lúc audit**: sự kiện `phuc_hoi` (ghi bởi `PhucHoiModal` khi phục hồi vụ Tạm
+đình chỉ) từ trước tới giờ **KHÔNG hề được `tinhBaoCaoKyTuLog` truy vấn** (thiếu hẳn trong danh sách
+`loaiSuKien` được query) — không tính vào "Tổng thụ lý"/"Tồn cuối kỳ" của kỳ có phục hồi, có thể làm
+"Cân đối số liệu" lệch nhẹ đúng ở kỳ đó. Cũng phát hiện: sheet Excel "DS phục hồi ĐT/TT/XX" đã tồn
+tại sẵn nhưng lấy dữ liệu từ **`nguon === "phuc_hoi_dieu_tra"`** (1 giá trị dropdown chọn tay lúc TẠO
+vụ MỚI, 1 trong 4 nguồn chính thức "Khởi tố mới" theo mẫu ngành B10 mục 3.1) — **HOÀN TOÀN KHÁC**
+sự kiện `phuc_hoi` thật (tái kích hoạt 1 vụ ĐÃ CÓ) — 2 khái niệm trùng tên tiếng Việt nhưng khác cơ
+chế, không được gộp chung sheet.
+
+**Sự kiện log mới `nhan_lai_chuyen_di`** — ghi qua `taoSuKien` (đã có sẵn field `denGiaiDoan` trong
+shape mặc định): `{maVuAn, loaiSuKien:"nhan_lai_chuyen_di", denGiaiDoan:<giai đoạn cán bộ chọn>,
+soQuyetDinh, ngaySuKien, kyThongKe, ghiChu}`.
+
+**Modal mới `NhanLaiChuyenDiModal`** (đặt cạnh `PhucHoiModal`) — theo đúng khuôn mẫu `PhucHoiModal`
+(Số quyết định/Ngày/Ghi chú, hỏi kỳ qua `ModalXacNhanKy`) + THÊM dropdown **"Giai đoạn tiếp tục xử
+lý"** (mặc định = `vuAn.coQuanThuLy` hiện tại — vì "Chuyển đi" không hề đổi field này, xem
+`HoanThanhVuAnModal`). Lưu: `vuan.update({trangThai:"dang_giai_quyet", coQuanThuLy:<giai đoạn
+chọn>, noiChuyenDen:"", soQuyetDinhChuyenDi:""})` + ghi sự kiện mới. Sự kiện `hoan_thanh`
+(hinhThucHoanThanh:"chuyen_di") GỐC GIỮ NGUYÊN trong lịch sử (không xoá — ghi nhận đúng sự thật đã
+từng xảy ra, khác hẳn công cụ sửa sai sót "Xoá hình thức giải quyết"). Nút "↩ Nhận lại vụ" trong
+`ChiTietPanel`, gated `vuAn.trangThai === "chuyen_di"`.
+
+**Sửa `PhucHoiModal`**: thêm `denGiaiDoan: vuAn.coQuanThuLy` vào sự kiện `phuc_hoi` (Phục hồi LUÔN
+ở lại đúng giai đoạn cũ, không cho chọn khác — khác hẳn "Nhận lại chuyển đi").
+
+**Mở rộng `tinhBaoCaoKyTuLog`** — thêm 2 query song song vào nhóm "Vào" (cùng mẫu tachVu/chuyenDen/
+traVe): `phuc_hoi`/`nhan_lai_chuyen_di` lọc theo `denGiaiDoan===gd`. Cộng vào `soMoi.tong` + `bcMoi`
+(nhánh kỳ chưa chốt) + `ds.phucHoi`/`ds.nhanLai` trả về.
+
+**`tinhBieu10`**: cộng `dt/tt/xx.phucHoi`/`.nhanLai` vào `dt_moi`/`tt_moi`/`xx_moi` — CHỈ ảnh hưởng
+C3/C33/C60 "Tổng thụ lý", KHÔNG đụng C6/C7 "Khởi tố mới" (vẫn chỉ dùng riêng `khoiToTrucTiep`) — giữ
+đúng nguyên tắc mẫu ngành B10 chỉ có 4 nguồn cố định cho "Khởi tố mới", không thêm nguồn thứ 5 trái
+phép.
+
+**`xuatBaoCaoThangExcel`**: thêm 2 sheet MỚI mỗi giai đoạn — `"DS phục hồi TĐC {gs}"` (dữ liệu
+`d.phucHoi`) và `"DS nhận lại CĐ {gs}"` (dữ liệu `d.nhanLai`), KHÔNG đụng "DS phục hồi {gs}" đã có
+(khác nguồn dữ liệu). Cập nhật ĐỦ các nơi liệt kê "nhóm sheet Vào" để 2 sheet mới thực sự được cộng
+vào mọi phép tính liên quan (rà bằng grep toàn file, tìm đúng 6 chỗ trước đó chỉ cộng 4/6 nguồn
+"vào" — nếu thiếu bất kỳ chỗ nào, "Cân đối số liệu"/"Tổng thụ lý" B10 sẽ lệch ngay khi có phục hồi/
+nhận lại thật):
+1. `VAO_SHEETS_GD`/`vaoArraysGd` (Cân đối số liệu tự SUM theo sheet, tự động ăn theo).
+2. `DT_VAO`/`TT_VAO`/`XX_VAO` (B10's "Tổng thụ lý" C3/C33/C60, SUMIF theo sheet — **bản riêng, KHÔNG
+   dùng chung với `VAO_SHEETS_GD`**, dễ quên sửa 1 trong 2 nơi).
+3. `BangBaoCaoChiTiet` (bảng xem trước trên màn hình) — thêm 2 dòng mới + sửa "Tổng số mới" `layDs`.
+4. `collectVuIdsFromBaoCao` (gom ID vụ để fetch bị can) — thiếu sẽ làm 1 số nơi tính bị can bị hụt.
+5. `taiTaoTonCuoiKyTheoTDTatCa`'s `moiList` (công cụ "Sửa lại tồn cuối kỳ theo tội danh").
+6. `vuMoiMap` (TK tội danh, cột "Vụ mới") + "Tổng hợp báo cáo" sheet (`khacSheets`/`khacArr` của
+   "Tổng số mới" + 2 dòng `_thRow` mới "— Phục hồi (từ Tạm đình chỉ)"/"— Nhận lại (đã Chuyển đi)").
+`THVao` (dùng bởi "Tổng hợp báo cáo") tự động ăn theo vì derive từ `DT_VAO`/`TT_VAO`/`XX_VAO`; `ALL_VAO`
+(TK tội danh cột B/C) tự động ăn theo tương tự — không cần sửa riêng 2 hằng số này.
+
+**Đã kiểm chứng**: test cô lập mới `test_nhanlai_chuyendi.js` (7 assertion, trích nguyên công thức
+`soMoi.tong`/`tonCuoiKy` từ `tinhBaoCaoKyTuLog`, mô phỏng log event thay vì mock toàn bộ Postgres) —
+xác nhận: vụ Chuyển đi kỳ K1 rồi Nhận lại vào giai đoạn KHÁC ở kỳ K2 → đúng giai đoạn mới nhận đủ
+"vào", giai đoạn cũ KHÔNG bị cộng thừa; Phục hồi (giả lập lỗ hổng cũ) giờ được tính đúng vào kỳ phục
+hồi; không tạo cảnh báo/cộng thừa khi không có sự kiện nào. 7/7 PASS. Compile-check toàn file qua
+`@babel/core`+`@babel/preset-react` — sạch.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** — khu vực "Tổng thụ lý"/"Cân đối số liệu" đã có lịch
+sử NHIỀU bug tinh vi (xem các mục "Bug đã sửa"/"Bug tiếp theo" phía dưới), bắt buộc kiểm chứng thêm
+trước khi merge/deploy: dựng 1 vụ test thật, Chuyển đi rồi Nhận lại vào giai đoạn KHÁC, xuất Excel
+báo cáo tháng xác nhận "Cân đối số liệu" (Chênh lệch = 0, tô xanh) ở cả 2 giai đoạn liên quan, 2
+sheet mới có đúng dòng dữ liệu, dòng "Tổng số mới" ở cả màn hình lẫn "Tổng hợp báo cáo" Excel khớp
+đúng, rồi dọn sạch dữ liệu test. Cũng nên thử riêng 1 vụ Tạm đình chỉ → Phục hồi để xác nhận lỗ hổng
+cũ đã hết (Cân đối số liệu không còn lệch ở kỳ phục hồi).
+
 ## Auto-điền "Trình độ học vấn" ngẫu nhiên có trọng số + cảnh báo "chưa xác nhận" (2026-07-31, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, CHƯA merge vào `main`)
 
 Tiếp theo mục kiểm tra tổng khối "Phân tích bị can mới khởi tố" ngay dưới đây — người dùng xác nhận
