@@ -22,7 +22,8 @@ còn ở trạng thái "chỉ là bản nháp chờ env" nữa.
 Supabase gói Free KHÔNG có backup/point-in-time-recovery tự động. `.github/workflows/
 backup-supabase.yml` tự `pg_dump` schema `public` + `extensions` (đủ 9 bảng nghiệp vụ + `pgcrypto`
 mà `public.vuan`... phụ thuộc qua `gen_random_uuid()` — KHÔNG dump `auth`/`storage`/`realtime`/
-`vault` nội bộ Supabase, không phải dữ liệu nghiệp vụ) mỗi ngày lúc 02:00 UTC, TỰ KIỂM CHỨNG bằng
+`vault` nội bộ Supabase, không phải dữ liệu nghiệp vụ) mỗi ngày lúc 02:00 sáng giờ VN (19:00 UTC),
+TỰ KIỂM CHỨNG bằng
 cách phục hồi thử vào 1 Postgres tạm ngay trong job trước khi mã hoá (GPG, bắt buộc vì repo
 public) + lưu artifact — dump lỗi thì job tự fail, không lưu bản backup hỏng. Giữ 7 bản gần nhất
 (`retention-days: 7`, tự hết hạn, không tích luỹ mãi — dữ liệu hiện ~15k dòng nén chỉ ~0.8MB nên

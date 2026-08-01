@@ -17,7 +17,8 @@ làm việc rủi ro.
 
 **Đã thêm** `.github/workflows/backup-supabase.yml` — chi tiết đầy đủ (cách khôi phục, 2 Secret
 cần thiết) đã ghi trong `supabase/README.md` mục "Backup tự động hàng ngày + cách khôi phục", KHÔNG
-lặp lại ở đây. Tóm tắt: cron `0 2 * * *` (02:00 UTC/9h sáng VN mỗi ngày) + `workflow_dispatch` kèm
+lặp lại ở đây. Tóm tắt: cron `0 19 * * *` (19:00 UTC = 02:00 sáng giờ VN mỗi ngày, đổi từ 9h sáng
+ban đầu theo yêu cầu Dũng — tránh trùng giờ làm việc dù backup chỉ đọc dữ liệu) + `workflow_dispatch` kèm
 input `reason` để bấm tay có ghi chú lý do — `pg_dump` schema `public`+`extensions` (đủ 9 bảng
 nghiệp vụ + `pgcrypto`, KHÔNG dump `auth`/`storage`/`realtime`/`vault` nội bộ Supabase) qua Session
 pooler, **TỰ KIỂM CHỨNG** bằng cách phục hồi thử vào 1 Postgres tạm ngay trong job (dịch vụ
