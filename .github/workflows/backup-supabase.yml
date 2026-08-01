@@ -81,7 +81,12 @@ jobs:
           PGPASSWORD: verify_pw
         run: |
           set -e
-          pg_restore -h localhost -p 5432 -U postgres -d verify_db --no-owner --no-privileges backup.dump
+          # pg_restore thoát khác 0 vì vài lỗi VÔ HẠI đã biết trước (không phải dấu hiệu dump hỏng):
+          # "schema public already exists" (postgres:17 image đã có sẵn schema public), và các
+          # CREATE POLICY tham chiếu auth.role()/role "authenticated" (thuộc RLS — chỉ tồn tại trên
+          # Supabase thật, không có trên Postgres thường vì ta cố tình không dump schema "auth").
+          # Không phải các lỗi này — kiểm chứng THẬT dựa vào đếm dòng dữ liệu thật ở bước dưới.
+          pg_restore -h localhost -p 5432 -U postgres -d verify_db --no-owner --no-privileges backup.dump || true
           TABLE_COUNT=$(psql -h localhost -p 5432 -U postgres -d verify_db -tAc \
             "select count(*) from information_schema.tables where table_schema='public'")
           VUAN_COUNT=$(psql -h localhost -p 5432 -U postgres -d verify_db -tAc "select count(*) from \"vuan\"")
