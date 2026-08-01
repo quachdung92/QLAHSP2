@@ -1,0 +1,36 @@
+name: Giữ Supabase luôn active
+
+# Supabase gói Free tự "pause" (tạm dừng) project nếu không có hoạt động nào khoảng 7 ngày liên
+# tục — lúc đó phải vào Dashboard bấm "Restore" thủ công mới dùng lại được. Workflow này tự gọi 1
+# truy vấn đọc rất nhẹ (limit 1) tới project mỗi 3 ngày, đủ để tính là "có hoạt động", project
+# không bao giờ bị pause nữa — không cần làm gì thêm sau khi file này đã có trên GitHub.
+#
+# An toàn: chỉ ĐỌC (GET), dùng đúng anon key đã có sẵn công khai trong qlahs-sup.html (ai mở
+# DevTools trên qlahsp2.web.app cũng thấy được) — không phải bí mật, không cần cấu hình Secret.
+# Row Level Security (supabase/rls.sql) chặn request chưa đăng nhập trả về dữ liệu thật (luôn ra
+# mảng rỗng), nhưng bản thân request vẫn được Supabase ghi nhận là hoạt động của project.
+
+on:
+  schedule:
+    - cron: "0 3 */3 * *" # 03:00 UTC (10:00 sáng giờ VN), mỗi 3 ngày
+  workflow_dispatch: {} # cho bấm chạy tay từ tab Actions trên GitHub nếu muốn kiểm tra ngay
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST API (qlahsp2)
+        run: |
+          set -e
+          HTTP_STATUS=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
+            "https://eutatszoaseixchvjbtg.supabase.co/rest/v1/vuan?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          echo "HTTP status: $HTTP_STATUS"
+          cat /tmp/resp.json
+          if [ "$HTTP_STATUS" -ge 400 ]; then
+            echo "::error::Supabase trả về lỗi $HTTP_STATUS — kiểm tra lại project còn tồn tại/URL đúng không."
+            exit 1
+          fi
+        env:
+          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1dGF0c3pvYXNlaXhjaHZqYnRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTI0OTEsImV4cCI6MjA5OTk2ODQ5MX0.LIAg6AItnoZak5tt9enw9kAuA-xCxXPOGcOJFs2E0a8
