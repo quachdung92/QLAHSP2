@@ -133,6 +133,20 @@ nhân) × 2 chế độ, xác nhận đúng: "chỉ thiếu" bỏ qua cả ướ
 đúng phần ước tính nhưng TUYỆT ĐỐI không đụng phần đã xác nhận thật — 18/18 PASS tổng cộng (10 cũ +
 8 mới). Compile-check lại toàn file — sạch.
 
+**✅ ĐÃ CHẠY ALTER TABLE thật lên Supabase (2026-08-01, sau khi Dũng cung cấp mật khẩu DB qua
+chat)** — chạy đúng `supabase/add_trinhdo_uoctinh_2026-07-31.sql` qua Session pooler (script Node
+tạm dùng package `pg` cài tạm trong thư mục scratchpad, mật khẩu chỉ truyền qua biến môi trường lúc
+chạy, KHÔNG ghi vào file nào, gỡ sạch script + package ngay sau khi chạy xong — đúng quy tắc
+`supabase/README.md`). Xác nhận qua 2 lớp: (1) `information_schema.columns` qua kết nối Postgres
+trực tiếp — đúng `trinhDoUocTinh boolean not null default false`; (2) `GET /rest/v1/bican?select=
+id,trinhDoUocTinh` qua REST API thật (đường app dùng) — không còn lỗi "column not found", xác nhận
+`NOTIFY pgrst, 'reload schema'` đã có hiệu lực. Từ nay tính năng này an toàn để deploy lên
+`qlahsp2.web.app` (production) — mọi lượt "Thêm/Sửa bị can" (kể cả khi công tắc TẮT) đều ghi kèm
+field `trinhDoUocTinh` nên BẮT BUỘC phải có bước này trước khi deploy, nếu không sẽ chặn đứng việc
+lưu bị can cho 4 cán bộ đang dùng thật (lỗi "Could not find the column... in schema cache").
+**Đã deploy lên `qlahsp2.web.app` qua `./deploy.sh prod` ngay sau khi xác nhận migration thành
+công.**
+
 ## Nhánh `bieu10-kiemtra-tong-phantich-bican` — kiểm tra tổng khối "Phân tích bị can mới khởi tố" (2026-07-31, `qlahs-sup.html`, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: khối C7-C24 (Điều tra / "Phân tích số bị can là CÁ NHÂN mới khởi tố", xem
