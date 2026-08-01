@@ -1043,7 +1043,7 @@ const NHAN_SU_KIEN = {
   ket_luan_dieu_tra: "Kết luận điều tra", ket_luan_dieu_tra_bo_sung: "Kết luận điều tra bổ sung",
   cao_trang: "Cáo trạng", cao_trang_bo_sung: "Cáo trạng bổ sung", hoan_thanh: "Hoàn thành",
   tach_vu: "Tách vụ", nhap_vu: "Nhập vụ", duoc_nhap_vu: "Nhận nhập vụ",
-  giao_nhan_ho_so: "Giao nhận hồ sơ",
+  giao_nhan_ho_so: "Giao nhận hồ sơ", nhan_lai_chuyen_di: "Nhận lại (đã Chuyển đi)",
 };
 
 // Nhãn hiển thị 1 sự kiện log trong "Lịch sử"/"Nhật ký thao tác" — hầu hết tra thẳng NHAN_SU_KIEN,
@@ -1867,6 +1867,109 @@ function tinhNhomTuoi(namSinh, namKTVA) {
   if (tuoi > 30 && tuoi <= 70) return "30_70";
   if (tuoi > 70) return ">70";
   return null;
+}
+
+// ====== Auto-điền Trình độ học vấn (ngẫu nhiên có trọng số) ======
+// Theo yêu cầu người dùng (2026-07-31): field `trinhDo` không có giá trị mặc định (khác `gioiTinh`
+// luôn mặc định "nam") nên thường bị bỏ trống khi nhập liệu thực tế — thay vì để trống (làm B10
+// đếm thiếu ở khối C14-C18), tự chọn 1 giá trị NGẪU NHIÊN có trọng số theo (nhóm tuổi × "mức giáo
+// dục" suy từ tội danh chính), đánh dấu `trinhDoUocTinh: true` để cán bộ biết đây là số DỰ ĐOÁN,
+// sửa lại khi có hồ sơ đầy đủ — xem CLAUDE.md mục "Auto-điền Trình độ học vấn" để biết bối cảnh đầy
+// đủ đã thống nhất với người dùng.
+
+// Bảng phân bố (%) — CHỈ LÀ ĐIỂM KHỞI ĐẦU HỢP LÝ theo mô tả thực tế của người dùng, KHÔNG PHẢI số
+// liệu thống kê chính thức: Tiểu học + Không biết chữ RẤT hiếm ("cả năm chỉ 1-2 trường hợp" — theo
+// đúng phản hồi người dùng), càng lớn tuổi 2 mức này nhích lên chút; "cao" (tội lừa đảo/kinh tế/
+// chức vụ...) đẩy về THPT/ĐH, "thấp" (trộm cắp/cướp giật...) đẩy về THCS. Sửa trực tiếp bảng này
+// nếu cần hiệu chỉnh sau này — không nằm rải rác trong logic.
+const PHAN_BO_TRINH_DO = {
+  "14_16": {
+    cao:        { khong_biet_chu: 0,   tieu_hoc: 1,   thcs: 60, thpt: 39, dh_tro_len: 0 },
+    trung_binh: { khong_biet_chu: 0,   tieu_hoc: 2,   thcs: 70, thpt: 28, dh_tro_len: 0 },
+    thap:       { khong_biet_chu: 0,   tieu_hoc: 3,   thcs: 78, thpt: 19, dh_tro_len: 0 },
+  },
+  "16_18": {
+    cao:        { khong_biet_chu: 0,   tieu_hoc: 1,   thcs: 40, thpt: 55, dh_tro_len: 4 },
+    trung_binh: { khong_biet_chu: 0,   tieu_hoc: 1,   thcs: 48, thpt: 49, dh_tro_len: 2 },
+    thap:       { khong_biet_chu: 0,   tieu_hoc: 2,   thcs: 58, thpt: 40, dh_tro_len: 0 },
+  },
+  "18_30": {
+    cao:        { khong_biet_chu: 0,   tieu_hoc: 0.5, thcs: 20, thpt: 50, dh_tro_len: 29.5 },
+    trung_binh: { khong_biet_chu: 0.2, tieu_hoc: 1,   thcs: 40, thpt: 45, dh_tro_len: 13.8 },
+    thap:       { khong_biet_chu: 0.5, tieu_hoc: 1.5, thcs: 58, thpt: 35, dh_tro_len: 5 },
+  },
+  "30_70": {
+    cao:        { khong_biet_chu: 0,   tieu_hoc: 0.5, thcs: 22, thpt: 48, dh_tro_len: 29.5 },
+    trung_binh: { khong_biet_chu: 0.5, tieu_hoc: 1.5, thcs: 44, thpt: 42, dh_tro_len: 12 },
+    thap:       { khong_biet_chu: 0.7, tieu_hoc: 2,   thcs: 60, thpt: 32, dh_tro_len: 5.3 },
+  },
+  ">70": {
+    cao:        { khong_biet_chu: 0.5, tieu_hoc: 2,   thcs: 30, thpt: 45, dh_tro_len: 22.5 },
+    trung_binh: { khong_biet_chu: 1.5, tieu_hoc: 3.5, thcs: 50, thpt: 37, dh_tro_len: 8 },
+    thap:       { khong_biet_chu: 2,   tieu_hoc: 4,   thcs: 62, thpt: 28, dh_tro_len: 4 },
+  },
+};
+
+// Danh sách từ khoá GỢI Ý (không phải bảng phân loại pháp lý chính thức) để suy "mức giáo dục" từ
+// tên tội danh chính — chỉ dùng để ước lượng thô cho việc random tạm, không ảnh hưởng tội danh/điều
+// luật thật của bị can (giữ nguyên, không bị đụng vào). Khớp theo chuỗi con, không phân biệt hoa/
+// thường. Danh sách dễ bổ sung/sửa sau — không cố gắng làm bảng phân loại pháp lý đầy đủ theo
+// chương BLHS (rủi ro sai sót cao hơn giá trị mang lại, vì đây chỉ là số dự đoán tạm).
+const TU_KHOA_GIAO_DUC_CAO = [
+  "lừa đảo", "lạm dụng tín nhiệm", "tham ô", "nhận hối lộ", "đưa hối lộ", "môi giới hối lộ",
+  "lợi dụng chức vụ", "lạm quyền", "buôn lậu", "trốn thuế", "làm giả", "rửa tiền", "thao túng",
+  "cho vay lãi nặng", "vi phạm quy định về kế toán", "vi phạm quy định về ngân hàng",
+  "vi phạm quy định về hoạt động chứng khoán",
+];
+const TU_KHOA_GIAO_DUC_THAP = [
+  "trộm cắp", "cướp giật", "cướp tài sản", "cưỡng đoạt", "công nhiên chiếm đoạt", "hủy hoại tài sản",
+  "cố ý gây thương tích", "gây rối trật tự công cộng", "đánh bạc", "tổ chức đánh bạc", "chứa chấp",
+  "tiêu thụ tài sản", "chống người thi hành công vụ",
+];
+function layMucGiaoDuc(tenToiDanh) {
+  const s = (tenToiDanh || "").toLowerCase();
+  if (TU_KHOA_GIAO_DUC_CAO.some(k => s.includes(k))) return "cao";
+  if (TU_KHOA_GIAO_DUC_THAP.some(k => s.includes(k))) return "thap";
+  return "trung_binh";
+}
+
+// Công tắc BẬT/TẮT toàn bộ tính năng (2026-07-31, theo yêu cầu người dùng) — MẶC ĐỊNH TẮT, người
+// dùng tự bật ở Cài đặt → Import Excel khi cần. Lưu qua localStorage, đúng quy ước NHẤT QUÁN của
+// mọi "cài đặt" khác trong app (`qlva_blhsMacDinh`, `qlva_danhsach_cotAn`, `qlva_ky_sapxep`...) —
+// KHÔNG có collection/bảng "settings" chung nào trên Postgres, không phải ngoại lệ khi dùng
+// localStorage ở đây. Đọc trực tiếp (không qua React state) ở mọi nơi auto-fill lúc lưu dữ liệu —
+// chỉ cần state React thật ở chính cái công tắc hiển thị trên UI (`useTuDongDienTrinhDo`).
+const KHOA_TU_DONG_DIEN_TRINHDO = "qlva_tudongdien_trinhdo";
+function trinhDoAutoFillDangBat() {
+  return localStorage.getItem(KHOA_TU_DONG_DIEN_TRINHDO) === "on";
+}
+function useTuDongDienTrinhDo() {
+  const [bat, setBatState] = useState(() => trinhDoAutoFillDangBat());
+  const setBat = (v) => { localStorage.setItem(KHOA_TU_DONG_DIEN_TRINHDO, v ? "on" : "off"); setBatState(v); };
+  return [bat, setBat];
+}
+
+// Chọn 1 trinhDo NGẪU NHIÊN có trọng số theo tuổi (bc.namSinh + namKTVA của vụ) + tội danh chính
+// (bc.toiDanh[0]) — CHỈ gọi khi bị can KHÔNG phải pháp nhân (kiểm ở nơi gọi, hàm này không tự lọc).
+// Luôn trả về 1 giá trị hợp lệ (không throw), kể cả khi thiếu Năm sinh (fallback nhóm "30_70", nhóm
+// phổ biến nhất). Gate NGAY ĐẦU hàm bằng `trinhDoAutoFillDangBat()` — khi TẮT, trả về y hệt hành vi
+// TRƯỚC KHI có tính năng này (trinhDo rỗng, không đánh dấu ước tính) — đặt gate ở ĐÚNG 1 chỗ này
+// (không lặp lại ở từng nơi gọi) để không lỡ quên chặn 1 trong 5 điểm gọi hàm này.
+function chonTrinhDoNgauNhien(bc, vu) {
+  if (!trinhDoAutoFillDangBat()) return { trinhDo: "", trinhDoUocTinh: false };
+  const namKTVA = vu?.ngayQdKtva
+    ? new Date(vu.ngayQdKtva.seconds ? vu.ngayQdKtva.seconds * 1000 : vu.ngayQdKtva).getFullYear()
+    : new Date().getFullYear();
+  const nhom = tinhNhomTuoi(bc.namSinh, namKTVA) || "30_70";
+  const muc = layMucGiaoDuc(bc.toiDanh?.[0] || "");
+  const phanBo = PHAN_BO_TRINH_DO[nhom][muc];
+  const tong = Object.values(phanBo).reduce((s, v) => s + v, 0);
+  let r = Math.random() * tong;
+  for (const [trinhDo, trongSo] of Object.entries(phanBo)) {
+    r -= trongSo;
+    if (r <= 0) return { trinhDo, trinhDoUocTinh: true };
+  }
+  return { trinhDo: "thcs", trinhDoUocTinh: true }; // an toàn nếu lệch số thực hiếm gặp (r vẫn > 0)
 }
 
 // ====== Cache/listener Firestore dùng chung ======
@@ -2838,6 +2941,123 @@ function BackfillLoaiKhoiToTool() {
   );
 }
 
+// Điền Trình độ học vấn NGẪU NHIÊN (có trọng số theo tuổi + loại tội danh, xem
+// chonTrinhDoNgauNhien) cho bị can cá nhân đang thiếu field `trinhDo` — field này không có giá trị
+// mặc định (khác gioiTinh) nên hay bị bỏ trống khi nhập liệu thực tế (2026-07-31, theo yêu cầu
+// người dùng). Đánh dấu `trinhDoUocTinh: true` để phân biệt với dữ liệu thật, hiện cảnh báo ở Bảng
+// dữ liệu Excel (tô đỏ + "⚠") và Biểu B10 (ghi chú cuối sheet). An toàn chạy lại nhiều lần — chỉ
+// điền bị can CHƯA có trinhDo, không đụng tới dữ liệu đã có (dù thật hay ước tính từ trước).
+function BackfillTrinhDoTool() {
+  const [state, setState] = useState("idle");
+  const [info, setInfo] = useState("");
+  const [bat, setBat] = useTuDongDienTrinhDo();
+  // Chế độ chạy lại (2026-08-01, theo yêu cầu người dùng) — "chi_thieu" (mặc định, AN TOÀN hơn):
+  // chỉ điền bị can CHƯA có trinhDo, giữ nguyên mọi giá trị đã có (dù là ước tính lần trước hay đã
+  // xác nhận thật). "chay_lai_het": random LẠI cho mọi bị can đang ở trạng thái ƯỚC TÍNH (kể cả đã
+  // có giá trị từ lần chạy trước) — hữu ích khi Dũng vừa chỉnh lại bảng trọng số PHAN_BO_TRINH_DO
+  // và muốn số cũ cập nhật theo bảng mới. CẢ 2 chế độ đều KHÔNG BAO GIỜ đụng tới bị can có
+  // `trinhDoUocTinh === false` (giá trị THẬT do cán bộ tự xác nhận) — an toàn tuyệt đối cho dữ liệu
+  // đã xác nhận, bất kể chọn chế độ nào.
+  const [cheDo, setCheDo] = useState("chi_thieu");
+
+  const run = async () => {
+    if (!bat) return; // an toàn — nút đã bị disabled, chặn thêm 1 lớp phòng gọi trực tiếp
+    setState("loading"); setInfo("Đang tải dữ liệu...");
+    try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const [bcSnap, vuSnap] = await Promise.all([
+        db.collection("bican").get(),
+        db.collection("vuan").get(),
+      ]);
+      const vuById = new Map(vuSnap.docs.map(d => [d.id, d.data()]));
+
+      let soCapNhat = 0;
+      // BATCH_SIZE = 100 — cùng lý do BackfillDieuLuatBCTool/BackfillLoaiKhoiToTool ngay trên: tránh
+      // statement_timeout=8s do trigger bican_sync_vuan_trg khi update nhiều "bican" liên tiếp.
+      const BATCH_SIZE = 100;
+      let batch = db.batch(); let batchCount = 0;
+      const commitNeu = async () => { if (batchCount >= BATCH_SIZE) { await batch.commit(); batch = db.batch(); batchCount = 0; } };
+
+      for (const doc of bcSnap.docs) {
+        const bc = doc.data();
+        if (bc.loaiBiCan === "phap_nhan") continue; // pháp nhân — luôn bỏ qua
+        const canXuLy = cheDo === "chay_lai_het"
+          ? (!bc.trinhDo || bc.trinhDoUocTinh === true) // chưa có HOẶC đang là ước tính — random lại
+          : !bc.trinhDo;                                // chỉ bị can CHƯA có gì cả
+        if (!canXuLy) continue; // đã có giá trị THẬT (trinhDoUocTinh===false) — không đụng tới
+        const vu = vuById.get(bc.maVuAn) || {};
+        const { trinhDo, trinhDoUocTinh } = chonTrinhDoNgauNhien(bc, vu);
+        batch.update(doc.ref, { trinhDo, trinhDoUocTinh, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+        soCapNhat++; batchCount++;
+        await commitNeu();
+      }
+      if (batchCount > 0) await batch.commit();
+
+      setState("done");
+      setInfo(soCapNhat === 0
+        ? (cheDo === "chay_lai_het"
+            ? "Không có bị can nào đang ở trạng thái ước tính để random lại."
+            : "Không có bị can nào thiếu Trình độ — không cần điền gì thêm.")
+        : `Đã điền Trình độ (ước tính, theo tuổi + loại tội danh) cho ${soCapNhat} bị can` +
+          (cheDo === "chay_lai_het" ? " (đã random LẠI toàn bộ bị can đang ước tính)" : "") +
+          `. Vào "Bảng dữ liệu" (Cài đặt) hoặc xuất Biểu B10 để xem/sửa lại khi có hồ sơ đầy đủ — ` +
+          `các bị can này sẽ tô đỏ + cảnh báo "⚠" ở cột Trình độ.`);
+    } catch (err) { setState("error"); setInfo("Lỗi: " + err.message); }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Tự điền Trình độ học vấn còn thiếu (ước tính)</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        "Trình độ" không có giá trị mặc định (khác Giới tính luôn mặc định "Nam") nên hay bị bỏ
+        trống khi nhập liệu thực tế. Công cụ này điền NGẪU NHIÊN có trọng số (theo độ tuổi + loại
+        tội danh chính) cho bị can cá nhân đang thiếu, đánh dấu rõ "chưa xác nhận" để tự sửa lại sau
+        khi có hồ sơ đầy đủ. KHÔNG áp dụng cho pháp nhân, và KHÔNG BAO GIỜ đụng tới bị can đã được
+        cán bộ TỰ XÁC NHẬN Trình độ thật (dù chọn chế độ nào bên dưới).
+      </p>
+      {/* Công tắc BẬT/TẮT toàn bộ tính năng (2026-07-31, theo yêu cầu người dùng) — MẶC ĐỊNH TẮT.
+          Khi tắt, form Thêm/Sửa bị can + Import Excel giữ nguyên hành vi cũ (để trống nếu thiếu),
+          và nút "Chạy điền tự động" bên dưới bị khoá — xem chonTrinhDoNgauNhien/trinhDoAutoFillDangBat. */}
+      <div className="flex items-center gap-2 mb-3 p-2 bg-slate-50 rounded-lg border border-slate-200">
+        <CongTac checked={bat} onChange={setBat} nhan="Bật tính năng tự động điền Trình độ học vấn" />
+      </div>
+      {!bat && (
+        <div className="text-xs rounded p-2 mb-3 bg-slate-100 text-slate-500">
+          Tính năng đang TẮT — bật công tắc ở trên trước khi chạy. Khi tắt, ô Trình độ để trống lúc
+          thiếu dữ liệu vẫn giữ nguyên như trước (không tự điền).
+        </div>
+      )}
+      {/* 2 chế độ chạy (2026-08-01, theo yêu cầu người dùng) — mặc định "chi_thieu" (an toàn hơn,
+          giữ nguyên kết quả random lần trước), "chay_lai_het" dùng khi vừa chỉnh bảng trọng số
+          PHAN_BO_TRINH_DO và muốn số ước tính cũ cập nhật theo bảng mới. */}
+      <div className="mb-3 space-y-1.5 text-sm text-slate-700">
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input type="radio" name="trinhdo-chedo" className="mt-0.5" checked={cheDo === "chi_thieu"}
+                 onChange={() => setCheDo("chi_thieu")} />
+          <span>Chỉ điền bị can <b>còn thiếu</b> — giữ nguyên kết quả đã điền từ lần chạy trước</span>
+        </label>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input type="radio" name="trinhdo-chedo" className="mt-0.5" checked={cheDo === "chay_lai_het"}
+                 onChange={() => setCheDo("chay_lai_het")} />
+          <span>Chạy lại <b>toàn bộ</b> — random LẠI mọi bị can đang ở trạng thái ước tính (kể cả đã
+            điền từ trước); không đụng bị can đã xác nhận Trình độ thật</span>
+        </label>
+      </div>
+      {info && (
+        <div className={`text-sm rounded p-2 mb-3 ${state === "error" ? "bg-red-50 text-red-700" : state === "done" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
+          {info}
+        </div>
+      )}
+      <button onClick={run} disabled={state === "loading" || !bat}
+              title={!bat ? "Bật công tắc ở trên trước khi chạy" : ""}
+              className="px-3 py-1.5 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
+        {state === "loading" ? "Đang chạy..." : "Chạy điền tự động"}
+      </button>
+    </div>
+  );
+}
+
 // Điền/sửa soBiCan/biCanDaiDien (tomTatBiCan) trên toàn bộ vuan hiện có — cần cho dữ liệu TẠO
 // TRƯỚC khi có tính năng này (Tối ưu Firestore Đợt 3, 2026-07-18); vụ tạo/sửa bị can sau đó đã tự
 // có 2 field này qua chính các form/công cụ ghi bình thường. An toàn chạy lại nhiều lần (idempotent
@@ -3411,11 +3631,15 @@ function ImportExcelModule() {
           // fallback sang Điều luật cấp vụ (v.dieuLuat, cột Excel riêng) nếu ô Tội danh bỏ trống
           // hoàn toàn — dữ liệu import ra chuẩn ngay, không còn phải chạy lại "Chuẩn hóa" sau.
           const ket = chuanHoaMotToiDanh(bc.toiDanh, "", v.dieuLuat, dmByTen, dmByDieu);
+          // Mẫu Import Excel không có cột Trình độ học vấn — luôn tự điền ước tính (bị can import
+          // luôn là cá nhân, xem loaiBiCan: "ca_nhan" hardcode ngay dưới, không cần lọc pháp nhân).
+          const tdUT = chonTrinhDoNgauNhien({ namSinh: bc.namSinh, toiDanh: [ket.ten || bc.toiDanh || ""] }, v);
           batch.set(bcRef, {
             maVuAn: maNoiSinh, hoTen: bc.hoTen, namSinh: bc.namSinh,
             gioiTinh: bc.gioiTinh, toiDanh: ket.ten ? [ket.ten] : [""], dieuLuatBC: [ket.dieuLuat || ""],
             dangVien: bc.dangVien, dangVienGiuChucVu: false,
-            danToc: bc.danToc, quocTich: "Việt Nam", trinhDo: "", taiPham: "khong",
+            danToc: bc.danToc, quocTich: "Việt Nam",
+            trinhDo: tdUT.trinhDo, trinhDoUocTinh: tdUT.trinhDoUocTinh, taiPham: "khong",
             loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
             diaChi: bc.diaChi, bienPhapNganChan: bc.bienPhapNganChan, hanTamGiam: bc.hanTamGiam,
             ngayKhoiTo: v.ngayQdKtva, loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
@@ -3677,6 +3901,7 @@ function ImportExcelModule() {
       <BackfillDieuLuatBCTool />
       <CapNhatDieuLuatTuFileTool />
       <BackfillLoaiKhoiToTool />
+      <BackfillTrinhDoTool />
       <BackfillTomTatBiCanTool />
       <BackfillNgayQuyetDinhGiaoNhanTool />
       <TaiTaoTonTheoTDTool />
@@ -3946,8 +4171,14 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
       const nguoiThucHien = auth.currentUser?.email || "";
       const batch = db.batch();
       batch.update(db.collection("vuan").doc(vuAn.id), { trangThai: "dang_giai_quyet", ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      // denGiaiDoan (2026-08-01, sửa lỗ hổng phát hiện khi audit "Nhận lại vụ chuyển đi") — Phục
+      // hồi LUÔN ở lại đúng giai đoạn cũ (coQuanThuLy không đổi, không cho chọn khác), nhưng trước
+      // đây sự kiện "phuc_hoi" không hề gắn denGiaiDoan nên tinhBaoCaoKyTuLog không truy vấn được,
+      // khiến sự kiện phục hồi KHÔNG tính vào "Tổng thụ lý"/"Tồn cuối kỳ" của kỳ phục hồi — có thể
+      // làm "Cân đối số liệu" lệch nhẹ đúng ở kỳ đó. Thêm field còn thiếu, không đổi hành vi nào
+      // khác của modal này.
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
-        maVuAn: vuAn.id, loaiSuKien: "phuc_hoi", soQuyetDinh: soQuyetDinh.trim(),
+        maVuAn: vuAn.id, loaiSuKien: "phuc_hoi", denGiaiDoan: vuAn.coQuanThuLy, soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
@@ -3961,6 +4192,71 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
       <label className="text-xs text-slate-500 block mb-1">Ngày phục hồi</label>
       <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định phục hồi điều tra</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+// "Nhận lại vụ đã Chuyển đi" (2026-08-01) — vụ ở trangThai="chuyen_di" bị chuyển ngược lại cho đơn
+// vị này xử lý tiếp. KHÁC PhucHoiModal ở trên (luôn về đúng giai đoạn cũ, không cho chọn) — modal
+// này CHO CHỌN LẠI giai đoạn tiếp nhận (mặc định = coQuanThuLy hiện tại, vì "Chuyển đi" không hề
+// đổi field này — xem HoanThanhVuAnModal, hinhThuc="chuyen_di" không cập nhật coQuanThuLy) vì thực
+// tế nhận lại có thể vào giai đoạn khác lúc chuyển đi. Ghi sự kiện loaiSuKien="nhan_lai_chuyen_di"
+// (denGiaiDoan=giai đoạn chọn) để tinhBaoCaoKyTuLog tính đúng vào "Tổng thụ lý"/"Tồn cuối kỳ" của
+// giai đoạn đó — KHÔNG xoá sự kiện hoan_thanh(chuyen_di) gốc (giữ nguyên làm lịch sử, khác hẳn công
+// cụ sửa sai sót "Xoá hình thức giải quyết").
+function NhanLaiChuyenDiModal({ vuAn, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [giaiDoan, setGiaiDoan] = useState(vuAn.coQuanThuLy || "dieu_tra");
+  const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+
+  const luu = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày nhận lại."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), {
+        trangThai: "dang_giai_quyet", coQuanThuLy: giaiDoan,
+        noiChuyenDen: "", soQuyetDinhChuyenDi: "",
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "nhan_lai_chuyen_di", denGiaiDoan: giaiDoan,
+        soQuyetDinh: soQuyetDinh.trim(), ngaySuKien: fromInputDate(ngay), kyThongKe: kyId,
+        ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+      onXong();
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Nhận lại vụ án (đã Chuyển đi)">
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <label className="text-xs text-slate-500 block mb-1">Giai đoạn tiếp tục xử lý</label>
+      <select value={giaiDoan} onChange={e => setGiaiDoan(e.target.value)} className={oInput + " mb-3"}>
+        {THU_TU_GIAI_DOAN.map(gd => <option key={gd} value={gd}>{NHAN_GIAI_DOAN[gd]}</option>)}
+      </select>
+      <p className="text-xs text-slate-400 -mt-2 mb-3">
+        Mặc định là giai đoạn vụ đang có sẵn ({NHAN_GIAI_DOAN[vuAn.coQuanThuLy] || vuAn.coQuanThuLy}) —
+        "Chuyển đi" không đổi giai đoạn, đổi lại ở đây nếu thực tế nhận về khác đi.
+      </p>
+      <label className="text-xs text-slate-500 block mb-1">Ngày nhận lại</label>
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Số quyết định tiếp nhận lại</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
@@ -4768,13 +5064,23 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         const ngayKT = bc.ngayKhoiTo ? fromInputDate(bc.ngayKhoiTo) : null;
         const toiDanhSach = bc.toiDanh.map(s => s.trim()).filter(Boolean);
         const dieuLuatBCSach = toiDanhSach.map((_, ti) => (bc.dieuLuatBC || [])[ti] || "");
+        // Trình độ để trống (và không phải pháp nhân) → tự điền ước tính thay vì lưu rỗng.
+        let trinhDoFinal = bc.trinhDo || "", trinhDoUocTinhFinal = false;
+        if (!trinhDoFinal && bc.loaiBiCan !== "phap_nhan") {
+          const tdUT = chonTrinhDoNgauNhien(
+            { namSinh: bc.namSinh ? Number(bc.namSinh) : null, toiDanh: toiDanhSach },
+            { ngayQdKtva: ngayQd },
+          );
+          trinhDoFinal = tdUT.trinhDo;
+          trinhDoUocTinhFinal = true;
+        }
         batch.set(bcRef, {
           maVuAn: maNoiSinh, hoTen: bc.hoTen.trim(), namSinh: bc.namSinh ? Number(bc.namSinh) : null,
           gioiTinh: bc.gioiTinh, toiDanh: toiDanhSach.length ? toiDanhSach : [""],
           dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
           dangVien: bc.dangVien, dangVienGiuChucVu: bc.dangVien === "co" ? !!bc.dangVienGiuChucVu : false,
           danToc: bc.danToc.trim() || "Kinh", quocTich: bc.quocTich.trim() || "Việt Nam",
-          trinhDo: bc.trinhDo || "", taiPham: bc.taiPham || "khong",
+          trinhDo: trinhDoFinal, trinhDoUocTinh: trinhDoUocTinhFinal, taiPham: bc.taiPham || "khong",
           loaiBiCan: bc.loaiBiCan || "ca_nhan",
           tenPhapNhan: bc.loaiBiCan === "phap_nhan" ? bc.tenPhapNhan.trim() : "",
           maSoThue: bc.loaiBiCan === "phap_nhan" ? bc.maSoThue.trim() : "",
@@ -5392,6 +5698,10 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
   const [dangVien, setDangVien] = useState(biCan.dangVien || "khong");
   const [dangVienGiuChucVu, setDangVienGiuChucVu] = useState(!!biCan.dangVienGiuChucVu);
   const [trinhDo, setTrinhDo] = useState(biCan.trinhDo || "");
+  // Chỉ bật khi cán bộ THẬT SỰ tương tác với dropdown Trình độ trong phiên sửa này — dùng để phân
+  // biệt "đang hiện giá trị ước tính cũ chưa đụng tới" (giữ nguyên trinhDoUocTinh) với "vừa xác
+  // nhận/sửa lại giá trị" (trinhDoUocTinh=false) — xem `luu()`.
+  const [trinhDoDaSua, setTrinhDoDaSua] = useState(false);
   const [taiPham, setTaiPham] = useState(biCan.taiPham || "khong");
   const [loaiBiCan, setLoaiBiCan] = useState(biCan.loaiBiCan || "ca_nhan");
   const [tenPhapNhan, setTenPhapNhan] = useState(biCan.tenPhapNhan || "");
@@ -5421,11 +5731,22 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
       const nguoiThucHien = auth.currentUser?.email || "";
       const toiDanhSach = toiDanh.map(s => s.trim()).filter(Boolean);
       const dieuLuatBCSach = toiDanhSach.map((_, i) => dieuLuatBC[i] || "");
+      // Trình độ: nếu để trống lúc lưu (và không phải pháp nhân) thì tự điền ước tính thay vì lưu
+      // rỗng; nếu đã có giá trị VÀ cán bộ vừa tự tay chọn trong phiên này thì coi là đã xác nhận
+      // thật (trinhDoUocTinh=false); nếu có giá trị nhưng KHÔNG đụng tới (giá trị cũ) thì giữ
+      // nguyên cờ ước tính đã có từ trước.
+      let trinhDoFinal = trinhDo;
+      let trinhDoUocTinhFinal = trinhDoDaSua ? false : (biCan.trinhDoUocTinh ?? false);
+      if (!trinhDoFinal && loaiBiCan !== "phap_nhan") {
+        const tdUT = chonTrinhDoNgauNhien({ namSinh: namSinh ? Number(namSinh) : null, toiDanh: toiDanhSach }, vuAn);
+        trinhDoFinal = tdUT.trinhDo;
+        trinhDoUocTinhFinal = true;
+      }
       await db.collection("bican").doc(biCan.id).update({
         hoTen: hoTen.trim(), namSinh: namSinh ? Number(namSinh) : null, gioiTinh,
         danToc: danToc.trim() || "Kinh", quocTich: quocTich.trim() || "Việt Nam",
         dangVien, dangVienGiuChucVu: dangVien === "co" ? dangVienGiuChucVu : false,
-        trinhDo: trinhDo || "", taiPham: taiPham || "khong",
+        trinhDo: trinhDoFinal, trinhDoUocTinh: trinhDoUocTinhFinal, taiPham: taiPham || "khong",
         loaiBiCan: loaiBiCan || "ca_nhan",
         tenPhapNhan: loaiBiCan === "phap_nhan" ? tenPhapNhan.trim() : "",
         maSoThue: loaiBiCan === "phap_nhan" ? maSoThue.trim() : "",
@@ -5465,10 +5786,13 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         <Truong nhan="Dân tộc"><input value={danToc} onChange={e => setDanToc(e.target.value)} className={oInput} /></Truong>
         <Truong nhan="Quốc tịch"><input value={quocTich} onChange={e => setQuocTich(e.target.value)} className={oInput} /></Truong>
         <Truong nhan="Trình độ">
-          <select value={trinhDo} onChange={e => setTrinhDo(e.target.value)} className={oInput}>
+          <select value={trinhDo} onChange={e => { setTrinhDo(e.target.value); setTrinhDoDaSua(true); }} className={oInput}>
             <option value="">— chưa rõ —</option>
             {Object.entries(NHAN_TRINH_DO).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
           </select>
+          {biCan.trinhDoUocTinh && !trinhDoDaSua && (
+            <p className="text-xs text-amber-600 mt-1">⚠ Dự đoán tự động, chưa xác nhận.</p>
+          )}
         </Truong>
         <Truong nhan="Tái phạm">
           <select value={taiPham} onChange={e => setTaiPham(e.target.value)} className={oInput}>
@@ -5592,6 +5916,13 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
       const toiDanhSach = toiDanh.map(s => s.trim()).filter(Boolean);
       const dieuLuatBCSach = toiDanhSach.map((_, ti) => (dieuLuatBC)[ti] || "");
       const ngayKT = ngayKhoiTo ? fromInputDate(ngayKhoiTo) : null;
+      // Trình độ để trống (và không phải pháp nhân) → tự điền ước tính thay vì lưu rỗng.
+      let trinhDoFinal = trinhDo, trinhDoUocTinhFinal = false;
+      if (!trinhDoFinal && loaiBiCan !== "phap_nhan") {
+        const tdUT = chonTrinhDoNgauNhien({ namSinh: namSinh ? Number(namSinh) : null, toiDanh: toiDanhSach }, vuAn);
+        trinhDoFinal = tdUT.trinhDo;
+        trinhDoUocTinhFinal = true;
+      }
 
       const bcRef = db.collection("bican").doc();
       const batch = db.batch();
@@ -5601,7 +5932,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
         dangVien, dangVienGiuChucVu: dangVien === "co" ? dangVienGiuChucVu : false,
         danToc: danToc.trim() || "Kinh", quocTich: quocTich.trim() || "Việt Nam",
-        trinhDo: trinhDo || "", taiPham: taiPham || "khong",
+        trinhDo: trinhDoFinal, trinhDoUocTinh: trinhDoUocTinhFinal, taiPham: taiPham || "khong",
         loaiBiCan: loaiBiCan || "ca_nhan",
         tenPhapNhan: loaiBiCan === "phap_nhan" ? tenPhapNhan.trim() : "",
         maSoThue: loaiBiCan === "phap_nhan" ? maSoThue.trim() : "",
@@ -6583,6 +6914,16 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
             {vuAn.trangThai === "tam_dinh_chi" && (
               <NutHanhDong nhan="Phục hồi" onClick={() => setModalMo("phuc_hoi")} />
             )}
+            {/* "Nhận lại vụ chuyển đi" (2026-08-01) — 1 số vụ đã "Chuyển đi" (coi như xong, chuyển
+                hẳn sang đơn vị khác) trên thực tế bị chuyển NGƯỢC LẠI cho đơn vị này. Trước đây
+                KHÔNG có cách nào chính thức nhận lại (chỉ có "Xoá hình thức giải quyết" — công cụ
+                sửa sai sót, không ghi log nghiệp vụ mới, không hỏi kỳ). Khác "Phục hồi" ở trên (luôn
+                về đúng giai đoạn cũ, không cho chọn) — modal này CHO CHỌN LẠI giai đoạn vì "Chuyển
+                đi" là ra khỏi hệ thống hẳn, giai đoạn tiếp nhận lại có thể khác giai đoạn lúc chuyển
+                đi tuỳ thực tế. Xem NhanLaiChuyenDiModal. */}
+            {vuAn.trangThai === "chuyen_di" && (
+              <NutHanhDong nhan="↩ Nhận lại vụ" onClick={() => setModalMo("nhan_lai_chuyen_di")} />
+            )}
             {/* Sửa lỗi chọn NHẦM hình thức giải quyết (VD "Đã xét xử" nhưng đúng ra là "Tạm đình
                 chỉ") — chỉ hiện cho 5 trạng thái do "Hoàn thành vụ án" tạo ra (FIELD_SO_QD_HOAN_THANH
                 có key tương ứng), KHÔNG áp dụng cho "Đã nhập vào vụ khác" (khác luồng, không có
@@ -6743,6 +7084,9 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
       )}
       {modalMo === "phuc_hoi" && (
         <PhucHoiModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {modalMo === "nhan_lai_chuyen_di" && (
+        <NhanLaiChuyenDiModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
       )}
       {modalMo === "hoan_thanh" && (
         <HoanThanhVuAnModal vuAnId={vuAn.id} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
@@ -7479,11 +7823,18 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     //     hồ sơ yêu cầu điều tra bổ sung).
     // Sự kiện khoi_to_vu/tach_vu tạo trước khi sửa công thức này không có denGiaiDoan (null) nên
     // sẽ không khớp where nào — cần backfill 1 lần cho dữ liệu cũ (xem ghi chú hạ tầng).
-    const [khoiToTrucTiepSnap, tachVuSnap, chuyenDenSnap, traVeSnap] = await Promise.all([
+    // phucHoiSnap/nhanLaiSnap (2026-08-01) — 2 sự kiện "vào" bổ sung, cùng mẫu tachVu/chuyenDen/
+    // traVe ở trên: "phuc_hoi" (PhucHoiModal, phục hồi vụ Tạm đình chỉ — trước đây KHÔNG hề được
+    // truy vấn ở đây, khiến kỳ có phục hồi thiếu "vào" tương ứng, Cân đối số liệu có thể lệch nhẹ)
+    // và "nhan_lai_chuyen_di" (NhanLaiChuyenDiModal, nhận lại vụ đã Chuyển đi — sự kiện HOÀN TOÀN
+    // MỚI). Cả 2 đều lọc theo denGiaiDoan như tachVu/chuyenDen/traVe.
+    const [khoiToTrucTiepSnap, tachVuSnap, chuyenDenSnap, traVeSnap, phucHoiSnap, nhanLaiSnap] = await Promise.all([
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "khoi_to_vu").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "tach_vu").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "chuyen_giai_doan").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "tra_ho_so").where("denGiaiDoan", "==", gd).get(),
+      db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "phuc_hoi").where("denGiaiDoan", "==", gd).get(),
+      db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "nhan_lai_chuyen_di").where("denGiaiDoan", "==", gd).get(),
     ]);
 
     const nguonDem = { an_khoi_to_moi: 0, tin_bao_khoi_to_len: 0, an_noi_khac_chuyen_den: 0, phuc_hoi_dieu_tra: 0 };
@@ -7496,8 +7847,10 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     // khoi_to_vu đó ĐÃ được thể hiện qua 4 dòng nguồn (án khởi tố mới/tin báo/...) ở trên rồi,
     // hiện thêm 1 dòng tổng riêng sẽ trùng lặp số liệu (nguon vẫn cộng đủ vào soMoi.tong).
     const soMoi = {
-      tong: khoiToTrucTiepSnap.size + tachVuSnap.size + chuyenDenSnap.size + traVeSnap.size,
+      tong: khoiToTrucTiepSnap.size + tachVuSnap.size + chuyenDenSnap.size + traVeSnap.size
+          + phucHoiSnap.size + nhanLaiSnap.size,
       chuyenDenTu: chuyenDenSnap.size, traVeTu: traVeSnap.size, tachVu: tachVuSnap.size,
+      phucHoi: phucHoiSnap.size, nhanLai: nhanLaiSnap.size,
       ...(gd === "dieu_tra" ? nguonDem : { khoiTaoTrucTiep: khoiToTrucTiepSnap.size }),
     };
 
@@ -7544,6 +7897,8 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     const dsTachVuArr = await vuAnTuLogDocs(tachVuSnap.docs);
     const dsChuyenDenArr = await vuAnTuLogDocs(chuyenDenSnap.docs);
     const dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs);
+    const dsPhucHoiArr = await vuAnTuLogDocs(phucHoiSnap.docs);
+    const dsNhanLaiArr = await vuAnTuLogDocs(nhanLaiSnap.docs);
     const dsChuyenDiArr = await vuAnTuLogDocs(chuyenDi.docs);
     const dsTraDiArr = await vuAnTuLogDocs(traDi.docs);
 
@@ -7567,7 +7922,8 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       const soGiaiQuyetVu = chuyenDi.size + traDi.size
         + Object.values(hoanThanhTheoGD).reduce((s, n) => s + n, 0) + soNhapVu;
       const bcMoi = tongBiCan(dsKhoiToTrucTiep) + tongBiCan(dsTachVuArr)
-        + tongBiCan(dsChuyenDenArr) + tongBiCan(dsTraVeArr);
+        + tongBiCan(dsChuyenDenArr) + tongBiCan(dsTraVeArr)
+        + tongBiCan(dsPhucHoiArr) + tongBiCan(dsNhanLaiArr);
       const bcGiaiQuyet = tongBiCan(dsChuyenDiArr) + tongBiCan(dsTraDiArr)
         + Object.values(dsHoanThanhTheoGD).reduce((s, arr) => s + tongBiCan(arr), 0)
         + tongBiCan(dsNhapVu);
@@ -7586,6 +7942,8 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
         tachVu: dsTachVuArr,
         chuyenDen: dsChuyenDenArr,
         traVe: dsTraVeArr,
+        phucHoi: dsPhucHoiArr,
+        nhanLai: dsNhanLaiArr,
         chuyenDi: dsChuyenDiArr,
         traDi: dsTraDiArr,
         hoanThanh: dsHoanThanhTheoGD,
@@ -8237,9 +8595,15 @@ function BangBaoCaoChiTiet({ baoCao }) {
             <H nhan="— Vụ tách ra (từ vụ khác, tách trong kỳ này)"
               lay={b => b.soMoi.tachVu}
               layDs={b => b.ds?.tachVu} />
+            <H nhan="— Phục hồi (từ Tạm đình chỉ)"
+              lay={b => b.soMoi.phucHoi}
+              layDs={b => b.ds?.phucHoi} />
+            <H nhan="— Nhận lại (đã Chuyển đi)"
+              lay={b => b.soMoi.nhanLai}
+              layDs={b => b.ds?.nhanLai} />
             <H nhan="Tổng số mới"
               lay={b => b.soMoi.tong}
-              layDs={b => [...(b.ds?.khoiToTrucTiep||[]), ...(b.ds?.tachVu||[]), ...(b.ds?.chuyenDen||[]), ...(b.ds?.traVe||[])]}
+              layDs={b => [...(b.ds?.khoiToTrucTiep||[]), ...(b.ds?.tachVu||[]), ...(b.ds?.chuyenDen||[]), ...(b.ds?.traVe||[]), ...(b.ds?.phucHoi||[]), ...(b.ds?.nhanLai||[])]}
               damNet />
             <HangBaoCaoTieuDe nhan="Đã giải quyết / ra khỏi giai đoạn" />
             <H nhan="— Chuyển giai đoạn (kết thúc giai đoạn này)" lay={b => b.chuyenDi} layDs={b => b.ds?.chuyenDi} />
@@ -8271,7 +8635,7 @@ function collectVuIdsFromBaoCao(baoCao) {
   const ids = new Set();
   for (const gd of THU_TU_GIAI_DOAN) {
     const d = baoCao[gd]?.ds || {};
-    ["khoiToTrucTiep","tachVu","chuyenDen","traVe","chuyenDi","traDi","nhapVu","tonHienTai"]
+    ["khoiToTrucTiep","tachVu","chuyenDen","traVe","phucHoi","nhanLai","chuyenDi","traDi","nhapVu","tonHienTai"]
       .forEach(k => (d[k] || []).forEach(v => ids.add(v.id)));
     for (const ht of HOAN_THANH_TRUONG_TONG) (d.hoanThanh?.[ht] || []).forEach(v => ids.add(v.id));
   }
@@ -8481,6 +8845,20 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     return result;
   };
 
+  // Giống bcCoD nhưng KHÔNG lọc theo D — mọi bị can của mọi vụ trong vuArr, kèm _namKTVA. Dùng cho
+  // audit tổng hợp CẢ NĂM/CẢ KỲ không phân mảnh theo từng tội danh (xem khối kiểm tra "Phân tích
+  // bị can mới khởi tố" ở cuối hàm) — bcCoD không dùng được ở đó vì nó luôn cần biết D trước.
+  const bcTatCa = (vuArr) => {
+    const result = [];
+    for (const vu of vuArr) {
+      const nk = vu.ngayQdKtva
+        ? new Date(vu.ngayQdKtva.seconds ? vu.ngayQdKtva.seconds * 1000 : vu.ngayQdKtva).getFullYear()
+        : namKy;
+      for (const bc of (biCanByVu[vu.id] || [])) result.push({ ...bc, _namKTVA: nk });
+    }
+    return result;
+  };
+
   const demTuoi = (bcArr, nhom) =>
     bcArr.filter(bc => bc.loaiBiCan !== "phap_nhan" && tinhNhomTuoi(bc.namSinh, bc._namKTVA) === nhom).length;
   const demField = (bcArr, field, val) =>
@@ -8525,9 +8903,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const thuTu = dm?.thuTuHienThi ?? 10000;
 
     const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds, xx = baoCao.xet_xu.ds;
-    const dt_moi = [...(dt.khoiToTrucTiep||[]),...(dt.tachVu||[]),...(dt.chuyenDen||[]),...(dt.traVe||[])];
-    const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...(tt.chuyenDen||[]),...(tt.traVe||[])];
-    const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...(xx.chuyenDen||[]),...(xx.traVe||[])];
+    // + dt/tt/xx.phucHoi/nhanLai (2026-08-01) — 2 nguồn "vào" bổ sung (Phục hồi TĐC + Nhận lại vụ
+    // Chuyển đi, xem tinhBaoCaoKyTuLog), chỉ ảnh hưởng C3/C33/C60 "Tổng thụ lý" qua *_moi ở đây —
+    // KHÔNG đụng C6/C7 "Khởi tố mới" (vẫn chỉ dùng riêng dt.khoiToTrucTiep, xem dưới), giữ đúng 4
+    // nguồn cố định theo mẫu ngành B10 (bieu_B10_mo_ta.md mục 3.1).
+    const dt_moi = [...(dt.khoiToTrucTiep||[]),...(dt.tachVu||[]),...(dt.chuyenDen||[]),...(dt.traVe||[]),...(dt.phucHoi||[]),...(dt.nhanLai||[])];
+    const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...(tt.chuyenDen||[]),...(tt.traVe||[]),...(tt.phucHoi||[]),...(tt.nhanLai||[])];
+    const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...(xx.chuyenDen||[]),...(xx.traVe||[]),...(xx.phucHoi||[]),...(xx.nhanLai||[])];
 
     // ── Tồn kỳ trước / kỳ này ──
     // Tồn kỳ này: dùng snapshot kyTonTD khi đã chốt (đúng thời điểm). Kỳ CHƯA CHỐT (đang xem
@@ -8752,6 +9134,65 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // Lệch dương (tongTheoTD > tonThucTe): đúng thiết kế, không cảnh báo
   }
 
+  // ── Kiểm tra tổng các khối "Phân tích bị can là cá nhân..." (Điều tra C7-C24 VÀ Truy tố C43-C52)
+  // — mỗi cột con (nhóm tuổi, Điều tra còn thêm trình độ) chỉ tính trên CÁ NHÂN (loại trừ pháp
+  // nhân, xem demTuoi/demField ở trên), nên về nguyên tắc: Σ 5 nhóm tuổi = tổng cá nhân của khối đó
+  // (C7−C8 ở Điều tra, C37−C38 ở Truy tố — tính TRÊN TOÀN BỘ kỳ, không phân mảnh theo từng tội danh
+  // — 1 bị can luôn nằm ở đúng 1 dòng D nên cộng dồn qua các dòng không đổi kết quả). Nếu 1 bị can
+  // cá nhân thiếu Năm sinh, `tinhNhomTuoi` trả `null` — người đó vẫn được đếm vào tổng nhưng KHÔNG
+  // rơi vào bucket tuổi nào → tổng theo tuổi sẽ THẤP HƠN tổng cá nhân mà không có cảnh báo gì nếu
+  // không kiểm tra riêng (cán bộ đối chiếu tay theo đúng cách cộng-dồn-phải-khớp-tổng này sẽ phát
+  // hiện lệch nhưng không tự biết vụ/bị can nào gây ra). Tương tự với Trình độ (C14-C18, CHỈ có ở
+  // khối Điều tra — Truy tố không lặp lại cột này theo đúng mẫu ngành, xem `bieu_B10_mo_ta.md` mục
+  // C43-C52). Quét trực tiếp dữ liệu gốc (không suy từ vals[] đã tổng hợp) để liệt kê ĐÚNG bị can
+  // cần bổ sung, theo yêu cầu người dùng (2026-07-31).
+  //
+  // CỐ Ý KHÔNG kiểm tra tương tự cho cột Giới tính (C19/C48): B10 chỉ có 1 cột "Nữ", không có cột
+  // "Nam" riêng — vì hệ thống mặc định `gioiTinh = "nam"` ở MỌI nơi ghi dữ liệu (form thêm/sửa bị
+  // can, Import Excel — xem `gioiTinh: gioiTinhRaw === "nữ" ... ? "nu" : "nam"`), "không tích Nữ"
+  // tự động là "Nam", KHÔNG phải trạng thái thiếu dữ liệu — khác hẳn Năm sinh/Trình độ (không có
+  // giá trị mặc định, `trinhDo: ""` để trống thật sự là thiếu). Bản đầu tiên của khối này từng thêm
+  // cảnh báo "Giới tính không hợp lệ/để trống" song song với Năm sinh — người dùng phản hồi sau khi
+  // test thật: sai giả định, "bị can chủ yếu là nam, nếu không tích nữ thì auto là nam" — đã bỏ hẳn
+  // nhánh đó, không suy đoán lại một lần nữa.
+  {
+    const moTaBc = (bc) => `${bc.hoTen || "(chưa rõ tên)"} (vụ ${bc.maVuAn || "?"})`;
+    const gomDs = (arr) => arr.slice(0, 10).map(moTaBc).join(", ")
+      + (arr.length > 10 ? ` và ${arr.length - 10} người khác` : "");
+    const kiemTraHoanChinhNhomBc = (nhan, cohort, macCotTuoi, kiemTrinhDo) => {
+      const thieuTuoi = cohort.filter(bc => !tinhNhomTuoi(bc.namSinh, bc._namKTVA));
+      if (thieuTuoi.length) {
+        canhBao.push(`${nhan}: ${thieuTuoi.length}/${cohort.length} bị can thiếu Năm sinh nên không ` +
+          `tính được vào nhóm tuổi (${macCotTuoi}) — tổng theo tuổi sẽ THẤP HƠN tổng cá nhân: ${gomDs(thieuTuoi)}`);
+      }
+      if (kiemTrinhDo) {
+        const thieuTrinhDo = cohort.filter(bc => !bc.trinhDo);
+        if (thieuTrinhDo.length) {
+          canhBao.push(`${nhan}: ${thieuTrinhDo.length}/${cohort.length} bị can thiếu Trình độ học vấn ` +
+            `nên không tính được vào khối trình độ (C14-C18) — tổng theo trình độ sẽ THẤP HƠN tổng cá nhân: ${gomDs(thieuTrinhDo)}`);
+        }
+        // Trình độ auto-điền (2026-07-31, "BackfillTrinhDoTool"/save-time auto-fill) khiến nhánh
+        // "thiếu Trình độ" ở trên gần như không còn bao giờ bắn — thay vào đó nhắc cán bộ đây là số
+        // DỰ ĐOÁN chưa xác nhận, khác hẳn dữ liệu thiếu (đã chặn không cho ra 0/rỗng, không lệch
+        // tổng), chỉ là ĐỘ TIN CẬY của con số cần được cán bộ tự kiểm tra lại dần.
+        const uocTinh = cohort.filter(bc => bc.trinhDoUocTinh);
+        if (uocTinh.length) {
+          canhBao.push(`${nhan}: ${uocTinh.length}/${cohort.length} bị can có Trình độ học vấn là ` +
+            `DỰ ĐOÁN tự động (chưa xác nhận) — nên kiểm tra lại khi có hồ sơ đầy đủ: ${gomDs(uocTinh)}`);
+        }
+      }
+    };
+    // Điều tra — C7-C24 "mới khởi tố" (lọc theo kỳ khởi tố RIÊNG của từng bị can, xem C7 ở trên)
+    const dtKtoCaNhan = bcTatCa(baoCao.dieu_tra.ds.khoiToTrucTiep || [])
+      .filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id)) && bc.loaiBiCan !== "phap_nhan");
+    kiemTraHoanChinhNhomBc("Phân tích bị can mới khởi tố (Điều tra)", dtKtoCaNhan, "C9-C13", true);
+    // Truy tố — C43-C52 "đã truy tố" (vụ chuyển từ Truy tố sang Xét xử trong kỳ, đã lọc kỳ sẵn ở
+    // baoCao.truy_to.ds.chuyenDi — không cần lọc kỳ riêng theo bị can như Điều tra)
+    const ttTruyToCaNhan = bcTatCa(baoCao.truy_to.ds.chuyenDi || [])
+      .filter(bc => bc.loaiBiCan !== "phap_nhan");
+    kiemTraHoanChinhNhomBc("Phân tích bị can đã truy tố (Truy tố)", ttTruyToCaNhan, "C43-C47", false);
+  }
+
   // tonTD_truoc/kyTonTD (đã chuẩn hoá key ở trên) trả kèm ra ngoài để xuatBaoCaoThangExcel dựng
   // sheet "Tồn theo ĐL (snapshot)" bằng ĐÚNG cùng 1 nguồn dữ liệu đã dùng để tính vals[] — tránh
   // viết lại logic chuẩn hoá 1 lần nữa ở nơi khác rồi lệch nhau.
@@ -8833,7 +9274,7 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
     const tonMoiMap = {}, tonRaMap = {};
     for (const gd of THU_TU_GIAI_DOAN) {
       const d = baoCao[gd].ds;
-      const moiList = [...(d.khoiToTrucTiep||[]), ...(d.tachVu||[]), ...(d.chuyenDen||[]), ...(d.traVe||[])];
+      const moiList = [...(d.khoiToTrucTiep||[]), ...(d.tachVu||[]), ...(d.chuyenDen||[]), ...(d.traVe||[]), ...(d.phucHoi||[]), ...(d.nhanLai||[])];
       const raList = [
         ...(d.chuyenDi||[]), ...(d.traDi||[]), ...(d.nhapVu||[]),
         ...HOAN_THANH_TRUONG_TONG.flatMap(ht => d.hoanThanh?.[ht] || []),
@@ -8985,7 +9426,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const vuGQMap  = new Map();   // vụ "ra" trong kỳ (giải quyết / chuyển đi / trả đi)
   for (const gd of THU_TU_GIAI_DOAN) {
     const d = baoCao[gd].ds;
-    [...(d.khoiToTrucTiep||[]),...(d.tachVu||[]),...(d.chuyenDen||[]),...(d.traVe||[])]
+    [...(d.khoiToTrucTiep||[]),...(d.tachVu||[]),...(d.chuyenDen||[]),...(d.traVe||[]),...(d.phucHoi||[]),...(d.nhanLai||[])]
       .forEach(v => { if (!vuMoiMap.has(v.id)) vuMoiMap.set(v.id, {...v, _gdMoi: gd}); });
     (d.tonHienTai||[]).forEach(v => { if (!vuTonMap.has(v.id)) vuTonMap.set(v.id, {...v, _gd: gd}); });
     [...(d.chuyenDi||[]),...(d.traDi||[]),...(d.nhapVu||[]),
@@ -9194,10 +9635,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     for (const sn of sheets) for (const kt of dsKyTen) parts.push(mkCfBc(sn, r, "AF", kt, ...extra));
     return parts.join("+") || "0";
   }
-  // Nhóm DS sheets theo vai trò — dùng cho B10 và TK tội danh
-  const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS vụ tách ĐT","DS trả về ĐT"];
-  const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"];
-  const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS vụ tách XX","DS chuyển đến XX"];
+  // Nhóm DS sheets theo vai trò — dùng cho B10 và TK tội danh. Thêm "DS phục hồi TĐC"/"DS nhận
+  // lại CĐ" (2026-08-01) — PHẢI khớp đúng tên + có mặt trong VAO_SHEETS_GD (khối "Cân đối số
+  // liệu" ở dưới) để "Tổng thụ lý" (C3/C33/C60) và "Cân đối số liệu" luôn tính TRÊN CÙNG 1 tập
+  // nguồn, không lệch nhau.
+  const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT"];
+  const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"];
+  const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX"];
   const DT_KTO = ["DS khởi tố ĐT","DS phục hồi ĐT"];   // khoiToTrucTiep ĐT (cho C7-C24)
   // "Tổng thụ lý" (C3/C4, C33/C34, C60/C61, xem bieu_B10_mo_ta.md mục 3.2) = Tồn kỳ trước (ô CÙNG
   // DÒNG, đã có sẵn — không phải DS sheet) + Σ(*_VAO ở trên) − Σ("DS nhập vụ"/"DS chuyển đi" của
@@ -9603,17 +10047,37 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
       };
     }),
+    // Phục hồi (từ Tạm đình chỉ) + Nhận lại (đã Chuyển đi) — 2 dòng MỚI (2026-08-01), KHÁC "Phục
+    // hồi điều tra" ở trên (dòng đó là nguồn Khởi tố mới chọn tay, đây là sự kiện log thật khi tái
+    // kích hoạt 1 vụ đã có sẵn — xem tinhBaoCaoKyTuLog).
+    _thRow("— Phục hồi (từ Tạm đình chỉ)", gd => {
+      const sn = `DS phục hồi TĐC ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.phucHoi || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.phucHoi ?? 0 },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
+    _thRow("— Nhận lại (đã Chuyển đi)", gd => {
+      const sn = `DS nhận lại CĐ ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.nhanLai || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.nhanLai ?? 0 },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
     // Tổng số mới = SUM tất cả VÀO sheets — BC = (khởi tố+phục hồi, lọc kỳ nếu ĐT) + phần còn lại.
     _thRow("Tổng số mới", gd => {
       const gs = _thGs(gd);
       const khoiToSheets = [`DS khởi tố ${gs}`, `DS phục hồi ${gs}`];
       const khacSheets = [
+        `DS phục hồi TĐC ${gs}`, `DS nhận lại CĐ ${gs}`,
         `DS vụ tách ${gs}`,
         ...(gd !== "dieu_tra" ? [`DS chuyển đến ${gs}`] : []),
         ...(gd !== "xet_xu" ? [`DS trả về ${gs}`] : []),
       ];
       const khoiToArr = baoCao[gd].ds.khoiToTrucTiep || [];
-      const khacArr = [...(baoCao[gd].ds.tachVu||[]), ...(baoCao[gd].ds.chuyenDen||[]), ...(baoCao[gd].ds.traVe||[])];
+      const khacArr = [...(baoCao[gd].ds.phucHoi||[]), ...(baoCao[gd].ds.nhanLai||[]), ...(baoCao[gd].ds.tachVu||[]), ...(baoCao[gd].ds.chuyenDen||[]), ...(baoCao[gd].ds.traVe||[])];
       const khoiToBcF = gd === "dieu_tra" ? demBcSheetKy(khoiToSheets, dsKyTenTrongBaoCao) : demBcSheetM(khoiToSheets);
       const khoiToBcR = gd === "dieu_tra" ? bcCountVuArrKy(khoiToArr) : bcCountVuArr(khoiToArr);
       return {
@@ -9747,10 +10211,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // Công thức: Tồn đầu + Vào - Ra = Tồn cuối (chốt)
   // Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ (kyThongKe=null) hoặc lỗi dữ liệu
   {
+    // "DS phục hồi TĐC {gs}"/"DS nhận lại CĐ {gs}" (2026-08-01) — 2 sheet MỚI, KHÁC hẳn "DS phục
+    // hồi {gs}" đã có sẵn (sheet đó lấy dữ liệu từ nguon==="phuc_hoi_dieu_tra", 1 trong 4 nguồn
+    // "Khởi tố mới" chính thức theo mẫu ngành — xem vaoArraysGd ngay dưới). 2 sheet mới này lấy
+    // dữ liệu thật từ sự kiện log `phuc_hoi` (PhucHoiModal, phục hồi vụ Tạm đình chỉ) và
+    // `nhan_lai_chuyen_di` (NhanLaiChuyenDiModal, nhận lại vụ đã Chuyển đi) — xem tinhBaoCaoKyTuLog.
     const VAO_SHEETS_GD = {
-      dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS vụ tách ĐT","DS trả về ĐT"],
-      truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"],
-      xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS vụ tách XX","DS chuyển đến XX"],
+      dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT"],
+      truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"],
+      xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX"],
     };
     const RA_SHEETS_GD = {
       dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
@@ -9768,6 +10237,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       const arrs = [
         (d.khoiToTrucTiep||[]).filter(v => v.nguon !== "phuc_hoi_dieu_tra"),
         (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
+        d.phucHoi||[], d.nhanLai||[],
         d.tachVu||[],
       ];
       if (gd !== "dieu_tra") arrs.push(d.chuyenDen||[]);
@@ -9997,6 +10467,12 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     add(`DS phục hồi ${gs}`,
       (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
       ["Ngày phục hồi"], _ngaySK);
+
+    // Phục hồi vụ Tạm đình chỉ (PhucHoiModal) + Nhận lại vụ đã Chuyển đi (NhanLaiChuyenDiModal) —
+    // 2 sheet MỚI (2026-08-01), KHÁC hẳn "DS phục hồi {gs}" ngay trên (đó là nguồn "Khởi tố mới"
+    // chọn tay lúc TẠO vụ mới, còn đây là sự kiện log thật khi TÁI KÍCH HOẠT 1 vụ đã có sẵn).
+    add(`DS phục hồi TĐC ${gs}`, d.phucHoi||[], ["Ngày phục hồi", "Số QĐ"], _ngaySoQD);
+    add(`DS nhận lại CĐ ${gs}`, d.nhanLai||[], ["Ngày nhận lại", "Số QĐ"], _ngaySoQD);
 
     // Vụ tách ra trong kỳ, đếm vụ tách = số dòng (mỗi dòng là 1 vụ mới xuất hiện)
     add(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);
@@ -14688,11 +15164,16 @@ function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
           </label>
         ) : <div className="px-1.5 py-1 text-xs text-slate-300">—</div>}
       </td>
-      <td {...oTd("trinhDo")}>
-        <select value={bc.trinhDo || ""} onChange={e => suaBiCanTruong(bc, { trinhDo: e.target.value })} className={oCellExcel}>
+      <td {...oTd("trinhDo")} title={bc.trinhDoUocTinh
+          ? "Trình độ học vấn là DỰ ĐOÁN tự động (theo độ tuổi + loại tội danh) — chưa xác nhận, sửa lại khi có thông tin thật."
+          : ""}>
+        <select value={bc.trinhDo || ""}
+                onChange={e => suaBiCanTruong(bc, { trinhDo: e.target.value, trinhDoUocTinh: false })}
+                className={`${oCellExcel} ${bc.trinhDoUocTinh ? "text-red-600 font-medium" : ""}`}>
           <option value="">— chưa rõ —</option>
           {Object.entries(NHAN_TRINH_DO).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
+        {bc.trinhDoUocTinh && <span className="text-red-600 text-xs">⚠</span>}
         <TayKeoFill onBatDau={() => keo.batDauKeo(index, "trinhDo", bc.trinhDo || "")} />
       </td>
       <td {...oTd("taiPham")}>
@@ -14805,6 +15286,10 @@ function BangBiCanCon({ vuAnId, danhMucTD, onVuAnCoTheDoi }) {
           toiDanh: [giaTri.ten, ...(bc.toiDanh || []).slice(1)],
           dieuLuatBC: [giaTri.dieuLuat, ...(bc.dieuLuatBC || []).slice(1)],
         });
+      } else if (field === "trinhDo") {
+        // Kéo-fill = cán bộ chủ động xác nhận giá trị này cho cả đoạn kéo qua — không còn là dự
+        // đoán tự động nữa, dù trước đó có đang là trinhDoUocTinh=true hay không.
+        batch.update(db.collection("bican").doc(bc.id), { trinhDo: giaTri, trinhDoUocTinh: false });
       } else {
         batch.update(db.collection("bican").doc(bc.id), { [field]: giaTri });
       }

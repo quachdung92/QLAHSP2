@@ -2,6 +2,340 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## "Nhận lại vụ đã Chuyển đi" + sửa lỗ hổng "Phục hồi" không tính vào báo cáo (2026-08-01, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, ĐÃ DEPLOY PRODUCTION, CHƯA merge vào `main`)
+
+Theo yêu cầu người dùng: 1 số vụ đã "Chuyển đi" (hoàn thành dạng `chuyen_di` — coi như xong hẳn,
+chuyển sang đơn vị/tỉnh khác) trên thực tế bị **chuyển ngược lại** cho đơn vị này xử lý tiếp. Hệ
+thống trước đây KHÔNG có cách nào chính thức nhận lại — vụ ở `trangThai:"chuyen_di"` chỉ có 3 nút
+(In mã QR/Sửa thông tin/Xoá vụ án), khác "Tạm đình chỉ" đã có sẵn "Phục hồi". Đã lên kế hoạch qua
+`EnterPlanMode` (2 câu hỏi đã hỏi người dùng: giai đoạn nhận lại mặc định = giai đoạn cũ nhưng CHO
+SỬA LẠI; và có sửa luôn 1 lỗ hổng liên quan phát hiện khi audit hay không — người dùng chọn CÓ).
+
+**Phát hiện quan trọng lúc audit**: sự kiện `phuc_hoi` (ghi bởi `PhucHoiModal` khi phục hồi vụ Tạm
+đình chỉ) từ trước tới giờ **KHÔNG hề được `tinhBaoCaoKyTuLog` truy vấn** (thiếu hẳn trong danh sách
+`loaiSuKien` được query) — không tính vào "Tổng thụ lý"/"Tồn cuối kỳ" của kỳ có phục hồi, có thể làm
+"Cân đối số liệu" lệch nhẹ đúng ở kỳ đó. Cũng phát hiện: sheet Excel "DS phục hồi ĐT/TT/XX" đã tồn
+tại sẵn nhưng lấy dữ liệu từ **`nguon === "phuc_hoi_dieu_tra"`** (1 giá trị dropdown chọn tay lúc TẠO
+vụ MỚI, 1 trong 4 nguồn chính thức "Khởi tố mới" theo mẫu ngành B10 mục 3.1) — **HOÀN TOÀN KHÁC**
+sự kiện `phuc_hoi` thật (tái kích hoạt 1 vụ ĐÃ CÓ) — 2 khái niệm trùng tên tiếng Việt nhưng khác cơ
+chế, không được gộp chung sheet.
+
+**Sự kiện log mới `nhan_lai_chuyen_di`** — ghi qua `taoSuKien` (đã có sẵn field `denGiaiDoan` trong
+shape mặc định): `{maVuAn, loaiSuKien:"nhan_lai_chuyen_di", denGiaiDoan:<giai đoạn cán bộ chọn>,
+soQuyetDinh, ngaySuKien, kyThongKe, ghiChu}`.
+
+**Modal mới `NhanLaiChuyenDiModal`** (đặt cạnh `PhucHoiModal`) — theo đúng khuôn mẫu `PhucHoiModal`
+(Số quyết định/Ngày/Ghi chú, hỏi kỳ qua `ModalXacNhanKy`) + THÊM dropdown **"Giai đoạn tiếp tục xử
+lý"** (mặc định = `vuAn.coQuanThuLy` hiện tại — vì "Chuyển đi" không hề đổi field này, xem
+`HoanThanhVuAnModal`). Lưu: `vuan.update({trangThai:"dang_giai_quyet", coQuanThuLy:<giai đoạn
+chọn>, noiChuyenDen:"", soQuyetDinhChuyenDi:""})` + ghi sự kiện mới. Sự kiện `hoan_thanh`
+(hinhThucHoanThanh:"chuyen_di") GỐC GIỮ NGUYÊN trong lịch sử (không xoá — ghi nhận đúng sự thật đã
+từng xảy ra, khác hẳn công cụ sửa sai sót "Xoá hình thức giải quyết"). Nút "↩ Nhận lại vụ" trong
+`ChiTietPanel`, gated `vuAn.trangThai === "chuyen_di"`.
+
+**Sửa `PhucHoiModal`**: thêm `denGiaiDoan: vuAn.coQuanThuLy` vào sự kiện `phuc_hoi` (Phục hồi LUÔN
+ở lại đúng giai đoạn cũ, không cho chọn khác — khác hẳn "Nhận lại chuyển đi").
+
+**Mở rộng `tinhBaoCaoKyTuLog`** — thêm 2 query song song vào nhóm "Vào" (cùng mẫu tachVu/chuyenDen/
+traVe): `phuc_hoi`/`nhan_lai_chuyen_di` lọc theo `denGiaiDoan===gd`. Cộng vào `soMoi.tong` + `bcMoi`
+(nhánh kỳ chưa chốt) + `ds.phucHoi`/`ds.nhanLai` trả về.
+
+**`tinhBieu10`**: cộng `dt/tt/xx.phucHoi`/`.nhanLai` vào `dt_moi`/`tt_moi`/`xx_moi` — CHỈ ảnh hưởng
+C3/C33/C60 "Tổng thụ lý", KHÔNG đụng C6/C7 "Khởi tố mới" (vẫn chỉ dùng riêng `khoiToTrucTiep`) — giữ
+đúng nguyên tắc mẫu ngành B10 chỉ có 4 nguồn cố định cho "Khởi tố mới", không thêm nguồn thứ 5 trái
+phép.
+
+**`xuatBaoCaoThangExcel`**: thêm 2 sheet MỚI mỗi giai đoạn — `"DS phục hồi TĐC {gs}"` (dữ liệu
+`d.phucHoi`) và `"DS nhận lại CĐ {gs}"` (dữ liệu `d.nhanLai`), KHÔNG đụng "DS phục hồi {gs}" đã có
+(khác nguồn dữ liệu). Cập nhật ĐỦ các nơi liệt kê "nhóm sheet Vào" để 2 sheet mới thực sự được cộng
+vào mọi phép tính liên quan (rà bằng grep toàn file, tìm đúng 6 chỗ trước đó chỉ cộng 4/6 nguồn
+"vào" — nếu thiếu bất kỳ chỗ nào, "Cân đối số liệu"/"Tổng thụ lý" B10 sẽ lệch ngay khi có phục hồi/
+nhận lại thật):
+1. `VAO_SHEETS_GD`/`vaoArraysGd` (Cân đối số liệu tự SUM theo sheet, tự động ăn theo).
+2. `DT_VAO`/`TT_VAO`/`XX_VAO` (B10's "Tổng thụ lý" C3/C33/C60, SUMIF theo sheet — **bản riêng, KHÔNG
+   dùng chung với `VAO_SHEETS_GD`**, dễ quên sửa 1 trong 2 nơi).
+3. `BangBaoCaoChiTiet` (bảng xem trước trên màn hình) — thêm 2 dòng mới + sửa "Tổng số mới" `layDs`.
+4. `collectVuIdsFromBaoCao` (gom ID vụ để fetch bị can) — thiếu sẽ làm 1 số nơi tính bị can bị hụt.
+5. `taiTaoTonCuoiKyTheoTDTatCa`'s `moiList` (công cụ "Sửa lại tồn cuối kỳ theo tội danh").
+6. `vuMoiMap` (TK tội danh, cột "Vụ mới") + "Tổng hợp báo cáo" sheet (`khacSheets`/`khacArr` của
+   "Tổng số mới" + 2 dòng `_thRow` mới "— Phục hồi (từ Tạm đình chỉ)"/"— Nhận lại (đã Chuyển đi)").
+`THVao` (dùng bởi "Tổng hợp báo cáo") tự động ăn theo vì derive từ `DT_VAO`/`TT_VAO`/`XX_VAO`; `ALL_VAO`
+(TK tội danh cột B/C) tự động ăn theo tương tự — không cần sửa riêng 2 hằng số này.
+
+**Đã kiểm chứng**: test cô lập mới `test_nhanlai_chuyendi.js` (7 assertion, trích nguyên công thức
+`soMoi.tong`/`tonCuoiKy` từ `tinhBaoCaoKyTuLog`, mô phỏng log event thay vì mock toàn bộ Postgres) —
+xác nhận: vụ Chuyển đi kỳ K1 rồi Nhận lại vào giai đoạn KHÁC ở kỳ K2 → đúng giai đoạn mới nhận đủ
+"vào", giai đoạn cũ KHÔNG bị cộng thừa; Phục hồi (giả lập lỗ hổng cũ) giờ được tính đúng vào kỳ phục
+hồi; không tạo cảnh báo/cộng thừa khi không có sự kiện nào. 7/7 PASS. Compile-check toàn file qua
+`@babel/core`+`@babel/preset-react` — sạch.
+
+**Đã kiểm chứng đầy đủ bằng Playwright thật trên dữ liệu Supabase production thật** (`qlahs-sup.html`,
+project `eutatszoaseixchvjbtg`, đăng nhập thật qua tài khoản `admin@qlva.local`) — dựng 2 vụ án test
+riêng biệt:
+1. **"TEST - Nhận lại chuyển đi"**: Điều tra → Hoàn thành (Chuyển đi, kỳ 07/2026) → bấm nút mới "↩
+   Nhận lại vụ", chọn giai đoạn **Truy tố** (khác Điều tra lúc chuyển đi, đúng kịch bản trọng tâm) —
+   xác nhận `coQuanThuLy` đổi đúng sang Truy tố, `trangThai` về "Đang giải quyết".
+2. **"TEST - Phục hồi TĐC"**: Điều tra → Hoàn thành (Tạm đình chỉ, kỳ 07/2026) → "Phục hồi" (kỳ
+   07/2026) — xác nhận về đúng lại Điều tra như thiết kế (không cho chọn khác).
+
+**Xuất Excel báo cáo tháng kỳ 07/2026** (chặn `URL.createObjectURL` để bắt Blob thật, nạp lại bằng
+`new ExcelJS.Workbook().xlsx.load(...)` NGAY TRONG TRÌNH DUYỆT — không tải xuống đĩa) — xác nhận:
+- 2 sheet mới `"DS phục hồi TĐC ĐT"`/`"DS nhận lại CĐ TT"` có ĐÚNG 1 dòng dữ liệu mỗi sheet, đúng
+  Ngày/Số QĐ/Kỳ TK đã nhập.
+- **"Cân đối số liệu" cân bằng TUYỆT ĐỐI (Chênh lệch = 0) ở CẢ 6 dòng** (Điều tra/Truy tố/Xét xử ×
+  Vụ/Bị can) — xác nhận công thức tồn đầu+vào−ra=tồn cuối vẫn đúng sau khi thêm 2 loại sự kiện mới.
+- "Tổng hợp báo cáo": 2 dòng mới "— Phục hồi (từ Tạm đình chỉ)"/"— Nhận lại (đã Chuyển đi)" đúng số
+  liệu (ĐT=1, TT=1), dòng "Tổng số mới" khớp đúng màn hình xem trước (`BangBaoCaoChiTiet`, đọc trực
+  tiếp qua UI: 57/97, 19/51, 24/58 cho ĐT/TT/XX) — không lệch giữa 2 nơi hiển thị.
+- Phát hiện phụ (KHÔNG phải bug, đã xác nhận qua đối chiếu bằng tay): cột "Chênh lệch" khi đọc lại
+  qua ExcelJS thiếu "result" cache (chỉ còn `{formula}`) — do `cdRow.getCell(8).fill/font` được set
+  SAU khi `addRow` đã ghi `{formula, result}`, có vẻ làm ExcelJS bỏ cache result lúc set style. Đây
+  là hiện tượng CÓ SẴN từ trước (xảy ra ở CẢ 6 dòng, kể cả Xét xử không liên quan gì tới thay đổi
+  lần này), không phải lỗi do tính năng mới — Excel THẬT vẫn tự tính lại đúng khi mở file (đúng bài
+  học đã ghi ở mục "Bug thật đã sửa: cột -BC..." bên dưới: ExcelJS đọc lại không tính lại công thức,
+  chỉ Excel thật mới tính). Đã tự đối chiếu bằng tay qua cột F (Tồn cuối tính) và G (Tồn cuối chốt)
+  — cả 2 đều có cache đúng, bằng nhau ở mọi dòng, nên Chênh lệch chắc chắn = 0 khi Excel thật mở.
+
+**Bug thật đã phát hiện + sửa trong lúc kiểm chứng**: bấm "Xác nhận" ở modal "Nhận lại vụ án" báo
+lỗi `new row for relation "lichsuChuyenGiaiDoan" violates check constraint
+"lichsuChuyenGiaiDoan_loaiSuKien_check"` — cột `loaiSuKien` có CHECK constraint cố định danh sách
+giá trị hợp lệ (xem `supabase/schema.sql`), thiếu `nhan_lai_chuyen_di` (khác lỗi "column not found"
+đã gặp nhiều lần trước đây — ở đây CỘT đã có sẵn, chỉ thiếu GIÁ TRỊ được phép). Đã sửa qua
+`supabase/add_nhan_lai_chuyen_di_2026-08-01.sql` (drop + tạo lại constraint, chạy qua Session
+pooler, xác nhận qua `pg_constraint`) + cập nhật `supabase/schema.sql` cho khớp. **Bài học cho phiên
+sau**: khi thêm 1 `loaiSuKien` MỚI (không chỉ field/cột mới), luôn kiểm tra CHECK constraint này
+trước, đừng chỉ lo ALTER TABLE thêm cột.
+
+**Cũng phát hiện qua kiểm chứng (đã sửa)**: `NHAN_SU_KIEN` (nhãn hiển thị sự kiện trong "Lịch sử"
+của `ChiTietPanel`) thiếu entry cho `nhan_lai_chuyen_di` — hiện ra tên thô "nhan_lai_chuyen_di" thay
+vì tiếng Việt. Đã thêm `nhan_lai_chuyen_di: "Nhận lại (đã Chuyển đi)"`.
+
+**Đã dọn sạch hoàn toàn 2 vụ test** (Đưa vào thùng rác → gõ mã xác nhận ngẫu nhiên → Xoá vĩnh viễn ở
+Cài đặt → Thùng rác, CHỈ xoá đúng 2 vụ vừa tạo, không đụng các mục khác đã có sẵn trong thùng rác từ
+trước) — xác nhận lại "Mới trong kỳ"/"Đã giải quyết trong kỳ" của kỳ 07/2026 trở về ĐÚNG số liệu
+gốc trước khi test (54 vụ/18 giải quyết), tổng vụ án 2155 (không đổi). 0 lỗi console liên quan tới
+thay đổi này.
+
+**Đã deploy lên `qlahsp2.web.app`** (2 lần: lần đầu để test tính năng nhận lại/phục hồi, lần 2 sau
+khi sửa CHECK constraint + nhãn sự kiện) qua `./deploy.sh prod`.
+
+## Auto-điền "Trình độ học vấn" ngẫu nhiên có trọng số + cảnh báo "chưa xác nhận" (2026-07-31, `qlahs-sup.html`, cùng nhánh `bieu10-kiemtra-tong-phantich-bican`, CHƯA merge vào `main`)
+
+Tiếp theo mục kiểm tra tổng khối "Phân tích bị can mới khởi tố" ngay dưới đây — người dùng xác nhận
+`trinhDo` (Trình độ học vấn) thường xuyên bị thiếu trong thực tế nhập liệu (không có giá trị mặc
+định, khác `gioiTinh` luôn mặc định "nam"), và muốn 1 tính năng tự động điền giá trị NGẪU NHIÊN có
+trọng số (theo độ tuổi + loại tội danh) thay vì để trống, kèm cờ đánh dấu "chưa xác nhận" để tự sửa
+lại sau — đúng mô hình đã có sẵn cho `ngayQuyetDinhUocTinh` (ngày giải quyết ước tính khi Import
+Excel thiếu dữ liệu). Đã lên kế hoạch qua `EnterPlanMode` (2 câu hỏi làm rõ đã hỏi người dùng: phạm
+vi áp dụng — chọn "cả backfill dữ liệu cũ lẫn tự động cho dữ liệu mới"; và "loại tội phạm" dùng để
+tính trọng số — người dùng làm rõ là **loại tội danh cụ thể** (VD "lừa đảo" xu hướng trình độ cao,
+"trộm cắp" xu hướng thấp hơn), KHÔNG PHẢI `mucDoNghiemTrong` như đề xuất ban đầu của Claude — xem
+chi tiết plan tại `C:\Users\Quach Dung\.claude\plans\luminous-humming-lightning.md`).
+
+**Field mới trên `bican`**: `trinhDoUocTinh` (boolean) — `true` = giá trị `trinhDo` hiện tại là DỰ
+ĐOÁN tự động, chưa được cán bộ xác nhận. **⚠ CẦN ALTER TABLE trước khi hoạt động trên dữ liệu thật**
+— cột này CHƯA TỪNG tồn tại trên bảng `bican` (đã xác nhận qua `supabase/schema.sql`, bảng có CHECK
+constraint cứng), và phiên code này KHÔNG có mật khẩu DB nên chưa chạy ALTER thật được. Đã chuẩn bị
+sẵn `supabase/add_trinhdo_uoctinh_2026-07-31.sql` (`alter table "bican" add column if not exists
+"trinhDoUocTinh" boolean not null default false;` + `notify pgrst, 'reload schema'`) VÀ cập nhật
+`supabase/schema.sql` cho khớp — Dũng hoặc phiên có mật khẩu DB cần chạy file migration này qua
+Session pooler (xem `supabase/README.md`) TRƯỚC khi merge/deploy, nếu không mọi lượt ghi
+`trinhDoUocTinh` sẽ bị `batch_commit` RPC âm thầm bỏ qua (đúng bài học đã ghi nhiều lần ở các mục
+"Nộp lưu kho"/"Giao nhận hồ sơ" bên dưới — Postgres không tự tạo cột như Firestore).
+
+**Bảng trọng số `PHAN_BO_TRINH_DO`** (đặt cạnh `NHAN_TRINH_DO`) — 5 nhóm tuổi (khớp `tinhNhomTuoi`)
+× 3 "mức giáo dục" (`cao/trung_binh/thap`) → phân bố % cho 5 mức trình độ. Theo đúng hiệu chỉnh
+người dùng cho biết: Tiểu học + Không biết chữ RẤT hiếm ("cả năm chỉ 1-2 trường hợp"), càng lớn tuổi
+2 mức này nhích lên chút; "cao" đẩy về THPT/ĐH, "thấp" đẩy về THCS. **Chỉ là điểm khởi đầu hợp lý,
+KHÔNG phải số liệu thống kê chính thức** — đặt thành 1 hằng số duy nhất, dễ chỉnh nếu Dũng muốn đổi
+số sau này.
+
+**Bảng phân loại tội danh → mức giáo dục (`TU_KHOA_GIAO_DUC_CAO`/`TU_KHOA_GIAO_DUC_THAP`)** — vì hệ
+thống chưa có field phân loại kiểu này, dùng khớp TỪ KHOÁ thô trên `bc.toiDanh[0]` (không phân biệt
+hoa/thường, khớp chuỗi con) — "cao": lừa đảo/tham ô/nhận-đưa hối lộ/buôn lậu/trốn thuế/rửa tiền...;
+"thấp": trộm cắp/cướp giật/cưỡng đoạt/cố ý gây thương tích/đánh bạc...; còn lại mặc định
+"trung_binh". **Danh sách gợi ý ban đầu, không phải bảng phân loại pháp lý chính thức theo chương
+BLHS** — cố tình đơn giản vì đây chỉ là số dự đoán tạm.
+
+**Hàm dùng chung `chonTrinhDoNgauNhien(bc, vu)`** (đặt cạnh `tinhNhomTuoi`) — tính `namKTVA` từ
+`vu.ngayQdKtva` (fallback năm hiện tại), `nhom = tinhNhomTuoi(bc.namSinh, namKTVA) || "30_70"` (bị
+can thiếu cả Năm sinh vẫn ra kết quả, không bỏ qua), `muc` suy từ `bc.toiDanh[0]`, random-pick có
+trọng số từ `PHAN_BO_TRINH_DO[nhom][muc]`. Trả `{trinhDo, trinhDoUocTinh: true}`. KHÔNG tự lọc pháp
+nhân — nơi gọi phải tự kiểm tra `loaiBiCan !== "phap_nhan"` trước khi gọi (pháp nhân không có khái
+niệm trình độ, giữ nguyên `trinhDo: ""`).
+
+**Áp dụng ở 4 nơi ghi dữ liệu bị can**:
+1. `ghiVaoCoSoDuLieu` (Import Excel) — mẫu không có cột Trình độ nên LUÔN tự điền (bị can import
+   luôn là cá nhân, `loaiBiCan: "ca_nhan"` hardcode sẵn).
+2. `ThemBiCanForm`/`ThemVuAnForm` (bị can hoàn toàn mới) — nếu để trống lúc lưu (và không phải pháp
+   nhân) thì tự điền, ngược lại lưu đúng giá trị cán bộ chọn với `trinhDoUocTinh: false`.
+3. `SuaBiCanForm` (sửa bị can đã có) — thêm state `trinhDoDaSua` (chỉ bật khi cán bộ THẬT SỰ đổi
+   dropdown Trình độ trong phiên sửa này) để phân biệt "đang hiện giá trị ước tính cũ chưa đụng
+   tới" (giữ nguyên cờ cũ) với "vừa xác nhận/sửa lại" (`trinhDoUocTinh: false`) — kèm dòng chữ hổ
+   phách nhỏ "⚠ Giá trị hiện tại là DỰ ĐOÁN tự động, chưa xác nhận." khi áp dụng.
+4. `BangExcelModule`/`DongBiCanBangExcel` (công cụ sửa hàng loạt) — KHÔNG tự auto-fill (đã có công
+   cụ Backfill riêng lo phần này), chỉ: đổi `<select>` hoặc kéo-fill → `trinhDoUocTinh: false` (xác
+   nhận thật); hiện chữ đỏ + "⚠" + tooltip khi `bc.trinhDoUocTinh`. Kéo-fill xử lý riêng trong
+   `apDungGiaTri` (thêm nhánh `field === "trinhDo"`, giống cách `toiDanhChinh` đã có nhánh riêng).
+
+**Công cụ Backfill mới `BackfillTrinhDoTool`** (Cài đặt → Import Excel, cạnh `BackfillLoaiKhoiToTool`)
+— theo đúng khuôn mẫu (state idle/loading/done/error, `BATCH_SIZE=100` tránh statement_timeout do
+trigger `bican_sync_vuan_trg`, an toàn chạy lại nhiều lần). Chỉ điền bị can cá nhân đang thiếu
+`trinhDo`, không đụng dữ liệu đã có.
+
+**Cập nhật cảnh báo Biểu B10** (`kiemTraHoanChinhNhomBc`, khối "Phân tích bị can mới khởi tố" đã có
+từ trước) — thêm nhánh MỚI (chỉ ở Điều tra, khối Truy tố không có cột Trình độ): đếm bị can có
+`trinhDoUocTinh`, nếu >0 thì cảnh báo "N/M bị can có Trình độ học vấn là DỰ ĐOÁN tự động, chưa xác
+nhận" — nhánh "thiếu Trình độ" cũ VẪN GIỮ làm lưới an toàn (gần như không còn bắn sau khi auto-fill
+phủ kín).
+
+**Đã kiểm chứng**: test cô lập mới `test_trinhdo_random.js` (8 assertion, trích nguyên hàm/bảng từ
+file thật) — PHÁT HIỆN THẬT 3 lỗi làm tròn trong bảng đề xuất ban đầu (3 hàng cộng ra 99/99.5 thay
+vì 100: `18_30/thap`, `30_70/trung_binh`, `30_70/thap`) và đã sửa (tăng nhẹ `dh_tro_len` mỗi hàng);
+sau khi sửa: mọi hàng cộng đúng 100%, phân bố thực tế qua 10.000 lần lệch tối đa ~2% so với bảng
+khai báo (đúng như kỳ vọng thống kê), bị can thiếu cả Năm sinh vẫn ra giá trị hợp lệ (fallback
+"30_70"), `layMucGiaoDuc` phân loại đúng ví dụ người dùng nêu (lừa đảo→cao, trộm cắp→thấp), vị
+thành niên 14-16 tuổi không bao giờ ra "Đại học trở lên" qua 500 lần thử. Chạy lại 7 assertion cũ
+của `test_bican_completeness.js` — không có gì bị phá vỡ (2 assertion mới cho "thiếu Trình độ").
+Compile-check toàn file qua `@babel/core`+`@babel/preset-react` — sạch.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** (do cột `trinhDoUocTinh` chưa tồn tại trên DB thật,
+xem mục ALTER TABLE ở trên) — sau khi Dũng chạy migration, nên: (1) chạy thử `BackfillTrinhDoTool`
+trên 1 vài bị can thật, xác nhận số lượng điền + cột Trình độ ở Bảng dữ liệu Excel tô đỏ/tooltip
+đúng; (2) thêm 1 bị can mới để trống Trình độ, xác nhận tự điền đúng; (3) sửa lại 1 bị can vừa được
+auto-fill qua dropdown, xác nhận cờ `trinhDoUocTinh` tắt đúng; (4) xuất thử Biểu B10 xem cảnh báo
+mới "chưa xác nhận" hiện đúng ở cuối sheet.
+
+**Thêm công tắc BẬT/TẮT toàn bộ tính năng, MẶC ĐỊNH TẮT (2026-07-31, cùng ngày, theo yêu cầu người
+dùng ngay sau đó "cho cái tính năng này vào phần setting, tôi sẽ bật nếu cần thiết")** — trước đó
+tính năng LUÔN hoạt động (không tắt được). Thêm `KHOA_TU_DONG_DIEN_TRINHDO =
+"qlva_tudongdien_trinhdo"` lưu qua `localStorage` (đúng quy ước NHẤT QUÁN mọi "cài đặt" khác trong
+app — `qlva_blhsMacDinh`/`qlva_danhsach_cotAn`/`qlva_ky_sapxep`... — không có bảng "settings" chung
+nào trên Postgres, không phải ngoại lệ), hàm đọc nhanh `trinhDoAutoFillDangBat()` (dùng ở nơi lưu dữ
+liệu, không cần React state) + hook `useTuDongDienTrinhDo()` (dùng cho chính công tắc UI).
+
+**Gate ở ĐÚNG 1 chỗ duy nhất — ngay đầu `chonTrinhDoNgauNhien`**: nếu tắt, trả thẳng `{trinhDo: "",
+trinhDoUocTinh: false}` — y hệt hành vi TRƯỚC KHI có tính năng này, không cần thêm điều kiện riêng ở
+từng 1 trong 5 nơi gọi hàm (Import Excel, 3 form bị can, `BackfillTrinhDoTool`) — giảm rủi ro quên
+chặn 1 chỗ. Công tắc (component `CongTac` có sẵn, không viết switch mới) đặt ngay trong
+`BackfillTrinhDoTool` (đầu khối UI, phía trên nút "Chạy điền tự động") — nút này cũng tự
+`disabled` + tooltip "Bật công tắc ở trên trước khi chạy" khi tắt, dòng thông báo xám nhắc rõ trạng
+thái tắt không ảnh hưởng gì tới dữ liệu (Trình độ để trống vẫn để trống như trước).
+
+**Đã kiểm chứng**: thêm assertion #9-10 vào `test_trinhdo_random.js` (mock `localStorage` bằng
+object JS thường) — xác nhận `trinhDoAutoFillDangBat()` đúng `false` khi tắt, và
+`chonTrinhDoNgauNhien` trả đúng no-op `{trinhDo:"", trinhDoUocTinh:false}` khi tắt (không tự ý
+random) — 10/10 PASS (2 assertion mới + 8 assertion cũ vẫn đúng sau khi bật công tắc lên "on" đầu
+test). Compile-check lại toàn file — sạch.
+
+**Thêm 2 chế độ chạy cho `BackfillTrinhDoTool` (2026-08-01, theo yêu cầu người dùng "khi chạy lại
+phải đưa ra 2 option: giữ nguyên kết quả trước đây + chỉ cập nhật bị can còn thiếu, HOẶC chạy lại
+hết")** — trước đó công cụ chỉ có đúng 1 hành vi (bỏ qua mọi bị can đã có `trinhDo`, kể cả giá trị
+ước tính từ lần chạy trước), không có cách nào random LẠI các ước tính cũ nếu Dũng chỉnh sửa bảng
+trọng số `PHAN_BO_TRINH_DO` sau này. Thêm radio 2 lựa chọn (state `cheDo`, mặc định `"chi_thieu"` —
+AN TOÀN hơn, giữ nguyên hành vi cũ):
+- **"Chỉ điền bị can còn thiếu"** (mặc định) — `canXuLy = !bc.trinhDo` (y hệt hành vi cũ).
+- **"Chạy lại toàn bộ"** — `canXuLy = !bc.trinhDo || bc.trinhDoUocTinh === true` — random LẠI mọi bị
+  can đang ở trạng thái ƯỚC TÍNH (kể cả đã có giá trị từ lần chạy trước), tạo 1 lượt `chonTrinhDoNgauNhien`
+  mới cho từng người.
+
+**Bất biến quan trọng, ÁP DỤNG CHO CẢ 2 CHẾ ĐỘ**: tuyệt đối không đụng tới bị can có
+`trinhDoUocTinh === false` VÀ đã có `trinhDo` (tức giá trị THẬT do cán bộ tự xác nhận qua dropdown/
+kéo-fill) — dù chọn "chạy lại toàn bộ" cũng chỉ random lại đúng phần dữ liệu CHƯA được xác nhận,
+không có rủi ro ghi đè mất dữ liệu thật đã nhập tay. Pháp nhân luôn bị loại ở cả 2 chế độ.
+
+**Đã kiểm chứng**: thêm 8 assertion mới vào `test_trinhdo_random.js` (trích nguyên điều kiện
+`canXuLy` từ `run()`) — kiểm đủ 4 tổ hợp bị can (thiếu hoàn toàn/đã ước tính/đã xác nhận thật/pháp
+nhân) × 2 chế độ, xác nhận đúng: "chỉ thiếu" bỏ qua cả ước tính lẫn thật; "chạy lại hết" random lại
+đúng phần ước tính nhưng TUYỆT ĐỐI không đụng phần đã xác nhận thật — 18/18 PASS tổng cộng (10 cũ +
+8 mới). Compile-check lại toàn file — sạch.
+
+**✅ ĐÃ CHẠY ALTER TABLE thật lên Supabase (2026-08-01, sau khi Dũng cung cấp mật khẩu DB qua
+chat)** — chạy đúng `supabase/add_trinhdo_uoctinh_2026-07-31.sql` qua Session pooler (script Node
+tạm dùng package `pg` cài tạm trong thư mục scratchpad, mật khẩu chỉ truyền qua biến môi trường lúc
+chạy, KHÔNG ghi vào file nào, gỡ sạch script + package ngay sau khi chạy xong — đúng quy tắc
+`supabase/README.md`). Xác nhận qua 2 lớp: (1) `information_schema.columns` qua kết nối Postgres
+trực tiếp — đúng `trinhDoUocTinh boolean not null default false`; (2) `GET /rest/v1/bican?select=
+id,trinhDoUocTinh` qua REST API thật (đường app dùng) — không còn lỗi "column not found", xác nhận
+`NOTIFY pgrst, 'reload schema'` đã có hiệu lực. Từ nay tính năng này an toàn để deploy lên
+`qlahsp2.web.app` (production) — mọi lượt "Thêm/Sửa bị can" (kể cả khi công tắc TẮT) đều ghi kèm
+field `trinhDoUocTinh` nên BẮT BUỘC phải có bước này trước khi deploy, nếu không sẽ chặn đứng việc
+lưu bị can cho 4 cán bộ đang dùng thật (lỗi "Could not find the column... in schema cache").
+**Đã deploy lên `qlahsp2.web.app` qua `./deploy.sh prod` ngay sau khi xác nhận migration thành
+công.**
+
+## Nhánh `bieu10-kiemtra-tong-phantich-bican` — kiểm tra tổng khối "Phân tích bị can mới khởi tố" (2026-07-31, `qlahs-sup.html`, CHƯA merge vào `main`)
+
+Theo yêu cầu người dùng: khối C7-C24 (Điều tra / "Phân tích số bị can là CÁ NHÂN mới khởi tố", xem
+`bieu_B10_mo_ta.md` mục C7-C24) cần tự kiểm tra — cộng dồn các cột con (5 nhóm tuổi C9-C13, giới
+tính C19) phải khớp đúng tổng số bị can cá nhân mới khởi tố (C7−C8, trừ pháp nhân vì pháp nhân
+không có tuổi/giới tính — đúng theo tiêu đề "cá nhân" của khối này trong mẫu ngành). Đây chính là
+cách cán bộ thống kê đối chiếu tay theo mẫu B10 giấy: nếu cộng 5 ô tuổi mà không ra đúng tổng, nghĩa
+là có bị can bị "rơi" khỏi phân loại tuổi/giới tính do thiếu dữ liệu — nhưng trước đây không có cảnh
+báo gì cho biết CHÍNH XÁC bị can/vụ nào gây ra lệch.
+
+**Nguyên nhân lệch (không phải bug tính toán, mà là dữ liệu thiếu)**: `tinhNhomTuoi(namSinh,
+namKTVA)` trả `null` nếu bị can thiếu Năm sinh — người đó vẫn được đếm vào C7 (tổng) nhưng không rơi
+vào bucket tuổi nào trong C9-C13. Tương tự, cột giới tính B10 (theo đúng mẫu ngành) CHỈ có 1 cột
+"Nữ" (C19), không có cột "Nam" riêng — nếu 1 bị can có `gioiTinh` khác "nam"/"nu" (dữ liệu hỏng/
+trống, hay gặp ở dữ liệu import Excel cũ), người đó không được đếm là "Nữ" nhưng cũng không chắc là
+"Nam" — suy "Nam" bằng phép trừ (tổng − Nữ) sẽ ngầm coi người này là Nam dù dữ liệu thật không xác
+định, là 1 dạng sai âm thầm.
+
+**Đã thêm** (trong `tinhBieu10`, ngay trước khi hàm `return`): 1 khối kiểm tra riêng, quét trực tiếp
+toàn bộ bị can CÁ NHÂN mới khởi tố Điều tra trong đúng kỳ đang xem (dùng lại `bcKyKhoiToMap`/
+`_kyIdSet` đã có sẵn cho C7, KHÔNG phân mảnh theo từng tội danh D — kiểm tra tổng CẢ KỲ, không phải
+từng dòng B10 riêng lẻ), liệt kê cụ thể (tên bị can + mã vụ, tối đa 10 người rồi gộp "và N người
+khác") bị can nào thiếu Năm sinh hoặc có Giới tính không hợp lệ, đẩy vào mảng `canhBao` đã có sẵn
+của `tinhBieu10` — tự động hiện trong phần ghi chú cảnh báo cuối sheet "Biểu B10" khi xuất Excel
+(đúng chỗ các cảnh báo "vụ chưa xác định điều luật" đã hiện từ trước, cùng 1 cơ chế, không tạo thêm
+đường hiển thị mới). Thêm hàm dùng chung `bcTatCa` (giống `bcCoD` đã có nhưng KHÔNG lọc theo điều
+luật D — cần thiết vì kiểm tra này tổng hợp CẢ KỲ, không theo từng D).
+
+**Đã kiểm chứng logic bằng test cô lập** (`test_bican_completeness.js`, trích nguyên `tinhNhomTuoi`
++ logic mới, không viết lại) — 5 assertion: loại đúng bị can pháp nhân khỏi tổng cá nhân; phát hiện
+đúng 1 bị can thiếu năm sinh; phát hiện đúng 1 bị can thiếu giới tính; dữ liệu sạch hoàn toàn không
+tạo cảnh báo giả (false positive); bị can thuộc kỳ KHÁC (bổ sung sau vào vụ cũ) không lọt vào tổng
+của kỳ đang xem. 5/5 PASS. Cũng đã compile-check cú pháp toàn bộ file qua `@babel/core` +
+`@babel/preset-react` (tương đương `@babel/standalone@7.25.6` app đang dùng) — sạch, không lỗi.
+
+**Đã sửa sau khi người dùng test thật (2026-07-31) — bỏ hẳn nhánh cảnh báo "Giới tính không hợp
+lệ/để trống"**: người dùng phản hồi trực tiếp "bị can chủ yếu là nam, nếu ko tích nữ thì auto là
+nam" — đúng như code ghi ở mọi nơi (`gioiTinh: "nam"` mặc định ở form thêm/sửa bị can, và Import
+Excel `gioiTinhRaw === "nữ" ... ? "nu" : "nam"`): hệ thống KHÔNG có khái niệm "thiếu giới tính",
+không tích "Nữ" tự động là "Nam" — đây là dữ liệu HỢP LỆ, không phải khoảng trống cần bổ sung, khác
+hẳn Năm sinh (không có giá trị mặc định, để trống là thiếu thật). Bản đầu tiên coi 2 trường này
+giống nhau (đối xứng "Σ tuổi = Σ giới tính = tổng cá nhân") là SAI giả định — đã bỏ nhánh giới tính,
+chỉ còn giữ đúng 1 cảnh báo "thiếu Năm sinh". Cập nhật lại test cô lập theo đúng thay đổi (4/4 PASS)
++ compile-check lại toàn bộ file, sạch.
+
+**Vẫn CHƯA xuất thử Excel báo cáo tháng trên dữ liệu Supabase thật** để tận mắt xác nhận cảnh báo
+"thiếu Năm sinh" hiện đúng ở cuối sheet "Biểu B10" (có/không tuỳ dữ liệu kỳ đang xem) — nên làm
+trước khi merge nhánh này vào `main`.
+
+**Mở rộng thêm (2026-07-31, theo yêu cầu "xem file excel còn có thể improve gì")** — đối chiếu lại
+`bieu_B10_mo_ta.md` (đặc tả đầy đủ 72 cột) để tìm các khối "cộng dồn phải khớp tổng" TƯƠNG TỰ C7-C24
+chưa được kiểm tra:
+1. **Trình độ học vấn (C14-C18, cùng khối Điều tra)** — 5 mức (không biết chữ/tiểu học/THCS/THPT/ĐH
+   trở lên) cũng CHỈ tính trên cá nhân như nhóm tuổi, và field `trinhDo` **không có giá trị mặc định**
+   (`trinhDo: ""` ở mọi nơi tạo/sửa bị can lẫn Import Excel — khác hẳn `gioiTinh` luôn mặc định
+   "nam") — nên đây là 1 khoảng trống THẬT giống hệt Năm sinh, không phải giả định sai như Giới tính.
+   Đã thêm cảnh báo tương tự "thiếu Trình độ học vấn" khi bị can cá nhân có `trinhDo` rỗng.
+2. **Khối "Phân tích số bị can là cá nhân đã truy tố" (C43-C52, Truy tố)** — CÙNG cấu trúc 5 nhóm
+   tuổi (C43-C47) như Điều tra, nhưng bản đầu tiên CHỈ kiểm tra Điều tra, bỏ sót Truy tố. Đã mở
+   rộng kiểm tra Năm sinh sang cohort này (`baoCao.truy_to.ds.chuyenDi`, đã lọc kỳ sẵn ở cấp vụ nên
+   không cần lọc `bcKyKhoiToMap` như Điều tra). Truy tố KHÔNG lặp lại cột Trình độ theo đúng mẫu
+   ngành nên KHÔNG áp dụng nhánh kiểm tra đó ở đây.
+3. **Đã rà nhưng KHÔNG cần sửa**: (a) Xét xử (C60-C72) không có khối nhân khẩu học nào theo mẫu
+   ngành — không có gì để kiểm tra; (b) "Phân loại tội phạm" (C39-C42, mức độ nghiêm trọng của vụ ở
+   Truy tố) đã có fallback mặc định `v.mucDoNghiemTrong || "dac_biet_nghiem_trong"` NGAY TRONG công
+   thức đếm (`mdn`) — mọi vụ luôn rơi đúng 1 bucket, không có khoảng trống như trinhDo/namSinh, nên
+   không cần thêm cảnh báo; (c) Giới tính vẫn giữ nguyên KHÔNG kiểm tra (xem mục ngay trên).
+
+Gộp 2 khối kiểm tra (Điều tra + Truy tố) qua 1 hàm dùng chung `kiemTraHoanChinhNhomBc(cohort,
+kiemTrinhDo)` để không lặp code. Đã cập nhật test cô lập (7/7 PASS, thêm 2 assertion mới cho Truy
+tố + Trình độ) và compile-check lại toàn file — sạch.
+
 ## Bug thật đã sửa: cột "-BC" ở Xuất Excel báo cáo tháng ra số khổng lồ 1.048.576/bội số (2026-07-31, `qlahs-sup.html`)
 
 Dũng phát hiện qua mở file thật bằng Excel (không phải qua kiểm chứng của Claude): sheet "Tổng hợp
