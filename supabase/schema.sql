@@ -258,7 +258,11 @@ create table "lichsuChuyenGiaiDoan" (
   "loaiSuKien"            text not null check ("loaiSuKien" in (
                              'khoi_to_vu','khoi_to_bican','chuyen_giai_doan','tra_ho_so',
                              'gia_han_dieu_tra','phuc_hoi','hoan_thanh','tach_vu','nhap_vu',
-                             'duoc_nhap_vu','giao_nhan_ho_so','sua_thong_tin'
+                             'duoc_nhap_vu','giao_nhan_ho_so','sua_thong_tin',
+                             'nhan_lai_chuyen_di'
+                             -- 'nhan_lai_chuyen_di' (2026-08-01): NhanLaiChuyenDiModal — nhận lại
+                             -- 1 vụ đã "Chuyển đi" (hoan_thanh/chuyen_di), chọn lại giai đoạn tiếp
+                             -- tục xử lý qua field denGiaiDoan đã có sẵn ở cột dưới.
                              -- 'ket_luan_dieu_tra'/'ket_luan_dieu_tra_bo_sung'/'cao_trang'/
                              -- 'cao_trang_bo_sung' CỐ Ý KHÔNG đưa vào — dead code, chưa từng
                              -- được ghi bởi code thật (đã xác nhận qua audit toàn bộ write-site)
