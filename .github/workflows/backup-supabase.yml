@@ -1,0 +1,106 @@
+name: Backup Supabase hàng ngày
+
+# Supabase gói Free KHÔNG có backup/point-in-time-recovery tự động (chỉ gói Pro trở lên mới có).
+# Workflow này tự pg_dump toàn bộ database mỗi ngày, TỰ KIỂM CHỨNG bằng cách phục hồi thử vào 1
+# Postgres tạm thời NGAY TRONG job (không đụng gì tới Supabase thật), rồi mới mã hoá + lưu lại —
+# nếu dump bị lỗi/không phục hồi được, job tự fail, KHÔNG lưu 1 bản backup hỏng mà không ai biết.
+#
+# Dữ liệu hiện tại (~15.000 dòng) nén lại chỉ ~1MB, ngoại suy 100.000 dòng cũng chỉ ~5-6MB — quá
+# nhỏ để lo tốn dung lượng, nên backup HÀNG NGÀY (không phải hàng tuần) + giữ 7 bản gần nhất.
+#
+# Bấm tay TRƯỚC KHI chạy công cụ audit/backfill/xoá hàng loạt trên dữ liệu thật (áp dụng cho cả
+# Dũng lẫn các phiên Claude Code sau này — xem CLAUDE.md):
+#   gh workflow run backup-supabase.yml -f reason="mo-ta-ngan-gon"
+#   gh run watch <run-id-in-ra-tu-lenh-tren>    # đợi xong rồi mới tiến hành thao tác rủi ro
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC (09:00 sáng giờ VN) mỗi ngày
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Lý do backup thủ công (VD: truoc-khi-chay-BackfillTrinhDoTool)"
+        required: false
+        default: "manual"
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    services:
+      # Postgres tạm CHỈ SỐNG TRONG job này — dùng để tự kiểm chứng dump phục hồi được, không phải
+      # nơi lưu trữ lâu dài, không liên quan gì tới Supabase thật.
+      verify_pg:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: verify_pw
+          POSTGRES_DB: verify_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Cài postgresql-client + gnupg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client gnupg
+
+      - name: pg_dump từ Supabase (qua Session pooler)
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -e
+          # Chỉ dump 2 schema "public" (9 bảng nghiệp vụ + boDemMaVu) và "extensions" (nơi Supabase
+          # cài pgcrypto — public.vuan/... dùng gen_random_uuid() từ đây qua search_path, THIẾU
+          # schema này sẽ không tạo lại được bảng). KHÔNG dump auth/storage/realtime/vault (nội bộ
+          # Supabase, có extension riêng như supabase_vault không cài được trên Postgres thường,
+          # cũng không phải dữ liệu nghiệp vụ cần backup — accounts đăng nhập của 4 cán bộ tạo lại
+          # tay được nếu thật sự cần, xem supabase/README.md).
+          pg_dump -Fc --no-owner --no-privileges -n public -n extensions \
+            -h aws-0-ap-southeast-1.pooler.supabase.com -p 5432 \
+            -U postgres.eutatszoaseixchvjbtg -d postgres \
+            -f backup.dump
+          ls -lh backup.dump
+
+      - name: Tự kiểm chứng — phục hồi thử vào Postgres tạm
+        env:
+          PGPASSWORD: verify_pw
+        run: |
+          set -e
+          pg_restore -h localhost -p 5432 -U postgres -d verify_db --no-owner --no-privileges backup.dump
+          TABLE_COUNT=$(psql -h localhost -p 5432 -U postgres -d verify_db -tAc \
+            "select count(*) from information_schema.tables where table_schema='public'")
+          VUAN_COUNT=$(psql -h localhost -p 5432 -U postgres -d verify_db -tAc "select count(*) from \"vuan\"")
+          BICAN_COUNT=$(psql -h localhost -p 5432 -U postgres -d verify_db -tAc "select count(*) from \"bican\"")
+          echo "Số bảng phục hồi được: $TABLE_COUNT"
+          echo "Số dòng vuan=$VUAN_COUNT, bican=$BICAN_COUNT"
+          if [ "$TABLE_COUNT" -lt 9 ] || [ "$VUAN_COUNT" -lt 1 ]; then
+            echo "::error::Dump có vẻ KHÔNG phục hồi đúng (thiếu bảng hoặc bảng vuan rỗng) — không lưu backup này."
+            exit 1
+          fi
+
+      - name: Mã hoá file dump (bắt buộc vì repo public)
+        env:
+          BACKUP_ENCRYPT_PASSPHRASE: ${{ secrets.BACKUP_ENCRYPT_PASSPHRASE }}
+        run: |
+          set -e
+          gpg --symmetric --batch --yes --passphrase "$BACKUP_ENCRYPT_PASSPHRASE" \
+            --cipher-algo AES256 -o backup.dump.gpg backup.dump
+          rm -f backup.dump
+          ls -lh backup.dump.gpg
+
+      - name: Đặt tên file kèm ngày + lý do
+        id: naming
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          REASON="${{ github.event.inputs.reason || 'scheduled' }}"
+          NAME="supabase-backup-${DATE}-${REASON}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          mv backup.dump.gpg "${NAME}.dump.gpg"
+
+      - name: Upload backup đã mã hoá
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.naming.outputs.name }}
+          path: ${{ steps.naming.outputs.name }}.dump.gpg
+          retention-days: 7
