@@ -2,6 +2,62 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Backup Postgres tự động hàng ngày + quy ước "backup trước thao tác rủi ro" (2026-08-01)
+
+Tiếp theo mục "Giữ Supabase Free luôn active" ngay dưới đây — Dũng hỏi tiếp còn có thể cải tiến gì
+nữa, rà soát ra Supabase gói Free **không có** backup/point-in-time-recovery tự động (chỉ Pro trở
+lên), trong khi đây là dữ liệu vụ án hình sự thật của 4 cán bộ — rủi ro cao nhất nếu ai đó (kể cả 1
+phiên Claude Code khác, xem sự cố đã ghi ở mục "Nộp lưu kho... 'Đợt nộp lưu năm 2025' bị xoá sạch")
+lỡ chạy 1 lệnh phá huỷ hàng loạt. Đã bàn qua `AskUserQuestion`/Plan Mode nhiều vòng — Dũng xác nhận
+đồng ý lưu mật khẩu DB vĩnh viễn làm GitHub Secret (sau khi tôi xác nhận repo PUBLIC nên GitHub
+Actions miễn phí không giới hạn), và muốn backup **hàng ngày** (không phải hàng tuần như đề xuất
+ban đầu) vì đã đo thật dung lượng hiện tại (~15k dòng nén chỉ ~0.8MB, ngoại suy 100k dòng cũng chỉ
+~5-6MB — quá nhỏ để cần tiết kiệm tần suất), cộng thêm khả năng bấm backup thủ công ngay trước khi
+làm việc rủi ro.
+
+**Đã thêm** `.github/workflows/backup-supabase.yml` — chi tiết đầy đủ (cách khôi phục, 2 Secret
+cần thiết) đã ghi trong `supabase/README.md` mục "Backup tự động hàng ngày + cách khôi phục", KHÔNG
+lặp lại ở đây. Tóm tắt: cron `0 2 * * *` (02:00 UTC/9h sáng VN mỗi ngày) + `workflow_dispatch` kèm
+input `reason` để bấm tay có ghi chú lý do — `pg_dump` schema `public`+`extensions` (đủ 9 bảng
+nghiệp vụ + `pgcrypto`, KHÔNG dump `auth`/`storage`/`realtime`/`vault` nội bộ Supabase) qua Session
+pooler, **TỰ KIỂM CHỨNG** bằng cách phục hồi thử vào 1 Postgres tạm ngay trong job (dịch vụ
+`postgres:17` — PHẢI khớp version server thật, xem bug đã sửa bên dưới) trước khi mã hoá GPG + lưu
+artifact (retention 7 ngày) — dump lỗi thì job tự fail, không lưu bản backup hỏng mà không ai biết.
+
+**Quy ước mới, áp dụng từ nay** (kể cả cho chính tôi ở các phiên sau): TRƯỚC KHI chạy bất kỳ công
+cụ audit/backfill/xoá hàng loạt nào trên dữ liệu Supabase THẬT (production), bấm
+`gh workflow run backup-supabase.yml -f reason="<mô tả ngắn>"` rồi `gh run watch <run-id>` đợi
+"success" mới tiến hành — chi phí gần như 0 (workflow chạy ~1 phút, miễn phí) đổi lấy 1 lớp an toàn
+thật sự trước các thao tác không thể hoàn tác.
+
+**2 lỗi thật gặp phải lúc kiểm chứng lần đầu (đã sửa ngay, không phải giả thuyết suông)**:
+1. `pg_dump: error: aborting because of server version mismatch` — Ubuntu runner mặc định chỉ có
+   `postgresql-client` bản 16, nhưng Supabase thật chạy Postgres **17.6** — `pg_dump` cũ hơn server
+   từ chối thẳng, không dump được gì. Sửa bằng cài đúng `postgresql-client-17` qua repo chính thức
+   PGDG (`apt.postgresql.org`) thay vì gói mặc định của Ubuntu.
+2. Bước tự kiểm chứng abort sớm (do `set -e` + `pg_restore` trả về exit code khác 0) dù dump HOÀN
+   TOÀN HỢP LỆ — nguyên nhân: RLS policy (`rls.sql`) tham chiếu `auth.role()`/role `authenticated`,
+   những thứ chỉ tồn tại trên Supabase thật (đúng chủ ý không dump schema `auth`) — phục hồi vào
+   Postgres thường báo lỗi ở đúng các câu `CREATE POLICY` đó (vô hại, KHÔNG ảnh hưởng bảng/dữ liệu
+   — thứ tự phục hồi luôn tạo bảng + nạp dữ liệu XONG mới tới RLS policy). Sửa bằng thêm `|| true`
+   sau `pg_restore`, dựa hẳn vào đếm dòng dữ liệu THẬT (`select count(*) from vuan`...) ở bước sau
+   để quyết định pass/fail, không dựa vào exit code của `pg_restore`.
+
+**Đã kiểm chứng đầy đủ bằng chính hạ tầng thật** (3 lần chạy tay qua `gh workflow run` + `gh run
+watch`, 2 lần đầu fail đúng như 2 bug ở trên, lần 3 "success"): log xác nhận phục hồi đúng **10
+bảng**, `vuan=2176`/`bican=3654` — khớp CHÍNH XÁC số liệu production thật đo được lúc đó qua
+`pg_stat_user_tables`. Tải artifact thật về máy (`gh run download`), giải mã bằng đúng passphrase
+đã lưu trong Secret — xác nhận file giải mã đúng kích thước (768KB, khớp file gốc trong CI), không
+hỏng khi đi qua vòng mã hoá/tải xuống/giải mã thật. Đã dọn sạch file tải về sau khi kiểm chứng
+(GitHub tự xoá artifact sau 7 ngày, không cần dọn phía GitHub).
+
+**Passphrase mã hoá backup (`BACKUP_ENCRYPT_PASSPHRASE`) do tôi tự sinh ngẫu nhiên lúc thiết lập,
+đã đưa cho Dũng xem 1 lần duy nhất trong chat lúc đó** — không lưu ở bất kỳ đâu trong repo, chỉ tồn
+tại dạng mã hoá trong GitHub Secret (không ai xem lại được kể cả Dũng) — **Dũng cần đã tự lưu lại
+bản rõ ở nơi an toàn ngoài GitHub (password manager)**, nếu mất thì vẫn còn backup nhưng không giải
+mã lại được, phải sinh passphrase mới + cập nhật lại Secret cho các lần backup SAU đó (không cứu
+được các bản backup CŨ đã mã hoá bằng passphrase đã mất).
+
 ## Giữ Supabase Free luôn active — GitHub Actions tự ping mỗi 3 ngày (2026-08-01)
 
 Dũng nêu vấn đề: gói Supabase Free tự "pause" (tạm dừng) project nếu không có hoạt động khoảng 7

@@ -17,6 +17,41 @@ còn ở trạng thái "chỉ là bản nháp chờ env" nữa.
   sinh mã hàng loạt, sinh mã vụ tách, tính lại điều luật/loại khởi tố). Các hàm này sẽ được gọi
   thẳng qua `.rpc(...)` từ JS, KHÔNG đi qua lớp shim giả lập Firestore API.
 
+## Backup tự động hàng ngày + cách khôi phục (2026-08-01)
+
+Supabase gói Free KHÔNG có backup/point-in-time-recovery tự động. `.github/workflows/
+backup-supabase.yml` tự `pg_dump` schema `public` + `extensions` (đủ 9 bảng nghiệp vụ + `pgcrypto`
+mà `public.vuan`... phụ thuộc qua `gen_random_uuid()` — KHÔNG dump `auth`/`storage`/`realtime`/
+`vault` nội bộ Supabase, không phải dữ liệu nghiệp vụ) mỗi ngày lúc 02:00 UTC, TỰ KIỂM CHỨNG bằng
+cách phục hồi thử vào 1 Postgres tạm ngay trong job trước khi mã hoá (GPG, bắt buộc vì repo
+public) + lưu artifact — dump lỗi thì job tự fail, không lưu bản backup hỏng. Giữ 7 bản gần nhất
+(`retention-days: 7`, tự hết hạn, không tích luỹ mãi — dữ liệu hiện ~15k dòng nén chỉ ~0.8MB nên
+backup hàng ngày vẫn rẻ hơn nhiều so với 1 lần khôi phục thất bại).
+
+**Bấm backup thủ công TRƯỚC khi chạy công cụ audit/backfill/xoá hàng loạt trên dữ liệu THẬT**
+(áp dụng cho cả Dũng lẫn các phiên Claude Code sau này):
+```bash
+gh workflow run backup-supabase.yml -f reason="mo-ta-ngan-gon-viec-sap-lam"
+gh run watch <run-id-in-ra-từ-lệnh-trên>   # đợi "success" rồi mới tiến hành thao tác rủi ro
+```
+
+**Cách khôi phục khi cần** (chỉ dùng khi thật sự mất/hỏng dữ liệu — không thử trên project đang
+chạy thật nếu chưa chắc chắn):
+1. Tab **Actions** trên GitHub → chọn đúng lần chạy (hoặc `gh run download <run-id>`) → tải file
+   `*.dump.gpg`.
+2. Giải mã: `gpg --decrypt --batch --yes --passphrase "<BACKUP_ENCRYPT_PASSPHRASE>" -o backup.dump
+   backup.dump.gpg` (passphrase Dũng tự lưu ngoài GitHub lúc thiết lập — KHÔNG lưu trong repo).
+3. Phục hồi vào project Supabase (project mới, hoặc project cũ SAU KHI đã xoá sạch dữ liệu hỏng —
+   `pg_restore` không tự xoá dữ liệu hiện có, chạy vào DB còn dữ liệu cũ sẽ báo lỗi trùng khoá):
+   `pg_restore -h aws-0-ap-southeast-1.pooler.supabase.com -p 5432 -U postgres.<ref> -d postgres
+   --no-owner --no-privileges backup.dump` (cần bản `pg_dump`/`pg_restore` **đúng major version**
+   với server đích — Supabase hiện chạy Postgres 17, bản 16 sẽ báo lỗi "server version mismatch",
+   xem cách cài bản 17 qua PGDG trong chính file workflow).
+
+2 GitHub Secret cần cho workflow này (`gh secret set`, không hiện lại được sau khi lưu):
+`SUPABASE_DB_PASSWORD` (mật khẩu DB, dùng để `pg_dump`) và `BACKUP_ENCRYPT_PASSPHRASE` (passphrase
+mã hoá file backup, KHÁC mật khẩu DB — Dũng tự lưu bản sao ở nơi an toàn ngoài GitHub).
+
 ## Kết nối Supabase project hiện có (ref `eutatszoaseixchvjbtg`)
 
 **Kết nối trực tiếp (`db.eutatszoaseixchvjbtg.supabase.co`) KHÔNG dùng được** từ môi trường thực
