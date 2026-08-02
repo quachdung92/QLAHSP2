@@ -2,6 +2,45 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Cài đặt → "Sao lưu dữ liệu" — xem danh sách backup + sao chép lệnh tải về (2026-08-02)
+
+Tiếp theo tính năng backup tự động ở mục ngay dưới đây — Dũng muốn có cách xem lại các bản backup
+đã có ngay trong app (thời gian tạo/sửa đổi cuối, thông tin cơ bản) và sao chép "mã backup" để kéo
+về khi cần, thay vì phải tự vào tab Actions trên GitHub.
+
+**Quyết định thiết kế quan trọng — KHÔNG cho tải trực tiếp qua app**: tải thật 1 artifact GitHub
+Actions (khác với chỉ LIỆT KÊ) bắt buộc phải có tài khoản GitHub đăng nhập/token — đã xác nhận qua
+`curl` thật: endpoint liệt kê (`GET .../actions/artifacts`) mở công khai không cần token (CORS
+`Access-Control-Allow-Origin: *`), nhưng endpoint tải (`GET .../artifacts/{id}/zip`) trả về
+`401 Unauthorized` khi không có token. Nhúng 1 token GitHub vào `qlahs-sup.html` (chạy trên trình
+duyệt của cả 4 cán bộ) sẽ lộ quyền đọc/ghi/xoá cả kho mã nguồn cho bất kỳ ai mở DevTools — **không
+làm**. Thay vào đó: module mới `SaoLuuModule` (tab "Sao lưu dữ liệu", `CaiDatModule`) chỉ GỌI ĐÚNG
+API liệt kê công khai (không cần token, an toàn) để hiển thị danh sách, rồi cho 2 cách lấy file
+thật: **"Sao chép lệnh tải về"** (copy `gh run download <run_id> -R quachdung92/QLAHSP2 -n
+"<tên artifact>"` vào clipboard — dán vào 1 phiên Claude Code đã có `gh` đăng nhập sẵn để nhờ tải
+giúp) hoặc **"Mở trên GitHub"** (link thẳng tới trang run đó, tự tải qua giao diện web nếu đã đăng
+nhập tài khoản GitHub của Dũng trên trình duyệt).
+
+Mỗi dòng hiện: thời gian tạo (`fmtNgayGio(a.created_at)`), lý do (tách từ tên artifact
+`supabase-backup-{ngày}-{reason}`, "scheduled" đổi hiển thị thành "Theo lịch hàng ngày"), kích
+thước (`fmtKichThuoc`), và ngày hết hạn (`a.expires_at`, hoặc "Đã hết hạn" nếu `a.expired === true`
+— GitHub tự tính đúng theo `retention-days: 7` của workflow). Nút "Sao chép lệnh tải về" tự
+`disabled` khi bản đã hết hạn (không còn tải được nữa, tránh nhầm).
+
+**Đã kiểm chứng bằng dữ liệu thật trên `qlahs-sup.web.app`** — đăng nhập thật, mở tab "Sao lưu dữ
+liệu", xác nhận hiện đúng 2 bản backup thật đã có (ngày giờ/lý do "Theo lịch hàng ngày" và
+"kiem-chung-lan-3"/kích thước 722KB/hạn hết đúng +7 ngày từ lúc tạo — khớp với dữ liệu thấy được
+qua `curl` trực tiếp API GitHub trước khi code). Link "Mở trên GitHub" trỏ đúng URL run tương ứng
+từng dòng. Nút "Sao chép lệnh tải về" gọi đúng `navigator.clipboard.writeText` — xác nhận qua test
+trực tiếp API Clipboard trong console: **môi trường trình duyệt tự động hoá (headless/CDP) tự chặn
+quyền clipboard** (`NotAllowedError: Write permission denied`, không liên quan gì tới thao tác
+click) — đây là hạn chế MÔI TRƯỜNG KIỂM CHỨNG (giống các hạn chế `window.confirm()`/screenshot đã
+ghi ở nhiều mục khác), không phải bug — code xử lý đúng cả 2 nhánh thành công/thất bại
+(`.then(thanhCong, thatBai)`), trình duyệt thật của người dùng sẽ cấp quyền clipboard bình thường
+theo đúng user-gesture (bấm nút) mà không cần hỏi. Compile-check qua `@babel/core`+
+`@babel/preset-react` — sạch. Đây là thao tác THUẦN ĐỌC (gọi API GitHub công khai, không đụng
+Supabase) — không cần dọn dữ liệu gì. Đã deploy `qlahs-sup.web.app` rồi `qlahsp2.web.app`.
+
 ## Backup Postgres tự động hàng ngày + quy ước "backup trước thao tác rủi ro" (2026-08-01)
 
 Tiếp theo mục "Giữ Supabase Free luôn active" ngay dưới đây — Dũng hỏi tiếp còn có thể cải tiến gì

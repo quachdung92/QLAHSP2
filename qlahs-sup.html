@@ -15924,6 +15924,140 @@ function CaiDatChungModule() {
   );
 }
 
+// Danh sách bản backup Postgres đã có (2026-08-01) — GitHub Actions
+// (.github/workflows/backup-supabase.yml) tự pg_dump + mã hoá + lưu artifact hàng ngày, xem
+// CLAUDE.md/supabase/README.md mục "Backup tự động hàng ngày". Module này CHỈ hiển thị danh
+// sách để tra cứu (ngày giờ tạo/kích thước/hạn hết hiệu lực) — KHÔNG tự tải file về được ngay
+// trong app, vì tải artifact GitHub Actions THẬT SỰ (khác lệnh liệt kê) bắt buộc phải có tài
+// khoản GitHub đăng nhập/token — nhúng 1 token như vậy vào app chạy trên trình duyệt của cả 4
+// cán bộ sẽ lộ quyền ghi/xoá cả repo cho bất kỳ ai mở DevTools, nên KHÔNG làm. Thay vào đó: liệt
+// kê qua đúng REST API công khai của GitHub (không cần token, đã xác nhận CORS mở
+// `Access-Control-Allow-Origin: *`, chỉ đọc, không rủi ro) rồi cho "Sao chép lệnh tải về" (dùng
+// với `gh` CLI đã đăng nhập sẵn — trên máy Dũng hoặc nhờ 1 phiên Claude Code chạy giúp) hoặc mở
+// thẳng trang GitHub (nếu đã đăng nhập trình duyệt, tải trực tiếp qua giao diện web của GitHub).
+const GITHUB_REPO = "quachdung92/QLAHSP2";
+
+function tenBackupDeDoc(name) {
+  // Tên artifact dạng "supabase-backup-YYYY-MM-DD-<reason>" (đặt trong chính workflow) — tách
+  // ngày + lý do để hiện gọn hơn, không phá vỡ gì nếu format tên đổi khác đi (fallback trả nguyên).
+  const m = /^supabase-backup-(\d{4}-\d{2}-\d{2})-(.+)$/.exec(name || "");
+  if (!m) return { ngay: "", lyDo: name || "" };
+  const [, ngay, lyDoRaw] = m;
+  const lyDo = lyDoRaw === "scheduled" ? "Theo lịch hàng ngày" : lyDoRaw;
+  return { ngay, lyDo };
+}
+
+function fmtKichThuoc(bytes) {
+  if (!bytes && bytes !== 0) return "—";
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function saoChepVanBan(text, moTa) {
+  navigator.clipboard.writeText(text).then(
+    () => addToast(`Đã sao chép ${moTa} vào clipboard.`),
+    () => addToast("Không sao chép được — trình duyệt chặn quyền clipboard.", "error")
+  );
+}
+
+function SaoLuuModule() {
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [loi, setLoi] = useState("");
+
+  const taiDanhSach = () => {
+    setDangTai(true); setLoi("");
+    fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/artifacts?per_page=30`)
+      .then(r => { if (!r.ok) throw new Error(`GitHub API trả về lỗi ${r.status}`); return r.json(); })
+      .then(data => {
+        const arr = (data.artifacts || [])
+          .filter(a => (a.name || "").startsWith("supabase-backup-"))
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        setList(arr);
+      })
+      .catch(err => { console.error(err); setLoi("Không tải được danh sách: " + err.message); })
+      .finally(() => setDangTai(false));
+  };
+
+  useEffect(() => { taiDanhSach(); }, []);
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-1">Sao lưu dữ liệu</h2>
+      <div className="text-sm text-slate-500 mb-4 max-w-3xl">
+        Danh sách bản backup Postgres tự động (GitHub Actions, xem CLAUDE.md) — tự chạy hàng ngày
+        02:00 sáng, mỗi bản giữ đúng 7 ngày rồi tự hết hạn. <strong>Không tải trực tiếp qua app
+        được</strong> (để không phải nhúng tài khoản GitHub vào trình duyệt của mọi người, lộ
+        quyền sửa/xoá cả kho mã nguồn) — bấm <strong>"Sao chép lệnh tải về"</strong> rồi dán vào 1
+        phiên Claude Code (đã đăng nhập sẵn `gh`) để nhờ tải giúp, hoặc bấm{" "}
+        <strong>"Mở trên GitHub"</strong> rồi tự tải qua giao diện web nếu đã đăng nhập tài khoản
+        GitHub của Dũng.
+      </div>
+
+      <div className="flex items-center gap-3 mb-3">
+        <button onClick={taiDanhSach} disabled={dangTai}
+                className="text-xs px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-50 disabled:opacity-50">
+          {dangTai ? "Đang tải..." : "↻ Làm mới danh sách"}
+        </button>
+        <a href={`https://github.com/${GITHUB_REPO}/actions/workflows/backup-supabase.yml`}
+           target="_blank" rel="noreferrer" className="text-xs text-indigo-600 hover:text-indigo-800">
+          Xem toàn bộ lịch sử chạy trên GitHub ↗
+        </a>
+      </div>
+
+      {loi && <div className="text-sm text-red-600 mb-3">{loi}</div>}
+      {dangTai && list.length === 0 && !loi && <div className="text-sm text-slate-400">Đang tải...</div>}
+      {!dangTai && list.length === 0 && !loi && (
+        <div className="text-sm text-slate-400">Chưa có bản backup nào (hoặc bản gần nhất đã hết hạn 7 ngày).</div>
+      )}
+
+      {list.length > 0 && (
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs">
+              <tr>
+                <th className="text-left p-3">Thời gian tạo</th>
+                <th className="text-left p-3">Lý do</th>
+                <th className="text-left p-3">Kích thước</th>
+                <th className="text-left p-3">Hết hạn</th>
+                <th className="text-left p-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map(a => {
+                const { lyDo } = tenBackupDeDoc(a.name);
+                const lenhTai = `gh run download ${a.workflow_run.id} -R ${GITHUB_REPO} -n "${a.name}"`;
+                const urlRun = `https://github.com/${GITHUB_REPO}/actions/runs/${a.workflow_run.id}`;
+                return (
+                  <tr key={a.id} className="border-t border-slate-100">
+                    <td className="p-3 text-xs">{fmtNgayGio(a.created_at)}</td>
+                    <td className="p-3 text-xs">{lyDo}</td>
+                    <td className="p-3 text-xs text-slate-500">{fmtKichThuoc(a.size_in_bytes)}</td>
+                    <td className="p-3 text-xs text-slate-500">
+                      {a.expired ? <span className="text-red-500">Đã hết hạn</span> : fmtNgayGio(a.expires_at)}
+                    </td>
+                    <td className="p-3 text-right whitespace-nowrap">
+                      <button onClick={() => saoChepVanBan(lenhTai, "lệnh tải về")}
+                              disabled={a.expired}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium mr-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                        Sao chép lệnh tải về
+                      </button>
+                      <a href={urlRun} target="_blank" rel="noreferrer"
+                         className="text-xs text-slate-500 hover:text-slate-800 font-medium">
+                        Mở trên GitHub ↗
+                      </a>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // CaiDatModule — gom Import Excel, Nhật ký thao tác, Cán bộ vào 1 chỗ để
 // tránh người dùng bình thường vô tình chạm vào các thao tác quản trị.
 function CaiDatModule() {
@@ -15936,6 +16070,7 @@ function CaiDatModule() {
     { id: "import",    label: "Import Excel"        },
     { id: "thungrac",  label: "Thùng rác"           },
     { id: "bangexcel", label: "Bảng dữ liệu"      },
+    { id: "saoluu",    label: "Sao lưu dữ liệu"   },
   ];
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -15962,6 +16097,7 @@ function CaiDatModule() {
           {subTab === "danhmuc"  && <DanhMucToiDanhModule />}
           {subTab === "import"   && <ImportExcelModule />}
           {subTab === "thungrac" && <ThungRacModule />}
+          {subTab === "saoluu"   && <SaoLuuModule />}
         </>
       )}
     </div>
