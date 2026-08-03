@@ -2,6 +2,107 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Nhánh `tra-dtbs-tach-bican-cu-moi` — sửa gốc: bị can bổ sung vào vụ đã có không được ghi "vào" ở Tổng thụ lý/Cân đối số liệu (2026-08-03, `qlahs-sup.html`, CHƯA merge vào `main`)
+
+Theo yêu cầu người dùng: 4 tab mới ở "Án đã giải quyết" (Kết thúc điều tra/VKS trả ĐTBS/Kết thúc
+truy tố/Toà trả điều tra bổ sung, xem mục ngay dưới đây) cần xử lý đúng kịch bản "vụ trả điều tra
+bổ sung có 4 bị can lúc trả, sau đó điều tra bổ sung thêm 2 bị can rồi kết thúc điều tra lại với 6
+bị can" — tránh "cộng dồn liên tục" khi làm báo cáo gộp nhiều tháng.
+
+**Đã đào code thật (không suy đoán) và tìm ra gốc rễ, rộng hơn hẳn phạm vi trả ĐTBS ban đầu nêu**:
+"Thêm bị can" (`ThemBiCanForm`) vào 1 vụ ĐÃ CÓ SẴN (đã từng được tính "vào" 1 giai đoạn từ trước)
+KHÔNG hề ghi nhận thêm "vào" nào ở tầng thống kê VỤ-LEVEL (Tổng thụ lý C3/C33/C60, sheet "Cân đối
+số liệu") — hệ thống VẪN hỏi "tính vào kỳ nào" khi thêm bị can, nhưng câu trả lời đó CHỈ được dùng
+cho khối "Phân tích bị can mới khởi tố" (C7-C24, thống kê nhân khẩu học qua `bcKyKhoiToMap`), hoàn
+toàn tách biệt với việc đếm tổng "Vụ/Bị can đang thụ lý" mỗi giai đoạn. Hậu quả: khi vụ đó sau này
+RỜI giai đoạn (chuyển đi/trả hồ sơ/hoàn thành), TOÀN BỘ bị can hiện có (kể cả người mới thêm) bị
+trừ "ra" trong khi chỉ có số ban đầu từng được cộng "vào" — gây tồn cuối kỳ hụt dần theo thời gian
+ở giai đoạn đã "cho đi" nhiều hơn đã "nhận", không tự sửa được (khác `soVuTon`/"Số tồn hiện tại" cố
+ý luôn sống theo thời gian thực, không bị ảnh hưởng). Bug này KHÔNG chỉ xảy ra với trả điều tra bổ
+sung — xảy ra với BẤT KỲ vụ nào được thêm bị can giữa chừng rồi sau đó mới chuyển giai đoạn (kể cả
+chuyển giai đoạn bình thường, không qua trả hồ sơ) — người dùng xác nhận muốn **sửa tận gốc** (mọi
+lần Thêm bị can, không riêng trả ĐTBS) sau khi được hỏi rõ qua `AskUserQuestion`/`EnterPlanMode`.
+
+**Sự kiện log mới `bo_sung_bican`** (migration `supabase/add_bo_sung_bican_2026-08-03.sql`, mở
+rộng CHECK constraint `lichsuChuyenGiaiDoan_loaiSuKien_check` — theo đúng bài học đã ghi nhiều lần
+"thêm loaiSuKien mới luôn cần ALTER constraint trước") — ghi tại `ThemBiCanForm.luuVoiKy` CÙNG
+batch với `bican`+`khoi_to_bican` đã có, field quan trọng nhất: `denGiaiDoan: vuAn.coQuanThuLy`
+(giai đoạn NHẬN bị can này) + `kyThongKe`.
+
+**`_soBiCan` đổi từ "tổng bị can HIỆN TẠI (live)" sang "tổng bị can TẠI THỜI ĐIỂM CHÍNH sự kiện đó"**
+— sửa `vuAnTuLogDocs` (hàm dùng chung cho MỌI dòng "vào"/"ra" giai đoạn trong `tinhBaoCaoKyTuLog`
+VÀ trong Excel `addSheetVu`): đổi từ `batchLayBiCanInfo` (chỉ đếm) sang `batchLayBiCanList` (đã có
+sẵn đầy đủ, gồm `ngayKhoiTo`) + hàm mới `locBiCanTheoCutoff(bcList, cutoff)` (đặt cạnh
+`chonBiCanChinh`) — bị can có `ngayKhoiTo <= cutoff` (= `ngaySuKien` hoặc `thoiDiemGhi` của CHÍNH sự
+kiện log đang xét) mới được tính; bị can thêm SAU thời điểm 1 sự kiện không còn bị tính trùng vào
+"vào"/"ra" của sự kiện đó nữa (có sự kiện `bo_sung_bican` RIÊNG lo phần "vào" của họ). Áp dụng
+THỐNG NHẤT cho CẢ vào lẫn ra (ban đầu định chỉ sửa "vào", nhưng suy luận kỹ hơn xác nhận "ra" cũng
+CẦN sửa y hệt — nếu không, tính lại 1 kỳ đã chốt SAU KHI vụ đã rời giai đoạn và được thêm bị can Ở
+GIAI ĐOẠN MỚI sẽ vô tình gộp nhầm bị can đó vào "ra" của giai đoạn CŨ). Field `_bcCutoff` gắn kèm
+lên kết quả để Excel `addSheetVu` lọc y hệt — vụ KHÔNG có `_bcCutoff` ("DS tồn"/"DS đã hoàn thành" —
+2 nơi cố tình giữ nguyên hành vi live, xem "Ngoài phạm vi" bên dưới) không bị ảnh hưởng.
+
+**`tinhBaoCaoKyTuLog`** — thêm query `bo_sung_bican` (kyThongKe+denGiaiDoan) cùng nhóm 6 query
+"vào" đã có, cộng `.size` vào `bcMoi` (CHỈ bị can, KHÔNG cộng vào `soMoi.tong` — không phải 1 vụ
+mới). Hàm mới `vuBiCanTuLogDocs` (khác `vuAnTuLogDocs` — mỗi log doc ứng ĐÚNG 1 bị can qua
+`maBiCan`, không đại diện cả vụ) dựng `ds.boSungBiCan` cho Excel.
+
+**Excel** — 3 thay đổi: (1) sửa `bcCountVuArr` (dùng cho "Cân đối số liệu"/"Tổng hợp báo cáo") từ
+đếm lại `biCanByVu[vu.id]` (live, SẼ LỆCH với `_soBiCan` mới sau fix này) sang ưu tiên dùng thẳng
+`vu._soBiCan` đã tính đúng; (2) sheet mới `"DS bổ sung BC ĐT/TT/XX"` (`addSheetBoSungBiCan`, mỗi
+dòng ĐÚNG 1 bị can, cột "Đếm vụ" LUÔN RỖNG vì không phải 1 vụ "vào" mới) — thêm vào
+`DT_VAO`/`TT_VAO`/`XX_VAO`/`VAO_SHEETS_GD` (đúng tiền lệ "DS phục hồi TĐC"/"DS nhận lại CĐ") và 1
+dòng mới "— Bị can bổ sung (vào vụ đã có)" trong "Tổng hợp báo cáo"; (3) **`ALL_VAO` (dùng RIÊNG
+cho "TK tội danh", CỐ Ý loại bỏ sheet mới** — TK tội danh đếm theo pivot tội danh qua cơ chế khác
+(`buildFlatVuBc`, chưa sửa theo asOfEventDate, ngoài phạm vi đợt này) — để không lộ dữ liệu mới qua
+formula Excel tự recalc mà JS "result" cache chưa cộng theo, tránh tạo lệch MỚI ở đúng sheet đó.
+
+**"Án đã giải quyết" — 2 tab "Kết thúc điều tra"/"Kết thúc truy tố" thêm cột "Số bị can" tách cũ/
+mới** — LƯU Ý: đây là phép tính RIÊNG với `_soBiCan` (ledger), vì `_soBiCan` của CHÍNH sự kiện
+"kết thúc điều tra" luôn = TOÀN BỘ bị can đang có (đúng cho ledger, nhưng không phân biệt được cũ/
+mới nếu chỉ nhìn 1 số này). Đã thêm field `_bcListGoc`/`_soBiCanHienTai` vào `vuAnTuLogDocs`, và
+trong `taiDsCgd` (module) tự tìm sự kiện `tra_ho_so` GẦN NHẤT trước đó của CHÍNH vụ (denGiaiDoan =
+giai đoạn NGUỒN, qua `giaiDoanTruoc`), dùng NGÀY của sự kiện trả hồ sơ đó (KHÁC ngày sự kiện đang
+xét) làm cutoff MỚI để lọc lại `_bcListGoc` — ra đúng "X (trả ĐTBS) + Y mới". Vụ chưa từng trả hồ
+sơ (kết thúc điều tra lần đầu bình thường) không có gì để tách, chỉ hiện tổng.
+
+**Ngoài phạm vi (không sửa ở nhánh này)**: "Nhập vụ" (`NhapVuModal`, bị can merge sang vụ đích
+cũng là 1 dạng "thêm vào vụ đã có", CÙNG lỗ hổng gốc nhưng khác cơ chế kích hoạt); "Tồn cuối kỳ
+theo tội danh" Biểu B10 (`tinhSnapTonTheoTD`, cơ chế snapshot riêng, có sẵn công cụ "Sửa lại tồn
+cuối kỳ theo tội danh" để recompute — CHƯA cộng riêng phần bị can bổ sung, cần chạy lại công cụ đó
+sau khi merge); "TK tội danh" (pivot theo tội danh, xem `ALL_VAO` ở trên).
+
+**Đã kiểm chứng bằng test cô lập** (`test_bo_sung_bican.js`, trích nguyên `locBiCanTheoCutoff`) —
+10/10 PASS: (A) ledger — mô phỏng đúng 4 kỳ liên tiếp (trả ĐTBS→bổ sung 2 BC→kết thúc điều tra),
+xác nhận tồn Điều tra/Truy tố khớp đúng 0/6 sau cùng (không âm/hụt) + đối chứng trực tiếp bug gốc
+(nếu không sửa sẽ ra -2, âm vô lý); (B) hiển thị — xác nhận tách đúng 4 cũ/2 mới theo cutoff KHÁC
+(ngày trả hồ sơ, không phải ngày sự kiện đang xét). Compile-check qua `@babel/preset-react` — sạch.
+
+**⚠ CHƯA kiểm chứng bằng Supabase thật** — cần chạy migration
+`supabase/add_bo_sung_bican_2026-08-03.sql` trước (cần mật khẩu DB, không có trong phiên code này)
+— nếu không, "Thêm bị can" sẽ lỗi CHECK constraint, chặn đứng thao tác nghiệp vụ hàng ngày của 4
+cán bộ. Sau khi có DB thật: thêm 1 vụ test, trả ĐTBS, thêm bị can, kết thúc điều tra lại — xuất
+Excel báo cáo tháng, xác nhận "Cân đối số liệu" vẫn cân bằng (Chênh lệch = 0) và sheet "DS bổ sung
+BC ĐT" có đúng dòng, trước khi merge nhánh này vào `main`/deploy production.
+
+## "Án đã giải quyết" — thêm 4 tab chuyển giai đoạn: Kết thúc điều tra/VKS trả ĐTBS/Kết thúc truy tố/Toà trả ĐTBS (2026-08-03, `qlahs-sup.html`)
+
+Theo yêu cầu người dùng — module "Án đã giải quyết" trước đây chỉ có 5 tab dựa vào `trangThai`
+(kết quả CUỐI CÙNG của vụ án: Đã xét xử/Chuyển đi/Tạm đình chỉ/Đình chỉ/Án huỷ). Thêm 4 tab MỚI dựa
+vào SỰ KIỆN chuyển giai đoạn (không phải kết quả cuối cùng — vụ có thể vẫn đang giải quyết tiếp):
+- **Kết thúc điều tra** (`chuyen_giai_doan`, denGiaiDoan="truy_to") — Điều tra → Truy tố.
+- **VKS trả ĐTBS** (`tra_ho_so`, denGiaiDoan="dieu_tra") — Truy tố → Điều tra (viện trả hồ sơ).
+- **Kết thúc truy tố** (`chuyen_giai_doan`, denGiaiDoan="xet_xu") — Truy tố → Xét xử.
+- **Toà trả điều tra bổ sung** (`tra_ho_so`, denGiaiDoan="truy_to") — Xét xử → Truy tố (toà trả).
+
+Dữ liệu lấy trực tiếp từ `lichsuChuyenGiaiDoan` (không phải cache lạnh `list` — cache đó chỉ chứa
+vụ đã trangThai≠"dang_giai_quyet"), lọc theo kỳ qua `kyThongKe` của CHÍNH sự kiện, dùng chung ô
+"Lọc theo kỳ" đã có. Bảng hiện thêm "Giai đoạn hiện tại"/"Trạng thái hiện tại" (vụ có thể đã đi xa
+hơn hoặc đã giải quyết xong) và số/ngày quyết định tương ứng (nhãn động qua `nhanSoQuyetDinhChuyen`/
+"Số QĐ trả hồ sơ ĐTBS"). Compile-check sạch — **chưa kiểm chứng bằng dữ liệu Supabase thật** (không
+có tài khoản đăng nhập trong phiên code). Đã deploy lên `qlahs-sup.web.app` (test) và
+`qlahsp2.web.app` (production) — xem commit `a11c6eb`.
+
 ## Audit công thức Nhập/Tách vụ + sửa gõ gộp "Số/Ngày" cho mọi cặp còn thiếu (2026-08-03, `qlahs-sup.html`)
 
 Dũng yêu cầu kiểm tra công thức đếm số vụ khi Nhập/Tách vụ (VD 6 vụ nhập vào nhau → còn 1 vụ, tức
