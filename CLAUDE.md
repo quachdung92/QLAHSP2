@@ -78,12 +78,20 @@ xác nhận tồn Điều tra/Truy tố khớp đúng 0/6 sau cùng (không âm/
 (nếu không sửa sẽ ra -2, âm vô lý); (B) hiển thị — xác nhận tách đúng 4 cũ/2 mới theo cutoff KHÁC
 (ngày trả hồ sơ, không phải ngày sự kiện đang xét). Compile-check qua `@babel/preset-react` — sạch.
 
-**⚠ CHƯA kiểm chứng bằng Supabase thật** — cần chạy migration
-`supabase/add_bo_sung_bican_2026-08-03.sql` trước (cần mật khẩu DB, không có trong phiên code này)
-— nếu không, "Thêm bị can" sẽ lỗi CHECK constraint, chặn đứng thao tác nghiệp vụ hàng ngày của 4
-cán bộ. Sau khi có DB thật: thêm 1 vụ test, trả ĐTBS, thêm bị can, kết thúc điều tra lại — xuất
-Excel báo cáo tháng, xác nhận "Cân đối số liệu" vẫn cân bằng (Chênh lệch = 0) và sheet "DS bổ sung
-BC ĐT" có đúng dòng, trước khi merge nhánh này vào `main`/deploy production.
+**✅ ĐÃ CHẠY migration thật lên Supabase (2026-08-03, sau khi Dũng cung cấp mật khẩu DB qua chat)**
+— chạy `supabase/add_bo_sung_bican_2026-08-03.sql` qua Session pooler (script Node tạm dùng package
+`pg` cài tạm trong thư mục scratchpad, mật khẩu chỉ truyền qua biến môi trường lúc chạy, KHÔNG ghi
+vào file nào, gỡ sạch script + package ngay sau khi chạy xong — đúng quy tắc `supabase/README.md`).
+Xác nhận qua `pg_constraint`: CHECK constraint đã có đúng `'bo_sung_bican'`. Kiểm chứng thêm 1 vòng
+INSERT→đọc lại→DELETE thật trên bảng `lichsuChuyenGiaiDoan` (dùng 1 vụ/bị can THẬT có sẵn, chỉ đọc
+— không đụng dữ liệu `vuan`/`bican`) — ghi đúng `loaiSuKien:"bo_sung_bican"`, xoá sạch ngay sau khi
+xác nhận, không để lại rác trên dữ liệu thật.
+
+**Vẫn CHƯA kiểm chứng qua UI thật** (Playwright/thao tác tay) — nên: thêm 1 vụ test, trả ĐTBS, thêm
+bị can (xác nhận không còn lỗi CHECK constraint qua UI thật), kết thúc điều tra lại — xuất Excel
+báo cáo tháng, xác nhận "Cân đối số liệu" vẫn cân bằng (Chênh lệch = 0), sheet "DS bổ sung BC ĐT"
+có đúng dòng, và tab "Kết thúc điều tra" (Án đã giải quyết) hiện đúng "4 (trả ĐTBS) + 2 mới" — trước
+khi merge nhánh này vào `main`/deploy production.
 
 ## "Án đã giải quyết" — thêm 4 tab chuyển giai đoạn: Kết thúc điều tra/VKS trả ĐTBS/Kết thúc truy tố/Toà trả ĐTBS (2026-08-03, `qlahs-sup.html`)
 
