@@ -312,7 +312,12 @@ create table "lichsuChuyenGiaiDoan" (
   -- qlahs-sup.html nhưng KHÔNG ràng buộc CHECK enum (cho tự gõ lý do khác ngoài gợi ý). Cột này
   -- được thêm bằng ALTER TABLE trực tiếp lên project thật (không phải deploy lại schema.sql từ
   -- đầu) — xem ghi chú CLAUDE.md "Giao nhận hồ sơ: thêm 'Lý do giao nhận'...".
-  "lyDoGiaoNhan"          text not null default ''
+  "lyDoGiaoNhan"          text not null default '',
+  -- Snapshot bị can của vụ NGUỒN lúc "Nhập vụ" (2026-08-03, chỉ có ý nghĩa khi loaiSuKien=
+  -- 'nhap_vu') — bị can bị chuyển hẳn maVuAn sang vụ đích ngay lúc nhập, nên mọi báo cáo xem SAU
+  -- đó không còn truy vấn lại được "bican where maVuAn=vụ nguồn". Cột này thêm bằng ALTER TABLE
+  -- trực tiếp lên project thật — xem supabase/add_bican_snapshot_nhap_vu_2026-08-03.sql.
+  "biCanSnapshot"         jsonb not null default '[]'
 );
 
 create index "lichsuChuyenGiaiDoan_maVuAn_thoiDiemGhi_idx"

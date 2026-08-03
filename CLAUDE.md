@@ -2,6 +2,66 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Audit công thức Nhập/Tách vụ + sửa gõ gộp "Số/Ngày" cho mọi cặp còn thiếu (2026-08-03, `qlahs-sup.html`)
+
+Dũng yêu cầu kiểm tra công thức đếm số vụ khi Nhập/Tách vụ (VD 6 vụ nhập vào nhau → còn 1 vụ, tức
+-5 vụ; tách 1 vụ thành 3 → +2 vụ) và xem lại cách Excel biểu diễn "vụ chính được nhập vào ở trên
+đầu, các vụ được nhập thì expand/collapse".
+
+**Kết luận audit — số VỤ đúng, số BỊ CAN có lỗ hổng thật đã sửa**: `tachVuAn` mỗi lần chỉ tạo đúng
+1 vụ mới (1 sự kiện `tach_vu` = +1 "mới"), `NhapVuModal` mỗi lần chỉ gộp đúng 1 vụ nguồn vào 1 vụ
+đích (1 sự kiện `nhap_vu` = -1 ở đúng giai đoạn của vụ nguồn, tính qua `coQuanThuLy` — không đổi
+sau khi nhập) — muốn nhập 6 vụ/tách 3 vụ phải làm nhiều lần liên tiếp, cộng dồn đúng ra -5/+2 như
+Dũng mô tả. **Phát hiện lỗ hổng thật**: khi nhập vụ, toàn bộ bị can của vụ nguồn bị chuyển hẳn
+`maVuAn` sang vụ đích NGAY LÚC NHẬP (`qlahs-sup.html` dòng ghi `batch.update(d.ref, {maVuAn:
+dichId,...})`), nhưng `tinhBaoCaoKyTuLog`/Xuất Excel lại TRUY VẤN LẠI "bican where maVuAn=vụ
+nguồn" SAU đó để biết vụ nguồn có bao nhiêu bị can — luôn ra RỖNG (bị can đã dời hết) — khiến sheet
+"DS nhập vụ" không tra được vụ bị nhập gốc có bị can nào (hiện "(Chưa có BC)" dù có thể có nhiều bị
+can thật). Số TỔNG vẫn tình cờ đúng khi nhập CÙNG giai đoạn (bị can không thực rời giai đoạn, chỉ
+đổi tên vụ) nhưng SAI nếu nhập KHÁC giai đoạn (giai đoạn nguồn không được trừ đúng, giai đoạn đích
+không được cộng đúng).
+
+**Đã sửa (3 việc, theo lựa chọn của Dũng qua AskUserQuestion)**:
+1. `NhapVuModal.luu()` — snapshot nguyên vẹn `bcSnap.docs.map(d=>d.data())` vào field mới
+   `biCanSnapshot` trên sự kiện `nhap_vu`, TRƯỚC khi bị can bị chuyển đi. `tinhBaoCaoKyTuLog`
+   (helper mới `biCanInfoTuDanhSach`) và sheet Excel "DS nhập vụ" ưu tiên đọc từ snapshot này thay
+   vì truy vấn sống. Cần cột mới `lichsuChuyenGiaiDoan.biCanSnapshot` (jsonb) — xem
+   `supabase/add_bican_snapshot_nhap_vu_2026-08-03.sql`, Dũng tự chạy qua Supabase Dashboard → SQL
+   Editor (đã chọn cách này thay vì đưa mật khẩu DB). Sự kiện `nhap_vu` cũ tạo TRƯỚC cột này không
+   có snapshot, không khôi phục lại được, rơi về hành vi cũ (0/rỗng).
+2. `NhapVuModal` — phát hiện vụ đích khác giai đoạn với vụ đang nhập (so `coQuanThuLy`), hiện cảnh
+   báo hổ phách giải thích rủi ro tính sai số bị can tồn, bắt tích "Tôi hiểu và vẫn muốn nhập" mới
+   cho bấm Xác nhận (theo yêu cầu Dũng: KHÔNG chặn hẳn, chỉ cảnh báo + bắt xác nhận).
+3. Viết lại hoàn toàn sheet Excel "DS nhập vụ {ĐT/TT/XX}" (`addSheetNhapVu`, thay `addSheetVuKy`
+   cũ) — nhóm theo VỤ ĐÍCH: mỗi vụ đích 1 dòng tổng "▸ Vụ đích: ..." ở trên (đậm, tím, cần fetch
+   riêng `dichVuById` vì vụ đích có thể không nằm trong bất kỳ mảng mới/tồn/giải quyết nào của
+   đúng giai đoạn sheet đang xét), các vụ đã nhập vào nó xếp ngay dưới, thu gọn qua Excel Outline —
+   đúng yêu cầu "vụ chính ở trên đầu, expand/collapse". Dòng tổng dùng `null` (không phải `""`)
+   cho mọi ô không áp dụng — tránh lặp lại đúng bug "-BC ra số khổng lồ" (xem mục cuối file): công
+   thức `demBcSheet` dựa vào `COUNTBLANK` để loại đúng ô trống, `""` là 1 trạng thái Excel khác có
+   thể không được coi là trống, rủi ro thổi phồng cột "-BC" của "Tổng hợp báo cáo"/B10.
+
+**Tiện thể mở rộng gõ gộp "Số/Ngày" (tính năng đã có từ 2026-07-30, xem mục "Gõ gộp 'Số/Ngày'..."
+bên dưới) cho các cặp còn thiếu** (Dũng yêu cầu "tất cả các phần nhập số ngày"), rà bằng grep toàn
+bộ cặp nhãn `Truong nhan="Số ..."`/`"Ngày ..."` đi liền nhau: "Ngày QĐ khởi tố VA" + "Số QĐ khởi tố
+VA" (ThemVuAnForm, SuaVuAnForm, `ChiTietVuAnModal`'s FormSua) và "Ngày khởi tố bị can" + "Số QĐ
+khởi tố bị can" (bị can lồng trong ThemVuAnForm, ThemBiCanForm, SuaBiCanForm) — thêm `onTachSo` y
+hệt pattern cũ. Riêng **Cài đặt → Bảng dữ liệu Excel** (bảng sửa hàng loạt kiểu spreadsheet) dùng
+component cell riêng `OCellDate` (không phải `NhapNgay` trực tiếp) — mỗi cell 1 field độc lập,
+không tự biết cell "Số QĐ" cùng dòng — đã thêm prop `onTachSo` xuyên qua `OCellDate` rồi wire cho 2
+cell "Ngày QĐ KTVA" (`DongVuBangExcel`) và "Ngày khởi tố BC" (`DongBiCanBangExcel`), gọi
+`suaVu`/`suaBiCanTruong` lần 2 độc lập để ghi "Số QĐ" — khớp đúng kiến trúc cell tự commit độc lập
+đã có sẵn của bảng này, không phải cơ chế mới.
+
+Đã biên dịch qua `@babel/core`+`@babel/preset-react` (cài tạm trong scratchpad, không đụng repo) —
+sạch cú pháp. **Chưa kiểm chứng bằng dữ liệu Supabase thật** (cần cột `biCanSnapshot` tồn tại trước
+— Dũng tự chạy migration) và **chưa commit/deploy** — nên: (1) Dũng chạy
+`supabase/add_bican_snapshot_nhap_vu_2026-08-03.sql` qua Supabase Dashboard; (2) thử Nhập 2 vụ
+test thật, xuất Excel báo cáo tháng, xác nhận sheet "DS nhập vụ" hiện đúng dòng tổng "▸ Vụ đích"
++ bị can gốc của vụ bị nhập không còn "(Chưa có BC)"; (3) thử gõ "380/06.7.2026" vào ô "Ngày QĐ
+khởi tố VA"/"Ngày khởi tố bị can" ở cả form thường lẫn Bảng dữ liệu Excel, xác nhận tự tách đúng cả
+2 ô; rồi mới deploy `qlahs-sup.web.app` → `qlahsp2.web.app`.
+
 ## Cài đặt → "Sao lưu dữ liệu" — xem danh sách backup + sao chép lệnh tải về (2026-08-02)
 
 Tiếp theo tính năng backup tự động ở mục ngay dưới đây — Dũng muốn có cách xem lại các bản backup

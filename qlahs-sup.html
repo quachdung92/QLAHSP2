@@ -773,6 +773,16 @@ async function layBiCanInfo(maVuAn) {
   return { soBiCan: bcSnap.size, toiDanhChinh };
 }
 
+// Giống layBiCanInfo nhưng tính TRÊN 1 MẢNG bị can đã có sẵn (không truy vấn Firestore/Supabase) —
+// dùng cho "biCanSnapshot" snapshot lúc Nhập vụ (2026-08-03, xem NhapVuModal + tinhBaoCaoKyTuLog):
+// sau khi nhập, bị can của vụ nguồn đã chuyển hẳn maVuAn sang vụ đích, truy vấn lại "bican where
+// maVuAn=vụ nguồn" luôn ra rỗng — phải dùng đúng bản snapshot ghi tại thời điểm nhập.
+function biCanInfoTuDanhSach(bcList) {
+  const bcChinh = bcList.length > 0 ? chonBiCanChinh(bcList) : null;
+  const toiDanhChinh = bcChinh?.toiDanh?.[0] || "";
+  return { soBiCan: bcList.length, toiDanhChinh };
+}
+
 // Chia nhỏ mảng id thành các lô AN TOÀN cho mệnh đề "in" qua PostgREST (2026-07-21) — "checklist
 // Supabase mục 5" từng bỏ hẳn chia lô 30 của Firestore với lý do "Postgres ANY() không giới hạn"
 // — ĐÚNG cho bản thân Postgres, nhưng SAI THỰC TẾ vì PostgREST gửi `.in()` qua QUERY STRING trên
@@ -4774,9 +4784,17 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   const [ketQua, setKetQua] = useState([]);
   const [dichId, setDichId] = useState(null);
   const [dichTen, setDichTen] = useState("");
+  // dichGD (2026-08-03) — coQuanThuLy của vụ đích, để phát hiện "nhập khác giai đoạn" (VD vụ Điều
+  // tra nhập vào vụ Truy tố) — trường hợp này khiến số bị can tồn tính SAI (xem tinhBaoCaoKyTuLog:
+  // bị can chuyển giai đoạn nguồn sang giai đoạn đích nhưng không có "vào" tương ứng cho giai đoạn
+  // đích, không có "ra" tương ứng thật cho giai đoạn nguồn). Theo yêu cầu người dùng: KHÔNG chặn
+  // hẳn (vẫn có thể có nhu cầu thực tế), chỉ cảnh báo + bắt xác nhận trước khi cho nhập.
+  const [dichGD, setDichGD] = useState(null);
+  const [xacNhanKhacGD, setXacNhanKhacGD] = useState(false);
   const [ngay, setNgay] = useState("");
   const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
+  const khacGiaiDoan = !!(dichId && dichGD && dichGD !== vuAn.coQuanThuLy);
 
   // 2026-07-18: TÁCH RIÊNG tải ứng viên (chỉ 1 lần, cache TTL 2 phút — xem fetchWithTtlCache) khỏi
   // lọc theo từ khoá (thuần client, chạy lại mỗi lần gõ) — trước đây gộp chung 1 effect theo
@@ -4804,6 +4822,10 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   const luu = () => {
     if (!dichId) { hd.setLoi("Cần chọn vụ đích để nhập vào."); return; }
     if (!ngay) { hd.setLoi("Cần nhập ngày nhập vụ."); return; }
+    if (khacGiaiDoan && !xacNhanKhacGD) {
+      hd.setLoi("Vụ đích khác giai đoạn với vụ này — cần tích xác nhận cảnh báo bên dưới trước khi nhập.");
+      return;
+    }
     hd.batDauXacNhanKy(async (kyId) => {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
@@ -4812,6 +4834,11 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
         db.collection("bican").where("maVuAn", "==", dichId).get(),
       ]);
       const bcDichTruoc = bcDichSnapTruoc.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }));
+      // Snapshot NGUYÊN VẸN dữ liệu bị can của vụ nguồn TRƯỚC khi chuyển maVuAn sang vụ đích
+      // (2026-08-03) — nếu không, mọi báo cáo/Excel xem SAU thời điểm nhập sẽ truy vấn "bican
+      // where maVuAn==vụ nguồn" và luôn ra RỖNG (bị can đã dời hết sang vụ đích), khiến sheet
+      // "DS nhập vụ" không tra được vụ đó gốc có bị can nào — xem tinhBaoCaoKyTuLog.dsNhapVu.
+      const biCanSnapshot = bcSnap.docs.map(d => d.data());
 
       const batch = db.batch();
       // Nếu bị can nguồn từng bị "sao chép" lúc tách vụ (nhomBiCanId) và vụ đích đã có 1 bản ghi
@@ -4836,6 +4863,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "nhap_vu", vuNhapVao: dichId, soQuyetDinh: soQuyetDinh.trim(),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
+        biCanSnapshot,
       }));
       // Ghi thêm 1 sự kiện phía vụ ĐÍCH — vụ nguồn tuy vẫn còn trong collection vuan (trangThai
       // "da_nhap", không xoá) nhưng lịch sử của vụ đích trước đây không có dấu vết gì về việc đã
@@ -4865,8 +4893,10 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       {ketQua.length > 0 && !dichId && (
         <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 mb-3 max-h-40 overflow-auto">
           {ketQua.map(v => (
-            <button key={v.id} onClick={() => { setDichId(v.id); setDichTen(v.tenVu); setTuKhoa(""); setKetQua([]); }}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50">
+            <button key={v.id} onClick={() => {
+              setDichId(v.id); setDichTen(v.tenVu); setDichGD(v.coQuanThuLy);
+              setXacNhanKhacGD(false); setTuKhoa(""); setKetQua([]);
+            }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50">
               <div className="text-xs text-slate-400">{hienThiMa(v)}</div>
               <div>{v.tenVu}</div>
             </button>
@@ -4876,7 +4906,22 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       {dichId && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-sm mb-3 flex items-center justify-between">
           <span>Nhập vào: <b>{dichTen}</b></span>
-          <button onClick={() => setDichId(null)} className="text-xs text-indigo-600">Đổi</button>
+          <button onClick={() => { setDichId(null); setDichGD(null); setXacNhanKhacGD(false); }} className="text-xs text-indigo-600">Đổi</button>
+        </div>
+      )}
+      {khacGiaiDoan && (
+        <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-sm mb-3">
+          <div className="text-amber-800 font-medium mb-1">⚠ Vụ đích khác giai đoạn với vụ này</div>
+          <div className="text-amber-700 text-xs mb-2">
+            Vụ này đang ở giai đoạn <b>{NHAN_GIAI_DOAN[vuAn.coQuanThuLy]}</b>, vụ đích đang ở giai
+            đoạn <b>{NHAN_GIAI_DOAN[dichGD]}</b>. Số bị can tồn của kỳ báo cáo có thể tính không
+            chính xác cho trường hợp nhập khác giai đoạn này (giai đoạn nguồn không được trừ đúng,
+            giai đoạn đích không được cộng đúng) — chỉ tiếp tục nếu bạn chắc chắn đây là điều muốn.
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer text-amber-800">
+            <input type="checkbox" checked={xacNhanKhacGD} onChange={e => setXacNhanKhacGD(e.target.checked)} />
+            Tôi hiểu và vẫn muốn nhập vụ khác giai đoạn
+          </label>
         </div>
       )}
       <label className="text-xs text-slate-500 block mb-1">Ngày nhập vụ</label>
@@ -4887,7 +4932,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
-        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy || (khacGiaiDoan && !xacNhanKhacGD)}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
@@ -5161,7 +5206,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
             <input value={soQdKtva} onChange={e => setSoQdKtva(e.target.value)} className={oInput} />
           </Truong>
           <Truong nhan="Ngày QĐ khởi tố VA *">
-            <NhapNgay value={ngayQdKtva} onChange={e => setNgayQdKtva(e.target.value)} className={oInput} />
+            <NhapNgay value={ngayQdKtva} onChange={e => setNgayQdKtva(e.target.value)} onTachSo={setSoQdKtva} className={oInput} />
           </Truong>
 
           <Truong nhan="Hạn điều tra">
@@ -5343,7 +5388,8 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
                   </Truong>
                 )}
                 <Truong nhan="Ngày khởi tố bị can">
-                  <NhapNgay value={bc.ngayKhoiTo} onChange={e => suaBiCan(bc.id, { ngayKhoiTo: e.target.value })} className={oInput} />
+                  <NhapNgay value={bc.ngayKhoiTo} onChange={e => suaBiCan(bc.id, { ngayKhoiTo: e.target.value })}
+                            onTachSo={so => suaBiCan(bc.id, { soQdKtBiCan: so })} className={oInput} />
                 </Truong>
                 <Truong nhan="Số QĐ khởi tố bị can">
                   <input value={bc.soQdKtBiCan||""} onChange={e => suaBiCan(bc.id, { soQdKtBiCan: e.target.value })} placeholder="VD: 15/QĐ-VKS" className={oInput} />
@@ -5612,7 +5658,7 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
             <input value={soQdKtva} onChange={e => setSoQdKtva(e.target.value)} className={oInput} />
           </Truong>
           <Truong nhan="Ngày QĐ khởi tố VA">
-            <NhapNgay value={ngayQdKtva} onChange={e => setNgayQdKtva(e.target.value)} className={oInput} />
+            <NhapNgay value={ngayQdKtva} onChange={e => setNgayQdKtva(e.target.value)} onTachSo={setSoQdKtva} className={oInput} />
           </Truong>
           <Truong nhan="Hạn điều tra">
             <NhapNgay value={hanDieuTra} onChange={e => setHanDieuTra(e.target.value)} className={oInput} />
@@ -5833,7 +5879,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         {bienPhapNganChan === "giam" && (
           <Truong nhan="Hạn tạm giam"><NhapNgay value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
         )}
-        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} className={oInput} /></Truong>
+        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
         <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
         <Truong nhan="Địa chỉ" rong4>
           <textarea value={diaChi} onChange={e => setDiaChi(e.target.value)} rows={1} className={oInput + " resize-y"} style={{ minHeight: "36px" }} />
@@ -6026,7 +6072,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         {bienPhapNganChan === "giam" && (
           <Truong nhan="Hạn tạm giam"><NhapNgay value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
         )}
-        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} className={oInput} /></Truong>
+        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
         <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
         <Truong nhan="Địa chỉ" rong4>
           <textarea value={diaChi} onChange={e => setDiaChi(e.target.value)} rows={1} className={oInput + " resize-y"} style={{ minHeight: "36px" }} />
@@ -7882,9 +7928,13 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     const dsNhapVu = [];
     await Promise.all(nhapVuSnap.docs.map(async d => {
       const l = d.data();
+      // Bị can đã chuyển hẳn maVuAn sang vụ đích lúc nhập — layBiCanInfo(l.maVuAn) truy vấn LẠI
+      // sau đó luôn ra rỗng (0 bị can), dù vụ nguồn gốc có thể có nhiều bị can thật. Dùng snapshot
+      // "biCanSnapshot" ghi ngay lúc nhập (nếu có — sự kiện tạo TRƯỚC 2026-08-03 sẽ không có, rơi
+      // về hành vi cũ 0/rỗng, không có cách khôi phục lại cho dữ liệu cũ).
       const [vuDoc, bcInfo] = await Promise.all([
         db.collection("vuan").doc(l.maVuAn).get(),
-        layBiCanInfo(l.maVuAn),
+        (l.biCanSnapshot && l.biCanSnapshot.length) ? biCanInfoTuDanhSach(l.biCanSnapshot) : layBiCanInfo(l.maVuAn),
       ]);
       if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
       soNhapVu++;
@@ -8251,7 +8301,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
           <input value={ed.soQdKtva} onChange={e => set("soQdKtva", e.target.value)} className={oInput} />
         </Truong>
         <Truong nhan="Ngày QĐ khởi tố VA">
-          <NhapNgay value={ed.ngayQdKtva} onChange={e => set("ngayQdKtva", e.target.value)} className={oInput} />
+          <NhapNgay value={ed.ngayQdKtva} onChange={e => set("ngayQdKtva", e.target.value)} onTachSo={so => set("soQdKtva", so)} className={oInput} />
         </Truong>
         <Truong nhan="Hạn điều tra">
           <NhapNgay value={ed.hanDieuTra} onChange={e => set("hanDieuTra", e.target.value)} className={oInput} />
@@ -9409,16 +9459,25 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
 
   // ---- Fetch bị can + danh mục tội danh + kỳ báo cáo + kỳ khởi tố riêng từng bị can song song ----
   const _vuIdsChoBaoCao = collectVuIdsFromBaoCao(baoCao);
-  const [biCanByVu, danhMucSnap, kySnap, bcKyKhoiToMap] = await Promise.all([
+  // Vụ ĐÍCH của "Nhập vụ" (2026-08-03) — cần info riêng (mã vụ/tên vụ/KSV...) để làm dòng tổng
+  // "▸ Vụ đích" trong sheet "DS nhập vụ {gs}" (xem addSheetNhapVu) — KHÔNG dùng chung _vuIdsChoBaoCao
+  // (mảng đó chỉ gom vụ NGUỒN của "mới/tồn/giải quyết", vụ đích có thể không nằm trong bất kỳ mảng
+  // nào ở giai đoạn đang xét, VD nhập khác giai đoạn).
+  const _dichIdsNhapVu = [...new Set(
+    THU_TU_GIAI_DOAN.flatMap(gd => (baoCao[gd].ds.nhapVu || []).map(v => v._log?.vuNhapVao).filter(Boolean))
+  )];
+  const [biCanByVu, danhMucSnap, kySnap, bcKyKhoiToMap, dichVuDocs] = await Promise.all([
     fetchBiCanTheoVuIds(_vuIdsChoBaoCao),
     db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc").get(),
     db.collection("kybaocao").get(),
     fetchKyKhoiToBiCan(_vuIdsChoBaoCao),
+    chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), _dichIdsNhapVu),
   ]);
   const danhMuc = danhMucSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const kyById = new Map(kySnap.docs.map(d => [d.id, d.data().tenKy || d.id]));
   const tenKyBaoCao = v => kyById.get(v._log?.kyThongKe) || v._log?.kyThongKe || "(chưa gán)";
   const tenKyBcRieng = bc => kyById.get(bcKyKhoiToMap.get(bc.id)) || bcKyKhoiToMap.get(bc.id) || "(chưa gán)";
+  const dichVuById = new Map(dichVuDocs.map(d => [d.id, { id: d.id, ...d.data() }]));
 
   // ---- Gom danh sách vụ theo loại để dùng cho nhiều sheet sau ----
   const vuMoiMap = new Map();   // vụ "vào" trong kỳ (khởi tố mới / chuyển đến / trả về)
@@ -10207,6 +10266,86 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     return addSheetVu(tenSheet, vuArr, h, f);
   }
 
+  // addSheetNhapVu (2026-08-03, theo yêu cầu người dùng "vụ chính (đích) ở trên đầu, các vụ đã
+  // nhập vào nó thu gọn bên dưới") — khác addSheetVuKy: nhóm các vụ NGUỒN theo vụ ĐÍCH
+  // (v._log.vuNhapVao), mỗi vụ đích 1 dòng tổng hiện info CHÍNH vụ đích, các vụ nguồn đã nhập vào
+  // nó xếp NGAY DƯỚI, thu gọn qua Excel Outline (cùng pattern "▸ Nhập vụ" ở sheet "Giải quyết
+  // {gđ} trong kỳ"). Dòng tổng để TRỐNG cột "Đếm vụ"/toàn bộ khối BC (không phải 1 dòng vụ nguồn
+  // thật) — không ảnh hưởng SUM(cột A)/COUNTIF(cột M) mà B10/"Tổng hợp báo cáo"/"Cân đối số liệu"
+  // dùng để tham chiếu NGƯỢC LẠI chính sheet này qua tên (xem RA_SHEETS_GD/RA_THULY_GD/ALL_RA).
+  // Cột chi tiết bị can của mỗi vụ nguồn ưu tiên đọc từ "biCanSnapshot" (snapshot lúc Nhập vụ, xem
+  // NhapVuModal) thay vì biCanByVu (live, LUÔN rỗng cho vụ nguồn vì bị can đã dời hết sang vụ đích
+  // — xem ghi chú tinhBaoCaoKyTuLog.dsNhapVu).
+  function addSheetNhapVu(tenSheet, nhapVuArr) {
+    const extraHeaders = ["Kỳ TK", "Ngày nhập", "Mã vụ đích"];
+    const rows = [];
+    const rowKind = []; // song song rows[] — "header" (dòng tổng vụ đích) | "detail" (dòng vụ nguồn)
+
+    const nhomTheoDich = new Map();
+    const thuTuDich = [];
+    for (const vu of nhapVuArr) {
+      const dichId = vu._log?.vuNhapVao || "";
+      if (!nhomTheoDich.has(dichId)) { nhomTheoDich.set(dichId, []); thuTuDich.push(dichId); }
+      nhomTheoDich.get(dichId).push(vu);
+    }
+
+    for (const dichId of thuTuDich) {
+      const nguonArr = nhomTheoDich.get(dichId);
+      const dichVu = dichVuById.get(dichId);
+      const tongBC = nguonArr.reduce((s, v) => s + (v._soBiCan || 0), 0);
+
+      // QUAN TRỌNG: mọi ô "không áp dụng" ở dòng tổng dùng null (ô THỰC SỰ trống), KHÔNG dùng ""
+      // (chuỗi rỗng) — demBcSheet ("Tổng hợp báo cáo"/B10 dựa vào COUNTIF(cột M,"<>(Chưa có BC)")
+      // trừ COUNTBLANK(cột M) để loại đúng các ô trống, xem CLAUDE.md "Bug thật đã sửa: cột '-BC'
+      // ... ra số khổng lồ"). null tái tạo ĐÚNG trạng thái ô "chưa từng ghi gì" mà COUNTBLANK đã
+      // được kiểm chứng loại trừ đúng; ghi "" (1 chuỗi 0 ký tự) là 1 trạng thái Excel KHÁC, có thể
+      // KHÔNG được COUNTBLANK coi là trống — rủi ro thổi phồng cột "-BC" giống hệt bug đã sửa.
+      rows.push([
+        null, null, // Đếm vụ, Mã ĐL vụ — trống, dòng tổng KHÔNG phải 1 vụ nguồn thật
+        dichVu ? hienThiMa(dichVu) : "(không rõ)",
+        `▸ Vụ đích: ${dichVu ? (dichVu.tenVu || "(chưa đặt tên)") : "— không tìm thấy (đã xoá?)"} — đã nhận nhập ${nguonArr.length} vụ / ${tongBC} bị can`,
+        dichVu?.ksvChinh || "", dichVu?.dtvCbdt || "", dichVu?.dieuLuat || "",
+        null, null, null, null, // Hạn ĐT vụ, Số QĐ KTVA, Ngày QĐ KTVA, Mức độ NT — không áp dụng
+        ...BC_EMPTY.map(() => null),
+        null, null, null,
+      ]);
+      rowKind.push("header");
+
+      nguonArr.forEach(vu => {
+        const vuPart = vuBaseRow(vu);
+        const maDLVu = vuPrimaryDL_xuat(vu);
+        const bcArr = (vu._log?.biCanSnapshot && vu._log.biCanSnapshot.length)
+          ? vu._log.biCanSnapshot : (biCanByVu[vu.id] || []);
+        const extraPart = [tenKyBaoCao(vu), fmtDate(vu._log?.ngaySuKien), vu._log?.vuNhapVao || ""];
+        const soDongVu = Math.max(1, bcArr.length);
+        if (bcArr.length === 0) {
+          rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart]);
+        } else {
+          bcArr.forEach((bc, i) => {
+            rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]);
+          });
+        }
+        for (let i = 0; i < soDongVu; i++) rowKind.push("detail");
+      });
+    }
+
+    const sheet = themSheetDanhSach(wb, tenSheet,
+      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
+      rows,
+      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 14)], 0);
+
+    // Outline: dòng tổng "▸ Vụ đích" nằm TRÊN, mọi dòng chi tiết của nhóm đó thu gọn NẰM DƯỚI —
+    // cùng cách summaryBelow:false đã dùng ở "gomBiCanPhu"/"▸ Nhập vụ".
+    sheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
+    rowKind.forEach((kind, idx) => {
+      const r = sheet.getRow(idx + 2); // +2: bù 1 dòng tiêu đề + rows[] 0-based -> Excel 1-based
+      if (kind === "detail") { r.outlineLevel = 1; r.hidden = true; }
+      else { r.getCell(4).font = { bold: true, color: { argb: "FF6366F1" } }; }
+    });
+
+    return sheet;
+  }
+
   // ---- Sheet "Cân đối số liệu" — kiểm chứng cân bằng kế toán mỗi giai đoạn ----
   // Công thức: Tồn đầu + Vào - Ra = Tồn cuối (chốt)
   // Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ (kyThongKe=null) hoặc lỗi dữ liệu
@@ -10549,10 +10688,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     add(`DS án huỷ ${gs}`,
       d.hoanThanh?.an_huy||[], ["Ngày huỷ", "Số QĐ"], _ngaySoQD);
 
-    // Nhập vụ — đếm vụ nhập = số dòng (mỗi dòng là 1 vụ bị nhập vào vụ khác)
-    add(`DS nhập vụ ${gs}`, d.nhapVu||[],
-      ["Ngày nhập", "Mã vụ đích"],
-      v => [fmtDate(v._log?.ngaySuKien), v._log?.vuNhapVao || ""]);
+    // Nhập vụ — đếm vụ nhập = số dòng "detail" (mỗi dòng là 1 vụ bị nhập vào vụ khác); nhóm theo
+    // vụ ĐÍCH, có dòng tổng "▸ Vụ đích" ở trên, thu gọn được (xem addSheetNhapVu).
+    dsSheetChiTiet.push({ ws: addSheetNhapVu(`DS nhập vụ ${gs}`, d.nhapVu||[]), gd });
 
     // "DS tồn {gs}" ĐÃ tạo ở vòng lặp riêng phía trên (ngay sau Cân đối số liệu) — không tạo lại
     // ở đây, và KHÔNG đưa vào dsSheetChiTiet vì sheet đó cố tình hiện sẵn, không ẩn.
@@ -15133,10 +15271,15 @@ function OCellText({ value, onCommit, type }) {
 
 // Ô ngày — NhapNgay chỉ gọi onChange khi đã nhận diện được đúng 1 ngày hợp lệ (xem định nghĩa
 // NhapNgay), không phải mỗi phím gõ dở dang, nên commit thẳng trong onChange là an toàn.
-function OCellDate({ value, onCommit }) {
+// onTachSo (2026-08-03, opt-in — chỉ truyền ở các cell "Ngày ..." có cell "Số QĐ ..." đi kèm cùng
+// dòng, VD "Ngày QĐ KTVA"/"Ngày khởi tố BC") — cho gõ gộp "380/06.7.2026" ngay tại ô Ngày, tự tách
+// ghi cả 2 cell qua 2 lượt commit độc lập, giống cách mọi cell khác trong bảng này vốn đã commit
+// độc lập theo từng field.
+function OCellDate({ value, onCommit, onTachSo }) {
   return (
     <NhapNgay value={toInputDate(value)}
               onChange={e => onCommit(e.target.value ? fromInputDate(e.target.value) : null)}
+              onTachSo={onTachSo}
               className={oCellExcel} />
   );
 }
@@ -15248,7 +15391,8 @@ function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
       </td>
       {/* Khởi tố & tội danh */}
       <td {...oTd("ngayKhoiTo")}>
-        <OCellDate value={bc.ngayKhoiTo} onCommit={v => suaBiCanTruong(bc, { ngayKhoiTo: v })} />
+        <OCellDate value={bc.ngayKhoiTo} onCommit={v => suaBiCanTruong(bc, { ngayKhoiTo: v })}
+                   onTachSo={so => suaBiCanTruong(bc, { soQdKtBiCan: so })} />
         <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ngayKhoiTo", bc.ngayKhoiTo)} />
       </td>
       <td {...oTd("soQdKtBiCan")}>
@@ -15408,7 +15552,8 @@ function DongVuBangExcel({ vuAn, index, keo, suaVu, daMoRong, onToggleMoRong }) 
         <TayKeoFill onBatDau={() => keo.batDauKeo(index, "soQdKtva", vuAn.soQdKtva)} />
       </td>
       <td {...oTd("ngayQdKtva")}>
-        <OCellDate value={vuAn.ngayQdKtva} onCommit={v => suaVu(vuAn.id, { ngayQdKtva: v })} />
+        <OCellDate value={vuAn.ngayQdKtva} onCommit={v => suaVu(vuAn.id, { ngayQdKtva: v })}
+                   onTachSo={so => suaVu(vuAn.id, { soQdKtva: so })} />
         <TayKeoFill onBatDau={() => keo.batDauKeo(index, "ngayQdKtva", vuAn.ngayQdKtva)} />
       </td>
       {/* Cán bộ - đơn vị thụ lý */}
