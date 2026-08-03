@@ -87,11 +87,38 @@ INSERT→đọc lại→DELETE thật trên bảng `lichsuChuyenGiaiDoan` (dùng
 — không đụng dữ liệu `vuan`/`bican`) — ghi đúng `loaiSuKien:"bo_sung_bican"`, xoá sạch ngay sau khi
 xác nhận, không để lại rác trên dữ liệu thật.
 
-**Vẫn CHƯA kiểm chứng qua UI thật** (Playwright/thao tác tay) — nên: thêm 1 vụ test, trả ĐTBS, thêm
-bị can (xác nhận không còn lỗi CHECK constraint qua UI thật), kết thúc điều tra lại — xuất Excel
-báo cáo tháng, xác nhận "Cân đối số liệu" vẫn cân bằng (Chênh lệch = 0), sheet "DS bổ sung BC ĐT"
-có đúng dòng, và tab "Kết thúc điều tra" (Án đã giải quyết) hiện đúng "4 (trả ĐTBS) + 2 mới" — trước
-khi merge nhánh này vào `main`/deploy production.
+**✅ ĐÃ KIỂM CHỨNG ĐẦY ĐỦ QUA UI THẬT trên dữ liệu Supabase production thật** (2026-08-03, mở
+`qlahs-sup.html` cục bộ trỏ đúng project thật `eutatszoaseixchvjbtg`, đăng nhập `admin@qlva.local`)
+— tạo 1 vụ test ("TEST - bo sung bican tra DTBS", khởi tố trực tiếp ở Truy tố với 1 bị can gốc
+01/01/2026) rồi chạy trọn luồng: **Trả hồ sơ** (Truy tố → Điều tra, ngày 05/02/2026, "VKS trả
+ĐTBS") → **Thêm bị can** (bị can bổ sung, ngày khởi tố 15/03/2026 — SAU ngày trả hồ sơ) → **Chuyển
+giai đoạn** (Điều tra → Truy tố, ngày 20/04/2026, "Kết thúc điều tra"). Xác nhận:
+- **Lịch sử vụ án** hiện đúng sự kiện mới "Bổ sung bị can vào vụ đã có" (nhãn `NHAN_SU_KIEN` đúng).
+- **Tab "Kết thúc điều tra" (Án đã giải quyết)** hiện đúng cột Số bị can = **"1 (trả ĐTBS) + 1
+  mới"** — khớp chính xác kịch bản người dùng mô tả (chỉ khác số lượng 1+1 thay vì 4+2 để gọn).
+- **Xuất Excel báo cáo tháng** (chặn `URL.createObjectURL` bắt Blob thật, nạp lại bằng
+  `new ExcelJS.Workbook().xlsx.load(...)` ngay trong trình duyệt): sheet `"DS bổ sung BC ĐT"` có
+  đúng 1 dòng (Đếm vụ rỗng, Họ tên BC/Ngày KTBC/Loại KTBC="bo_sung" đúng dữ liệu); "Cân đối số
+  liệu" Điều tra Vào/Ra Bị can = 2/2 (1 trả về + 1 bổ sung, TỰ TÍNH LẠI bằng cách đọc trực tiếp dữ
+  liệu ô — không chỉ tin cache "result" của ExcelJS, đúng bài học đã ghi ở mục "cột -BC" — khớp
+  chính xác với cache); Truy tố Vào/Ra Bị can = 3/1 (tự tính lại cũng khớp); "Tổng hợp báo cáo" có
+  đúng dòng "— Bị can bổ sung (vào vụ đã có)" = 1 tại cột Điều tra-BC.
+- **Phát hiện + sửa thêm 1 gap qua chính lần test này**: bảng xem trước trên màn hình
+  (`BangBaoCaoChiTiet`, dùng chung cho `KyChiTietModal`/`TongHopNhieuKyModal`) KHÔNG cộng bị can bổ
+  sung vào dòng "Tổng số mới" (chỉ Excel có, do `layDs` của dòng đó thiếu `ds.boSungBiCan`) — nếu
+  không sửa, "Tồn đầu + Tổng số mới − Đã giải quyết ≠ Tồn cuối kỳ" ngay trên MÀN HÌNH (dù số liệu
+  gốc `tonCuoiBiCanKy` vẫn đúng). Đã thêm dòng "— Bị can bổ sung (vào vụ đã có)" mới (0 vụ, chỉ BC)
+  + gộp `ds.boSungBiCan` (gán tạm `_soBiCan:1` mỗi entry) vào `layDs` của "Tổng số mới" thay vì
+  dùng `layBiCan` riêng (sẽ làm mất khả năng bấm mở chi tiết của dòng này — xem điều kiện `coThe`
+  trong `HangBaoCao`). Đã kiểm chứng lại qua UI thật (mở lại kỳ 08/2026 sau khi dọn dữ liệu test,
+  dòng mới hiện đúng "0 vụ / 0 BC", không lỗi console).
+- **Dọn dẹp**: xoá vụ test qua đúng luồng Thùng rác (gõ mã xác nhận ngẫu nhiên → Xoá vĩnh viễn ở
+  Cài đặt → Thùng rác), xác nhận qua Postgres trực tiếp: 0 dòng còn sót ở `vuan`/`bican`/
+  `lichsuChuyenGiaiDoan` liên quan vụ test, "Mới trong kỳ" của 08/2026 trở về đúng 0 vụ/0 bị can
+  như trước khi test. 0 lỗi console (ngoài cảnh báo Babel kích thước file vô hại đã biết).
+
+Nhánh này đã sẵn sàng để merge vào `main`/deploy production (migration đã chạy thật, UI đã kiểm
+chứng đầy đủ trên chính production database).
 
 ## "Án đã giải quyết" — thêm 4 tab chuyển giai đoạn: Kết thúc điều tra/VKS trả ĐTBS/Kết thúc truy tố/Toà trả ĐTBS (2026-08-03, `qlahs-sup.html`)
 

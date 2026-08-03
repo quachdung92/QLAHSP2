@@ -8740,9 +8740,26 @@ function BangBaoCaoChiTiet({ baoCao }) {
             <H nhan="— Nhận lại (đã Chuyển đi)"
               lay={b => b.soMoi.nhanLai}
               layDs={b => b.ds?.nhanLai} />
+            {/* Bị can bổ sung vào vụ ĐÃ CÓ (2026-08-03) — KHÁC hẳn các dòng trên: không có "vụ"
+                tương ứng (0 vụ mới — vụ đã được đếm "vào" từ trước rồi), chỉ cộng thêm bị can. Xem
+                add_bo_sung_bican_2026-08-03.sql. layDs để trống (không click mở chi tiết được vì
+                đây là danh sách BỊ CAN, không phải danh sách VỤ như các dòng khác trong bảng này). */}
+            <H nhan="— Bị can bổ sung (vào vụ đã có)"
+              lay={() => 0}
+              layBiCan={b => (b.ds?.boSungBiCan || []).length} />
+            {/* boSungBiCan gán tạm _soBiCan:1 (mỗi entry ĐÚNG 1 bị can, xem vuBiCanTuLogDocs — vốn
+                không có field này) để cộng đúng vào tổng BC qua CÙNG cơ chế ds.reduce đã có ở
+                HangBaoCao, KHÔNG dùng layBiCan riêng (sẽ làm mất khả năng bấm mở chi tiết của dòng
+                này — xem điều kiện `coThe` trong HangBaoCao). Đánh đổi chấp nhận được: khi bấm mở
+                chi tiết, danh sách có thể dài hơn "X vụ" hiển thị (gồm cả các dòng bị can bổ sung,
+                không phải vụ mới) — vẫn đúng dữ liệu, chỉ không còn khớp 1:1 số vụ. */}
             <H nhan="Tổng số mới"
               lay={b => b.soMoi.tong}
-              layDs={b => [...(b.ds?.khoiToTrucTiep||[]), ...(b.ds?.tachVu||[]), ...(b.ds?.chuyenDen||[]), ...(b.ds?.traVe||[]), ...(b.ds?.phucHoi||[]), ...(b.ds?.nhanLai||[])]}
+              layDs={b => [
+                ...(b.ds?.khoiToTrucTiep||[]), ...(b.ds?.tachVu||[]), ...(b.ds?.chuyenDen||[]),
+                ...(b.ds?.traVe||[]), ...(b.ds?.phucHoi||[]), ...(b.ds?.nhanLai||[]),
+                ...(b.ds?.boSungBiCan||[]).map(v => ({ ...v, _soBiCan: 1 })),
+              ]}
               damNet />
             <HangBaoCaoTieuDe nhan="Đã giải quyết / ra khỏi giai đoạn" />
             <H nhan="— Chuyển giai đoạn (kết thúc giai đoạn này)" lay={b => b.chuyenDi} layDs={b => b.ds?.chuyenDi} />
