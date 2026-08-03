@@ -11096,6 +11096,41 @@ const TAB_DA_GIAI_QUYET = [
   ["dinh_chi", "Đình chỉ"], ["an_huy", "Án huỷ"],
 ];
 
+// 4 tab MỚI (2026-08-03, theo yêu cầu người dùng: muốn biết "các hình thức giải quyết phát sinh
+// trong kỳ") — KHÁC HẲN 5 tab ở trên: không dựa vào `trangThai` (kết quả CUỐI CÙNG của vụ án, vụ
+// đã xong hẳn), mà dựa vào SỰ KIỆN chuyển giai đoạn — vụ có thể vẫn đang giải quyết tiếp ở giai
+// đoạn sau, không nhất thiết đã có kết quả cuối cùng. Mỗi tab là 1 tổ hợp (loaiSuKien, denGiaiDoan)
+// — cùng đúng công thức query `tinhBaoCaoKyTuLog` đã dùng để tính "DS chuyển đến"/"DS trả về" (chỉ
+// lọc thêm theo denGiaiDoan là đủ, không cần biết tuGiaiDoan — hệ thống chỉ có 3 giai đoạn tuần tự
+// nên mỗi denGiaiDoan chỉ ứng với đúng 1 tuGiaiDoan khả dĩ cho mỗi loaiSuKien, xem moTaLoaiSuKien/
+// giaiDoanTruoc):
+//  - "Kết thúc điều tra" = chuyen_giai_doan, Điều tra → Truy tố (tiến).
+//  - "VKS trả ĐTBS" = tra_ho_so, Truy tố → Điều tra (lùi — viện trả hồ sơ điều tra bổ sung).
+//  - "Kết thúc truy tố" = chuyen_giai_doan, Truy tố → Xét xử (tiến).
+//  - "Toà trả điều tra bổ sung" = tra_ho_so, Xét xử → Truy tố (lùi — toà trả hồ sơ, cùng nhãn
+//    "Số quyết định trả hồ sơ điều tra bổ sung" TraHoSoModal đã dùng, dù đích đến là Truy tố chứ
+//    không phải thẳng Điều tra — viện nhận lại rồi mới quyết định có trả tiếp về Điều tra hay không).
+// Cả 4 đều lọc theo kỳ qua field `kyThongKe` của CHÍNH sự kiện (không phải `kyHoanThanh` của vụ —
+// field đó chỉ có ở vụ đã hoàn thành hẳn), dùng chung ô "Lọc theo kỳ" đã có — xem AnDaGiaiQuyetModule.
+const TAB_CHUYEN_GIAI_DOAN = [
+  { id: "cgd_truy_to", label: "Kết thúc điều tra", loaiSuKien: "chuyen_giai_doan", denGiaiDoan: "truy_to" },
+  { id: "cgd_vks_tra_dtbs", label: "VKS trả ĐTBS", loaiSuKien: "tra_ho_so", denGiaiDoan: "dieu_tra" },
+  { id: "cgd_xet_xu", label: "Kết thúc truy tố", loaiSuKien: "chuyen_giai_doan", denGiaiDoan: "xet_xu" },
+  { id: "cgd_toa_tra_dtbs", label: "Toà trả điều tra bổ sung", loaiSuKien: "tra_ho_so", denGiaiDoan: "truy_to" },
+];
+const NHAN_TAB_DGQ = { ...NHAN_TRANG_THAI };
+TAB_CHUYEN_GIAI_DOAN.forEach(t => { NHAN_TAB_DGQ[t.id] = t.label; });
+// Nhãn cột "Số quyết định"/"Ngày ..." theo đúng loại sự kiện của tab — `chuyen_giai_doan` dùng lại
+// nhanSoQuyetDinhChuyen (Số kết luận điều tra/Số cáo trạng); `tra_ho_so` dùng chung nhãn
+// TraHoSoModal đã có ("Số quyết định trả hồ sơ điều tra bổ sung"), bất kể đích đến là Điều tra
+// hay Truy tố (viện/toà cùng dùng 1 loại quyết định trả hồ sơ).
+function nhanSoQuyetDinhTabCgd(tab) {
+  return tab.loaiSuKien === "tra_ho_so" ? "Số QĐ trả hồ sơ ĐTBS" : nhanSoQuyetDinhChuyen(tab.denGiaiDoan);
+}
+function nhanNgaySuKienTabCgd(tab) {
+  return tab.loaiSuKien === "tra_ho_so" ? "Ngày trả hồ sơ" : "Ngày chuyển giai đoạn";
+}
+
 // ====================================================================
 // CACHE LẠNH (IndexedDB) — vụ án ĐÃ GIẢI QUYẾT (2026-07-17, Đợt 2 tối ưu Firestore)
 // Vụ đã giải quyết (trangThai ≠ "dang_giai_quyet") gần như bất biến — chỉ đổi khi Phục hồi (Tạm
@@ -11211,6 +11246,31 @@ function AnDaGiaiQuyetModule() {
   const [ksv, setKsv] = useState("tat_ca");
   const [selectedId, setSelectedId] = useState(null); // vụ đang chọn — hiện chi tiết ở panel phải
 
+  // Dữ liệu riêng cho 2 tab "Kết thúc điều tra"/"Kết thúc truy tố" (xem TAB_CHUYEN_GIAI_DOAN) —
+  // KHÔNG lấy từ cache lạnh `list` (chỉ chứa vụ đã trangThai != "dang_giai_quyet"), mà truy vấn
+  // trực tiếp `lichsuChuyenGiaiDoan` mỗi khi đổi tab/đổi kỳ lọc, vì đây là sự kiện log — vụ có thể
+  // vẫn đang giải quyết tiếp, không nằm trong cache lạnh.
+  const tabCgdDangChon = TAB_CHUYEN_GIAI_DOAN.find(t => t.id === hinhThuc) || null;
+  const [dsCgd, setDsCgd] = useState([]);
+  const [dangTaiCgd, setDangTaiCgd] = useState(false);
+  const taiDsCgd = useCallback(() => {
+    if (!tabCgdDangChon || locKy === null) return;
+    let huy = false;
+    setDangTaiCgd(true);
+    let q = db.collection("lichsuChuyenGiaiDoan")
+      .where("loaiSuKien", "==", tabCgdDangChon.loaiSuKien).where("denGiaiDoan", "==", tabCgdDangChon.denGiaiDoan);
+    if (locKy && locKy !== "tat_ca") q = q.where("kyThongKe", "==", locKy);
+    q.get()
+      .then(snap => vuAnTuLogDocs(snap.docs))
+      .then(rows => { if (!huy) { setDsCgd(rows.filter(v => !v.daXoa)); setDangTaiCgd(false); } })
+      .catch(err => {
+        console.error(err);
+        if (!huy) { setLoiTai("Lỗi khi tải dữ liệu: " + err.message); setDangTaiCgd(false); }
+      });
+    return () => { huy = true; };
+  }, [tabCgdDangChon, locKy]);
+  useEffect(() => taiDsCgd(), [taiDsCgd]);
+
   // Danh sách kỳ để chọn — gồm cả kỳ lưu trữ án cũ (loai: "luu_tru", vụ án cũ nhập lại qua Import
   // Excel hoặc gán tay vào kỳ lưu trữ vẫn cần xem/lọc được ở đây như mọi kỳ khác). Dùng chung cache
   // "kybaocao:desc" với DanhSachPanel/KyBaoCaoModule/NhatKyModule.
@@ -11252,18 +11312,26 @@ function AnDaGiaiQuyetModule() {
     return () => { huy = true; };
   }, []);
 
+  // Ngày dùng để sắp xếp/hiển thị khác nhau tuỳ loại tab: 5 tab hình thức dùng `ngayQuyetDinh`
+  // (ngày CÓ KẾT QUẢ cuối cùng); 2 tab chuyển giai đoạn dùng `ngaySuKien` của CHÍNH sự kiện log
+  // (`_log`, gắn kèm qua vuAnTuLogDocs) — vì vụ có thể chưa có kết quả cuối cùng nào.
+  const layThoiGianSapXep = (v) =>
+    tabCgdDangChon
+      ? (v._log?.ngaySuKien?.toMillis?.() ?? (v._log?.ngaySuKien ? new Date(v._log.ngaySuKien).getTime() : 0))
+      : (v.ngayQuyetDinh?.toMillis?.() ?? (v.ngayQuyetDinh ? new Date(v.ngayQuyetDinh).getTime() : 0));
+
   const listTheoHinhThuc = useMemo(() => {
-    return list.filter(v => v.trangThai === hinhThuc).sort((a, b) => {
-      const ta = a.ngayQuyetDinh?.toMillis?.() ?? (a.ngayQuyetDinh ? new Date(a.ngayQuyetDinh).getTime() : 0);
-      const tb = b.ngayQuyetDinh?.toMillis?.() ?? (b.ngayQuyetDinh ? new Date(b.ngayQuyetDinh).getTime() : 0);
-      return tb - ta;
-    });
-  }, [list, hinhThuc]);
+    const goc = tabCgdDangChon ? dsCgd : list.filter(v => v.trangThai === hinhThuc);
+    return [...goc].sort((a, b) => layThoiGianSapXep(b) - layThoiGianSapXep(a));
+  }, [list, dsCgd, tabCgdDangChon, hinhThuc]);
 
   const dsKsv = useMemo(() => [...new Set(listTheoHinhThuc.map(v => v.ksvChinh).filter(Boolean))].sort(), [listTheoHinhThuc]);
 
   const listHienThi = useMemo(() => {
-    let rows = (locKy && locKy !== "tat_ca") ? listTheoHinhThuc.filter(v => v.kyHoanThanh === locKy) : listTheoHinhThuc;
+    // 2 tab chuyển giai đoạn đã lọc kỳ NGAY LÚC QUERY (kyThongKe của sự kiện) — không lọc lại ở
+    // đây theo `kyHoanThanh` (field đó chỉ có ý nghĩa với vụ đã hoàn thành hẳn).
+    let rows = (!tabCgdDangChon && locKy && locKy !== "tat_ca")
+      ? listTheoHinhThuc.filter(v => v.kyHoanThanh === locKy) : listTheoHinhThuc;
     if (ksv !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksv);
     const k = tuKhoa.trim().toLowerCase();
     if (k) {
@@ -11278,7 +11346,7 @@ function AnDaGiaiQuyetModule() {
       );
     }
     return rows;
-  }, [listTheoHinhThuc, locKy, ksv, tuKhoa]);
+  }, [listTheoHinhThuc, tabCgdDangChon, locKy, ksv, tuKhoa]);
 
   const tenKyDangChon = dsKy.find(k => k.id === locKy)?.tenKy;
 
@@ -11313,6 +11381,14 @@ function AnDaGiaiQuyetModule() {
         </div>
       </div>
       <div className="flex gap-1 mb-4 w-fit bg-slate-100 rounded-lg p-1">
+        {TAB_CHUYEN_GIAI_DOAN.map(t => (
+          <button key={t.id} onClick={() => setHinhThuc(t.id)}
+                  title="Vụ đã chuyển giai đoạn trong kỳ — có thể vẫn đang giải quyết tiếp, chưa hẳn có kết quả cuối cùng."
+                  className={`text-sm px-4 py-1.5 rounded-md ${hinhThuc === t.id ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
+            {t.label}
+          </button>
+        ))}
+        <div className="w-px bg-slate-300 my-1" />
         {TAB_DA_GIAI_QUYET.map(([v, l]) => (
           <button key={v} onClick={() => setHinhThuc(v)}
                   className={`text-sm px-4 py-1.5 rounded-md ${hinhThuc === v ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
@@ -11323,9 +11399,9 @@ function AnDaGiaiQuyetModule() {
 
       <div className="flex-1 flex gap-4 min-h-0">
         <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
-          {dangTai && <div className="p-4 text-sm text-slate-400">Đang tải...</div>}
+          {(tabCgdDangChon ? dangTaiCgd : dangTai) && <div className="p-4 text-sm text-slate-400">Đang tải...</div>}
           {loiTai && <div className="p-4 text-sm text-red-600">{loiTai}</div>}
-          {!dangTai && listHienThi.length === 0 && (
+          {!(tabCgdDangChon ? dangTaiCgd : dangTai) && listHienThi.length === 0 && (
             <div className="p-4 text-sm text-slate-400">
               {tuKhoa.trim()
                 ? "Không có vụ nào khớp từ khoá tìm kiếm."
@@ -11342,12 +11418,21 @@ function AnDaGiaiQuyetModule() {
                     <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Mã vụ</th>
                     <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Tên vụ</th>
                     <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">KSV chính</th>
-                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Giai đoạn khi giải quyết</th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">
+                      {tabCgdDangChon ? "Giai đoạn hiện tại" : "Giai đoạn khi giải quyết"}
+                    </th>
+                    {/* Vụ đã chuyển giai đoạn có thể vẫn đang giải quyết tiếp — cần biết rõ trạng
+                        thái hiện tại, khác 5 tab hình thức ở trên (trạng thái luôn = hinhThuc đang chọn). */}
+                    {tabCgdDangChon && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Trạng thái hiện tại</th>}
                     <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Số QĐ KTVA</th>
                     <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Ngày KTVA</th>
-                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Số QĐ giải quyết</th>
-                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Ngày giải quyết</th>
-                    {hinhThuc === "chuyen_di" && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Nơi chuyển đến</th>}
+                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">
+                      {tabCgdDangChon ? nhanSoQuyetDinhTabCgd(tabCgdDangChon) : "Số QĐ giải quyết"}
+                    </th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">
+                      {tabCgdDangChon ? nhanNgaySuKienTabCgd(tabCgdDangChon) : "Ngày giải quyết"}
+                    </th>
+                    {!tabCgdDangChon && hinhThuc === "chuyen_di" && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Nơi chuyển đến</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -11361,14 +11446,26 @@ function AnDaGiaiQuyetModule() {
                       <td className="p-3 font-medium text-slate-800">{v.tenVu}</td>
                       <td className="p-3">{v.ksvChinh || "—"}</td>
                       <td className="p-3"><Badge mau={MAU_GIAI_DOAN[v.coQuanThuLy]}>{NHAN_GIAI_DOAN[v.coQuanThuLy] || v.coQuanThuLy}</Badge></td>
+                      {tabCgdDangChon && (
+                        <td className="p-3"><Badge mau={MAU_TRANG_THAI[v.trangThai]}>{NHAN_TRANG_THAI[v.trangThai] || v.trangThai}</Badge></td>
+                      )}
                       <td className="p-3 text-xs whitespace-nowrap">{v.soQdKtva || "—"}</td>
                       <td className="p-3 text-xs whitespace-nowrap">{fmtDate(v.ngayQdKtva)}</td>
-                      <td className="p-3 text-xs whitespace-nowrap">{v[FIELD_SO_QD_HOAN_THANH[hinhThuc]] || "—"}</td>
-                      <td className={`p-3 text-xs whitespace-nowrap ${v.ngayQuyetDinhUocTinh ? "text-red-600 font-medium" : ""}`}
-                          title={v.ngayQuyetDinhUocTinh ? "Ngày ước tính (= Ngày QĐ KTVA + 4 tháng) do import thiếu dữ liệu — cần cập nhật lại ngày thật." : ""}>
-                        {fmtDate(v.ngayQuyetDinh)}{v.ngayQuyetDinhUocTinh ? " ⚠" : ""}
-                      </td>
-                      {hinhThuc === "chuyen_di" && <td className="p-3 text-xs">{v.noiChuyenDen || "—"}</td>}
+                      {tabCgdDangChon ? (
+                        <>
+                          <td className="p-3 text-xs whitespace-nowrap">{v._log?.soQuyetDinh || "—"}</td>
+                          <td className="p-3 text-xs whitespace-nowrap">{fmtDate(v._log?.ngaySuKien)}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="p-3 text-xs whitespace-nowrap">{v[FIELD_SO_QD_HOAN_THANH[hinhThuc]] || "—"}</td>
+                          <td className={`p-3 text-xs whitespace-nowrap ${v.ngayQuyetDinhUocTinh ? "text-red-600 font-medium" : ""}`}
+                              title={v.ngayQuyetDinhUocTinh ? "Ngày ước tính (= Ngày QĐ KTVA + 4 tháng) do import thiếu dữ liệu — cần cập nhật lại ngày thật." : ""}>
+                            {fmtDate(v.ngayQuyetDinh)}{v.ngayQuyetDinhUocTinh ? " ⚠" : ""}
+                          </td>
+                        </>
+                      )}
+                      {!tabCgdDangChon && hinhThuc === "chuyen_di" && <td className="p-3 text-xs">{v.noiChuyenDen || "—"}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -11376,7 +11473,7 @@ function AnDaGiaiQuyetModule() {
             </div>
           )}
           <div className="text-xs text-slate-400 px-3 py-2 border-t border-slate-100">
-            {listHienThi.length} vụ ở hình thức "{NHAN_TRANG_THAI[hinhThuc]}"
+            {listHienThi.length} vụ ở {tabCgdDangChon ? "sự kiện" : "hình thức"} "{NHAN_TAB_DGQ[hinhThuc]}"
             {locKy && locKy !== "tat_ca" ? ` trong ${tenKyDangChon}` : " (tất cả kỳ)"}.
           </div>
         </div>
@@ -11389,6 +11486,9 @@ function AnDaGiaiQuyetModule() {
           dongBoColdCacheVuAnDaGiaiQuyet()
             .then(docs => setList(docs.filter(v => !v.daXoa)))
             .catch(err => console.error(err));
+          // Tab chuyển giai đoạn không nằm trong cache lạnh ở trên — tải lại riêng để phản ánh
+          // đúng thay đổi (VD vụ vừa sửa lại vừa là vụ đang hiện trong 1 trong 2 tab này).
+          taiDsCgd();
         }} />
       </div>
     </div>
