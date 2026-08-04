@@ -10053,6 +10053,44 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const raF = RA_THULY_GD[gd].map(s => mkCfBc(s, r)).join("-");
     return `${tonTruocCol}${r}+${vaoF}-${raF}`;
   }
+  // Bug đã sửa (2026-08-04, Dũng phát hiện qua filter tay trên sheet "DS tồn ĐT": lọc bỏ dòng
+  // "(Chưa có BC)" đếm ra 818 bị can, không khớp 812 mà Kỳ báo cáo hiển thị) — "Tồn kỳ này" (kỳ
+  // CHƯA CHỐT) trước đây dùng CÔNG THỨC Excel SUMIF/COUNTIFS THẲNG vào sheet "DS tồn {gs}" (số
+  // LIVE, đúng `baoCao[gd].ds.tonHienTai` tại thời điểm xuất) — khác hẳn cách `tinhBaoCaoKyTuLog`
+  // tính "Tồn cuối kỳ" bên ngoài (LOG-based: tồn đầu kỳ + vào kỳ này − ra kỳ này). 2 cách ra 2 số
+  // khác nhau bất cứ khi nào có bị can bổ sung vào vụ ĐÃ CÓ mà KHÔNG có sự kiện `bo_sung_bican`
+  // tương ứng (dữ liệu cũ, trước 2026-08-03) — vẫn LIVE có mặt trong vụ (đẩy "DS tồn ĐT" lên 818)
+  // nhưng chưa từng được LOG "vào" (nên tổng log-based dừng ở 812).
+  // ⚠ Bản sửa JS trước đó cùng ngày (`tonTheoLogD`, thêm `bcCoDBoSung`) CHỈ sửa đúng "result" CACHE
+  // của ô — Excel THẬT vẫn tính LẠI theo chính FORMULA khi mở file (bài học đã ghi nhiều lần ở mục
+  // "cột -BC..."), nên KHÔNG đủ để sửa số Dũng thấy khi mở file thật — phải sửa cả công thức ở đây.
+  // Đã sửa: đổi công thức sang CÙNG CÁCH TÍNH log-based (tồn kỳ trước + Σvào − Σra, y hệt
+  // `mkThuLyVu`/`mkThuLyBc` ở trên) thay vì tham chiếu thẳng "DS tồn {gs}" — chỉ khác ở tập "ra"
+  // (dùng ĐẦY ĐỦ RA_SHEETS_GD, không phải RA_THULY_GD chỉ 3 sheet của "Tổng thụ lý").
+  // ⚠ VAO_SHEETS_GD/RA_SHEETS_GD khai báo Ở DƯỚI (sau điểm này trong file) nên chép lại y hệt giá
+  // trị ở đây thay vì tham chiếu thẳng — sửa 1 trong 2 nơi thì nhớ sửa nơi kia cho khớp.
+  const VAO_TON_GD = {
+    dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT"],
+    truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT"],
+    xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX"],
+  };
+  const RA_TON_GD = {
+    dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
+    truy_to:  ["DS TT chuyển XX","DS TT trả ĐT","DS đã xét xử TT","DS chuyển đi TT","DS tạm đình chỉ TT","DS đình chỉ TT","DS án huỷ TT","DS nhập vụ TT"],
+    xet_xu:   ["DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX"],
+  };
+  function mkTonNayVu(gd, r) {
+    const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 3);
+    const vaoF = VAO_TON_GD[gd].map(s => mkSfVu(s, r)).join("+");
+    const raF = RA_TON_GD[gd].map(s => mkSfVu(s, r)).join("-");
+    return `${tonTruocCol}${r}+${vaoF}-${raF}`;
+  }
+  function mkTonNayBc(gd, r) {
+    const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 1 + 3);
+    const vaoF = VAO_TON_GD[gd].map(s => mkCfBc(s, r)).join("+");
+    const raF = RA_TON_GD[gd].map(s => mkCfBc(s, r)).join("-");
+    return `${tonTruocCol}${r}+${vaoF}-${raF}`;
+  }
   // "TK tội danh" (sheet 2) đếm THEO TỪNG TỘI DANH qua buildFlatVuBc/tkTD_add — cơ chế RIÊNG, CHƯA
   // được sửa theo "asOfEventDate" (ngoài phạm vi đợt sửa 2026-08-03, xem add_bo_sung_bican...sql) —
   // loại "DS bổ sung BC *" khỏi ALL_VAO để KHÔNG lộ (qua formula Excel tự recalc) một tập dữ liệu
@@ -10069,14 +10107,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     0: r => mkVlSnap(3, r),  1: r => mkVlSnap(4, r),   // ĐT tồn trước Vụ/BC
     34: r => mkVlSnap(5, r), 35: r => mkVlSnap(6, r),  // TT tồn trước Vụ/BC
     65: r => mkVlSnap(7, r), 66: r => mkVlSnap(8, r),  // XX tồn trước Vụ/BC
-    // ── Tồn kỳ này: kỳ ĐÃ CHỐT → VLOOKUP sheet snapshot (ảnh chụp cố định); kỳ CHƯA chốt → SUMIF/
-    // COUNTIFS thẳng vào "DS tồn ĐT/TT/XX" (số LIVE, đúng cùng nguồn baoCao[gd].ds.tonHienTai) ──
-    2: r => b10KyTonTD ? mkVlSnap(9, r) : mkSfVu("DS tồn ĐT", r),
-    3: r => b10KyTonTD ? mkVlSnap(10, r) : mkCfBcM(["DS tồn ĐT"], r),
-    36: r => b10KyTonTD ? mkVlSnap(11, r) : mkSfVu("DS tồn TT", r),
-    37: r => b10KyTonTD ? mkVlSnap(12, r) : mkCfBcM(["DS tồn TT"], r),
-    67: r => b10KyTonTD ? mkVlSnap(13, r) : mkSfVu("DS tồn XX", r),
-    68: r => b10KyTonTD ? mkVlSnap(14, r) : mkCfBcM(["DS tồn XX"], r),
+    // ── Tồn kỳ này: kỳ ĐÃ CHỐT → VLOOKUP sheet snapshot (ảnh chụp cố định); kỳ CHƯA chốt → công
+    // thức log-based tồn trước + vào − ra (mkTonNayVu/mkTonNayBc, xem giải thích bug đã sửa ở đó —
+    // KHÔNG còn tham chiếu thẳng "DS tồn ĐT/TT/XX" vì sheet đó là số LIVE, có thể lệch với log) ──
+    2: r => b10KyTonTD ? mkVlSnap(9, r) : mkTonNayVu("dieu_tra", r),
+    3: r => b10KyTonTD ? mkVlSnap(10, r) : mkTonNayBc("dieu_tra", r),
+    36: r => b10KyTonTD ? mkVlSnap(11, r) : mkTonNayVu("truy_to", r),
+    37: r => b10KyTonTD ? mkVlSnap(12, r) : mkTonNayBc("truy_to", r),
+    67: r => b10KyTonTD ? mkVlSnap(13, r) : mkTonNayVu("xet_xu", r),
+    68: r => b10KyTonTD ? mkVlSnap(14, r) : mkTonNayBc("xet_xu", r),
     // ── "Tổng thụ lý" (C3/C4, C33/C34, C60/C61) — xem mkThuLyVu/mkThuLyBc + bieu_B10_mo_ta.md 3.2 ──
     4:  r => mkThuLyVu("dieu_tra", r),  // C3 Tổng thụ lý ĐT — Vụ
     5:  r => mkThuLyBc("dieu_tra", r),  // C4 Tổng thụ lý ĐT — Bị can
@@ -10731,9 +10770,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT"],
       xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX"],
     };
-    // ⚠ dieu_tra: DT_KTO (đầu file, dùng cho Biểu B10 C7-C24) chép lại Y HỆT "DS tồn ĐT" +
-    // RA_SHEETS_GD.dieu_tra bên dưới (không tham chiếu thẳng được vì DT_KTO khai báo TRƯỚC điểm
-    // này) — sửa danh sách RA của Điều tra ở đây thì nhớ sửa cả DT_KTO cho khớp.
+    // ⚠ VAO_TON_GD/RA_TON_GD (đầu file, dùng cho "Tồn kỳ này" B10 khi kỳ chưa chốt — xem
+    // mkTonNayVu/mkTonNayBc) chép lại Y HỆT VAO_SHEETS_GD/RA_SHEETS_GD ở đây (không tham chiếu
+    // thẳng được vì khai báo TRƯỚC điểm này) — sửa 1 trong 2 cặp thì nhớ sửa cặp còn lại cho khớp.
     const RA_SHEETS_GD = {
       dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
       truy_to:  ["DS TT chuyển XX","DS TT trả ĐT","DS đã xét xử TT","DS chuyển đi TT","DS tạm đình chỉ TT","DS đình chỉ TT","DS án huỷ TT","DS nhập vụ TT"],
