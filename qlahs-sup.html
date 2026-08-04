@@ -8860,9 +8860,18 @@ async function fetchKyVaoGiaiDoanTonHienTai(vuIds, gd) {
 // nên dùng riêng ExcelJS (script CDN riêng, xem <head>) chỉ cho hàm này — phần Import/Xuất Excel
 // khác trong app vẫn dùng XLSX (SheetJS) như cũ, không đụng tới.
 const DO_RONG_COT_CHUNG = [16, 30, 14, 7, 28, 18, 18, 26, 12, 28];
-// iColNhom: chỉ số cột dùng làm khoá nhóm (VD 0 = Mã vụ) — khi giá trị đổi → đổi màu nền.
-// Dùng cho các sheet flat có nhiều dòng bị can/vụ xen kẽ, giúp dễ phân biệt từng vụ.
-function themSheetDanhSach(wb, tenSheet, header, rows, doRongCot, iColNhom = -1) {
+// Viền mảnh dùng chung cho mọi ô của các sheet danh sách — "thin" (mảnh nhất còn luôn hiện rõ khi
+// in/xem, khác "hair" dễ mất nét khi in đen trắng), màu slate-300 (nhạt hơn viền UI thường
+// "border-slate-200" 1 nấc để không lấn át nội dung) — chỉ để phân ô cho dễ quan sát, không nhấn.
+const VIEN_MANH_1O = { style: "thin", color: { argb: "FFCBD5E1" } };
+const VIEN_MANH_TatCa = { top: VIEN_MANH_1O, left: VIEN_MANH_1O, bottom: VIEN_MANH_1O, right: VIEN_MANH_1O };
+// nhomKeys: mảng SONG SONG với rows[] (1 khoá/dòng) — khi khoá đổi giữa 2 dòng liên tiếp thì đổi
+// màu nền. Dùng cho các sheet flat có nhiều dòng bị can/vụ xen kẽ, giúp dễ phân biệt từng vụ.
+// CỐ Ý nhận khoá qua mảng riêng thay vì "chỉ số cột trong rows[]" (thiết kế cũ, đã bỏ) — cột dùng
+// để HIỂN THỊ (VD "Đếm vụ": chỉ có giá trị ở dòng bị can ĐẦU TIÊN của vụ, rỗng ở các dòng sau) có
+// thể KHÔNG phải khoá nhóm đúng, khiến dòng đầu tiên của 1 vụ nhiều bị can bị tô màu KHÁC hẳn các
+// dòng còn lại của chính vụ đó (bug thật đã gặp — xem CLAUDE.md "border/highlight DS sheet").
+function themSheetDanhSach(wb, tenSheet, header, rows, doRongCot, nhomKeys = null) {
   const sheet = wb.addWorksheet(tenSheet.slice(0, 31));
   sheet.columns = header.map((h, i) => ({ width: (doRongCot && doRongCot[i]) || 20 }));
   const hangTieuDe = sheet.addRow(header);
@@ -8870,23 +8879,25 @@ function themSheetDanhSach(wb, tenSheet, header, rows, doRongCot, iColNhom = -1)
     cell.font = { bold: true };
     cell.alignment = { wrapText: true, vertical: "top" };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    cell.border = VIEN_MANH_TatCa;
   });
   let bandIdx = 0;
   let prevKey = undefined;
   // Xen kẽ 2 màu: trắng (band 0) và xanh nhạt (band 1)
   const BAND_FILL = [null, { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8F4FD" } }];
-  for (const r of rows) {
-    if (iColNhom >= 0) {
-      const key = r[iColNhom];
+  rows.forEach((r, idx) => {
+    if (nhomKeys) {
+      const key = nhomKeys[idx];
       if (prevKey !== undefined && key !== prevKey) bandIdx = 1 - bandIdx;
       prevKey = key;
     }
     const hang = sheet.addRow(r);
     hang.eachCell(cell => {
       cell.alignment = { wrapText: true, vertical: "top" };
-      if (iColNhom >= 0 && BAND_FILL[bandIdx]) cell.fill = BAND_FILL[bandIdx];
+      cell.border = VIEN_MANH_TatCa;
+      if (nhomKeys && BAND_FILL[bandIdx]) cell.fill = BAND_FILL[bandIdx];
     });
-  }
+  });
   sheet.views = [{ state: "frozen", ySplit: 1 }];
   return sheet;
 }
@@ -10349,6 +10360,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     extraFn = extraFn || (() => []);
     const rows = [];
     const rowsCanNhom = []; // song song rows[] — true = dòng bị can PHỤ (cần thu gọn khi gomBiCanPhu)
+    const nhomKeys = []; // song song rows[] — khoá tô màu xen kẽ theo TỪNG VỤ, xem themSheetDanhSach
     for (const vu of vuArr) {
       const vuPart = vuBaseRow(vu);
       const extraPart = extraFn(vu);
@@ -10362,10 +10374,12 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, AF+=extraHeaders (cố định BC để B10 COUNTIFS dùng đúng cột)
         rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart]);
         rowsCanNhom.push(false);
+        nhomKeys.push(vu.id);
       } else {
         bcArr.forEach((bc, i) => {
           rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]);
           rowsCanNhom.push(gomBiCanPhu ? i > 0 : false);
+          nhomKeys.push(vu.id);
         });
       }
     }
@@ -10374,7 +10388,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const sheet = themSheetDanhSach(wb, tenSheet,
       ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
       rows,
-      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12)], 0);
+      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12)], nhomKeys);
     if (gomBiCanPhu) {
       // summaryBelow:false — dòng ĐẦU (đã có info vụ) nằm TRÊN, các dòng bị can phụ thu gọn NẰM
       // DƯỚI — đúng thứ tự đọc trên-xuống-dưới tự nhiên, cùng cách đã dùng cho khối "Nhập vụ".
@@ -10410,10 +10424,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       "", vuPrimaryDL_xuat(v), ...vuBaseRow(v), ...bcCellsRow(v._bican, 1, v),
       tenKyBaoCao(v), fmtDate(v._log?.ngaySuKien),
     ]);
+    // Khoá tô màu = id vụ (v.id) — cùng 1 vụ bổ sung nhiều bị can khác đợt vẫn gộp đúng 1 màu.
     return themSheetDanhSach(wb, tenSheet,
       ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
       rows,
-      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 14)], 0);
+      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 14)], dsArr.map(v => v.id));
   }
 
   // addSheetNhapVu (2026-08-03, theo yêu cầu người dùng "vụ chính (đích) ở trên đầu, các vụ đã
@@ -10430,6 +10445,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const extraHeaders = ["Kỳ TK", "Ngày nhập", "Mã vụ đích"];
     const rows = [];
     const rowKind = []; // song song rows[] — "header" (dòng tổng vụ đích) | "detail" (dòng vụ nguồn)
+    // Khoá tô màu = dichId (vụ ĐÍCH) — dòng tổng + mọi dòng vụ nguồn đã nhập vào nó PHẢI cùng 1 màu
+    // (khác id riêng của từng vụ nguồn) để cả cụm 1 vụ đích nổi bật thành 1 khối liền mạch.
+    const nhomKeys = [];
 
     const nhomTheoDich = new Map();
     const thuTuDich = [];
@@ -10460,6 +10478,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         null, null, null,
       ]);
       rowKind.push("header");
+      nhomKeys.push(dichId);
 
       nguonArr.forEach(vu => {
         const vuPart = vuBaseRow(vu);
@@ -10475,14 +10494,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
             rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]);
           });
         }
-        for (let i = 0; i < soDongVu; i++) rowKind.push("detail");
+        for (let i = 0; i < soDongVu; i++) { rowKind.push("detail"); nhomKeys.push(dichId); }
       });
     }
 
     const sheet = themSheetDanhSach(wb, tenSheet,
       ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
       rows,
-      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 14)], 0);
+      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 14)], nhomKeys);
 
     // Outline: dòng tổng "▸ Vụ đích" nằm TRÊN, mọi dòng chi tiết của nhóm đó thu gọn NẰM DƯỚI —
     // cùng cách summaryBelow:false đã dùng ở "gomBiCanPhu"/"▸ Nhập vụ".
