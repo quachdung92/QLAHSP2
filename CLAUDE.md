@@ -2,6 +2,55 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Bug đã sửa: Biểu B10 C7-C24 bỏ sót bị can bổ sung vào vụ ĐÃ CÓ — sửa lại lần 2, bỏ phụ thuộc `bo_sung_bican` (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Người dùng phát hiện qua audit trực tiếp: khối "Phân tích bị can mới khởi tố" (C7-C24, chỉ Điều
+tra) của Biểu B10 không tính bị can được **thêm bổ sung vào 1 vụ ĐÃ CÓ SẴN** (VD vụ khởi tố kỳ
+06/2026, tháng sau "Thêm bị can" 2 người vào đúng vụ đó ở kỳ 07/2026) — 2 người này bị bỏ sót
+hoàn toàn khỏi thống kê nhân khẩu học (tuổi/trình độ/dân tộc/giới tính...) của kỳ họ thực sự được
+khởi tố, dù họ VẪN được tính đúng vào "Tổng thụ lý" (nhờ sự kiện `bo_sung_bican`, xem mục
+`tra-dtbs-tach-bican-cu-moi` ngay dưới — 2 khối thống kê khác nhau, sửa riêng).
+
+**Bản sửa ĐẦU TIÊN (commit `5c74544`, đã bị thay thế) dựa vào sự kiện `bo_sung_bican`** — chỉ
+quét `ds.boSungBiCan` (nguồn dữ liệu từ đúng sự kiện log mới thêm 2026-08-03, xem mục
+`tra-dtbs-tach-bican-cu-moi`) để tìm bị can bổ sung. Người dùng phản hồi trực tiếp: cách này
+**"sẽ miss rất nhiều"** — đúng, vì `bo_sung_bican` chỉ có ĐÚNG 3 sự kiện trên toàn hệ thống lúc
+đó (mới thêm gần đây, KHÔNG backfill cho dữ liệu cũ, Import Excel cũng không tạo ra sự kiện này).
+
+**Logic đúng theo yêu cầu người dùng**: "chỉ cần so sánh vụ án khởi tố mới vào kỳ 06/2026 thì
+tất cả bị can khởi tố vào kì 07/2026 là khởi tố bổ sung. nghĩa là ko trùng kì sau kì báo cáo của
+vụ án thì tính là bổ sung" — tức so kỳ khởi tố **CỦA TỪNG BỊ CAN** (qua sự kiện `khoi_to_bican`,
+LUÔN tồn tại kể cả dữ liệu cũ/import — khác `bo_sung_bican`) với kỳ đang tính báo cáo, hoàn toàn
+độc lập với việc vụ thuộc nhóm nào (mới/tồn/đã ra) hay có sự kiện `bo_sung_bican` hay không.
+
+**Đã sửa lại** (`tinhBieu10`): thêm `dt_bcMoiKyToanBo` — quét **TOÀN BỘ vụ Điều tra liên quan tới
+kỳ** (`allVuDT`, hợp nhất MỌI nhóm: khởi tố trực tiếp/tách vụ/chuyển đến/trả về/tồn hiện tại/
+chuyển đi/trả đi/nhập vụ/hoàn thành — không chỉ riêng nhóm "mới" như bản đầu), gom bị can có
+`bcKyKhoiToMap.get(bc.id)` khớp kỳ báo cáo, khử trùng qua `id`. `dt_ktBcMoiKy` (theo từng điều
+luật, dùng cho C7-C24) và `dtKtoCaNhan` (cảnh báo thiếu Năm sinh/Trình độ) đều lọc từ danh sách
+chung này thay vì gộp riêng lẻ theo từng nhóm như trước. Bỏ hẳn `bcCoDBoSung`/`bcTuBoSung` (dead
+code sau khi thay bằng cách tiếp cận tổng quát hơn).
+
+**Excel**: `DT_KTO` đổi từ `["DS khởi tố ĐT","DS phục hồi ĐT","DS bổ sung BC ĐT"]` sang
+`["DS tồn ĐT"]` + `RA_SHEETS_GD.dieu_tra` (7 sheet: DS ĐT chuyển TT/DS đã xét xử ĐT/DS chuyển đi
+ĐT/DS tạm đình chỉ ĐT/DS đình chỉ ĐT/DS án huỷ ĐT/DS nhập vụ ĐT) — đúng phân vùng LOẠI TRỪ LẪN
+NHAU (1 vụ Điều tra tại 1 thời điểm chỉ có thể "đang tồn" HOẶC "đã ra", không thể cả 2), tránh
+đếm trùng vì `mkCfBcKy` cộng dồn COUNTIFS qua nhiều sheet KHÔNG khử trùng — nếu giữ "DS bổ sung BC
+ĐT" song song với "DS tồn ĐT" sẽ đếm 2 lần đúng những bị can bổ sung vào vụ vẫn còn đang tồn.
+
+**Đã kiểm chứng bằng dữ liệu Supabase production thật qua console** (`qlahs-sup.web.app`, gọi
+trực tiếp `tinhBaoCaoKyTuLog`+`tinhBieu10` — các hàm này lộ ra ở phạm vi global của thẻ script,
+gọi được thẳng từ console) — vụ `QLVA_E01.53_2412_0062` khởi tố kỳ 06/2026, bổ sung 2 bị can
+(Hoàng Văn Triệu, Nguyễn Huy Hoàng) với `khoi_to_bican` gắn kỳ 07/2026: gọi `tinhBieu10()` xác
+nhận **C7 của "Điều 174 BLHS 2025" kỳ 07 = 21**, khớp CHÍNH XÁC với phép đếm thủ công độc lập
+(tự quét toàn bộ vụ liên quan qua `collectVuIdsFromBaoCao`/`batchLayBiCanList`/
+`fetchKyKhoiToBiCan` rồi lọc tay, không gọi lại `tinhBieu10`) — có đủ cả 2 bị can trong danh sách
+khớp, **dù vụ này ĐÃ chuyển sang Truy tố trong kỳ 07** (không còn nằm trong "DS tồn ĐT", chỉ nằm
+trong nhóm "chuyển đi"/`RA_SHEETS_GD`) và bất kể có hay không có sự kiện `bo_sung_bican` — chứng
+minh cách sửa mới không còn phụ thuộc sự kiện đó, đúng yêu cầu người dùng. Compile-check qua
+`@babel/core`+`@babel/preset-react` — sạch. Đã deploy `qlahs-sup.web.app` (test) rồi
+`qlahsp2.web.app` (production) qua `./deploy.sh sup` rồi `./deploy.sh prod`.
+
 ## Nhánh `tra-dtbs-tach-bican-cu-moi` — sửa gốc: bị can bổ sung vào vụ đã có không được ghi "vào" ở Tổng thụ lý/Cân đối số liệu (2026-08-03, `qlahs-sup.html`, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: 4 tab mới ở "Án đã giải quyết" (Kết thúc điều tra/VKS trả ĐTBS/Kết thúc
