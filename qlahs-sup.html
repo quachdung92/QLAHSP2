@@ -960,7 +960,7 @@ function layMaDieuLuatBiCan(bc, danhMucByTen) {
 // luật, không cần sửa lại tên). Dùng chung cho BackfillDieuLuatBCTool VÀ Import Excel (resolve
 // ngay lúc import, xem chuanHoaMotToiDanh) — tránh viết lặp lại thêm 1 nơi nữa.
 function taoDanhMucDayDu(danhMuc) {
-  const dmByTen = {}, dmByDieu = {};
+  const dmByTen = {}, dmByDieu = {}, dmByMa = {};
   danhMuc.forEach(data => {
     const keyTen = chuanHoaTenToiDanh(data.tenToiDanh);
     if (!dmByTen[keyTen] || data.namBLHS === "2025") dmByTen[keyTen] = data;
@@ -969,8 +969,20 @@ function taoDanhMucDayDu(danhMuc) {
       const keyDieu = mDieu[1].toLowerCase();
       if (!dmByDieu[keyDieu] || data.namBLHS === "2025") dmByDieu[keyDieu] = data;
     }
+    // dmByMa: tra THẲNG theo đúng chuỗi "dieuLuat" đầy đủ (VD "Điều 267 BLHS 1999") — cần TÁCH
+    // RIÊNG khỏi dmByDieu (chỉ theo SỐ điều, không phân biệt năm luật) vì số điều có thể TRÙNG
+    // NGẪU NHIÊN giữa BLHS 1999 và BLHS 2025 cho 2 TỘI DANH HOÀN TOÀN KHÁC NHAU (2 bộ luật đánh số
+    // độc lập, không như 2015→2025 vốn giữ nguyên số điều — xem "Audit 'chưa xác định điều luật'"
+    // trong CLAUDE.md, VD Điều 267 BLHS 1999 = "làm giả con dấu" ≠ Điều 267 BLHS 2025 = "vi phạm
+    // giao thông đường sắt"). Bug thật đã gặp: chuẩn hoá lại khoá snapshot "Tồn cuối kỳ theo tội
+    // danh" của kỳ trước qua trichDieuLuatTuChuoi lỡ dùng dmByDieu (ưu tiên 2025 khi trùng SỐ) làm
+    // 1 vụ "Điều 267 BLHS 1999" bị gộp nhầm sang dòng B10 của "Điều 267 BLHS 2025" — vụ thật biến
+    // mất khỏi B10 (mọi giá trị dòng gốc về 0, bị lọc bởi `vals.every(v=>!v)`) mà không cảnh báo gì
+    // (điều luật vẫn "xác định được", chỉ SAI dòng), gây lệch "Tồn Điều tra" 325 (nơi khác) vs 324
+    // (B10) không rõ nguyên nhân.
+    if (data.dieuLuat) dmByMa[data.dieuLuat.trim()] = data;
   });
-  return { dmByTen, dmByDieu };
+  return { dmByTen, dmByDieu, dmByMa };
 }
 // Tra 1 CHUỖI TỰ DO (tên tội danh, HOẶC "Điều N BLHS YYYY", HOẶC chỉ số điều) ra {ten, dieuLuat}
 // chuẩn khớp danh mục — hàm dùng CHUNG cho "form thống nhất" (2026-07-20, theo yêu cầu Dũng: ghi
@@ -980,9 +992,15 @@ function taoDanhMucDayDu(danhMuc) {
 // Biểu B10 khi chỉ còn mã điều luật (thay `normTen` cũ trong tinhBieu10 — xem đó). Trả
 // `{ten:"", dieuLuat:""}` nếu input rỗng; trả NGUYÊN input làm "ten" (không có dieuLuat) nếu không
 // khớp được gì trong danh mục — không bịa dữ liệu, để chỗ gọi tự quyết định coi là "chưa xác định".
-function trichDieuLuatTuChuoi(raw, dmByTen, dmByDieu) {
+// `dmByMa` (tuỳ chọn, có thể thiếu ở caller cũ chưa cập nhật) — kiểm tra TRƯỚC TIÊN xem `s` đã khớp
+// NGUYÊN VĂN 1 "dieuLuat" đầy đủ trong danh mục chưa (VD "Điều 267 BLHS 1999" đã LÀ 1 mã chuẩn) —
+// nếu có, dùng thẳng, KHÔNG rơi xuống nhánh dò theo SỐ điều (dmByDieu) — nhánh đó không phân biệt
+// năm luật nên dễ gộp nhầm 2 tội khác nhau trùng số điều giữa BLHS 1999/2025 (xem taoDanhMucDayDu).
+function trichDieuLuatTuChuoi(raw, dmByTen, dmByDieu, dmByMa) {
   const s = (raw || "").trim();
   if (!s) return { ten: "", dieuLuat: "" };
+  const hitMa = dmByMa && dmByMa[s];
+  if (hitMa) return { ten: hitMa.tenToiDanh, dieuLuat: hitMa.dieuLuat };
   const mDieu = s.match(/Điều\s+(\d+[a-zA-Z]*)/i);
   const hit = mDieu ? dmByDieu[mDieu[1].toLowerCase()] : dmByTen[chuanHoaTenToiDanh(s)];
   if (hit) return { ten: hit.tenToiDanh, dieuLuat: hit.dieuLuat };
@@ -993,7 +1011,7 @@ function trichDieuLuatTuChuoi(raw, dmByTen, dmByDieu) {
 // BackfillDieuLuatBCTool (xem đó để biết lịch sử audit). Trả {ten, dieuLuat, changed} —
 // changed=false nghĩa là giữ nguyên input (đã có ref sẵn, hoặc không tra được gì thêm).
 // `dieuLuatCapVu` (field `dieuLuat` của chính vuan) chỉ dùng khi tenGoc RỖNG HOÀN TOÀN.
-function chuanHoaMotToiDanh(tenGoc, dieuLuatGoc, dieuLuatCapVu, dmByTen, dmByDieu) {
+function chuanHoaMotToiDanh(tenGoc, dieuLuatGoc, dieuLuatCapVu, dmByTen, dmByDieu, dmByMa) {
   const t = (tenGoc || "").trim();
   const dl = (dieuLuatGoc || "").trim();
   if (dl) return { ten: tenGoc, dieuLuat: dieuLuatGoc, changed: false };
@@ -1012,10 +1030,10 @@ function chuanHoaMotToiDanh(tenGoc, dieuLuatGoc, dieuLuatCapVu, dmByTen, dmByDie
     // (rút số điều bằng regex rồi tra dmByDieu) — khớp thì SỬA LẠI cả `ten` (thay chuỗi rác bằng
     // đúng tên tội danh) lẫn `dieuLuat`, không giữ nguyên `t` như nhánh tên khớp phía trên (vì `t`
     // ở đây là rác, không phải tên hợp lệ cần giữ nguyên cách gõ của người dùng).
-    const hitDieu = trichDieuLuatTuChuoi(t, dmByTen, dmByDieu);
+    const hitDieu = trichDieuLuatTuChuoi(t, dmByTen, dmByDieu, dmByMa);
     if (hitDieu.dieuLuat) return { ten: hitDieu.ten, dieuLuat: hitDieu.dieuLuat, changed: true };
   } else if ((dieuLuatCapVu || "").trim()) {
-    const hit = trichDieuLuatTuChuoi(dieuLuatCapVu, dmByTen, dmByDieu);
+    const hit = trichDieuLuatTuChuoi(dieuLuatCapVu, dmByTen, dmByDieu, dmByMa);
     if (hit.dieuLuat) return { ten: hit.ten, dieuLuat: hit.dieuLuat, changed: true };
   }
   return { ten: tenGoc, dieuLuat: dieuLuatGoc, changed: false };
@@ -2514,7 +2532,7 @@ function BackfillDieuLuatBCTool() {
       const vuanById = new Map(vaSnap.docs.map(d => [d.id, d.data()]));
       // dmByTen/dmByDieu (giữ nguyên cả entry danh mục) + logic chuẩn hoá 1 cặp (tên, mã) giờ dùng
       // chung với Import Excel — xem taoDanhMucDayDu/chuanHoaMotToiDanh (đầu file, cạnh tinhDieuLuat).
-      const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
+      const { dmByTen, dmByDieu, dmByMa } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
 
       let soCapNhat = 0, soBo = 0, soLoi = 0, soSuyTuVu = 0;
       // BATCH_SIZE = 100, KHÔNG PHẢI 400 (2026-07-31, bug thật gặp phải trên production: "canceling
@@ -2538,7 +2556,7 @@ function BackfillDieuLuatBCTool() {
 
         for (let i = 0; i < toiDanh.length; i++) {
           const truocKhiSua = !(toiDanh[i] || "").trim();
-          const ket = chuanHoaMotToiDanh(toiDanh[i], dieuLuatBC[i], dieuLuatCapVu, dmByTen, dmByDieu);
+          const ket = chuanHoaMotToiDanh(toiDanh[i], dieuLuatBC[i], dieuLuatCapVu, dmByTen, dmByDieu, dmByMa);
           if (ket.changed) {
             toiDanh[i] = ket.ten; dieuLuatBC[i] = ket.dieuLuat; changed = true;
             // toiDanh RỖNG hoàn toàn trước khi sửa = suy ra từ Điều luật cấp vụ (audit 2026-07-19:
@@ -2716,13 +2734,13 @@ function CapNhatDieuLuatTuFileTool() {
           if (!bcByVu.has(bc.maVuAn)) bcByVu.set(bc.maVuAn, []);
           bcByVu.get(bc.maVuAn).push(bc);
         });
-        const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
+        const { dmByTen, dmByDieu, dmByMa } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
 
         const previewRows = [];
         for (const [ma, dlRaw] of dieuLuatTheoVu) {
           const vuan = vuanById.get(ma);
           if (!vuan) { previewRows.push({ ma, dlRaw, loai: "khong_thay_vu" }); continue; }
-          const ket = trichDieuLuatTuChuoi(dlRaw, dmByTen, dmByDieu);
+          const ket = trichDieuLuatTuChuoi(dlRaw, dmByTen, dmByDieu, dmByMa);
           if (!ket.dieuLuat) { previewRows.push({ ma, tenVu: vuan.tenVu, dlRaw, loai: "khong_khop_danh_muc" }); continue; }
           const bcs = bcByVu.get(ma) || [];
           const soBcThieu = bcs.filter(bc => !(bc.dieuLuatBC && bc.dieuLuatBC[0])).length;
@@ -3567,7 +3585,7 @@ function ImportExcelModule() {
       // Import Excel) sau đó mới hết "chưa xác định". Dùng chung logic với BackfillDieuLuatBCTool
       // (xem taoDanhMucDayDu/chuanHoaMotToiDanh) để 2 nơi luôn khớp nhau, không lệch quy tắc.
       const dmSnap = await db.collection("danhMucToiDanh").get();
-      const { dmByTen, dmByDieu } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
+      const { dmByTen, dmByDieu, dmByMa } = taoDanhMucDayDu(dmSnap.docs.map(d => d.data()));
 
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
@@ -3599,7 +3617,7 @@ function ImportExcelModule() {
         // không chuẩn hoá năm/không khớp danh mục — đúng nguyên nhân gây lệch thống kê đã audit).
         // Dùng trichDieuLuatTuChuoi (đọc được cả "Điều N BLHS ..." lẫn tên tội danh thuần) — nếu
         // không khớp gì, giữ nguyên text gốc làm "tên" (không mất dữ liệu, chỉ chưa xác định mã).
-        const dlVu = trichDieuLuatTuChuoi(v.dieuLuat, dmByTen, dmByDieu);
+        const dlVu = trichDieuLuatTuChuoi(v.dieuLuat, dmByTen, dmByDieu, dmByMa);
         const vuData = {
           maNoiSinh, maNganhCap: v.maVu || null, tenVu: v.tenVu,
           coQuanThuLy: v.coQuanThuLy, trangThai: v.trangThai,
@@ -3660,7 +3678,7 @@ function ImportExcelModule() {
           // Resolve NGAY "Mã ĐL" từ cột "Tội danh" (tên đúng danh mục, hoặc chỉ số điều VD "173"),
           // fallback sang Điều luật cấp vụ (v.dieuLuat, cột Excel riêng) nếu ô Tội danh bỏ trống
           // hoàn toàn — dữ liệu import ra chuẩn ngay, không còn phải chạy lại "Chuẩn hóa" sau.
-          const ket = chuanHoaMotToiDanh(bc.toiDanh, "", v.dieuLuat, dmByTen, dmByDieu);
+          const ket = chuanHoaMotToiDanh(bc.toiDanh, "", v.dieuLuat, dmByTen, dmByDieu, dmByMa);
           // Mẫu Import Excel không có cột Trình độ học vấn — luôn tự điền ước tính (bị can import
           // luôn là cá nhân, xem loaiBiCan: "ca_nhan" hardcode ngay dưới, không cần lọc pháp nhân).
           const tdUT = chonTrinhDoNgauNhien({ namSinh: bc.namSinh, toiDanh: [ket.ten || bc.toiDanh || ""] }, v);
@@ -8934,7 +8952,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // chỉ theo tên) để normTen/vuPrimaryDL đọc đúng cả chuỗi "Điều N BLHS YYYY" (dạng field
   // vuan.dieuLuat của vụ 0 bị can, xem trichDieuLuatTuChuoi) — danhMucByTen (Map tên→dieuLuat) ở
   // trên không đủ, giữ nguyên cho layMaDieuLuatBiCan (chỗ khác đang dùng, không đổi).
-  const { dmByTen, dmByDieu } = taoDanhMucDayDu(danhMuc);
+  const { dmByTen, dmByDieu, dmByMa } = taoDanhMucDayDu(danhMuc);
 
   // Cộng dồn 2 giá trị "tồn theo tội danh" (dạng {gd: {vuAn, biCan}}) — dùng khi 2 khoá thô khác
   // nhau (VD "Điều 174 BLHS 2025" và "Tội lừa đảo chiếm đoạt tài sản") cùng chuẩn hoá về 1 key.
@@ -8959,10 +8977,19 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // đơn lẻ đã mất tới 54 vụ Điều tra/12 BC Truy tố/28 BC Xét xử trên dữ liệu thật, cộng với 6 điều
   // luật khác bị y hệt đủ giải thích khoảng lệch lớn của cảnh báo. Sửa bằng cộng dồn thay vì ghi đè
   // khi phát hiện trùng khoá sau chuẩn hoá — không mất dữ liệu dù snapshot cũ có bị trùng khoá.
+  // Bug đã sửa (2026-08-04, phát hiện qua Dũng báo B10 "Tồn Điều tra" lệch 1 so với nơi khác — VD
+  // 324 vs 325) — thiếu `dmByMa` (tra THẲNG theo đúng chuỗi "dieuLuat" đầy đủ) ở normKey khiến 1
+  // khoá dạng "Điều N BLHS 1999" bị rơi vào nhánh dò theo SỐ điều (dmByDieu, không phân biệt năm
+  // luật, luôn ưu tiên BLHS 2025 khi trùng số) — gộp NHẦM tồn của 1 tội danh 1999 vào đúng dòng của
+  // 1 tội danh 2025 HOÀN TOÀN KHÁC nhưng trùng số điều (VD Điều 267 BLHS 1999 "làm giả con dấu" bị
+  // gộp vào Điều 267 BLHS 2025 "vi phạm giao thông đường sắt") — dòng B10 đúng của vụ đó mất hết
+  // "tồn đầu kỳ", mọi giá trị về 0, bị lọc khỏi B10 bởi `vals.every(v=>!v)` mà KHÔNG cảnh báo gì
+  // (điều luật vẫn "xác định được", chỉ bị gộp sai dòng — khác hẳn cảnh báo "vuChuaDL" chỉ bắt được
+  // trường hợp điều luật rỗng hoàn toàn). Xem taoDanhMucDayDu/trichDieuLuatTuChuoi.
   const tonTD_truocRaw = kyTruoc?.tonCuoiKyTheoTD || {};
   const tonTD_truoc = {};
   for (const [k, v] of Object.entries(tonTD_truocRaw)) {
-    const normKey = trichDieuLuatTuChuoi(k, dmByTen, dmByDieu).dieuLuat || chuanHoaMaDieuLuat(k);
+    const normKey = trichDieuLuatTuChuoi(k, dmByTen, dmByDieu, dmByMa).dieuLuat || chuanHoaMaDieuLuat(k);
     tonTD_truoc[normKey] = tonTD_truoc[normKey] ? gopTonTheoTD(tonTD_truoc[normKey], v) : v;
   }
 
@@ -8973,7 +9000,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   const kyTonTD = kyTonTD_raw ? {} : null;
   if (kyTonTD_raw) {
     for (const [k, v] of Object.entries(kyTonTD_raw)) {
-      const normKey = trichDieuLuatTuChuoi(k, dmByTen, dmByDieu).dieuLuat || chuanHoaMaDieuLuat(k);
+      const normKey = trichDieuLuatTuChuoi(k, dmByTen, dmByDieu, dmByMa).dieuLuat || chuanHoaMaDieuLuat(k);
       kyTonTD[normKey] = kyTonTD[normKey] ? gopTonTheoTD(kyTonTD[normKey], v) : v;
     }
   }
@@ -8986,7 +9013,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // tra được theo TÊN (bỏ sót định dạng "Điều N BLHS YYYY" mà vụ 0 bị can hay ghi — xem CLAUDE.md
   // "vậy làm sao hệ thống phân biệt được vụ nào thuộc điều luật năm nào"). Fallback giữ nguyên như
   // cũ (chỉ đổi nhãn năm 2015→2025) nếu không khớp gì, không bịa/không làm mất bucket cũ.
-  const normTen = (nm) => trichDieuLuatTuChuoi(nm, dmByTen, dmByDieu).dieuLuat || chuanHoaMaDieuLuat(nm);
+  const normTen = (nm) => trichDieuLuatTuChuoi(nm, dmByTen, dmByDieu, dmByMa).dieuLuat || chuanHoaMaDieuLuat(nm);
 
   // Điều luật CHÍNH của vụ: BC ban_dau (hoặc BC đầu tiên nếu không có), vụ 0 BC lấy dieuLuat[0].
   // Mỗi vụ chỉ đếm 1 lần duy nhất dưới đúng tội danh chính → tổng cột B10 = đúng tổng danh sách.
@@ -9386,10 +9413,13 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
   const danhMucSnap = await db.collection("danhMucToiDanh").get();
   const danhMuc = danhMucSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const danhMucByTen = taoDanhMucByTen(danhMuc);
-  const { dmByTen, dmByDieu } = taoDanhMucDayDu(danhMuc);
+  const { dmByTen, dmByDieu, dmByMa } = taoDanhMucDayDu(danhMuc);
   const getDL = (bc) => layMaDieuLuatBiCan(bc, danhMucByTen);
   // trichDieuLuatTuChuoi (2026-07-20, "form thống nhất") — xem giải thích ở tinhBieu10, cùng lý do.
-  const normTen = (nm) => trichDieuLuatTuChuoi(nm, dmByTen, dmByDieu).dieuLuat || chuanHoaMaDieuLuat(nm);
+  // dmByMa (2026-08-04) — xem bug đã sửa ở tinhBieu10 (gộp nhầm Điều N BLHS 1999 vào Điều N BLHS
+  // 2025 trùng số điều khác tội danh) — hàm này dựng lại TOÀN BỘ lịch sử tonCuoiKyTheoTD nên PHẢI
+  // dùng đúng bản đã sửa, nếu không sẽ ghi lại y hệt lỗi cũ vào từng kỳ đã chốt.
+  const normTen = (nm) => trichDieuLuatTuChuoi(nm, dmByTen, dmByDieu, dmByMa).dieuLuat || chuanHoaMaDieuLuat(nm);
   const KEY_CHUA_XD = "(chưa xác định — chênh lệch dữ liệu cũ)";
 
   const themVao = (map, D, gd, vuId, soBiCan) => {
@@ -9682,12 +9712,12 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // dmByTen/dmByDieu (2026-07-20, "form thống nhất") — trichDieuLuatTuChuoi đọc được cả "Điều N
   // BLHS YYYY" (vụ 0 bị can hay ghi) lẫn tên thuần, khác _tkDMByTen (chỉ tra theo tên) — xem
   // tinhBieu10 để biết lý do đầy đủ, 2 nơi PHẢI khớp nhau vì cùng mục đích "TK tội danh nhóm giống B10".
-  const { dmByTen: _tkDmByTen2, dmByDieu: _tkDmByDieu2 } = taoDanhMucDayDu(danhMuc);
+  const { dmByTen: _tkDmByTen2, dmByDieu: _tkDmByDieu2, dmByMa: _tkDmByMa2 } = taoDanhMucDayDu(danhMuc);
   const _tkGetDL = (bc) => layMaDieuLuatBiCan(bc, _tkDMByTen) || "(Chưa xác định)";
   const _tkGetDLVu = (vu) => {
     const parts = (vu.dieuLuat || "").split(";").map(s => s.trim()).filter(Boolean);
     if (parts.length === 0) return "(Chưa xác định)";
-    return trichDieuLuatTuChuoi(parts[0], _tkDmByTen2, _tkDmByDieu2).dieuLuat || chuanHoaMaDieuLuat(parts[0]);
+    return trichDieuLuatTuChuoi(parts[0], _tkDmByTen2, _tkDmByDieu2, _tkDmByMa2).dieuLuat || chuanHoaMaDieuLuat(parts[0]);
   };
 
   function tkTD_add(stats, vuMap, cat, gdField) {
