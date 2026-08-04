@@ -2,6 +2,55 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Biểu B10 C7-C24 bị can bổ sung — sửa lại lần 3: đơn giản hoá công thức, tách riêng "mới"/"bổ sung" (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Tiếp theo mục "sửa lại lần 2" ngay dưới đây — bản đó đúng số liệu (gộp "mới"+"bổ sung" thành 1
+danh sách `dt_bcMoiKyToanBo`, quét toàn bộ 9 nhóm vụ Điều tra liên quan tới kỳ rồi khử trùng theo
+id bị can) nhưng Dũng phản hồi trực tiếp: **"công thức tính bị can KT mới phức tạp quá"** — khó
+đối chiếu bằng mắt so với thiết kế BAN ĐẦU (2 phần tách riêng, dễ đọc: "mới" = từ `dt.khoiToTrucTiep`
+như cũ, "bổ sung" = từ 1 nguồn riêng). Yêu cầu cụ thể: **"để như ban đầu nhưng thay đổi sheet DS bổ
+sung BC để đảm bảo lọc lấy từ nguồn tất cả các bị can có ngày nhập mới tháng 07/2026, nhưng ngày vụ
+án khác tháng 07/2026"** — tức quay lại kiến trúc 2 phần đơn giản, chỉ đổi NGUỒN của phần "bổ sung"
+từ sự kiện `bo_sung_bican` (đã bị bỏ ở lần sửa 2 vì quá thưa) sang so sánh kỳ TRỰC TIẾP: kỳ khởi tố
+của CHÍNH bị can khác kỳ khởi tố của VỤ.
+
+**Đã sửa** (`tinhBieu10`): thay `dt_bcMoiKyToanBo` bằng `dt_boSungBc` — vẫn quét `allVuDT` (như bản
+2), nhưng giờ **BỎ QUA vụ có kỳ khởi tố (`vuKyKhoiToMap`) TRÙNG kỳ báo cáo** (những vụ đó là "mới",
+đã tính riêng qua `dt.khoiToTrucTiep`) — chỉ giữ lại vụ có kỳ khởi tố KHÁC kỳ báo cáo, rồi mới gom
+bị can có kỳ khởi tố CỦA CHÍNH HỌ khớp kỳ báo cáo. Trong per-D loop, `dt_ktBcMoiKy` quay lại thành
+1 phép CỘNG 2 mảng rõ ràng: `[...bcCoD(dt.khoiToTrucTiep, D).filter(kỳ khớp), ...dt_boSungBcRaw.filter(D
+khớp)]` — dễ đọc/đối chiếu hơn hẳn 1 danh sách gộp sẵn không phân biệt nguồn. Tương tự cho
+`dtKtoCaNhan` (khối cảnh báo thiếu Năm sinh/Trình độ).
+
+**Hàm mới `fetchKyKhoiToVu(vuIds)`** (đặt cạnh `fetchKyKhoiToBiCan`) — trả `Map<maVuAn, kyThongKe>`,
+nguồn từ 2 loại sự kiện: `khoi_to_vu` (vụ mở bình thường, khoá `maVuAn`) VÀ `tach_vu` (vụ TÁCH RA —
+không có sự kiện `khoi_to_vu` riêng, "kỳ mở" của nó chính là kỳ của sự kiện tách, field
+`vuTachRa` — xem `idVuThatCuaLog`, mục "sự kiện tách vụ gán nhầm bị can" bên dưới). **Thiếu nhánh
+`tach_vu` này sẽ khiến MỌI vụ tách bị coi nhầm "không xác định được kỳ mở"** (`vuKyKhoiToMap.get()`
+trả `undefined`, luôn KHÁC bất kỳ kỳ báo cáo nào) → tự động rơi vào "bổ sung" dù vụ đó vừa mới tách
+ra ĐÚNG trong kỳ đang xét — 1 dạng lỗi âm thầm dễ bỏ sót nếu chỉ query `khoi_to_vu`.
+
+**Excel**: `DT_KTO` quay lại danh sách đơn giản 3 sheet (như thiết kế ban đầu):
+`["DS khởi tố ĐT", "DS phục hồi ĐT", "DS bổ sung BC ĐT (C7-C24)"]`. Sheet thứ 3 là **sheet MỚI**
+(`addSheetBoSungBiCan`, dựng từ `dt_boSungBc`) — **KHÁC HẲN** sheet `"DS bổ sung BC ĐT"` đã có sẵn
+từ trước (nguồn sự kiện `bo_sung_bican`, dùng riêng cho "Tổng thụ lý"/"Cân đối số liệu" qua
+`DT_VAO`) — **GIỮ NGUYÊN sheet cũ không đổi**, tránh rủi ro ảnh hưởng cơ chế ledger/`_bcCutoff` đã
+được kiểm chứng kỹ ở nhánh `tra-dtbs-tach-bican-cu-moi` (xem mục bên dưới) mà yêu cầu lần này không
+hề nhắc tới. 2 sheet cùng tên gần giống nhau nhưng phục vụ 2 mục đích khác nhau, không gộp chung.
+
+**Đã kiểm chứng bằng dữ liệu Supabase thật qua console** (`qlahs-sup.web.app`) — gọi trực tiếp
+`tinhBieu10()`: C7 "Điều 174 BLHS 2025" kỳ 07/2026 vẫn = **21** (khớp y hệt bản sửa lần 2, xác
+nhận đổi kiến trúc KHÔNG đổi kết quả); `fetchKyKhoiToVu()` xác nhận đúng vụ `QLVA_E01.53_2412_0062`
+có kỳ khởi tố = kỳ 06 (khác kỳ báo cáo 07) → rơi đúng vào "bổ sung" (chứa đúng Hoàng Văn Triệu/
+Nguyễn Huy Hoàng); test riêng 1 vụ tách thật (`QLVA_E01.53_2510_0014_1`) xác nhận resolve đúng kỳ
+qua nhánh `tach_vu`, không bị `undefined`. **Xuất Excel thật** (chặn `URL.createObjectURL`, nạp
+lại bằng `new ExcelJS.Workbook().xlsx.load(...)` ngay trong trình duyệt) — sheet mới
+`"DS bổ sung BC ĐT (C7-C24)"` có đúng **32 dòng** (khớp `dt_boSungBc.length`), cột "Kỳ TK BC" đúng
+"07/2026", cột "Đếm vụ" rỗng (không đếm đúp sang cột Vụ của "Tổng thụ lý" nếu lỡ dùng nhầm); sheet
+cũ `"DS bổ sung BC ĐT"` vẫn giữ nguyên đúng 2 dòng (event-sourced, không bị đụng tới). Compile-check
+qua `@babel/core`+`@babel/preset-react` — sạch. Đã deploy `qlahs-sup.web.app` (test) rồi
+`qlahsp2.web.app` (production) qua `./deploy.sh sup` rồi `./deploy.sh prod`.
+
 ## Bug đã sửa: Biểu B10 C7-C24 bỏ sót bị can bổ sung vào vụ ĐÃ CÓ — sửa lại lần 2, bỏ phụ thuộc `bo_sung_bican` (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
 
 Người dùng phát hiện qua audit trực tiếp: khối "Phân tích bị can mới khởi tố" (C7-C24, chỉ Điều
