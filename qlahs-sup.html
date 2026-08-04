@@ -9181,6 +9181,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
         for (const bc of bcs) { const dl = getDL(bc); if (dl) tatCaDieuLuat.add(dl); }
       }
     }
+    // Bị can bổ sung vào vụ ĐÃ CÓ (sự kiện bo_sung_bican) — vụ chứa họ THƯỜNG đã được quét ở trên
+    // qua 1 trong các nhóm allVu (tonHienTai/chuyenDi/...), nhưng phòng trường hợp không (VD vụ
+    // rơi ngoài mọi nhóm khác của kỳ này), quét thêm riêng để không bỏ sót điều luật của họ khỏi
+    // tatCaDieuLuat — thiếu dòng D tương ứng sẽ khiến tonTheoLogD bên dưới không có chỗ cộng họ vào.
+    for (const entry of (d.boSungBiCan || [])) {
+      const dl = getDL(entry._bican); if (dl) tatCaDieuLuat.add(dl);
+    }
   }
 
   // dt_boSungBc: bị can Điều tra được THÊM BỔ SUNG vào 1 vụ ĐÃ CÓ SẴN trong kỳ này — so kỳ khởi tố
@@ -9255,6 +9262,17 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // TỨC dù đúng ra chỉ nên ảnh hưởng tồn của kỳ 7 — vi phạm đúng nguyên tắc "log là nguồn sự
     // thật duy nhất" (số liệu của 1 kỳ chỉ phụ thuộc kyThongKe gắn trên sự kiện, không phụ thuộc
     // thời điểm xem báo cáo).
+    // Bug đã sửa (2026-08-04, người dùng phát hiện: "Tồn cuối kỳ" ngoài Kỳ báo cáo (318 vụ/812 BC
+    // Điều tra) không khớp tổng B10 (chỉ ra 810 BC, thiếu đúng 2)) — nguyên nhân: bị can BỔ SUNG
+    // vào 1 vụ ĐÃ CÓ (sự kiện `bo_sung_bican`, `d.boSungBiCan`) được `tinhBaoCaoKyTuLog` cộng riêng
+    // vào "vào" của kỳ qua `soMoi.boSungBiCan` (CHỈ bị can, không cộng vụ — xem tinhBaoCaoKyTuLog),
+    // nhưng `tonTheoLogD` ở đây KHÔNG hề biết tới nguồn "vào" này — nếu vụ đó SAU ĐÓ rời giai đoạn
+    // ngay trong kỳ (`raArr`), `bcCoD(raArr, D)` vẫn trừ ĐỦ cả bị can bổ sung (đọc số liệu SỐNG,
+    // đúng) nhưng KHÔNG có gì cộng bù ở vế "vào" tương ứng → tồn kỳ này bị hụt đúng bằng số bị can
+    // bổ sung của những vụ rời giai đoạn ngay trong kỳ. Thêm bcCoD-tương-đương cho `d.boSungBiCan`
+    // (mỗi entry đã có sẵn `_bican`, không cần tra lại `biCanByVu`) vào vế "vào" của riêng BC (đúng
+    // như `soMoi.boSungBiCan` — KHÔNG cộng vụ, vụ không hề "mới" chỉ vì có bị can bổ sung).
+    const bcCoDBoSung = (dsBoSung, D) => (dsBoSung || []).filter(v => getDL(v._bican) === D).length;
     const tonTheoLogD = (d, moiArr, D, tpVu, tpBc) => {
       const raArr = [
         ...(d.chuyenDi || []), ...(d.traDi || []),
@@ -9263,7 +9281,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       ];
       return {
         vu: tpVu + vuCoD(moiArr, D).length - vuCoD(raArr, D).length,
-        bc: tpBc + bcCoD(moiArr, D).length - bcCoD(raArr, D).length,
+        bc: tpBc + bcCoD(moiArr, D).length + bcCoDBoSung(d.boSungBiCan, D) - bcCoD(raArr, D).length,
       };
     };
     const dt_tp_vu = tonTD_truoc[D]?.dieu_tra?.vuAn ?? 0;
