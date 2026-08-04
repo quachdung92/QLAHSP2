@@ -2,6 +2,42 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Bug đã sửa: Biểu B10 "Tồn kỳ này" thiếu bị can bổ sung khi vụ rời giai đoạn trong kỳ (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Dũng phát hiện qua đối chiếu trực tiếp: Kỳ báo cáo (ngoài B10) báo "Tồn cuối kỳ" Điều tra kỳ
+07/2026 = 318 vụ/812 BC (Truy tố 43/219, Xét xử 50/328 — 2 giai đoạn này khớp đúng), nhưng tổng
+Biểu B10 (cộng dồn `vals[3]` — "Tồn kỳ này" BC — qua mọi dòng điều luật) chỉ ra **810 BC** ở Điều
+tra — thiếu đúng 2 người, dù số VỤ (318) vẫn khớp.
+
+**Nguyên nhân**: `tinhBaoCaoKyTuLog` cộng riêng "vào" cho bị can bổ sung vào 1 vụ ĐÃ CÓ (sự kiện
+`bo_sung_bican`, field `soMoi.boSungBiCan` — CHỈ cộng bị can, không cộng vụ, vì vụ đó không phải
+"mới"). `tonTheoLogD` (hàm nội bộ `tinhBieu10`, tính "Tồn kỳ này" theo TỪNG điều luật khi kỳ chưa
+chốt — xem mục "Bug tiếp theo... Tồn kỳ này theo tội danh" cũ) hoàn toàn không biết tới nguồn "vào"
+này — nếu vụ chứa bị can bổ sung đó RỜI giai đoạn NGAY TRONG CÙNG KỲ (VD Điều tra → Truy tố),
+`bcCoD(raArr, D)` vẫn trừ ĐỦ cả các bị can bổ sung (đọc số bị can bổ sung SỐNG hiện tại của vụ, kể
+cả người vừa thêm — đúng), nhưng không có gì cộng bù tương ứng ở vế "vào" — tồn kỳ này bị hụt đúng
+bằng số bị can bổ sung của những vụ rời giai đoạn trong kỳ đó (ví dụ thực tế: vụ
+`QLVA_E01.53_2412_0062` khởi tố kỳ 06, bổ sung 2 bị can trong kỳ 07 rồi chuyển ngay sang Truy tố
+cũng trong kỳ 07 — 2 người này bị "trừ ra" khi vụ rời Điều tra nhưng chưa từng được "cộng vào").
+
+**Đã sửa** (`tonTheoLogD`): thêm `bcCoDBoSung(d.boSungBiCan, D)` — đếm CHÍNH XÁC theo cùng nguồn
+`d.boSungBiCan` mà `tinhBaoCaoKyTuLog` dùng cho `soMoi.boSungBiCan` (không đổi sang nguồn "so kỳ
+trực tiếp" như bản sửa C7-C24 sáng cùng ngày — ở đây mục tiêu là khớp CHÍNH XÁC với con số bên
+ngoài, phải cùng 1 nguồn dữ liệu) — cộng vào vế "vào" của riêng BC, KHÔNG cộng vụ (đúng như
+`soMoi.boSungBiCan` không cộng `soMoi.tong`). Cũng bổ sung quét `d.boSungBiCan` vào bước gom
+`tatCaDieuLuat` (phòng vụ chứa bị can bổ sung không rơi vào bất kỳ nhóm `allVu` nào khác của kỳ,
+tránh thiếu hẳn dòng D để cộng bù vào).
+
+**Đã kiểm chứng bằng dữ liệu Supabase thật** (`qlahs-sup.web.app`) — kỳ 07/2026 (đang mở): trước
+sửa B10 Điều tra = 318 vụ/**810** BC (thiếu 2, đúng 2 bị can bổ sung của vụ `QLVA_E01.53_2412_0062`
+rời sang Truy tố trong kỳ); sau sửa B10 Điều tra = 318 vụ/**812** BC, khớp CHÍNH XÁC với
+`baoCao.tonCuoiKy`/`tonCuoiBiCanKy` ở cả 3 giai đoạn (ĐT 318/812, TT 43/219, XX 50/328). Kỳ
+06/2026 (đã chốt, dùng nhánh `kyTonTD` snapshot khác hẳn `tonTheoLogD`, không đụng tới) vẫn khớp
+đúng 310/768 như trước — không hồi quy. C7 (Điều 174, kỳ 07 — khối C7-C24 sửa sáng cùng ngày, xem
+mục ngay dưới) vẫn = 21, không đổi — xác nhận 2 phần code hoàn toàn độc lập nhau. Xuất Excel báo
+cáo tháng thật vẫn chạy trơn tru, không lỗi. Compile-check qua `@babel/core`+`@babel/preset-react`
+— sạch. Đã deploy `qlahs-sup.web.app` (test) rồi `qlahsp2.web.app` (production).
+
 ## Biểu B10 C7-C24 bị can bổ sung — sửa lại lần 3: đơn giản hoá công thức, tách riêng "mới"/"bổ sung" (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
 
 Tiếp theo mục "sửa lại lần 2" ngay dưới đây — bản đó đúng số liệu (gộp "mới"+"bổ sung" thành 1
