@@ -9127,6 +9127,20 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   const demField = (bcArr, field, val) =>
     bcArr.filter(bc => bc.loaiBiCan !== "phap_nhan" && bc[field] === val).length;
 
+  // Bug đã sửa (2026-08-04, Dũng hỏi "vụ khởi tố tháng trước, tháng này thêm 0 vụ/2 bị can thì có
+  // tính vào B10 không" — kiểm tra ra KHÔNG) — khối C7-C24 "Phân tích bị can mới khởi tố" trước đây
+  // CHỈ lấy từ dt.khoiToTrucTiep (vụ mới mở), bỏ sót hẳn dt.boSungBiCan (bị can THẬT SỰ mới bị
+  // khởi tố lần đầu trong kỳ này, chỉ khác là vào 1 vụ đã mở từ trước) — dù đúng nghĩa "bị can mới
+  // khởi tố" của cột C7 thì họ phải được tính. Khi thêm cơ chế "bo_sung_bican" (migration
+  // 2026-08-03) đã sửa đúng phần "Tổng thụ lý"/"Cân đối số liệu" nhưng bỏ quên khối C7-C24 này.
+  // namKTVACuaVu/bcTuBoSung/bcCoDBoSung dùng CHUNG cho cả tính C7-C24 (theo D) lẫn khối kiểm tra
+  // hoàn chỉnh bên dưới (không theo D) — tránh 2 nơi đếm lệch nhau.
+  const namKTVACuaVu = (vu) => vu.ngayQdKtva
+    ? new Date(vu.ngayQdKtva.seconds ? vu.ngayQdKtva.seconds * 1000 : vu.ngayQdKtva).getFullYear()
+    : namKy;
+  const bcTuBoSung = (dsBoSung) => (dsBoSung || []).map(entry => ({ ...entry._bican, _namKTVA: namKTVACuaVu(entry) }));
+  const bcCoDBoSung = (dsBoSung, D) => bcTuBoSung(dsBoSung).filter(bc => getDL(bc) === D);
+
   // Gom tất cả điều luật xuất hiện
   const tatCaDieuLuat = new Set(danhMuc.map(d => d.dieuLuat));
   Object.keys(tonTD_truoc).forEach(d => { if (d) tatCaDieuLuat.add(d); });
@@ -9226,8 +9240,11 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // đã đếm đúng theo kỳ của chính vụ rồi; ở đây chỉ cần đếm ĐÚNG bị can nào thật sự mới khởi tố
     // TRONG KỲ NÀY, dùng thẳng kỳ thống kê của chính sự kiện khoi_to_bican (bcKyKhoiToMap) — vì
     // bị can chỉ phát sinh (thêm mới) ở giai đoạn Điều tra, và hệ thống đã hỏi kỳ ngay lúc thêm.
-    // Bị can bổ sung vào kỳ SAU (khi vụ đã cũ) sẽ KHÔNG bị đếm nhầm vào kỳ vụ mới khởi tố nữa.
-    const dt_ktBcMoiKy = bcCoD(dt.khoiToTrucTiep || [], D).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id)));
+    // Bị can bổ sung vào kỳ SAU (khi vụ đã cũ) sẽ KHÔNG bị đếm nhầm vào kỳ vụ mới khởi tố nữa —
+    // nhưng VẪN PHẢI được tính vào ĐÚNG kỳ của chính họ (bcCoDBoSung, xem bug đã sửa ở trên) — họ
+    // thật sự là "bị can mới khởi tố" theo đúng nghĩa cột C7, chỉ khác là vào vụ đã có sẵn.
+    const dt_ktBcMoiKy = [...bcCoD(dt.khoiToTrucTiep || [], D), ...bcCoDBoSung(dt.boSungBiCan, D)]
+      .filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id)));
     const C6  = vuCoD(dt.khoiToTrucTiep || [], D).length;
     const C7  = dt_ktBcMoiKy.length;
     const C8  = dt_ktBcMoiKy.filter(bc => bc.loaiBiCan === "phap_nhan").length;
@@ -9445,8 +9462,10 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
         }
       }
     };
-    // Điều tra — C7-C24 "mới khởi tố" (lọc theo kỳ khởi tố RIÊNG của từng bị can, xem C7 ở trên)
-    const dtKtoCaNhan = bcTatCa(baoCao.dieu_tra.ds.khoiToTrucTiep || [])
+    // Điều tra — C7-C24 "mới khởi tố" (lọc theo kỳ khởi tố RIÊNG của từng bị can, xem C7 ở trên) —
+    // gộp cả bị can bổ sung (bcTuBoSung) để khối kiểm tra này khớp đúng cùng cohort với C7 thật sự
+    // dùng, không đếm thiếu so với số đã sửa ở trên.
+    const dtKtoCaNhan = [...bcTatCa(baoCao.dieu_tra.ds.khoiToTrucTiep || []), ...bcTuBoSung(baoCao.dieu_tra.ds.boSungBiCan)]
       .filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id)) && bc.loaiBiCan !== "phap_nhan");
     kiemTraHoanChinhNhomBc("Phân tích bị can mới khởi tố (Điều tra)", dtKtoCaNhan, "C9-C13", true);
     // Truy tố — C43-C52 "đã truy tố" (vụ chuyển từ Truy tố sang Xét xử trong kỳ, đã lọc kỳ sẵn ở
@@ -9918,7 +9937,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT"];
   const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT"];
   const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX"];
-  const DT_KTO = ["DS khởi tố ĐT","DS phục hồi ĐT"];   // khoiToTrucTiep ĐT (cho C7-C24)
+  // Bug đã sửa (2026-08-04) — thiếu "DS bổ sung BC ĐT" khiến C7-C24 bỏ sót bị can mới khởi tố lần
+  // đầu nhưng vào 1 vụ đã mở từ trước (xem giải thích ở dt_ktBcMoiKy/bcCoDBoSung phía trên). Sheet
+  // này CÓ SẴN cột "Kỳ TK BC" đúng vị trí AF (từ BC_H dùng chung, xem bcCellsRow) nên mkCfBcKy dùng
+  // được thẳng, không cần sửa cấu trúc cột.
+  const DT_KTO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS bổ sung BC ĐT"];   // khoiToTrucTiep ĐT (cho C7-C24)
   // "Tổng thụ lý" (C3/C4, C33/C34, C60/C61, xem bieu_B10_mo_ta.md mục 3.2) = Tồn kỳ trước (ô CÙNG
   // DÒNG, đã có sẵn — không phải DS sheet) + Σ(*_VAO ở trên) − Σ("DS nhập vụ"/"DS chuyển đi" của
   // đúng giai đoạn đó) — 2026-07-2x, sheet-hoá nốt 6 ô cuối cùng của B10 còn ghi số JS tĩnh (audit
