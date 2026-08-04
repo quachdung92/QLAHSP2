@@ -2,6 +2,41 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Sửa gốc bug B10 "Tồn kỳ này" — công thức Excel đổi từ tham chiếu "DS tồn {gs}" (live) sang log-based (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Tiếp theo mục "Bug đã sửa: Biểu B10 'Tồn kỳ này' thiếu bị can bổ sung..." ngay dưới đây — Dũng phát
+hiện tiếp: filter tay sheet "DS tồn ĐT" (loại bỏ dòng "(Chưa có BC)") đếm ra **818** bị can, không
+khớp **812** mà Kỳ báo cáo/B10 đang hiển thị — dù bản sửa buổi sáng (mục ngay dưới) đã xác nhận
+812 đúng qua console.
+
+**Nguyên nhân thật**: bản sửa buổi sáng (`tonTheoLogD`, commit `a60eacc`) chỉ sửa đúng **"result"
+CACHE** của ô Excel — nhưng công thức "Tồn kỳ này" (khi kỳ CHƯA CHỐT) từ trước tới giờ luôn dùng
+SUMIF/COUNTIFS **THẲNG vào sheet "DS tồn {gs}"** (số LIVE, đúng `baoCao[gd].ds.tonHienTai` tại
+đúng thời điểm xuất báo cáo) — hoàn toàn KHÔNG liên quan gì tới `tonTheoLogD`. Khi Dũng mở file
+Excel THẬT, công thức tự tính lại theo "DS tồn ĐT" (818, LIVE), không đọc "result" cache (812) —
+đúng bài học đã ghi nhiều lần ở mục "cột -BC...": ExcelJS đọc lại không tính lại công thức, chỉ
+Excel thật mới tính, nên CHỈ sửa JS là không đủ, phải sửa cả CÔNG THỨC.
+
+**818 (live) > 812 (log-based) vì sao**: có bị can bổ sung vào vụ ĐÃ CÓ TỪ TRƯỚC KHI có sự kiện
+`bo_sung_bican` (migration 2026-08-03) — không có sự kiện "vào" tương ứng nên log-based không đếm
+được, nhưng vẫn LIVE có mặt trong vụ đang tồn hiện tại.
+
+**Đã sửa**: thêm `mkTonNayVu`/`mkTonNayBc` (đặt cạnh `mkThuLyVu`/`mkThuLyBc`) — đổi công thức "Tồn
+kỳ này" (kỳ chưa chốt) từ tham chiếu thẳng "DS tồn {gs}" sang CÔNG THỨC LOG-BASED thật sự (tồn kỳ
+trước + Σvào qua `VAO_TON_GD` − Σra qua `RA_TON_GD`, y hệt cách `mkThuLyVu`/`mkThuLyBc` đã làm cho
+"Tổng thụ lý" C3/C4 — chỉ khác tập "ra" dùng ĐẦY ĐỦ `RA_SHEETS_GD` 7-8 sheet thay vì `RA_THULY_GD`
+chỉ 3 sheet). `VAO_TON_GD`/`RA_TON_GD` là bản chép lại y hệt `VAO_SHEETS_GD`/`RA_SHEETS_GD` (khai
+báo Ở DƯỚI trong file nên không tham chiếu thẳng được — sửa 1 trong 2 cặp nhớ sửa cặp còn lại).
+
+**Đã kiểm chứng SÂU trên dữ liệu Supabase thật** (`qlahs-sup.web.app`) — KHÔNG chỉ tin "result"
+cache (đúng bài học đã rút ra): xuất Excel thật, đọc trực tiếp CHUỖI CÔNG THỨC ở ô G13 (Điều 174,
+"Tồn kỳ này BC") xác nhận đã đổi đúng sang tổng COUNTIFS qua 7 sheet vào − 7 sheet ra (không còn
+tham chiếu "DS tồn ĐT"); rồi TỰ TÁI TẠO TAY phép tính COUNTIFS đó bằng cách đọc THẲNG dữ liệu thô
+(cột V) của cả 14 sheet liên quan (không dùng cache nào) — ra đúng 768 (tồn trước) + 163 (vào, gồm
+2 bổ sung) − 119 (ra) = **812**, khớp CHÍNH XÁC với cả "result" cache (812) lẫn
+`baoCao.tonCuoiBiCanKy` bên ngoài. Compile-check qua `@babel/core`+`@babel/preset-react` — sạch.
+Đã deploy `qlahs-sup.web.app` (test) rồi `qlahsp2.web.app` (production).
+
 ## Bug đã sửa: Biểu B10 "Tồn kỳ này" thiếu bị can bổ sung khi vụ rời giai đoạn trong kỳ (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
 
 Dũng phát hiện qua đối chiếu trực tiếp: Kỳ báo cáo (ngoài B10) báo "Tồn cuối kỳ" Điều tra kỳ
