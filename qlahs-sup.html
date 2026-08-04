@@ -8906,6 +8906,25 @@ async function fetchKyKhoiToBiCan(vuIds) {
   return map;
 }
 
+// Helper: fetch kỳ thống kê khởi tố THẬT của riêng từng VỤ (khác fetchKyKhoiToBiCan — đó là kỳ của
+// từng bị can) — dùng để so sánh "bị can bổ sung vào 1 vụ ĐÃ CÓ SẴN" (kỳ bị can khác kỳ vụ) ở
+// tinhBieu10 (C7-C24), xem dt_boSungBc. Nguồn: sự kiện khoi_to_vu (vụ mở bình thường, khoá theo
+// maVuAn) HOẶC tach_vu (vụ TÁCH ra — không có khoi_to_vu riêng, "kỳ mở" của nó là kỳ của chính sự
+// kiện tách, ghi trên field vuTachRa chứ KHÔNG PHẢI maVuAn — xem idVuThatCuaLog) — thiếu 1 trong 2
+// nguồn này sẽ khiến MỌI vụ tách bị coi nhầm là "không xác định được kỳ mở", tự động rơi vào nhánh
+// "bổ sung" dù thật ra vừa mới tách trong đúng kỳ đang xét. Trả về Map<maVuAn, kyId>.
+async function fetchKyKhoiToVu(vuIds) {
+  const map = new Map();
+  if (!vuIds.length) return map;
+  const [docsKhoiTo, docsTach] = await Promise.all([
+    chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", vuIds, q => q.where("loaiSuKien", "==", "khoi_to_vu")),
+    chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "vuTachRa", vuIds, q => q.where("loaiSuKien", "==", "tach_vu")),
+  ]);
+  docsKhoiTo.forEach(d => { const e = d.data(); map.set(e.maVuAn, e.kyThongKe || null); });
+  docsTach.forEach(d => { const e = d.data(); if (e.vuTachRa) map.set(e.vuTachRa, e.kyThongKe || null); });
+  return map;
+}
+
 // Helper: kỳ thống kê của sự kiện GẦN NHẤT đưa 1 vụ VÀO đúng giai đoạn `gd` hiện tại — dùng cho
 // cột "Kỳ TK phát sinh" ở sheet "DS tồn" (2026-07-31, theo yêu cầu người dùng: "DS tồn thì kỳ
 // thống kê báo cáo là kỳ thống kê phát sinh mới ở giai đoạn đó"). "Vào giai đoạn" gồm 4 nguồn
@@ -9005,7 +9024,7 @@ function hangDsVuAn(v) {
 // vuChuaDL: { dieu_tra, truy_to, xet_xu } — mảng vụ trong tồn hiện tại chưa xác định được điều luật
 // (nguyên nhân gây lệch âm giữa B10 và báo cáo). Lệch dương = đúng thiết kế (1 vụ nhiều tội).
 // canhBao: chỉ cảnh báo khi có vụ chưa có điều luật (lệch âm thực sự), không cảnh báo lệch dương.
-function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new Map(), kyIdSetTrongBaoCao = null) {
+function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new Map(), kyIdSetTrongBaoCao = null, vuKyKhoiToMap = new Map()) {
   // Mặc định (không truyền) = báo cáo 1 kỳ, coi "trong kỳ này" = đúng ky.id. Báo cáo tổng hợp
   // nhiều kỳ (TongHopNhieuKyModal) truyền set đầy đủ id các kỳ đã gộp — xem xuatBaoCaoThangExcel.
   const _kyIdSet = kyIdSetTrongBaoCao || new Set([ky.id]);
@@ -9164,31 +9183,42 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     }
   }
 
-  // dt_bcMoiKyToanBo: TẤT CẢ bị can Điều tra thật sự mới khởi tố TRONG KỲ NÀY (kỳ CỦA CHÍNH họ,
-  // qua bcKyKhoiToMap/khoi_to_bican — nguồn sự thật duy nhất, luôn có sẵn cho MỌI bị can, kể cả
-  // dữ liệu cũ/import), BẤT KỂ vụ của họ được mở kỳ nào — không còn phân biệt "vụ mới" (C6) hay
-  // "bổ sung vào vụ cũ" bằng cách dò 2 nguồn riêng (dt.khoiToTrucTiep + dt.boSungBiCan/sự kiện
-  // "bo_sung_bican") như trước. Bug đã sửa (2026-08-04, theo góp ý Dũng: cách lọc cũ dựa vào sự
-  // kiện "bo_sung_bican" — CHỈ mới có từ 2026-08-03, dữ liệu cũ/import hầu như không ghi — sẽ BỎ
-  // SÓT rất nhiều bị can bổ sung thật). Cách đúng đơn giản hơn: so kỳ khởi tố CỦA BỊ CAN với kỳ
-  // đang xem — không cần biết vụ của họ mở kỳ nào, không trùng kỳ báo cáo hiện tại thì KHÔNG tính
-  // (đã tính ở kỳ đó rồi hoặc chưa tới lượt), trùng thì tính, dù vụ mới hay vụ cũ.
+  // dt_boSungBc: bị can Điều tra được THÊM BỔ SUNG vào 1 vụ ĐÃ CÓ SẴN trong kỳ này — so kỳ khởi tố
+  // CỦA CHÍNH BỊ CAN (qua bcKyKhoiToMap/khoi_to_bican, luôn có sẵn kể cả dữ liệu cũ/import) với kỳ
+  // khởi tố CỦA VỤ (qua vuKyKhoiToMap/khoi_to_vu+tach_vu) — khác kỳ thì tính là "bổ sung". Giữ
+  // KIẾN TRÚC ĐƠN GIẢN ban đầu — C7-C24 vẫn = 2 phần TÁCH RIÊNG dễ đối chiếu: "mới" (dt.khoiToTrucTiep,
+  // vụ mở đúng kỳ này, xem dt_ktBcMoiKy bên dưới, KHÔNG đổi) + "bổ sung" (danh sách này).
+  //
+  // Lịch sử 2 bản sửa trước (2026-08-04, đều bị thay bằng bản này theo góp ý Dũng):
+  //  1. Lọc theo sự kiện "bo_sung_bican" — CHỈ mới có từ 2026-08-03, dữ liệu cũ/import hầu như
+  //     không ghi, BỎ SÓT rất nhiều bị can bổ sung thật.
+  //  2. Gộp hẳn "mới"+"bổ sung" thành 1 danh sách duy nhất (dt_bcMoiKyToanBo, so kỳ bị can với kỳ
+  //     báo cáo, KHÔNG so với kỳ của vụ) — đúng số liệu nhưng công thức khó đọc/khó đối chiếu bằng
+  //     mắt (không còn tách bạch được "mới"/"bổ sung" như tên gọi C6/C7 gợi ý).
+  // Bản này quay lại tách riêng, chỉ đổi NGUỒN "bổ sung" từ sự kiện sang so sánh kỳ trực tiếp —
+  // vẫn không phụ thuộc bo_sung_bican. Vụ có kỳ khởi tố = kỳ báo cáo (tức đã nằm trong "mới") bị
+  // loại khỏi vòng quét này để không đếm đúp qua cả 2 nhánh.
   // allVuDT (tonHienTai + mọi mục vào/ra Điều tra) là nguồn vụ TOÀN DIỆN nhất hiện có trong hàm
-  // này — 1 vụ có thể lặp lại ở nhiều nhánh (VD vừa "mới" vừa đang "tồn hiện tại") nên khử trùng
-  // theo ID bị can bằng idsDaThem, tránh đếm đúp.
-  const dt_bcMoiKyToanBo = [];
+  // này — 1 vụ có thể lặp lại ở nhiều nhánh (VD vừa "chuyển đi" vừa "tồn hiện tại" ở snapshot khác
+  // thời điểm) nên khử trùng theo ID bị can bằng idsDaThem, tránh đếm đúp.
+  // Mỗi phần tử giữ NGUYÊN dạng {...vu, _bican, _log} (giống vuBiCanTuLogDocs) để dùng thẳng được
+  // cho sheet Excel "DS bổ sung BC ĐT (C7-C24)" (addSheetBoSungBiCan) — cán bộ đối chiếu bằng mắt
+  // đúng danh sách bị can nào bị tính là "bổ sung". dt_boSungBcRaw là dạng BỊ CAN THUẦN (kèm
+  // _namKTVA) để dùng trong công thức C7-C24 (getDL/demTuoi/demField), cùng shape bcCoD/bcTatCa.
+  const dt_boSungBc = [];
   {
     const idsDaThem = new Set();
     for (const vu of allVuDT) {
-      const nk = namKTVACuaVu(vu);
+      if (_kyIdSet.has(vuKyKhoiToMap.get(vu.id))) continue; // vụ mở đúng kỳ này = "mới", đã tính riêng
       for (const bc of (biCanByVu[vu.id] || [])) {
         if (idsDaThem.has(bc.id)) continue;
         if (!_kyIdSet.has(bcKyKhoiToMap.get(bc.id))) continue;
         idsDaThem.add(bc.id);
-        dt_bcMoiKyToanBo.push({ ...bc, _namKTVA: nk });
+        dt_boSungBc.push({ ...vu, _bican: bc, _log: { kyThongKe: bcKyKhoiToMap.get(bc.id), ngaySuKien: bc.ngayKhoiTo } });
       }
     }
   }
+  const dt_boSungBcRaw = dt_boSungBc.map(v => ({ ...v._bican, _namKTVA: namKTVACuaVu(v) }));
 
   // Cũng normalize các key từ tonTD_truoc — cũ có thể lưu tên thay vì code
   const tatCaDieuLuatChuan = new Set();
@@ -9261,10 +9291,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length - dt_ahBc.length;
     const C5  = dt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
-    // C7-C24: dt_bcMoiKyToanBo (dựng ở trên, KHÔNG phân biệt vụ mới/vụ cũ — chỉ so kỳ khởi tố của
-    // CHÍNH bị can với kỳ đang xem) đã lọc đúng "thật sự mới khởi tố trong kỳ này" rồi, ở đây chỉ
-    // cần lọc tiếp theo D (điều luật của dòng B10 đang tính).
-    const dt_ktBcMoiKy = dt_bcMoiKyToanBo.filter(bc => getDL(bc) === D);
+    // C7-C24 = 2 phần: "mới" (bị can của vụ MỞ đúng kỳ này, lọc theo kỳ khởi tố RIÊNG của từng bị
+    // can — bị can bổ sung vào kỳ SAU sẽ không bị đếm nhầm vào đây) + "bổ sung" (dt_boSungBcRaw,
+    // dựng ở trên — bị can thêm vào vụ ĐÃ CÓ, so kỳ trực tiếp, không phụ thuộc bo_sung_bican).
+    const dt_ktBcMoiKy = [
+      ...bcCoD(dt.khoiToTrucTiep || [], D).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id))),
+      ...dt_boSungBcRaw.filter(bc => getDL(bc) === D),
+    ];
     const C6  = vuCoD(dt.khoiToTrucTiep || [], D).length;
     const C7  = dt_ktBcMoiKy.length;
     const C8  = dt_ktBcMoiKy.filter(bc => bc.loaiBiCan === "phap_nhan").length;
@@ -9482,9 +9515,12 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
         }
       }
     };
-    // Điều tra — C7-C24 "mới khởi tố" — dùng ĐÚNG cohort dt_bcMoiKyToanBo mà C7 thật sự dùng (đã
-    // lọc theo kỳ khởi tố RIÊNG của từng bị can), để khối kiểm tra này không đếm thiếu/lệch.
-    const dtKtoCaNhan = dt_bcMoiKyToanBo.filter(bc => bc.loaiBiCan !== "phap_nhan");
+    // Điều tra — C7-C24 "mới khởi tố" — dùng ĐÚNG 2 cohort (mới + bổ sung) mà C7 thật sự dùng, để
+    // khối kiểm tra này không đếm thiếu/lệch.
+    const dtKtoCaNhan = [
+      ...bcTatCa(baoCao.dieu_tra.ds.khoiToTrucTiep || []).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id)) && bc.loaiBiCan !== "phap_nhan"),
+      ...dt_boSungBcRaw.filter(bc => bc.loaiBiCan !== "phap_nhan"),
+    ];
     kiemTraHoanChinhNhomBc("Phân tích bị can mới khởi tố (Điều tra)", dtKtoCaNhan, "C9-C13", true);
     // Truy tố — C43-C52 "đã truy tố" (vụ chuyển từ Truy tố sang Xét xử trong kỳ, đã lọc kỳ sẵn ở
     // baoCao.truy_to.ds.chuyenDi — không cần lọc kỳ riêng theo bị can như Điều tra)
@@ -9496,7 +9532,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // tonTD_truoc/kyTonTD (đã chuẩn hoá key ở trên) trả kèm ra ngoài để xuatBaoCaoThangExcel dựng
   // sheet "Tồn theo ĐL (snapshot)" bằng ĐÚNG cùng 1 nguồn dữ liệu đã dùng để tính vals[] — tránh
   // viết lại logic chuẩn hoá 1 lần nữa ở nơi khác rồi lệch nhau.
-  return { rows, canhBao, vuChuaDL, tonTD_truoc, kyTonTD };
+  return { rows, canhBao, vuChuaDL, tonTD_truoc, kyTonTD, dt_boSungBc };
 }
 
 // Tính lại ĐÚNG tonCuoiKyTheoTD/tonCuoiBiCan cho TẤT CẢ kỳ đã chốt, theo thứ tự thời gian, từ
@@ -9719,12 +9755,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const _dichIdsNhapVu = [...new Set(
     THU_TU_GIAI_DOAN.flatMap(gd => (baoCao[gd].ds.nhapVu || []).map(v => v._log?.vuNhapVao).filter(Boolean))
   )];
-  const [biCanByVu, danhMucSnap, kySnap, bcKyKhoiToMap, dichVuDocs] = await Promise.all([
+  const [biCanByVu, danhMucSnap, kySnap, bcKyKhoiToMap, dichVuDocs, vuKyKhoiToMap] = await Promise.all([
     fetchBiCanTheoVuIds(_vuIdsChoBaoCao),
     db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc").get(),
     db.collection("kybaocao").get(),
     fetchKyKhoiToBiCan(_vuIdsChoBaoCao),
     chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), _dichIdsNhapVu),
+    fetchKyKhoiToVu(_vuIdsChoBaoCao),
   ]);
   const danhMuc = danhMucSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const kyById = new Map(kySnap.docs.map(d => [d.id, d.data().tenKy || d.id]));
@@ -9858,7 +9895,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     .map(([td,s]) => [td, s.vuM, s.bcM, s.tgM, s.bcM-s.tgM, s.vuT, s.bcT, s.tgT, s.bcT-s.tgT, s.vuG, s.bcG]);
 
   // ---- Sheet 1: Biểu B10 (72 cột + phụ, động theo điều luật thực tế trong kỳ) ----
-  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, tonTD_truoc: b10TonTruoc, kyTonTD: b10KyTonTD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao);
+  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, tonTD_truoc: b10TonTruoc, kyTonTD: b10KyTonTD, dt_boSungBc: b10DtBoSungBc } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap);
   // Dòng Tổng
   const b10Tong = Array(B10_HEADER_CHI_TIET.length - 2).fill(0);
   for (const row of b10Rows) { row.vals.forEach((v, i) => { b10Tong[i] = (b10Tong[i] || 0) + v; }); }
@@ -9955,21 +9992,18 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT"];
   const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT"];
   const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX"];
-  // Bug đã sửa (2026-08-04, 2 vòng) — C7-C24 trước đây chỉ dò "DS khởi tố ĐT"/"DS phục hồi ĐT" nên
+  // Bug đã sửa (2026-08-04, 3 vòng) — C7-C24 trước đây chỉ dò "DS khởi tố ĐT"/"DS phục hồi ĐT" nên
   // bỏ sót bị can mới khởi tố lần đầu nhưng vào 1 vụ đã mở từ trước. Vòng 1 định vá bằng "DS bổ
-  // sung BC ĐT" (dò theo sự kiện riêng "bo_sung_bican") — Dũng chỉ ra 2 vấn đề: (1) sự kiện đó CHỈ
-  // mới có từ 2026-08-03, dữ liệu cũ/import hầu như không ghi, bỏ sót rất nhiều; (2) nếu cứ thêm
-  // "DS bổ sung BC ĐT" vào đây thì SẼ ĐẾM ĐÚP — bị can đó đã có sẵn trong "DS tồn ĐT" (sổ live của
-  // vụ, không lọc cutoff), mkCfBcKy chỉ SUM COUNTIFS qua các sheet chứ KHÔNG khử trùng.
-  // Cách đúng (khớp JS dt_bcMoiKyToanBo phía trên): 1 vụ ở giai đoạn Điều tra tại BẤT KỲ thời điểm
-  // nào cũng chỉ rơi vào ĐÚNG 1 trong 2 trạng thái loại trừ lẫn nhau — ĐANG tồn (DS tồn ĐT, đã liệt
-  // kê ĐỦ bị can hiện tại của vụ, không cần biết vụ mở kỳ nào) HOẶC ĐÃ RỜI Điều tra trong kỳ này
-  // (RA_SHEETS_GD.dieu_tra) — không bao giờ cả 2 cùng lúc nên SUM không đếm đúp. Không cần liệt kê
-  // riêng "DS khởi tố/phục hồi/tách/trả về ĐT" nữa vì vụ mới mở, nếu còn tồn, đã nằm trong "DS tồn
-  // ĐT"; nếu đã rời ngay trong kỳ thì nằm trong RA_SHEETS_GD.dieu_tra.
-  // ⚠ RA_SHEETS_GD định nghĩa Ở DƯỚI (sau điểm này trong file) nên phải chép lại y hệt giá trị ở
-  // đây thay vì tham chiếu thẳng — 2 nơi PHẢI khớp nhau, xem RA_SHEETS_GD.dieu_tra để đối chiếu khi sửa.
-  const DT_KTO = ["DS tồn ĐT", "DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"];
+  // sung BC ĐT" (dò theo sự kiện riêng "bo_sung_bican") — Dũng chỉ ra sự kiện đó CHỈ mới có từ
+  // 2026-08-03, dữ liệu cũ/import hầu như không ghi, bỏ sót rất nhiều. Vòng 2 gộp DT_KTO thành
+  // "DS tồn ĐT" + toàn bộ RA_SHEETS_GD.dieu_tra (loại trừ lẫn nhau, không cần dò theo sự kiện) —
+  // đúng số liệu nhưng Dũng phản hồi công thức "phức tạp quá" (8 sheet, khó đối chiếu bằng mắt).
+  // Vòng 3 (bản này) quay lại DANH SÁCH ĐƠN GIẢN 3 sheet như thiết kế ban đầu — chỉ đổi NGUỒN của
+  // sheet thứ 3 "DS bổ sung BC ĐT (C7-C24)" (xem addSheetBoSungBiCan bên dưới, dựng từ dt_boSungBc
+  // ở tinhBieu10 — so trực tiếp kỳ khởi tố bị can với kỳ khởi tố vụ, KHÔNG dựa vào bo_sung_bican) —
+  // sheet MỚI, KHÁC "DS bổ sung BC ĐT" đã có ở DT_VAO (nguồn event, dùng riêng cho "Tổng thụ lý" —
+  // giữ NGUYÊN không đổi, tránh ảnh hưởng "Cân đối số liệu" đã kiểm chứng kỹ trước đó).
+  const DT_KTO = ["DS khởi tố ĐT", "DS phục hồi ĐT", "DS bổ sung BC ĐT (C7-C24)"];
   // "Tổng thụ lý" (C3/C4, C33/C34, C60/C61, xem bieu_B10_mo_ta.md mục 3.2) = Tồn kỳ trước (ô CÙNG
   // DÒNG, đã có sẵn — không phải DS sheet) + Σ(*_VAO ở trên) − Σ("DS nhập vụ"/"DS chuyển đi" của
   // đúng giai đoạn đó) — 2026-07-2x, sheet-hoá nốt 6 ô cuối cùng của B10 còn ghi số JS tĩnh (audit
@@ -10985,8 +11019,18 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
 
     // Bị can bổ sung vào vụ ĐÃ CÓ (2026-08-03, sự kiện "bo_sung_bican" — xem
     // add_bo_sung_bican_2026-08-03.sql) — KHÁC hẳn các sheet trên (không phải addSheetVuKy, dùng
-    // addSheetBoSungBiCan riêng vì mỗi dòng là 1 BỊ CAN, không phải 1 vụ "vào" mới).
+    // addSheetBoSungBiCan riêng vì mỗi dòng là 1 BỊ CAN, không phải 1 vụ "vào" mới). Dùng riêng cho
+    // "Tổng thụ lý"/"Cân đối số liệu" (DT_VAO/TT_VAO/XX_VAO) — GIỮ NGUYÊN, không đổi nguồn.
     dsSheetChiTiet.push({ ws: addSheetBoSungBiCan(`DS bổ sung BC ${gs}`, d.boSungBiCan||[]), gd });
+
+    // Sheet RIÊNG cho C7-C24 Biểu B10 (2026-08-04, xem dt_boSungBc ở tinhBieu10 + DT_KTO ở trên) —
+    // CHỈ Điều tra (khối C7-C24 chỉ có ở giai đoạn này). KHÁC "DS bổ sung BC ĐT" ngay trên: nguồn
+    // là SO KỲ TRỰC TIẾP (kỳ khởi tố bị can ≠ kỳ khởi tố vụ) thay vì dò sự kiện "bo_sung_bican" —
+    // bắt được cả dữ liệu cũ/import không có sự kiện đó. Tên sheet khác hẳn để không nhầm với sheet
+    // trên (2 nguồn dữ liệu khác nhau, phục vụ 2 mục đích khác nhau — không gộp chung).
+    if (gd === "dieu_tra") {
+      dsSheetChiTiet.push({ ws: addSheetBoSungBiCan(`DS bổ sung BC ĐT (C7-C24)`, b10DtBoSungBc || []), gd });
+    }
 
     // ── RA: chuyển giai đoạn tiến (từ giai đoạn này lên giai đoạn tiếp theo) ──
     // Lưu ý: cùng dữ liệu với "DS chuyển đến {gsNext}" nhưng từ góc nhìn giai đoạn nguồn —
