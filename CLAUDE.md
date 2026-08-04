@@ -2,6 +2,79 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Thêm sheet "DS tồn cuối kỳ {gđ}" khớp đúng số tồn đã chốt/công thức của kỳ đang xuất + 2 bug thật phát hiện trong lúc làm (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
+
+Dũng phát hiện: mở lại báo cáo Excel của 1 kỳ (kỳ 06/2026, đã chốt), "Cân đối số liệu" báo tồn cuối
+kỳ Điều tra đúng số đã chốt, nhưng sheet **"DS tồn ĐT"** trong CHÍNH file đó lại ra số THẤP HƠN,
+không biết "lọt" vụ nào. Nguyên nhân gốc: sheet "DS tồn {gđ}" lấy từ `tinhTonHienTaiTheoGD` — số
+**LIVE tại đúng lúc bấm xuất Excel** (thiết kế CỐ Ý cho dòng "Số tồn hiện tại", tách biệt "Tồn cuối
+kỳ" đã chốt — xem nhiều đoạn ghi chú "cố ý luôn sống theo thời gian thực" trong file này) — mở lại
+báo cáo 1 kỳ CŨ sau khi có vụ rời giai đoạn ở kỳ SAU sẽ luôn lệch, không có cách nào biết vụ nào.
+
+**Giải pháp: THÊM sheet mới, KHÔNG đổi sheet cũ** — "DS tồn {gđ}" (live) giữ nguyên 100% (đang nuôi
+công thức "Số tồn hiện tại"/"TK tội danh"/B10 kỳ chưa chốt, sửa thẳng sẽ vỡ 3 chỗ đó). Thêm 3 sheet
+**"DS tồn cuối kỳ ĐT/TT/XX"** ngay cạnh, dựng bằng cách CỘNG DỒN qua từng kỳ theo đúng công thức
+`tonCuoiKy` đã có (tồn đầu kỳ trước + mới trong kỳ − ra trong kỳ) nhưng theo dõi **tập hợp ID vụ**
+thay vì chỉ đếm — y hệt cách `taiTaoTonCuoiKyTheoTDTatCa` (công cụ "Sửa lại tồn cuối kỳ theo tội
+danh...", nay đổi tên "...+ danh sách vụ") đã làm cho tồn theo tội danh, chỉ khác theo dõi Set thay
+vì Map theo D.
+
+**Hạ tầng**: cột mới `kybaocao.tonCuoiKyIds` (jsonb, `{dieu_tra:[maVuAn,...],...}`,
+`add_ton_cuoi_ky_ids_2026-08-04.sql`, ĐÃ chạy lên Supabase thật) — persist bởi
+`taiTaoTonCuoiKyTheoTDTatCa` (mở rộng, chạy CÙNG lúc với `tonCuoiKyTheoTD` cũ, không thêm lượt
+duyệt lịch sử mới). Hàm mới `tinhDsTonTheoKy(gd, ky, kyTruoc, baoCaoGd)`: kỳ đã có
+`tonCuoiKyIds` → dùng thẳng; kỳ chưa có nhưng `kyTruoc` có (hoặc `kyTruoc==null`, kỳ đầu tiên) →
+dựng tạm từ `kyTruoc.tonCuoiKyIds` + mới/ra CỦA CHÍNH kỳ này (đã có sẵn trong `baoCaoGd.ds`, không
+query thêm); không có gì cả → trả `live:true`, sheet Excel tự fallback về số live kèm cảnh báo đỏ
+"chưa backfill" thay vì âm thầm hiện sai. Bị can lọc theo `locBiCanTheoCutoff(bcList, ky.ngayChot)`
+(kỳ đã chốt) hoặc không lọc (kỳ chưa chốt) — loại đúng bo_sung_bican thêm SAU khi kỳ đã chốt.
+
+**Bug thật #1 phát hiện qua chính cross-check mới thêm — `gomTheoTD` (dùng bởi
+`taiTaoTonCuoiKyTheoTDTatCa` để tính `tonCuoiKyTheoTD`/`tonCuoiBiCan`) KHÔNG áp dụng cutoff
+`bo_sung_bican` dù nhận vụ đã có sẵn `_bcCutoff` từ `vuAnTuLogDocs`** — mỗi lần công cụ "Sửa lại
+tồn cuối kỳ..." chạy lại, nó ÂM THẦM GHI ĐÈ `tonCuoiBiCan` (số ĐÃ CHỐT, đáng lẽ bất biến) bằng bị
+can LIVE của vụ tại đúng lúc chạy, kể cả bị can mới "Thêm sau" ở 1 kỳ SAU đã chốt — phát hiện thật:
+kỳ 06/2026 Điều tra bị nâng từ 738 (đúng, theo cutoff ngày chốt 29/06) lên 768 (30 bị can thêm
+trong tháng 7, SAU khi kỳ đã chốt). Đã sửa `gomTheoTD` dùng `locBiCanTheoCutoff(bcs, vu._bcCutoff)`
+thay vì bị can live thẳng — chạy lại còn 735 (chênh 3, do gap #2 dưới đây, chưa sửa).
+**Gap #2 CÒN LẠI, CHƯA SỬA (ngoài phạm vi, để dành phiên sau)**: `moiList`/`raList` trong
+`taiTaoTonCuoiKyTheoTDTatCa` KHÔNG bao gồm `d.boSungBiCan` (bị can bổ sung vào vụ ĐÃ CÓ trong CÙNG
+kỳ, trước khi chốt — hợp lệ, phải tính) — thiếu khoản này làm `tonCuoiBiCan` hụt nhẹ (3 bị can ở kỳ
+06/2026 Điều tra). Nút "Sửa lại tồn cuối kỳ..." tự cảnh báo rõ khi gặp (không âm thầm sai).
+
+**Bug thật #2 phát hiện khi kiểm chứng qua UI thật — thứ tự add/remove SAI khi 1 vụ có CẢ 2 sự
+kiện vào/ra trong CÙNG 1 kỳ (VD chuyển giai đoạn ra rồi bị trả hồ sơ về lại, cùng kỳ)**: bản đầu
+`moiList.forEach(add)` RỒI MỚI `raList.forEach(remove)` — vô điều kiện, không quan tâm thứ tự thời
+gian thật, nên 1 vụ "ra ngày 14, vào lại ngày 15" (cùng kỳ) bị XOÁ NHẦM khỏi tồn cuối kỳ dù thực tế
+đã quay lại trước khi kỳ kết thúc. Sửa bằng hàm dùng chung mới `apDungThayDoiVuTheoThoiGian` — gộp
+2 mảng thành 1 danh sách sự kiện có mốc thời gian, sắp XƯA→MỚI rồi áp add/remove tuần tự đúng lịch
+sử thật. **Bẫy thứ 2 trong CHÍNH lần sửa bug này**: bản sửa ĐẦU TIÊN dùng `_log.thoiDiemGhi?.toMillis?.()`
+(kiểu Firestore Timestamp) — nhưng qua shim Supabase, `thoiDiemGhi`/`ngaySuKien` là **CHUỖI ISO
+thường**, không có `.toMillis()` → mọi sự kiện đều rơi về t=0 → sort không có tác dụng gì, bug vẫn y
+nguyên dù tưởng đã sửa. Phát hiện được NHỜ kiểm chứng bằng dữ liệu Supabase thật (không dừng ở test
+cô lập dùng mock sai hình dạng `{toMillis(){}}` — mock đó khiến test PASS giả tạo). Sửa đúng bằng
+fallback `new Date(t).getTime()` (đúng pattern `locBiCanTheoCutoff` đã dùng sẵn ở nơi khác).
+
+**Đã kiểm chứng đầy đủ bằng dữ liệu Supabase production thật** (mở `qlahs-sup.html` triển khai tại
+`qlahs-sup.web.app`, đăng nhập `admin@qlva.local`) — trước khi backfill hàng loạt, chạy
+`gh workflow run backup-supabase.yml` lấy backup mới, đợi "success". Chạy "Sửa lại tồn cuối kỳ..."
+qua UI thật (không phải giả lập): kỳ 06/2026 (kỳ đã chốt duy nhất) — `tonCuoiKyIds.dieu_tra` đúng
+310 ID, khớp CHÍNH XÁC `tonCuoiKy.dieu_tra` (không lệch, không cần gộp "(chưa xác định)"). Xuất
+Excel kỳ 07/2026 (đang mở) qua nút thật, chặn `URL.createObjectURL` bắt Blob thật, nạp lại bằng
+`new ExcelJS.Workbook().xlsx.load(...)` NGAY TRONG TRÌNH DUYỆT — xác nhận CẢ 3 giai đoạn "DS tồn
+cuối kỳ {gđ}" khớp CHÍNH XÁC con số "Tồn cuối kỳ" hiển thị trên màn hình (ĐT 318 vụ/810 BC, TT 43
+vụ/219 BC, XX 50 vụ/328 BC) — và diff với "DS tồn {gđ}" (live, 318/318/42/43/51/50) chỉ còn ĐÚNG 2
+vụ khác biệt cho Điều tra, cả 2 đều giải thích được chính xác qua log: 1 vụ arrived dưới kỳ 08 (tự
+động bị loại khỏi tồn cuối kỳ 07 — ĐÚNG) và 1 vụ chỉ rời đi ở kỳ 08 (vẫn đúng tồn tại trong tồn
+cuối kỳ 07 dù đã rời trong LIVE — ĐÚNG) — không còn vụ "lọt" nào không giải thích được.
+
+**Test cô lập** (`test_ds_ton_cuoi_ky.js`, scratchpad, không commit) — 17/17 PASS, trích nguyên
+`locBiCanTheoCutoff`/`apDungThayDoiVuTheoThoiGian` từ file thật, dùng mock ĐÚNG hình dạng dữ liệu
+thật (chuỗi ISO, không phải `{toMillis(){}}`) sau khi rút kinh nghiệm từ bẫy bug #2 ở trên.
+
+**Đã deploy `qlahsp2.web.app` (production)** sau khi Dũng xác nhận qua chat — smoke test sau deploy
+(trang đăng nhập tải sạch, 0 lỗi console ngoài cảnh báo Babel kích thước file vô hại đã biết).
+
 ## Nhánh `tra-dtbs-tach-bican-cu-moi` — sửa gốc: bị can bổ sung vào vụ đã có không được ghi "vào" ở Tổng thụ lý/Cân đối số liệu (2026-08-03, `qlahs-sup.html`, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: 4 tab mới ở "Án đã giải quyết" (Kết thúc điều tra/VKS trả ĐTBS/Kết thúc

@@ -3253,14 +3253,17 @@ function TaiTaoTonTheoTDTool() {
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
-      <h3 className="font-semibold text-slate-800 mb-1">Sửa lại tồn cuối kỳ theo tội danh (Biểu B10)</h3>
+      <h3 className="font-semibold text-slate-800 mb-1">Sửa lại tồn cuối kỳ theo tội danh + danh sách vụ (Biểu B10 / DS tồn cuối kỳ)</h3>
       <p className="text-xs text-slate-500 mb-3">
-        Tính lại ĐÚNG <code>tonCuoiKyTheoTD</code>/<code>tonCuoiBiCan</code> cho toàn bộ kỳ đã chốt
-        theo thứ tự thời gian, từ log (số mới − đã giải quyết theo tội danh mỗi kỳ), đối chiếu với
-        <code>tonCuoiKy</code> (chưa bao giờ bị ghi sai) để đảm bảo tổng luôn khớp. Dùng để sửa dữ
-        liệu đã bị bug cũ ghi sai (Biểu B10 hiện "tồn kỳ trước" trùng "tồn kỳ này") — chỉ cần chạy
-        lại khi anh thấy B10 vẫn còn sai sau khi đã cập nhật bản mới nhất của app. An toàn khi chạy
-        lại nhiều lần (tính lại từ đầu mỗi lần chạy, không cộng dồn chồng lên kết quả cũ).
+        Tính lại ĐÚNG <code>tonCuoiKyTheoTD</code>/<code>tonCuoiBiCan</code>/<code>tonCuoiKyIds</code>
+        cho toàn bộ kỳ đã chốt theo thứ tự thời gian, từ log (số mới − đã giải quyết mỗi kỳ), đối
+        chiếu với <code>tonCuoiKy</code> (chưa bao giờ bị ghi sai) để đảm bảo tổng luôn khớp. Dùng
+        để sửa dữ liệu đã bị bug cũ ghi sai (Biểu B10 hiện "tồn kỳ trước" trùng "tồn kỳ này"), VÀ để
+        dựng lại <code>tonCuoiKyIds</code> (danh sách ID vụ khớp đúng số tồn đã chốt — cần cho sheet
+        "DS tồn cuối kỳ" khi Xuất Excel báo cáo tháng, khác "DS tồn" hiện có vốn là số LIVE tại thời
+        điểm xuất). Chạy lại khi B10 còn sai, hoặc khi "DS tồn cuối kỳ" của 1 kỳ đã chốt báo "chưa
+        backfill". An toàn khi chạy lại nhiều lần (tính lại từ đầu mỗi lần chạy, không cộng dồn
+        chồng lên kết quả cũ).
       </p>
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-3 mb-3">{loi}</div>}
       {dangChay && tienDo && (
@@ -8108,6 +8111,85 @@ async function tinhTonHienTaiTheoGD(gd) {
   return { soVuTon: docsTon.length, soBiCanTon, dsTon };
 }
 
+// Áp dụng "vào"/"ra" (mảng vụ, mỗi phần tử có `_log.thoiDiemGhi`) lên 1 Set<maVuAn> THEO ĐÚNG THỨ
+// TỰ THỜI GIAN THẬT — dùng chung cho tinhDsTonTheoKy VÀ taiTaoTonCuoiKyTheoTDTatCa (phần theo dõi
+// tonCuoiKyIds). Bug đã sửa (2026-08-04, phát hiện qua kiểm chứng thật trên kỳ 07/2026): áp dụng
+// "moiList.forEach(add)" RỒI MỚI "raList.forEach(remove)" — không đổi ý nghĩa nếu 1 vụ chỉ xuất
+// hiện ở 1 trong 2 mảng, nhưng SAI khi CÙNG 1 vụ có CẢ 2 sự kiện trong CÙNG 1 kỳ theo thứ tự
+// "ra trước, vào lại sau" (VD chuyển giai đoạn ĐT→TT ngày 14/7 rồi bị trả hồ sơ về ĐT ngày 15/7,
+// cả 2 cùng kỳ 07/2026) — áp add-rồi-remove vô điều kiện sẽ XOÁ NHẦM vụ này khỏi tồn cuối kỳ dù
+// thực tế nó đã QUAY LẠI trước khi kỳ kết thúc. Sửa bằng cách gộp 2 mảng thành 1 danh sách sự kiện
+// có mốc thời gian, sắp XƯA→MỚI, áp add/remove tuần tự đúng như lịch sử thật đã diễn ra.
+function apDungThayDoiVuTheoThoiGian(baseSet, moiList, raList) {
+  const s = new Set(baseSet);
+  // Bug thật thứ 2 phát hiện qua kiểm chứng UI (2026-08-04): `thoiDiemGhi`/`ngaySuKien` qua shim
+  // Supabase trả về CHUỖI ISO thường (không có `.toMillis()` như Firestore Timestamp) — bản đầu
+  // chỉ thử `.toMillis?.()` rồi rơi thẳng về `0` khi không có, khiến MỌI sự kiện đều có t=0 và
+  // Array.sort (stable) chỉ giữ nguyên thứ tự chèn (moiList trước raList) — y hệt bug cũ, "sửa"
+  // không có tác dụng gì. Dùng đúng pattern fallback đã có sẵn ở `locBiCanTheoCutoff`.
+  const layThoiDiem = (v) => {
+    const t = v._log?.thoiDiemGhi ?? v._log?.ngaySuKien;
+    if (!t) return 0;
+    const ms = t.toMillis ? t.toMillis() : new Date(t).getTime();
+    return isNaN(ms) ? 0 : ms;
+  };
+  const events = [
+    ...moiList.map(v => ({ id: v.id, type: "add", t: layThoiDiem(v) })),
+    ...raList.map(v => ({ id: v.id, type: "remove", t: layThoiDiem(v) })),
+  ].sort((a, b) => a.t - b.t);
+  events.forEach(e => { if (e.type === "add") s.add(e.id); else s.delete(e.id); });
+  return s;
+}
+
+// Dựng danh sách vụ "tồn cuối kỳ" KHỚP ĐÚNG tonCuoiKy/tonCuoiBiCan của kỳ K (theo giai đoạn gd) —
+// KHÁC HẲN tinhTonHienTaiTheoGD ở trên (CỐ Ý luôn LIVE, dùng cho "Số tồn hiện tại"/"TK tội danh"/
+// B10 kỳ chưa chốt — không đụng vào). Dùng riêng cho sheet Excel "DS tồn cuối kỳ {gđ}" (xem
+// xuatBaoCaoThangExcel) — để mở lại báo cáo 1 kỳ CŨ vẫn thấy đúng danh sách đã làm nên số đã chốt,
+// không bị số phát sinh ở kỳ SAU (vụ rời giai đoạn/bổ sung bị can...) làm trôi lệch theo thời gian.
+//
+// Nguồn ID ưu tiên: `ky.tonCuoiKyIds[gd]` — đã persist bởi taiTaoTonCuoiKyTheoTDTatCa (chạy qua nút
+// "Sửa lại tồn cuối kỳ theo tội danh..."). Nếu kỳ này chưa có (chưa từng backfill): dựng tạm bằng
+// `kyTruoc.tonCuoiKyIds[gd]` (nếu có) cộng "mới"/"ra" CỦA CHÍNH kỳ K (đã có sẵn trong baoCaoGd.ds,
+// không query thêm — đúng công thức tonCuoiKy đã dùng ở tinhBaoCaoKyTuLog). `kyTruoc == null` (kỳ
+// đầu tiên hệ thống) cũng đi nhánh này với base rỗng — không phải "thiếu dữ liệu". Chỉ khi kyTruoc
+// TỒN TẠI nhưng CŨNG chưa có tonCuoiKyIds (chưa backfill) mới thật sự "chưa tính được"
+// (`live: true`) — nơi gọi (Excel) tự fallback về baoCaoGd.ds.tonHienTai + hiện cảnh báo.
+async function tinhDsTonTheoKy(gd, ky, kyTruoc, baoCaoGd) {
+  let ids;
+  if (ky?.tonCuoiKyIds?.[gd]) {
+    ids = ky.tonCuoiKyIds[gd];
+  } else if (!kyTruoc || kyTruoc.tonCuoiKyIds?.[gd]) {
+    const d = baoCaoGd.ds || {};
+    const moiList = [...(d.khoiToTrucTiep||[]), ...(d.tachVu||[]), ...(d.chuyenDen||[]), ...(d.traVe||[]), ...(d.phucHoi||[]), ...(d.nhanLai||[])];
+    const raList = [
+      ...(d.chuyenDi||[]), ...(d.traDi||[]), ...(d.nhapVu||[]),
+      ...HOAN_THANH_TRUONG_TONG.flatMap(ht => d.hoanThanh?.[ht] || []),
+    ];
+    ids = [...apDungThayDoiVuTheoThoiGian(kyTruoc?.tonCuoiKyIds?.[gd] || [], moiList, raList)];
+  } else {
+    return { list: [], live: true };
+  }
+  if (!ids.length) return { list: [], live: false };
+  const [vuDocs, biCanByVu] = await Promise.all([
+    chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), ids),
+    batchLayBiCanList(ids),
+  ]);
+  // Cutoff bị can = ngày CHỐT của kỳ (bị can "bo_sung_bican" thêm SAU khi kỳ đã chốt không được
+  // tính vào đây) — kỳ chưa chốt thì không cutoff, dùng bị can hiện có (đúng bản chất "chưa xong").
+  // Gắn `_bcCutoff` NGAY LÊN kết quả (giống vuAnTuLogDocs) — để `addSheetVu` (dùng biCanByVu CHUNG
+  // của cả file xuất, không phải biCanByVu cục bộ vừa fetch ở đây) lọc lại y hệt cutoff này khi vẽ
+  // dòng bị can, không lệch giữa `_soBiCan` tính ở đây và số dòng thật hiện trên sheet.
+  const cutoff = ky?.trangThai === "da_chot" ? (ky.ngayChot || null) : null;
+  const list = vuDocs.map(d => {
+    const vu = { id: d.id, ...d.data() };
+    const bcList = locBiCanTheoCutoff(biCanByVu[vu.id] || [], cutoff);
+    const bcChinh = bcList.length ? chonBiCanChinh(bcList) : null;
+    const toiDanhChinh = bcChinh?.toiDanh?.[0] || "";
+    return { ...vu, _bcCutoff: cutoff, _soBiCan: bcList.length, _toiDanhChinh: toiDanhChinhCuaVu(vu, toiDanhChinh) };
+  });
+  return { list, live: false };
+}
+
 // Tách phần "đông cứng" (không đổi sau khi kỳ đã chốt, trừ khi bấm "Tính lại số liệu") ra khỏi
 // phần "tồn hiện tại" (luôn live) — dùng khi lưu baoCaoLuu lúc chốt/tính lại.
 function tachBaoCaoLuu(baoCaoTuLog) {
@@ -9391,9 +9473,20 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
   // - Vụ 0 BC: dùng dieuLuat[0] (tội danh chính của vụ)
   // - Vụ có BC: vụ đếm vào tội danh của BC ban_dau (hoặc BC đầu tiên), mỗi BC đếm biCan riêng
   // Mỗi vụ chỉ xuất hiện 1 lần trong map → tổng khớp đúng với số vụ trong danh sách
+  //
+  // Bug đã sửa (2026-08-04, phát hiện qua cross-check với tonCuoiKyIds mới thêm): TRƯỚC ĐÂY dùng
+  // THẲNG `biCanByVu[vu.id]` (uncut, LIVE) dù `moiList`/`raList` (nguồn dsVu) đều dựng từ
+  // `vuAnTuLogDocs` — hàm ĐÃ gắn sẵn `_bcCutoff` đúng ngày sự kiện lên từng vụ (xem
+  // add_bo_sung_bican_2026-08-03.sql) nhưng `gomTheoTD` bỏ qua field này, khiến bị can "Thêm sau"
+  // (bo_sung_bican) VẪN bị tính vào tội danh/tồn của kỳ CŨ mỗi khi công cụ "Sửa lại tồn cuối kỳ
+  // theo tội danh..." chạy lại — phát hiện thật: kỳ 06/2026 Điều tra bị đếm 768 BC (dùng
+  // `tonCuoiBiCanMoi`, hàm này nuôi) thay vì đúng 738 (30 BC thêm SAU ngày chốt 29/06). Sửa bằng
+  // `locBiCanTheoCutoff` — vụ không có `_bcCutoff` (hoàn thành/nhập vụ, xem hoanThanhSnap/
+  // nhapVuSnap trong tinhBaoCaoKyTuLog — CHƯA áp dụng cutoff, ngoài phạm vi sửa lần này) giữ nguyên
+  // hành vi cũ, không ảnh hưởng gì thêm.
   const gomTheoTD = (map, dsVu, gd, biCanByVu) => {
     for (const vu of dsVu) {
-      const bcs = biCanByVu[vu.id] || [];
+      const bcs = locBiCanTheoCutoff(biCanByVu[vu.id] || [], vu._bcCutoff);
       if (bcs.length === 0) {
         // Vụ 0 BC: chỉ dùng dieuLuat[0] (tội danh chính)
         const tenChinh = (vu.dieuLuat || "").split(";")[0].trim();
@@ -9419,6 +9512,12 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
   };
 
   let tonTruoc = {}; // { [D]: { [gd]: { vuAn, biCan } } } — đã tính đúng của kỳ liền trước
+  // tonTruocIds (2026-08-04) — CÙNG 1 vòng lặp, thêm theo dõi TẬP HỢP ID VỤ tồn mỗi giai đoạn
+  // (không phân theo tội danh) — dùng để dựng sheet Excel "DS tồn cuối kỳ {gđ}" khớp đúng
+  // tonCuoiKy/tonCuoiBiCan đã chốt, KHÁC "DS tồn {gđ}" (live) — xem tinhDsTonTheoKy +
+  // add_ton_cuoi_ky_ids_2026-08-04.sql. moiList/raList tái dùng NGUYÊN của gomTheoTD ngay dưới,
+  // không tính lại/query thêm gì.
+  let tonTruocIds = { dieu_tra: new Set(), truy_to: new Set(), xet_xu: new Set() };
   const ketQua = [];
 
   for (let i = 0; i < dsKyChot.length; i++) {
@@ -9428,6 +9527,7 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
     const biCanByVu = await fetchBiCanTheoVuIds(vuIds);
 
     const tonMoiMap = {}, tonRaMap = {};
+    const tonMoiIds = {};
     for (const gd of THU_TU_GIAI_DOAN) {
       const d = baoCao[gd].ds;
       const moiList = [...(d.khoiToTrucTiep||[]), ...(d.tachVu||[]), ...(d.chuyenDen||[]), ...(d.traVe||[]), ...(d.phucHoi||[]), ...(d.nhanLai||[])];
@@ -9437,6 +9537,11 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
       ];
       gomTheoTD(tonMoiMap, moiList, gd, biCanByVu);
       gomTheoTD(tonRaMap, raList, gd, biCanByVu);
+
+      // apDungThayDoiVuTheoThoiGian (không phải add-rồi-remove vô điều kiện) — xem chú thích tại
+      // định nghĩa hàm: cần thiết cho vụ có CẢ 2 sự kiện vào/ra trong CÙNG kỳ này (VD chuyển giai
+      // đoạn rồi bị trả hồ sơ về lại, cùng kỳ).
+      tonMoiIds[gd] = apDungThayDoiVuTheoThoiGian(tonTruocIds[gd], moiList, raList);
     }
 
     const tonMoiNay = {};
@@ -9478,11 +9583,30 @@ async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
       tonCuoiBiCanMoi[gd] = Object.values(tonMoiNay).reduce((s, hang) => s + (hang[gd]?.biCan || 0), 0);
     });
 
+    // Đối chiếu tonMoiIds (Set ID vụ) với tonCuoiKy — KHÔNG có tội danh "(chưa xác định)" để gộp
+    // (không thể bịa ra 1 ID vụ), nên chỉ CẢNH BÁO khi lệch, không tự sửa. Cũng đối chiếu số bị
+    // can (lọc theo ngayChot làm cutoff — bị can bổ sung SAU khi kỳ này đã chốt không được tính)
+    // với tonCuoiBiCanMoi (đáng tin, vừa tính ở trên) để phát hiện sớm nếu cutoff làm lệch số.
+    const tonCuoiKyIdsMoi = {};
+    for (const gd of THU_TU_GIAI_DOAN) {
+      const idArr = [...tonMoiIds[gd]];
+      tonCuoiKyIdsMoi[gd] = idArr;
+      const soVuThat = ky.tonCuoiKy?.[gd] ?? 0;
+      if (idArr.length !== soVuThat) {
+        canhBaoKy.push(`${NHAN_GIAI_DOAN[gd]}: dựng lại được ${idArr.length} vụ tồn, khác tonCuoiKy đã chốt (${soVuThat} vụ) — chênh ${soVuThat - idArr.length}, có sự kiện log kyThongKe=null (dữ liệu cũ) chưa được tính vào bất kỳ kỳ nào.`);
+      }
+      const soBcCutoff = idArr.reduce((s, id) => s + locBiCanTheoCutoff(biCanByVu[id] || [], ky.ngayChot || null).length, 0);
+      if (soBcCutoff !== tonCuoiBiCanMoi[gd]) {
+        canhBaoKy.push(`${NHAN_GIAI_DOAN[gd]}: bị can tồn tính theo cutoff ngày chốt = ${soBcCutoff}, khác tonCuoiBiCan (${tonCuoiBiCanMoi[gd]}) — kiểm tra lại ngày chốt/bị can bổ sung của kỳ này.`);
+      }
+    }
+
     await db.collection("kybaocao").doc(ky.id).update({
-      tonCuoiKyTheoTD: tonMoiNay, tonCuoiBiCan: tonCuoiBiCanMoi,
+      tonCuoiKyTheoTD: tonMoiNay, tonCuoiBiCan: tonCuoiBiCanMoi, tonCuoiKyIds: tonCuoiKyIdsMoi,
     });
     ketQua.push({ ky: ky.tenKy, canhBao: canhBaoKy });
     tonTruoc = tonMoiNay;
+    tonTruocIds = tonMoiIds;
     onTienDo?.(i + 1, dsKyChot.length, ky.tenKy);
   }
   return { tongSoKy: dsKyChot.length, ketQua };
@@ -9563,8 +9687,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const kyIdSetTrongBaoCao = new Set(dsKyTrongBaoCao.map(k => k.id));
   const dsKyTenTrongBaoCao = dsKyTrongBaoCao.map(k => k.tenKy);
 
+  // "DS tồn cuối kỳ {gđ}" (2026-08-04) — tính TRƯỚC bước gom _vuIdsChoBaoCao ngay dưới, vì danh
+  // sách này có thể chứa vụ đã RỜI giai đoạn ở 1 kỳ SAU (xem tinhDsTonTheoKy) — những vụ đó KHÔNG
+  // nằm trong bất kỳ mảng nào của baoCao[gd].ds (chỉ gồm dữ liệu của CHÍNH kỳ đang xuất), nên phải
+  // gộp ID của chúng vào TRƯỚC khi fetch biCanByVu chung của cả file, nếu không addSheetVu sẽ không
+  // có bị can để vẽ (biCanByVu[vu.id] rỗng) dù _bcCutoff/_soBiCan đã tính đúng ở tinhDsTonTheoKy.
+  const dsTonCuoiKyTheoGD = {};
+  for (const gd of THU_TU_GIAI_DOAN) {
+    dsTonCuoiKyTheoGD[gd] = await tinhDsTonTheoKy(gd, ky, kyTruoc, baoCao[gd]);
+  }
+
   // ---- Fetch bị can + danh mục tội danh + kỳ báo cáo + kỳ khởi tố riêng từng bị can song song ----
-  const _vuIdsChoBaoCao = collectVuIdsFromBaoCao(baoCao);
+  const _vuIdsChoBaoCao = [...new Set([
+    ...collectVuIdsFromBaoCao(baoCao),
+    ...THU_TU_GIAI_DOAN.flatMap(gd => dsTonCuoiKyTheoGD[gd].list.map(v => v.id)),
+  ])];
   // Vụ ĐÍCH của "Nhập vụ" (2026-08-03) — cần info riêng (mã vụ/tên vụ/KSV...) để làm dòng tổng
   // "▸ Vụ đích" trong sheet "DS nhập vụ {gs}" (xem addSheetNhapVu) — KHÔNG dùng chung _vuIdsChoBaoCao
   // (mảng đó chỉ gom vụ NGUỒN của "mới/tồn/giải quyết", vụ đích có thể không nằm trong bất kỳ mảng
@@ -10609,6 +10746,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       ["• 'DS ĐT chuyển TT' = cùng dữ liệu 'DS chuyển đến TT', từ góc nhìn giai đoạn nguồn (để tính đủ RA của ĐT)."],
       ["• 'Tồn cuối (chốt)' = snapshot lúc chốt kỳ; 'Tồn cuối (tính)' = tính từ log kỳ này — hai cột nên bằng nhau."],
       ["• Hàng 'Bị can' đếm số BỊ CAN (cột 'Họ tên BC' của các sheet DS, loại bỏ dòng giả '(Chưa có BC)' của vụ 0 bị can) — song song hàng 'Vụ' phía trên."],
+      ["• 'DS tồn {gđ}' = số LIVE tại thời điểm bấm xuất báo cáo này; 'DS tồn cuối kỳ {gđ}' = danh sách khớp ĐÚNG 'Tồn cuối (chốt)' của kỳ đang xem — mở lại báo cáo cũ lâu sau vẫn ra đúng số đã chốt, dùng sheet này để đối chiếu nếu 2 số lệch nhau."],
     ].forEach(r => { const nr = wsCd.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; });
   }
 
@@ -10628,6 +10766,25 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       ["Kỳ TK phát sinh"],
       v => [kyById.get(kyVaoGDMap.get(v.id)) || kyVaoGDMap.get(v.id) || "(chưa gán)"],
       true);
+
+    // "DS tồn cuối kỳ {gđ}" (2026-08-04, theo yêu cầu Dũng) — KHÁC "DS tồn {gđ}" ở trên (live tại
+    // thời điểm xuất): đây là danh sách khớp ĐÚNG số "Tồn cuối (chốt)"/tonCuoiKy của CHÍNH kỳ đang
+    // xuất — mở lại báo cáo 1 kỳ cũ bao lâu sau vẫn ra đúng số đã chốt, không bị vụ rời giai đoạn/
+    // bổ sung bị can ở kỳ SAU làm trôi lệch (xem tinhDsTonTheoKy). KHÔNG đụng/đổi "DS tồn {gđ}" —
+    // sheet đó vẫn nuôi đúng công thức "Số tồn hiện tại"/"TK tội danh"/B10 kỳ chưa chốt như cũ.
+    const { list: dsTonCK, live: dsTonCKLive } = dsTonCuoiKyTheoGD[gd];
+    const wsTonCK = addSheetVu(`DS tồn cuối kỳ ${GD_VIET_TAT[gd]}`,
+      dsTonCKLive ? dsTon : dsTonCK, [], () => [], true);
+    if (dsTonCKLive) {
+      wsTonCK.addRow([]);
+      const rCanhBao = wsTonCK.addRow([
+        `⚠ Chưa dựng được danh sách tồn cuối kỳ cho kỳ này (kỳ liền trước cũng chưa chạy "Sửa lại ` +
+        `tồn cuối kỳ theo tội danh..." ở Cài đặt → Import Excel) — sheet này TẠM THỜI hiện số LIVE ` +
+        `giống "DS tồn ${GD_VIET_TAT[gd]}", có thể KHÔNG khớp "Tồn cuối (chốt)" ở Cân đối số liệu. ` +
+        `Chạy công cụ trên rồi xuất lại báo cáo để có số đúng.`,
+      ]);
+      rCanhBao.font = { bold: true, color: { argb: "FFDC2626" } };
+    }
   }
 
   // ---- 4 sheet "tổng hợp giải quyết theo giai đoạn" MỚI (2026-07-31, theo yêu cầu người dùng) ----
