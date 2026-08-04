@@ -7918,9 +7918,20 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
 // MỚI sẽ vô tình gộp nhầm những bị can đó vào "ra" của giai đoạn CŨ. Field `_bcCutoff` cũng được
 // gắn lên kết quả để `addSheetVu` (Excel) lọc y hệt khi liệt kê dòng bị can, giữ formula/COUNTIFS
 // trên sheet khớp đúng với con số JS đã tính (không lệch giữa 2 nơi).
+// idVuThatCuaLog: vụ THẬT sự kiện log này đại diện — HẦU HẾT loaiSuKien ghi maVuAn = đúng vụ đang
+// nói tới, NHƯNG "tach_vu" là NGOẠI LỆ: ghi maVuAn = vụ GỐC (nơi lưu sự kiện, vì tách vụ là hành
+// động xảy ra TRÊN vụ gốc) còn vụ MỚI thật sự được tạo ra nằm ở field riêng `vuTachRa` (xem
+// tachVuAn/TachVuAnModal). Bug thật đã sửa (2026-08-04, Dũng phát hiện qua ví dụ "1 vụ/33 bị can
+// tách thành 1 vụ/1 bị can + 1 vụ/32 bị can" — bản chất chỉ +1 vụ mới, không phải +32 bị can) —
+// trước đây hàm này LUÔN dùng maVuAn nên "mới" (tách vụ) bị gán NHẦM cho vụ GỐC (đã tồn tại từ
+// trước, không phải vụ mới) kèm TOÀN BỘ bị can CÒN LẠI của vụ gốc sau khi tách (32, không phải 1
+// bị can thật sự thuộc vụ mới) — thổi phồng "Tổng số mới"/"Tồn cuối kỳ" theo bị can mỗi khi có
+// tách vụ trên 1 vụ nhiều bị can. Kiểm chứng trên Supabase thật: đúng 1 sự kiện tách vụ duy nhất
+// trong hệ thống (QLVA_E01.53_2510_0014 → tách ra QLVA_E01.53_2510_0014_1) khớp y hệt ví dụ.
+const idVuThatCuaLog = (l) => (l.loaiSuKien === "tach_vu" ? (l.vuTachRa || l.maVuAn) : l.maVuAn);
 async function vuAnTuLogDocs(logDocs) {
   if (!logDocs.length) return [];
-  const maVuAnList = [...new Set(logDocs.map(d => d.data().maVuAn))];
+  const maVuAnList = [...new Set(logDocs.map(d => idVuThatCuaLog(d.data())))];
   // Batch-read vuan + bican song song — chia lô qua chiaLoTruyVanIn (2026-07-21: "checklist Supabase
   // mục 5" từng bỏ hẳn chia lô với lý do "Postgres ANY() không giới hạn" — ĐÚNG cho Postgres nhưng
   // SAI thực tế vì PostgREST gửi .in() qua URL query string, dài quá sẽ bị 400 Bad Request. Đặc biệt
@@ -7933,10 +7944,11 @@ async function vuAnTuLogDocs(logDocs) {
   vuanDocs.forEach(d => { vuanMap[d.id] = { id: d.id, ...d.data() }; });
   return logDocs.map(d => {
     const l = d.data();
-    const vu = vuanMap[l.maVuAn];
+    const idThat = idVuThatCuaLog(l);
+    const vu = vuanMap[idThat];
     if (!vu) return null;
     const cutoff = l.ngaySuKien || l.thoiDiemGhi || null;
-    const bcListGoc = biCanByVu[l.maVuAn] || [];
+    const bcListGoc = biCanByVu[idThat] || [];
     const bcListDung = locBiCanTheoCutoff(bcListGoc, cutoff);
     const bcChinh = bcListDung.length ? chonBiCanChinh(bcListDung) : null;
     const toiDanhChinh = bcChinh?.toiDanh?.[0] || "";
@@ -8905,15 +8917,27 @@ async function fetchKyKhoiToBiCan(vuIds) {
 async function fetchKyVaoGiaiDoanTonHienTai(vuIds, gd) {
   const map = new Map();
   if (!vuIds.length) return map;
-  const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", vuIds,
-    q => q.where("loaiSuKien", "in", ["khoi_to_vu", "tach_vu", "chuyen_giai_doan", "tra_ho_so"]).where("denGiaiDoan", "==", gd));
-  const moiNhat = new Map(); // maVuAn -> { kyThongKe, thoiDiemGhi }
-  docs.forEach(d => {
-    const e = d.data();
+  // tach_vu tách riêng khỏi nhóm truy vấn theo "maVuAn" — event này ghi maVuAn = VỤ GỐC (nơi lưu
+  // sự kiện) chứ KHÔNG PHẢI vụ mới được tạo ra (nằm ở field riêng "vuTachRa", xem idVuThatCuaLog/
+  // vuAnTuLogDocs — cùng bug, cùng đợt sửa 2026-08-04). Nếu gộp chung 1 truy vấn theo maVuAn: (1)
+  // vụ MỚI (vuTachRa) sẽ không bao giờ khớp field maVuAn nên mất hẳn "Kỳ TK phát sinh" (hiện "—"),
+  // (2) vụ GỐC bị gán NHẦM kỳ tách vụ làm "kỳ vào giai đoạn" của chính nó (ghi đè kỳ vào THẬT SỰ
+  // trước đó vì tách luôn xảy ra sau, "gần nhất" thắng) dù tách vụ không hề làm vụ gốc "vào lại"
+  // giai đoạn nào — nó vẫn luôn ở nguyên đó.
+  const [docsThuong, docsTach] = await Promise.all([
+    chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", vuIds,
+      q => q.where("loaiSuKien", "in", ["khoi_to_vu", "chuyen_giai_doan", "tra_ho_so"]).where("denGiaiDoan", "==", gd)),
+    chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "vuTachRa", vuIds,
+      q => q.where("loaiSuKien", "==", "tach_vu").where("denGiaiDoan", "==", gd)),
+  ]);
+  const moiNhat = new Map(); // maVuAn (vụ THẬT) -> { kyThongKe, thoiDiemGhi }
+  const xetDong = (key, e) => {
     const t = e.thoiDiemGhi?.toMillis?.() || 0;
-    const hienCo = moiNhat.get(e.maVuAn);
-    if (!hienCo || t > hienCo.thoiDiemGhi) moiNhat.set(e.maVuAn, { kyThongKe: e.kyThongKe || null, thoiDiemGhi: t });
-  });
+    const hienCo = moiNhat.get(key);
+    if (!hienCo || t > hienCo.thoiDiemGhi) moiNhat.set(key, { kyThongKe: e.kyThongKe || null, thoiDiemGhi: t });
+  };
+  docsThuong.forEach(d => { const e = d.data(); xetDong(e.maVuAn, e); });
+  docsTach.forEach(d => { const e = d.data(); xetDong(e.vuTachRa, e); });
   moiNhat.forEach((v, maVuAn) => map.set(maVuAn, v.kyThongKe));
   return map;
 }
