@@ -2,6 +2,82 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Gộp nhánh `fix-thong-ke-may2` + `ds-ton-cuoi-ky` (2 phiên song song) — sửa gốc bug "Tồn kỳ này" thiếu bị can bổ sung ở đúng phần TỒN (không phải "vào"/"ra"), + sự cố ghi đè dữ liệu thật rồi tự khôi phục (2026-08-05, `qlahs-sup.html`, nhánh `ds-ton-cuoi-ky`, ĐÃ deploy `qlahs-sup.web.app`, **CHƯA deploy production** — chờ Dũng xác nhận số liệu đúng)
+
+**Bối cảnh**: 2 phiên Claude Code chạy song song trên máy khác nhau cùng sửa thống kê B10/Kỳ báo
+cáo — 1 phiên làm trên nhánh `ds-ton-cuoi-ky` (thêm sheet "DS tồn cuối kỳ {gđ}" khớp số đã chốt,
+xem mục ngay dưới đây; sửa `apDungThayDoiVuTheoThoiGian` xử lý đúng thứ tự thời gian + bug
+`.toMillis?.()` luôn ra 0 với timestamp dạng chuỗi ISO của Supabase), phiên này làm trực tiếp trên
+`main` (tiếp tục sửa B10 "Tồn kỳ này" thiếu bị can bổ sung khi vụ rời giai đoạn trong kỳ — xem các
+mục "Sửa gốc bug B10..."/"Bug đã sửa: Biểu B10..." phía dưới). Theo đúng yêu cầu Dũng: đưa việc
+đang làm dở sang nhánh riêng `fix-thong-ke-may2` (không commit thẳng vào `main`), rồi merge với
+`ds-ton-cuoi-ky` (`git merge --no-ff`, xung đột nhỏ ở CLAUDE.md, đã gộp cả 2 khối tài liệu). Sau
+merge, ĐỌC LẠI TOÀN BỘ vùng code thống kê đã gộp (không chỉ tin git merge "sạch" — merge chỉ diff
+theo dòng, không hiểu ngữ nghĩa báo cáo) để xác nhận 2 phần sửa không xung đột LOGIC.
+
+**Phát hiện lỗ hổng CÒN SÓT sau khi đọc lại**: bug "Tồn kỳ này" thiếu bị can bổ sung (đã sửa ở
+`tinhBieu10`/`tonTheoLogD`, xem mục "Bug đã sửa: Biểu B10..." dưới đây) **CHỈ sửa đúng phần "Tồn
+kỳ này" theo TỪNG điều luật của B10** — nhưng KHÔNG lan sang: (1) `tinhBaoCaoKyTuLog`'s
+`tonCuoiKy`/`tonCuoiBiCanKy` (dùng ở Kỳ báo cáo/Dashboard/Danh sách vụ án — con số TỔNG không theo
+điều luật), và (2) sheet "Cân đối số liệu" (tự SUM theo sheet Excel, không gọi lại JS). Query trực
+tiếp Supabase xác nhận: B10 (`dt_bc_b10`) ra 807 (đã tính bổ sung), nhưng `tinhBaoCaoKyTuLog` ra
+779 (chưa tính) — 2 nguồn cùng nói về "Tồn kỳ này" của kỳ 07 nhưng lệch nhau 28 người.
+
+**Nguyên tắc scoping bổ sung ĐÃ RÚT RA và ÁP DỤNG THỐNG NHẤT ở cả 3 nơi**: chỉ đếm bị can bổ sung
+của vụ **VẪN CÒN TỒN, KHÔNG PHẢI "mới" (đã tính đủ qua đường khác) VÀ KHÔNG PHẢI "ra" (đã bị trừ
+hết qua số live/hiện tại) trong đúng kỳ này** — tức `vuTonConLai = dsTon.filter(v => !moiIds.has(v.id)
+&& !raIds.has(v.id))`, rồi so `bcKyKhoiToMap.get(bc.id) === ky.id` cho TỪNG bị can của nhóm này qua
+`fetchKyKhoiToBiCan`. Cố tình KHÔNG mở rộng sang vụ "ra" (đã thử — xem mục "sự cố" dưới đây, gây
+overshoot). Biến kết quả `b10BoSungTonTheoGD`/`bcBoSungTonTheoGD` được **tính ĐÚNG 1 LẦN bên trong
+`tinhBieu10`**, rồi TÁI SỬ DỤNG (không tính lại) ở cả `tinhBaoCaoKyTuLog` (cộng vào `bcMoi`) và sheet
+"Cân đối số liệu" (`xuatBaoCaoThangExcel`, đổi `VAO_SHEETS_GD` cục bộ của sheet này trỏ sang sheet
+Excel mới `"DS bổ sung BC {gs} (tồn)"` thay vì sheet cũ `"DS bổ sung BC {gs}"` — sheet CŨ vẫn giữ
+nguyên dùng riêng cho "Tổng thụ lý" C3/C4, KHÔNG gộp chung 2 sheet dù tên gần giống nhau).
+
+**⚠ SỰ CỐ THẬT trên dữ liệu Supabase chia sẻ với production, ĐÃ TỰ PHÁT HIỆN + TỰ KHÔI PHỤC**: lần
+sửa `taiTaoTonCuoiKyTheoTDTatCa` (công cụ "Sửa lại tồn cuối kỳ theo tội danh") đầu tiên quét RỘNG
+`d.tonHienTai` (chỉ loại trừ `moiList`/`raList`) cho MỌI kỳ trong vòng lặp lịch sử tuần tự — chạy
+thật trên Supabase (dữ liệu DÙNG CHUNG với production) ra `tonCuoiBiCan.dieu_tra = 788` cho kỳ
+06/2026 (đáng ra chỉ +3 thành 738, thực tế +53 thành 788 — overshoot). Nguyên nhân: kỳ06 là kỳ ĐẦU
+TIÊN xử lý (`tonTruoc={}`), vụ có `khoi_to_vu` trỏ vào kỳ lưu trữ (bị loại khỏi mọi kỳ "mới") vẫn
+xuất hiện trong `tonHienTai` — quét rộng coi nhầm bị can sẵn có của các vụ đó là "bổ sung trong
+kỳ". **Đã REVERT NGAY LẬP TỨC, deploy lại, chạy lại công cụ để khôi phục đúng giá trị trước đó
+(735)** — xác nhận qua đọc lại Supabase (`Điều tra: 735, Truy tố: 442, Xét xử: 148` — TT/XX không
+hề bị ảnh hưởng suốt cả 2 lần chạy, chỉ ĐT bị đụng). Báo cáo minh bạch với Dũng, được yêu cầu điều
+tra tìm ĐÚNG người/nguyên nhân trước khi thử sửa lại (không đoán mò lần 2).
+
+**Tìm ra ĐÚNG 3 người gây lệch 735→738** qua so sánh 2 phương pháp trên CÙNG 1 `moiList`: cách A
+(cutoff = `ky.ngayChot`, áp dụng chung cho mọi vụ trong `moiList`) ra 738; cách B (cutoff = từng
+`vu._bcCutoff` như code cũ) ra 735 — lệch đúng 3 người: Bùi Khánh Thương (vụ "Trần Duy Dũng và đồng
+phạm", `QLVA_E01.53_2410_0133`), Trần Hùng (vụ "Phùng Duy Anh và đồng phạm",
+`QLVA_E01.53_2512_0056`), Nguyễn Đức Huy (vụ "Nguyễn Đức Huy", `QLVA_E01.53_2511_0047`) — cả 3 đều
+là bị can BỔ SUNG vào 1 vụ VỪA MỚI vào kỳ06 (`moiList`), nhưng thêm SAU thời điểm vụ được ghi nhận
+"mới" (`_bcCutoff`) mà TRƯỚC khi kỳ06 chốt (29/06/2026) — đúng là "bổ sung trong cùng kỳ vụ mới
+mở", `_bcCutoff` (chốt tại thời điểm sự kiện vào vụ) bỏ sót nhóm này.
+
+**Đã sửa ĐÚNG PHẠM VI, hẹp hơn hẳn lần thử đầu**: `gomTheoTD` (trong `taiTaoTonCuoiKyTheoTDTatCa`)
+thêm tham số `cutoffOverride` — chỉ áp dụng cho **`moiList`** (dùng `ky.ngayChot` làm cutoff thay
+`vu._bcCutoff`, bắt đúng bị can bổ sung SAU khi vụ mở nhưng TRONG cùng kỳ), **`raList` GIỮ NGUYÊN
+KHÔNG ĐỔI** (không lặp lại lỗi overshoot). Kết quả trên dữ liệu thật: `canhBao: []`,
+`tonCuoiBiCan.dieu_tra = 738` — khớp CHÍNH XÁC con số Dũng đã xác nhận là đúng.
+
+**Đã kiểm chứng bằng công thức Excel THẬT (không chỉ tin "result" cache — đúng yêu cầu của Dũng:
+"số liệu và biểu báo cáo phải trùng khớp chứ ko phải đơn thuần cộng trừ ước tính... nếu sai với sổ
+thực tế tôi mới có căn cứ để rà soát")** — xuất báo cáo kỳ 07/2026 thật, chặn `URL.createObjectURL`
+bắt Blob thật, nạp lại bằng `new ExcelJS.Workbook().xlsx.load(...)`, đọc THẲNG chuỗi công thức ô
+D4/E4 sheet "Cân đối số liệu" (Vào/Ra kỳ, Bị can, Điều tra) xác nhận đúng tham chiếu sheet mới
+`'DS bổ sung BC ĐT (tồn)'`; rồi **TỰ TÁI TẠO TAY** (đọc thẳng cột M từng dòng của cả 14 sheet liên
+quan, không dùng cache nào) — Điều tra: 738 (tồn đầu, đã xác nhận qua `kybaocao.tonCuoiBiCan` của
+kỳ06) + 191 (vào, gồm đúng 30 bổ sung) − 119 (ra) = **810**; Truy tố: 442 + 135 − 358 = **219**;
+Xét xử: 148 + 295 − 115 = **328** — TT/XX khớp CHÍNH XÁC với con số "Kỳ báo cáo" gốc Dũng đã nêu
+lúc đầu (43 vụ/219 BC, 50 vụ/328 BC), xác nhận 2 giai đoạn này chưa từng sai, chỉ ĐT bị lệch (812
+cũ → 810 mới, là hệ quả ĐÚNG của việc sửa gốc kỳ06 từ giá trị sai sang 738 đã xác nhận, không phải
+số tuỳ tiện). Cả 6 dòng "Cân đối số liệu" (Vụ+BC × 3 giai đoạn) đều Chênh lệch = 0.
+
+**CHƯA xong**: chưa cập nhật lại `bieu_B10_mo_ta.md`/tài liệu nếu cần; **CHƯA deploy production**
+(`qlahsp2.web.app`) — chờ Dũng xác nhận số liệu đúng theo đúng yêu cầu minh bạch đã đặt ra; nhánh
+`fix-thong-ke-may2` VÀ `ds-ton-cuoi-ky` chưa xoá, chờ xác nhận trước khi dọn.
+
 ## Thêm sheet "DS tồn cuối kỳ {gđ}" khớp đúng số tồn đã chốt/công thức của kỳ đang xuất + 2 bug thật phát hiện trong lúc làm (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
 
 Dũng phát hiện: mở lại báo cáo Excel của 1 kỳ (kỳ 06/2026, đã chốt), "Cân đối số liệu" báo tồn cuối
