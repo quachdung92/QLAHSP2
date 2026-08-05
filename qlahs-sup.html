@@ -8198,6 +8198,12 @@ async function vuBiCanTuLogDocs(logDocs) {
 // lần bấm xem, như yêu cầu người dùng 2026-07-11.
 async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
   const baoCao = {};
+  // Tính THÊM (không thay) tồn cuối kỳ theo RPC động (2026-08-05, xem CLAUDE.md mục "Chuyển hệ
+  // thống thống kê 'tồn'...") — CHỈ ĐÍNH KÈM `tonCuoiKyRPC`/`tonCuoiBiCanKyRPC` để đối chiếu, KHÔNG
+  // đụng `tonCuoiKy`/`tonCuoiBiCanKy` (vẫn tính theo chuỗi snapshot như cũ, mọi nơi đang dùng 2
+  // field đó — Dashboard/B10/Danh sách vụ án — không bị ảnh hưởng). Lỗi RPC (network...) không làm
+  // hỏng luồng chính — `rpcTon` = null thì bỏ qua phần đính kèm, giữ nguyên hành vi cũ hoàn toàn.
+  const rpcTon = await layTonTheoKyRPC(ky.id).catch(() => null);
   for (const gd of THU_TU_GIAI_DOAN) {
     // Guard backward compat: data cũ lưu tonCuoiKy[gd] = {soVu: N, soBiCan: M},
     // data mới lưu tonCuoiKy[gd] = N (số nguyên), tonCuoiBiCan[gd] = M.
@@ -8377,9 +8383,16 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       tonCuoiBiCanKy = tonDauBiCan + bcMoi - bcGiaiQuyet;
     }
 
+    const rpcIds = rpcTon?.vuTheoGD[gd] || null;
+    const tonCuoiKyRPC = rpcIds ? rpcIds.length : null;
+    const tonCuoiBiCanKyRPC = rpcIds
+      ? rpcIds.reduce((s, id) => s + (rpcTon.bcTonTheoVu.get(id)?.size || 0), 0)
+      : null;
+
     baoCao[gd] = {
       tonDauKy, tonDauBiCan, soMoi, chuyenDi: chuyenDi.size, traDi: traDi.size,
       hoanThanhTheoGD, soNhapVu, tonCuoiKy, tonCuoiBiCanKy,
+      tonCuoiKyRPC, tonCuoiBiCanKyRPC,
       soVuTon, soBiCanTon,
       ds: {
         khoiToTrucTiep: dsKhoiToTrucTiep,
@@ -9171,6 +9184,25 @@ function BangBaoCaoChiTiet({ baoCao }) {
           </tbody>
         </table>
       </div>
+      {/* Đối chiếu RPC động (2026-08-05, xem CLAUDE.md mục "Chuyển hệ thống thống kê 'tồn'...") —
+          CHỈ HIỆN THỊ, không thay số "Tồn cuối kỳ" ở bảng trên (vẫn tính theo chuỗi snapshot như
+          cũ). `tonCuoiKyRPC` null nghĩa là gọi RPC lỗi (network...), không hiện gì cả. */}
+      {THU_TU_GIAI_DOAN.some(gd => baoCao[gd].tonCuoiKyRPC != null) && (
+        <div className="mt-2 text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1">
+          <span className="font-medium">Đối chiếu RPC động:</span>
+          {THU_TU_GIAI_DOAN.map(gd => {
+            const b = baoCao[gd];
+            if (b.tonCuoiKyRPC == null) return null;
+            const khop = b.tonCuoiKyRPC === b.tonCuoiKy && b.tonCuoiBiCanKyRPC === b.tonCuoiBiCanKy;
+            return (
+              <span key={gd} className={khop ? "text-green-600" : "text-amber-600 font-medium"}>
+                {NHAN_GIAI_DOAN[gd]}: {b.tonCuoiKyRPC} vụ/{b.tonCuoiBiCanKyRPC} BC
+                {!khop && ` (lệch snapshot: ${b.tonCuoiKy} vụ/${b.tonCuoiBiCanKy} BC)`}
+              </span>
+            );
+          })}
+        </div>
+      )}
       {chiTiet && (
         <ChiTietSoLieuModal nhan={chiTiet.nhan} dsList={chiTiet.ds} onDong={() => setChiTiet(null)} />
       )}
