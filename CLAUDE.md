@@ -2,6 +2,82 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Biểu B10 "Tồn kỳ trước" ĐÃ RPC-HOÁ + bỏ hẳn sheet "Tồn theo ĐL (snapshot)" — phát hiện quan trọng: fix ngày hôm trước KHÔNG hề chạm tới ô Excel thật (2026-08-06, nhánh `feature/tong-ke-dong`, CHƯA deploy production, CHƯA kiểm chứng lại qua UI thật)
+
+Dũng xác nhận sheet "DS tồn cuối kỳ" (mục Phase 1+2 dưới đây) chạy đúng qua dữ liệu thật, rồi yêu
+cầu tiếp: "kiểm tra lại toàn bộ hệ thống xem đã đổi sang hệ query triệt để chưa. Excel bỏ hẳn sheet
+tồn theo ĐL snap on đi thay bằng các sheet DS tồn cuối kỳ trước (hide đi ko cần hiện) thay công
+thức biểu 10 lấy theo các sheet này. dọn dẹp các tàn dư cuối cùng của hệ thống cũ".
+
+**PHÁT HIỆN QUAN TRỌNG khi đào code để làm việc này** — bản sửa "B10 'Tồn kỳ này' đổi ưu tiên sang
+RPC" (mục ngay dưới, viết hôm trước) chỉ đổi được GIÁ TRỊ JS (`dt_tn_vu`/`vals[idx]`, dùng cho
+`canhBao`/dòng Tổng) — **KHÔNG hề chạm tới CÔNG THỨC EXCEL thật sự ghi vào ô B10**. Đào ra: B10
+không ghi `vals[idx]` thẳng vào ô — nó ghi 1 CHUỖI CÔNG THỨC (`B10_FORMULA`, VD `mkVlSnap`/
+`mkTonNayVu`) qua `wsB10.addRow(cells)`, và Excel THẬT tính lại theo formula khi mở file (đúng bài
+học "cột -BC..." đã ghi nhiều lần trong file này — ExcelJS/ "result" cache KHÔNG PHẢI thứ hiển thị
+khi mở bằng Excel thật). Cụ thể trước khi sửa lần này:
+- **"Tồn kỳ trước"** (mọi kỳ): LUÔN `mkVlSnap` — `VLOOKUP` sang sheet "Tồn theo ĐL (snapshot)", chính
+  sheet đọc `kyTruoc.tonCuoiKyTheoTD` (field ĐÃ BIẾT "trôi" 738→735) — **hoàn toàn KHÔNG bị ảnh
+  hưởng bởi bản sửa RPC hôm trước**.
+- **"Tồn kỳ này"**: kỳ ĐÃ CHỐT → CŨNG `mkVlSnap` (VLOOKUP sang cột "(này)" của sheet snapshot, sourced
+  từ `ky.tonCuoiKyTheoTD` RAW — **cũng KHÔNG bị ảnh hưởng bởi bản sửa hôm trước**); kỳ CHƯA CHỐT →
+  `mkTonNayVu`/`mkTonNayBc` (công thức Excel cộng dồn "tồn trước + Σvào − Σra" qua SUMIF/COUNTIFS
+  nhiều sheet DS — CŨNG là cơ chế CŨ, độc lập với JS `dt_tn_vu`).
+
+Kết luận: **bản sửa "graduate B10 sang RPC" hôm trước chỉ có tác dụng thật ở đúng 1 chỗ — dòng cảnh
+báo `canhBao`** (đã xác nhận đúng qua ảnh chụp 738 vs 735) — CÁC Ô B10 THẬT SỰ mở bằng Excel vẫn
+tiếp tục hiện số theo snapshot/cộng-dồn CŨ, không đổi gì. Đây chính là lý do hợp lý khiến Dũng cảm
+thấy hệ thống "chưa đổi triệt để" dù đã báo đã sửa.
+
+**Đã sửa triệt để lần này**:
+1. **Bỏ hẳn sheet "Tồn theo ĐL (snapshot)"** (`wsTonSnap`/`TEN_SHEET_TON_SNAPSHOT`) và hàm
+   `mkVlSnap` — không còn VLOOKUP vào 1 sheet số tĩnh nữa.
+2. **Thêm RPC as-of kỳ TRƯỚC** — `xuatBaoCaoThangExcel` giờ gọi thêm `layTonTheoKyRPC(kyTruoc.id)`
+   (song song với RPC kỳ hiện tại đã có) → `dsTonTruocTheoGD[gd]` (qua `tinhDsTonTheoKy`, TÁI DÙNG
+   hàm đã có — không viết logic mới). Không có `kyTruoc` (kỳ đầu tiên) hoặc RPC lỗi → rỗng, sheet
+   tương ứng để trống kèm cảnh báo, KHÔNG suy đoán số liệu.
+3. **2 sheet MỚI mỗi giai đoạn — "DS tồn cuối kỳ trước {gs}"** (ẨN mặc định, `ws.state="hidden"`,
+   theo đúng yêu cầu "hide đi ko cần hiện" — chỉ để B10 SUMIF/COUNTIFS vào, không cần cán bộ mở) —
+   dựng bằng `addSheetVu` (dùng lại nguyên hàm, không viết sheet-builder mới), cùng cấu trúc cột
+   "Đếm vụ"/"Mã ĐL vụ"/... như mọi sheet DS khác nên SUMIF/COUNTIFS hoạt động y hệt.
+   ("DS tồn cuối kỳ {gs}" — kỳ HIỆN TẠI, đã có từ trước — vẫn giữ HIỆN (không ẩn), chỉ đổi tên biến
+   tham chiếu qua hằng số `TEN_SHEET_TON_NAY_GD` cho nhất quán với sheet mới.)
+4. **`B10_FORMULA` đổi hẳn sang SUMIF/COUNTIFS trực tiếp** — "Tồn kỳ trước" → `mkSfVu`/`mkCfBc` vào
+   "DS tồn cuối kỳ trước {gs}"; "Tồn kỳ này" → `mkSfVu`/`mkCfBc` vào "DS tồn cuối kỳ {gs}" — **ĐỒNG
+   NHẤT 1 công thức cho MỌI trường hợp** (không còn phân nhánh "đã chốt/chưa chốt" nữa — RPC tự xử
+   lý đúng cả 2 qua `ky_cutoff` trong SQL). Xoá hẳn `mkTonNayVu`/`mkTonNayBc`/`VAO_TON_GD`/
+   `RA_TON_GD` — không còn cần theo dõi bị can bổ sung qua sự kiện/sheet phụ NỮA CHO B10 (RPC so
+   trực tiếp `ngayKhoiTo` với cutoff, tự đúng cả "ban đầu" lẫn "bổ sung", không phân biệt).
+5. **`tinhBieu10`** — thêm tham số thứ 10 `rpcTonTruocList`, hàm `gomRpcTheoTD` (refactor DÙNG
+   CHUNG cho cả `rpcTonList`/`rpcTonTruocList` — trước đó chỉ có 1 bản cho kỳ hiện tại) →
+   `rpcTonTruocTheoTD`. `dt_tp_vu`/`dt_tp_bc`/`tt_tp_vu`/... ("Tồn kỳ trước", dùng cho `canhBao`+
+   fallback của "Tồn kỳ này" khi RPC kỳ hiện tại lỗi) giờ ƯU TIÊN `rpcTonTruocTheoTD[D]` — cùng
+   pattern hệt "Tồn kỳ này" hôm trước (RPC có nhưng D không có entry → 0 thật, KHÔNG fallback;
+   không có `rpcTonTruocList` → fallback `tonTD_truoc` snapshot cũ).
+6. **`VAO_SHEETS_GD`/`RA_SHEETS_GD`/"DS bổ sung BC {gs} (tồn)" GIỮ NGUYÊN, KHÔNG đụng** — đây là cơ
+   chế của sheet "Cân đối số liệu" (khác B10, dùng công thức cộng dồn CÓ CHỦ Ý để tự SUM kiểm tra
+   chéo `tonTruocCol + Σvào − Σra = tonCuoiCột` NGAY TRONG Excel — không phải "tàn dư", là 1 sheet
+   audit CỐ Ý dùng cách tính khác B10 để đối chiếu). Chỉ dọn các COMMENT tham chiếu tới
+   `VAO_TON_GD`/`mkTonNayBc` đã xoá cho khỏi treo (dangling reference), không đổi hành vi.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch (nhiều vòng, sau
+mỗi bước sửa lớn). Test cô lập mở rộng (`test_b10_rpc_crosscheck.js`, scratchpad) — **15/15 PASS**
+(12 cũ + 3 mới cho logic chọn nguồn "Tồn kỳ trước": RPC có entry → ưu tiên RPC bỏ qua snapshot;
+RPC có sẵn nhưng D không có entry → 0 thật không fallback; RPC lỗi/không có kỳ trước → fallback
+snapshot cũ). **CHƯA xuất thử Excel trên dữ liệu Supabase thật sau đợt sửa formula này** — đây là
+thay đổi RỦI RO CAO NHẤT trong toàn bộ chuỗi công việc hôm nay (đổi cả cấu trúc sheet lẫn công thức
+gốc của Biểu B10, không chỉ đính kèm/đổi ưu tiên JS như các bước trước) — bắt buộc phải kiểm chứng
+kỹ trước khi deploy production:
+1. Xuất báo cáo kỳ 06 (đã chốt) VÀ kỳ 07/08 (đang mở) — mở CẢ 2 file bằng Excel THẬT (không phải
+   ExcelJS.load, không đủ để bắt lỗi công thức — xem bài học "cột -BC").
+2. Xác nhận Biểu B10 "Tồn kỳ trước"/"Tồn kỳ này" ra đúng số đã biết (VD Điều tra kỳ06 = 738 BC).
+3. Xác nhận 2 sheet "DS tồn cuối kỳ trước {gs}" tồn tại, ẨN (không hiện trong danh sách tab trừ khi
+   bấm hiện), dữ liệu đúng (đối chiếu vài dòng bằng tay).
+4. Xác nhận sheet "Tồn theo ĐL (snapshot)" KHÔNG CÒN xuất hiện trong workbook.
+5. Xác nhận "Cân đối số liệu" vẫn ra Chênh lệch = 0 (sheet đó KHÔNG bị đụng, nhưng nên xác nhận lại
+   cho chắc vì B10 đã đổi khá nhiều xung quanh nó).
+
+## Nối RPC vào Biểu B10 — "Tồn kỳ này" ĐÃ ĐỔI ƯU TIÊN sang RPC ở tầng JS, xác nhận đúng qua dữ liệu thật NHƯNG CHƯA từng chạm tới công thức Excel thật (2026-08-05/06, xem mục ngay TRÊN để biết bản sửa đầy đủ hơn)
 ## Audit toàn hệ thống "tồn cuối kỳ" — `tinhBaoCaoKy` (nguồn dùng chung cho MỌI nơi hiển thị/xuất) ĐỔI ƯU TIÊN sang RPC, liệt kê đầy đủ phần đã/chưa chuyển (2026-08-06, nhánh `feature/tong-ke-dong`, CHƯA deploy production, CHƯA kiểm chứng lại qua UI thật lần này)
 
 Theo yêu cầu Dũng sau khi xác nhận cross-check B10 hoạt động đúng (mục "Nối RPC vào Biểu B10" ngay

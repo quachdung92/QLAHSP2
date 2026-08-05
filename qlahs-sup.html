@@ -9428,7 +9428,7 @@ function hangDsVuAn(v) {
 // vuChuaDL: { dieu_tra, truy_to, xet_xu } — mảng vụ trong tồn hiện tại chưa xác định được điều luật
 // (nguyên nhân gây lệch âm giữa B10 và báo cáo). Lệch dương = đúng thiết kế (1 vụ nhiều tội).
 // canhBao: chỉ cảnh báo khi có vụ chưa có điều luật (lệch âm thực sự), không cảnh báo lệch dương.
-function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new Map(), kyIdSetTrongBaoCao = null, vuKyKhoiToMap = new Map(), rpcTonList = null) {
+function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new Map(), kyIdSetTrongBaoCao = null, vuKyKhoiToMap = new Map(), rpcTonList = null, rpcTonTruocList = null) {
   // Mặc định (không truyền) = báo cáo 1 kỳ, coi "trong kỳ này" = đúng ky.id. Báo cáo tổng hợp
   // nhiều kỳ (TongHopNhieuKyModal) truyền set đầy đủ id các kỳ đã gộp — xem xuatBaoCaoThangExcel.
   const _kyIdSet = kyIdSetTrongBaoCao || new Set([ky.id]);
@@ -9623,7 +9623,9 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
           if (!_kyIdSet.has(bcKyKhoiToMap.get(bc.id))) continue;
           idsDaThem.add(bc.id);
           // Dạng composite {...vu, _bican, _log} (giống vuBiCanTuLogDocs) để dùng thẳng được cho
-          // sheet Excel "DS bổ sung BC {gs} (tồn)" (xem xuatBaoCaoThangExcel/VAO_TON_GD) — công thức
+          // sheet Excel "DS bổ sung BC {gs} (tồn)" (xem xuatBaoCaoThangExcel/VAO_SHEETS_GD — công
+          // thức "Cân đối số liệu"; B10 "Tồn kỳ này" đã ĐỔI sang SUMIF trực tiếp "DS tồn cuối kỳ
+          // {gs}" từ 2026-08-06, KHÔNG còn dùng sheet này nữa, xem TEN_SHEET_TON_NAY_GD) — công thức
           // Excel PHẢI tham chiếu đúng sheet này (không phải "DS bổ sung BC {gs}" event-sourced,
           // vốn chỉ 2/32 người) để công thức thật khớp đúng kết quả JS đã tính ở đây khi Excel THẬT
           // tính lại (bài học "cột -BC"/"Tồn kỳ này" đã ghi nhiều lần — sửa JS không đủ).
@@ -9681,33 +9683,37 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   const danhMucMap = Object.fromEntries(danhMuc.map(d => [d.dieuLuat, d]));
   const rows = [];
 
-  // RPC-based "Tồn kỳ này" theo điều luật (2026-08-05, ĐÍNH KÈM để đối chiếu — KHÔNG thay
-  // tonTheoLogD/vals/công thức Excel hiện có, xem CLAUDE.md "nối RPC vào Biểu B10"). rpcTonList =
-  // dsTonCuoiKyTheoGD đã tính SẴN ở xuatBaoCaoThangExcel (qua layTonTheoKyRPC + tinhDsTonTheoKy,
-  // KHÔNG gọi RPC lần 2 ở đây) — mỗi vụ có _bcIdsTon (Set maBiCan đang tồn TÍNH TỚI ĐÚNG kỳ K theo
-  // RPC, không phụ thuộc chuỗi tonTD_truoc/kyTonTD/tonTheoLogD đã vá tay nhiều lần trong ngày).
-  // Gộp theo điều luật giống hệt cách vuPrimaryDL/getDL làm ở nhánh JS-log, để so sánh táo với táo.
-  const rpcTonTheoTD = { dieu_tra: {}, truy_to: {}, xet_xu: {} };
-  if (rpcTonList) {
+  // RPC-based "Tồn theo điều luật" — dùng CHUNG cho cả "Tồn kỳ này" (rpcTonList, as-of kỳ ĐANG
+  // XUẤT) và "Tồn kỳ TRƯỚC" (rpcTonTruocList, as-of kỳ TRƯỚC — mới thêm 2026-08-06, thay hẳn
+  // `kyTruoc.tonCuoiKyTheoTD` snapshot cũ, xem CLAUDE.md "nối RPC vào Biểu B10"). `list[gd]` mỗi
+  // phần tử đã có sẵn `_bcIdsTon` (Set maBiCan đang tồn TÍNH TỚI ĐÚNG kỳ tương ứng theo RPC) —
+  // chính là `dsTonCuoiKyTheoGD`/`dsTonTruocTheoGD` đã tính SẴN ở xuatBaoCaoThangExcel (KHÔNG gọi
+  // RPC lần nữa ở đây). Gộp theo điều luật giống hệt cách vuPrimaryDL/getDL làm ở nhánh JS-log.
+  const gomRpcTheoTD = (list) => {
+    const ket = { dieu_tra: {}, truy_to: {}, xet_xu: {} };
+    if (!list) return ket;
     for (const gd of THU_TU_GIAI_DOAN) {
-      for (const vu of (rpcTonList[gd] || [])) {
+      for (const vu of (list[gd] || [])) {
         const bcIdsTon = vu._bcIdsTon || new Set();
         const bcTon = (biCanByVu[vu.id] || []).filter(bc => bcIdsTon.has(bc.id));
         const bcChinh = bcTon.length ? (bcTon.find(bc => bc.loaiKhoiTo === "ban_dau") || bcTon[0]) : null;
         const vuDL = bcChinh ? getDL(bcChinh) : (normTen((vu.dieuLuat || "").split(";")[0].trim()) || "");
         if (vuDL) {
-          if (!rpcTonTheoTD[gd][vuDL]) rpcTonTheoTD[gd][vuDL] = { vu: 0, bc: 0 };
-          rpcTonTheoTD[gd][vuDL].vu++;
+          if (!ket[gd][vuDL]) ket[gd][vuDL] = { vu: 0, bc: 0 };
+          ket[gd][vuDL].vu++;
         }
         for (const bc of bcTon) {
           const bcDL = getDL(bc);
           if (!bcDL) continue;
-          if (!rpcTonTheoTD[gd][bcDL]) rpcTonTheoTD[gd][bcDL] = { vu: 0, bc: 0 };
-          rpcTonTheoTD[gd][bcDL].bc++;
+          if (!ket[gd][bcDL]) ket[gd][bcDL] = { vu: 0, bc: 0 };
+          ket[gd][bcDL].bc++;
         }
       }
     }
-  }
+    return ket;
+  };
+  const rpcTonTheoTD = gomRpcTheoTD(rpcTonList);
+  const rpcTonTruocTheoTD = gomRpcTheoTD(rpcTonTruocList);
 
   for (const D of tatCaDieuLuatChuan) {
     if (!D) continue;
@@ -9765,8 +9771,14 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
         bc: tpBc + bcCoD(moiArr, D).length + boSungBc - bcCoD(raArr, D).length,
       };
     };
-    const dt_tp_vu = tonTD_truoc[D]?.dieu_tra?.vuAn ?? 0;
-    const dt_tp_bc = tonTD_truoc[D]?.dieu_tra?.biCan ?? 0;
+    // "Tồn kỳ TRƯỚC" (2026-08-06, ĐỔI ƯU TIÊN sang RPC as-of kỳ trước — cùng lý do/cùng cách với
+    // "Tồn kỳ này" ngay dưới, xem CLAUDE.md "nối RPC vào Biểu B10") — thay `tonTD_truoc[D]` (đọc
+    // `kyTruoc.tonCuoiKyTheoTD`, snapshot đã biết có thể "trôi") bằng `rpcTonTruocTheoTD[D]` khi có
+    // `rpcTonTruocList` (RPC gọi thành công cho kỳ trước). Không có kỳ trước/RPC lỗi → giữ nguyên
+    // `tonTD_truoc` cũ làm dự phòng.
+    const dt_tpRpc = rpcTonTruocList ? (rpcTonTruocTheoTD.dieu_tra[D] || { vu: 0, bc: 0 }) : null;
+    const dt_tp_vu = dt_tpRpc ? dt_tpRpc.vu : (tonTD_truoc[D]?.dieu_tra?.vuAn ?? 0);
+    const dt_tp_bc = dt_tpRpc ? dt_tpRpc.bc : (tonTD_truoc[D]?.dieu_tra?.biCan ?? 0);
     // "Tồn kỳ này" (2026-08-05, ĐỔI ƯU TIÊN sang RPC — xem CLAUDE.md "nối RPC vào Biểu B10") — RPC
     // (rpcTonTheoTD, tính as-of-kỳ TRỰC TIẾP từ log mỗi lần) giờ là NGUỒN CHÍNH, thay cho chuỗi
     // kyTonTD (snapshot chốt kỳ, có thể "trôi" nếu 1 lượt chạy lại công cụ backfill trên code cũ —
@@ -9778,14 +9790,16 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const dt_tnRpc = rpcTonList ? (rpcTonTheoTD.dieu_tra[D] || { vu: 0, bc: 0 }) : null;
     const dt_tn_vu = dt_tnRpc ? dt_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.dieu_tra?.vuAn ?? 0) : dt_tnLog.vu);
     const dt_tn_bc = dt_tnRpc ? dt_tnRpc.bc : (kyTonTD ? (kyTonTD[D]?.dieu_tra?.biCan ?? 0) : dt_tnLog.bc);
-    const tt_tp_vu = tonTD_truoc[D]?.truy_to?.vuAn ?? 0;
-    const tt_tp_bc = tonTD_truoc[D]?.truy_to?.biCan ?? 0;
+    const tt_tpRpc = rpcTonTruocList ? (rpcTonTruocTheoTD.truy_to[D] || { vu: 0, bc: 0 }) : null;
+    const tt_tp_vu = tt_tpRpc ? tt_tpRpc.vu : (tonTD_truoc[D]?.truy_to?.vuAn ?? 0);
+    const tt_tp_bc = tt_tpRpc ? tt_tpRpc.bc : (tonTD_truoc[D]?.truy_to?.biCan ?? 0);
     const tt_tnLog = kyTonTD ? null : tonTheoLogD(tt, tt_moi, D, tt_tp_vu, tt_tp_bc, bcBoSungTonTheoGD.truy_to);
     const tt_tnRpc = rpcTonList ? (rpcTonTheoTD.truy_to[D] || { vu: 0, bc: 0 }) : null;
     const tt_tn_vu = tt_tnRpc ? tt_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.truy_to?.vuAn ?? 0) : tt_tnLog.vu);
     const tt_tn_bc = tt_tnRpc ? tt_tnRpc.bc : (kyTonTD ? (kyTonTD[D]?.truy_to?.biCan ?? 0) : tt_tnLog.bc);
-    const xx_tp_vu = tonTD_truoc[D]?.xet_xu?.vuAn ?? 0;
-    const xx_tp_bc = tonTD_truoc[D]?.xet_xu?.biCan ?? 0;
+    const xx_tpRpc = rpcTonTruocList ? (rpcTonTruocTheoTD.xet_xu[D] || { vu: 0, bc: 0 }) : null;
+    const xx_tp_vu = xx_tpRpc ? xx_tpRpc.vu : (tonTD_truoc[D]?.xet_xu?.vuAn ?? 0);
+    const xx_tp_bc = xx_tpRpc ? xx_tpRpc.bc : (tonTD_truoc[D]?.xet_xu?.biCan ?? 0);
     const xx_tnLog = kyTonTD ? null : tonTheoLogD(xx, xx_moi, D, xx_tp_vu, xx_tp_bc, bcBoSungTonTheoGD.xet_xu);
     const xx_tnRpc = rpcTonList ? (rpcTonTheoTD.xet_xu[D] || { vu: 0, bc: 0 }) : null;
     const xx_tn_vu = xx_tnRpc ? xx_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.xet_xu?.vuAn ?? 0) : xx_tnLog.vu);
@@ -10334,9 +10348,24 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     dsTonCuoiKyTheoGD[gd] = await tinhDsTonTheoKy(gd, ky, rpcTonKyNay);
   }
 
+  // "DS tồn cuối kỳ TRƯỚC {gđ}" (2026-08-06, thay hẳn sheet "Tồn theo ĐL (snapshot)" cũ — theo yêu
+  // cầu Dũng "dọn dẹp tàn dư hệ thống cũ") — cùng cơ chế RPC as-of, chỉ khác tính tới HẾT kỳ TRƯỚC
+  // thay vì kỳ đang xuất. Đây chính là gap lớn nhất còn lại đã ghi trong CLAUDE.md ("B10 'Tồn kỳ
+  // TRƯỚC' vẫn đọc kyTruoc.tonCuoiKyTheoTD — chính field đã biết 'trôi' 738→735") — dùng KẾT QUẢ
+  // NÀY để: (1) dựng 3 sheet ẩn "DS tồn cuối kỳ trước {gđ}" làm nguồn SUMIF/COUNTIFS cho B10 (thay
+  // VLOOKUP snapshot cũ); (2) truyền vào tinhBieu10 để tính lại dt_tp_vu/dt_tp_bc... (Tồn kỳ trước,
+  // dùng cho canhBao/Tổng) theo RPC thay vì snapshot. Không có kyTruoc (kỳ đầu tiên) → giữ null,
+  // mọi nơi tự fallback về hành vi cũ (0/snapshot rỗng).
+  const rpcTonKyTruoc = kyTruoc ? await layTonTheoKyRPC(kyTruoc.id).catch(() => null) : null;
+  const dsTonTruocTheoGD = {};
+  for (const gd of THU_TU_GIAI_DOAN) {
+    dsTonTruocTheoGD[gd] = kyTruoc ? await tinhDsTonTheoKy(gd, kyTruoc, rpcTonKyTruoc) : { list: [], live: true };
+  }
+
   // ---- Fetch bị can + danh mục tội danh + kỳ báo cáo + kỳ khởi tố riêng từng bị can song song ----
   const _vuIdsChoBaoCao = [...new Set([
     ...collectVuIdsFromBaoCao(baoCao),
+    ...THU_TU_GIAI_DOAN.flatMap(gd => dsTonTruocTheoGD[gd].list.map(v => v.id)),
     ...THU_TU_GIAI_DOAN.flatMap(gd => dsTonCuoiKyTheoGD[gd].list.map(v => v.id)),
   ])];
   // Vụ ĐÍCH của "Nhập vụ" (2026-08-03) — cần info riêng (mã vụ/tên vụ/KSV...) để làm dòng tổng
@@ -10492,58 +10521,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const b10RpcTonList = rpcTonKyNay ? {
     dieu_tra: dsTonCuoiKyTheoGD.dieu_tra.list, truy_to: dsTonCuoiKyTheoGD.truy_to.list, xet_xu: dsTonCuoiKyTheoGD.xet_xu.list,
   } : null;
-  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, tonTD_truoc: b10TonTruoc, kyTonTD: b10KyTonTD, dt_boSungBc: b10DtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList);
+  // rpcTonKyTruoc null = không có kỳ trước HOẶC RPC lỗi — cùng lý do như trên, không truyền để
+  // tinhBieu10 tự fallback về tonTD_truoc (snapshot) cho "Tồn kỳ trước".
+  const b10RpcTonTruocList = rpcTonKyTruoc ? {
+    dieu_tra: dsTonTruocTheoGD.dieu_tra.list, truy_to: dsTonTruocTheoGD.truy_to.list, xet_xu: dsTonTruocTheoGD.xet_xu.list,
+  } : null;
+  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList);
   // Dòng Tổng
   const b10Tong = Array(B10_HEADER_CHI_TIET.length - 2).fill(0);
   for (const row of b10Rows) { row.vals.forEach((v, i) => { b10Tong[i] = (b10Tong[i] || 0) + v; }); }
 
-  // ---- Sheet "Tồn theo ĐL (snapshot)": bảng dữ liệu THÔ đứng sau cột "Tồn kỳ trước"/"Tồn kỳ
-  // này" của Biểu B10 (2026-07-19, theo yêu cầu người dùng — trước đây 2 cột này chỉ ghi thẳng số
-  // JS, không có sheet nào backing nên không tra ngược lại được trong Excel; mục 10 của
-  // SUPABASE_MIGRATION.md từng quyết định giữ nguyên số tĩnh vì "không có DS sheet nào để SUM/
-  // COUNTIF" — quyết định đó vẫn đúng theo nghĩa "không có danh sách vụ chi tiết để SUMIF", nhưng
-  // vẫn có thể click-trace được tới ĐÚNG con số gốc qua VLOOKUP nếu materialize số đó ra 1 sheet
-  // riêng, thay vì giấu cứng trong ô — đây là điểm nâng cấp thêm so với quyết định trước). "Tồn kỳ
-  // trước" LUÔN là ảnh chụp (snapshot) đã chốt của KỲ TRƯỚC — hệ thống chỉ lưu ĐÚNG số đếm theo
-  // điều luật tại thời điểm chốt đó (không lưu danh sách vụ cụ thể), nên không thể viết thành
-  // SUMIF/COUNTIFS tham chiếu 1 danh sách vụ như các cột khác — sheet này là cách duy nhất để ít
-  // nhất TRÌNH BÀY rõ số liệu gốc, và B10 tra bằng VLOOKUP thay vì giấu số liệu trực tiếp trong ô.
-  // "Tồn kỳ này" CHỈ giống vậy khi kỳ ĐÃ CHỐT (ky.tonCuoiKyTheoTD có sẵn — số đã cố định vĩnh viễn
-  // từ lúc chốt, xem tinhBieu10); khi kỳ CHƯA chốt, "Tồn kỳ này" là số LIVE tính từ đúng
-  // baoCao[gd].ds.tonHienTai — TRÙNG với dữ liệu sheet "DS tồn ĐT/TT/XX" đã có sẵn, nên
-  // B10_FORMULA dùng thẳng SUMIF/COUNTIFS vào các sheet đó (xem bên dưới), không cần qua sheet
-  // snapshot này.
-  const TEN_SHEET_TON_SNAPSHOT = "Tồn theo ĐL (snapshot)";
-  const wsTonSnap = wb.addWorksheet(TEN_SHEET_TON_SNAPSHOT);
-  wsTonSnap.views = [{ state: "frozen", xSplit: 2, ySplit: 1 }];
-  wsTonSnap.addRow([
-    "Mã ĐL", "Tội danh",
-    "ĐT-Vụ (trước)", "ĐT-BC (trước)", "TT-Vụ (trước)", "TT-BC (trước)", "XX-Vụ (trước)", "XX-BC (trước)",
-    "ĐT-Vụ (này)", "ĐT-BC (này)", "TT-Vụ (này)", "TT-BC (này)", "XX-Vụ (này)", "XX-BC (này)",
-  ]).font = { bold: true };
-  for (const row of b10Rows) {
-    const tp = b10TonTruoc[row.D] || {};
-    const tn = b10KyTonTD ? (b10KyTonTD[row.D] || {}) : null;
-    wsTonSnap.addRow([
-      row.D, row.tenToiDanh,
-      tp.dieu_tra?.vuAn || 0, tp.dieu_tra?.biCan || 0,
-      tp.truy_to?.vuAn || 0, tp.truy_to?.biCan || 0,
-      tp.xet_xu?.vuAn || 0, tp.xet_xu?.biCan || 0,
-      tn ? (tn.dieu_tra?.vuAn || 0) : "", tn ? (tn.dieu_tra?.biCan || 0) : "",
-      tn ? (tn.truy_to?.vuAn || 0) : "", tn ? (tn.truy_to?.biCan || 0) : "",
-      tn ? (tn.xet_xu?.vuAn || 0) : "", tn ? (tn.xet_xu?.biCan || 0) : "",
-    ]);
-  }
-  if (!b10KyTonTD) {
-    wsTonSnap.addRow([]);
-    wsTonSnap.addRow(["Kỳ này CHƯA chốt (hoặc chưa chạy \"Tính lại số liệu\") nên chưa có ảnh chụp "
-      + "riêng — 6 cột \"(này)\" ở trên để trống. Biểu B10 đang lấy \"Tồn kỳ này\" trực tiếp từ sheet "
-      + "\"DS tồn ĐT/TT/XX\" (số LIVE tại thời điểm xuất báo cáo)."]);
-  }
-  wsTonSnap.getColumn(1).width = 26;
-  wsTonSnap.getColumn(2).width = 32;
-  for (let c = 3; c <= 14; c++) wsTonSnap.getColumn(c).width = 12;
-  wsTonSnap.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
+  // Sheet "Tồn theo ĐL (snapshot)" ĐÃ BỎ HẲN (2026-08-06, dọn tàn dư hệ thống cũ theo yêu cầu Dũng)
+  // — thay bằng 2 sheet ẩn "DS tồn cuối kỳ {gđ}"/"DS tồn cuối kỳ trước {gđ}" (RPC as-of, xem ngay
+  // dưới) làm nguồn SUMIF/COUNTIFS trực tiếp cho B10 "Tồn kỳ này"/"Tồn kỳ trước" — không còn cần
+  // VLOOKUP vào 1 sheet snapshot số tĩnh nữa, cả 2 cột giờ tra được ra ĐÚNG danh sách vụ/bị can gốc
+  // như mọi cột khác của B10.
 
   const wsB10 = wb.addWorksheet("Biểu B10");
   wsB10.views = [{ state: "frozen", xSplit: 3, ySplit: 2 }];
@@ -10561,11 +10553,6 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   };
   // B10_FORMULA: mọi cột có công thức, nhận r (số dòng Excel) → trả về chuỗi công thức
   // Helpers: mkSfVu = SUMIF VỤ (cột A×B); mkCfBc = COUNTIFS BC (cột V + extra); mkCfBcM = multi-sheet
-  // mkVlSnap: VLOOKUP sang sheet "Tồn theo ĐL (snapshot)" — dùng cho "Tồn kỳ trước" (LUÔN — ảnh
-  // chụp của kỳ trước, không có danh sách vụ nào để SUMIF) và "Tồn kỳ này" khi kỳ NÀY đã chốt
-  // (cũng là ảnh chụp cố định, xem b10KyTonTD). IFERROR trả 0 nếu điều luật đó không xuất hiện ở
-  // kỳ trước/kỳ này (vụ mới lần đầu xuất hiện tội danh này, hoặc kỳ này chưa chốt để trống cột).
-  function mkVlSnap(col, r) { return `IFERROR(VLOOKUP($A${r},'${TEN_SHEET_TON_SNAPSHOT}'!$A:$N,${col},FALSE),0)`; }
   function mkSfVu(sn, r) { return `SUMIF('${sn}'!$B:$B,$A${r},'${sn}'!$A:$A)`; }
   function mkCfBc(sn, r, ...extra) {
     let f = `COUNTIFS('${sn}'!$V:$V,$A${r}`;
@@ -10632,52 +10619,17 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const raF = RA_THULY_GD[gd].map(s => mkCfBc(s, r)).join("-");
     return `${tonTruocCol}${r}+${vaoF}-${raF}`;
   }
-  // Bug đã sửa (2026-08-04, Dũng phát hiện qua filter tay trên sheet "DS tồn ĐT": lọc bỏ dòng
-  // "(Chưa có BC)" đếm ra 818 bị can, không khớp 812 mà Kỳ báo cáo hiển thị) — "Tồn kỳ này" (kỳ
-  // CHƯA CHỐT) trước đây dùng CÔNG THỨC Excel SUMIF/COUNTIFS THẲNG vào sheet "DS tồn {gs}" (số
-  // LIVE, đúng `baoCao[gd].ds.tonHienTai` tại thời điểm xuất) — khác hẳn cách `tinhBaoCaoKyTuLog`
-  // tính "Tồn cuối kỳ" bên ngoài (LOG-based: tồn đầu kỳ + vào kỳ này − ra kỳ này). 2 cách ra 2 số
-  // khác nhau bất cứ khi nào có bị can bổ sung vào vụ ĐÃ CÓ mà KHÔNG có sự kiện `bo_sung_bican`
-  // tương ứng (dữ liệu cũ, trước 2026-08-03) — vẫn LIVE có mặt trong vụ (đẩy "DS tồn ĐT" lên 818)
-  // nhưng chưa từng được LOG "vào" (nên tổng log-based dừng ở 812).
-  // ⚠ Bản sửa JS trước đó cùng ngày (`tonTheoLogD`, thêm `bcCoDBoSung`) CHỈ sửa đúng "result" CACHE
-  // của ô — Excel THẬT vẫn tính LẠI theo chính FORMULA khi mở file (bài học đã ghi nhiều lần ở mục
-  // "cột -BC..."), nên KHÔNG đủ để sửa số Dũng thấy khi mở file thật — phải sửa cả công thức ở đây.
-  // Đã sửa: đổi công thức sang CÙNG CÁCH TÍNH log-based (tồn kỳ trước + Σvào − Σra, y hệt
-  // `mkThuLyVu`/`mkThuLyBc` ở trên) thay vì tham chiếu thẳng "DS tồn {gs}" — chỉ khác ở tập "ra"
-  // (dùng ĐẦY ĐỦ RA_SHEETS_GD, không phải RA_THULY_GD chỉ 3 sheet của "Tổng thụ lý").
-  // ⚠ VAO_SHEETS_GD/RA_SHEETS_GD khai báo Ở DƯỚI (sau điểm này trong file) nên chép lại y hệt giá
-  // trị ở đây thay vì tham chiếu thẳng — sửa 1 trong 2 nơi thì nhớ sửa nơi kia cho khớp.
-  // Bug đã sửa TIẾP (2026-08-04, sau khi merge `ds-ton-cuoi-ky`, đúng "Gap #2" họ ghi nhận ở
-  // `taiTaoTonCuoiKyTheoTDTatCa`) — "DS bổ sung BC {gs}" (event-sourced, sự kiện `bo_sung_bican`)
-  // quá thưa, chỉ bắt được 2/32 người thật ở kỳ 07/2026 Điều tra — ĐỔI sang "DS bổ sung BC {gs}
-  // (tồn)" (MỚI, dựng từ `boSungTonTheoGD`/`bcBoSungTonTheoGD` trong `tinhBieu10` — so kỳ khởi tố
-  // CỦA CHÍNH bị can trực tiếp, không phụ thuộc sự kiện, ĐÃ LOẠI vụ "mới"/"ra" của kỳ để không đếm
-  // đúp) — PHẢI khớp đúng nguồn JS dùng cho `tonTheoLogD`, nếu không Excel THẬT sẽ tính lại ra số
-  // khác cache (bài học "cột -BC..."). KHÁC "DS bổ sung BC {gs}" cũ (vẫn giữ nguyên, dùng riêng cho
-  // "Tổng thụ lý" qua `DT_VAO`/`TT_VAO`/`XX_VAO` — xem ghi chú ở đó, không đụng tới).
-  const VAO_TON_GD = {
-    dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT (tồn)"],
-    truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT (tồn)"],
-    xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX (tồn)"],
-  };
-  const RA_TON_GD = {
-    dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
-    truy_to:  ["DS TT chuyển XX","DS TT trả ĐT","DS đã xét xử TT","DS chuyển đi TT","DS tạm đình chỉ TT","DS đình chỉ TT","DS án huỷ TT","DS nhập vụ TT"],
-    xet_xu:   ["DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX"],
-  };
-  function mkTonNayVu(gd, r) {
-    const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 3);
-    const vaoF = VAO_TON_GD[gd].map(s => mkSfVu(s, r)).join("+");
-    const raF = RA_TON_GD[gd].map(s => mkSfVu(s, r)).join("-");
-    return `${tonTruocCol}${r}+${vaoF}-${raF}`;
-  }
-  function mkTonNayBc(gd, r) {
-    const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 1 + 3);
-    const vaoF = VAO_TON_GD[gd].map(s => mkCfBc(s, r)).join("+");
-    const raF = RA_TON_GD[gd].map(s => mkCfBc(s, r)).join("-");
-    return `${tonTruocCol}${r}+${vaoF}-${raF}`;
-  }
+  // "Tồn kỳ trước"/"Tồn kỳ này" (2026-08-06, ĐỔI HẲN sang SUMIF/COUNTIFS trực tiếp vào 2 sheet ẩn
+  // "DS tồn cuối kỳ trước {gs}"/"DS tồn cuối kỳ {gs}" — dựng từ RPC as-of, xem
+  // dsTonTruocTheoGD/dsTonCuoiKyTheoGD ở đầu hàm) — THAY HẲN cơ chế cũ (VLOOKUP sheet snapshot
+  // "Tồn theo ĐL (snapshot)" cho kỳ đã chốt, hoặc công thức cộng dồn tồn-trước+vào-ra qua
+  // VAO_TON_GD/RA_TON_GD cho kỳ chưa chốt — cả 2 đều đã bị lỗi/dễ vỡ, xem lịch sử bug "818 vs 812"/
+  // "738 vs 735" trong CLAUDE.md). Giờ ĐỒNG NHẤT 1 công thức duy nhất bất kể kỳ đã chốt hay chưa —
+  // RPC tự xử lý đúng cả 2 trường hợp (xem layTrangThaiBiCanTaiKy's ky_cutoff) — và tự động ĐÃ ĐÚNG
+  // cho cả bị can bổ sung (không cần theo dõi sự kiện "bo_sung_bican" riêng nữa, vì RPC so trực
+  // tiếp `ngayKhoiTo` với cutoff, không phân biệt "ban đầu"/"bổ sung").
+  const TEN_SHEET_TON_TRUOC_GD = { dieu_tra: "DS tồn cuối kỳ trước ĐT", truy_to: "DS tồn cuối kỳ trước TT", xet_xu: "DS tồn cuối kỳ trước XX" };
+  const TEN_SHEET_TON_NAY_GD = { dieu_tra: "DS tồn cuối kỳ ĐT", truy_to: "DS tồn cuối kỳ TT", xet_xu: "DS tồn cuối kỳ XX" };
   // "TK tội danh" (sheet 2) đếm THEO TỪNG TỘI DANH qua buildFlatVuBc/tkTD_add — cơ chế RIÊNG, CHƯA
   // được sửa theo "asOfEventDate" (ngoài phạm vi đợt sửa 2026-08-03, xem add_bo_sung_bican...sql) —
   // loại "DS bổ sung BC *" khỏi ALL_VAO để KHÔNG lộ (qua formula Excel tự recalc) một tập dữ liệu
@@ -10690,19 +10642,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     "DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX",
   ];
   const B10_FORMULA = {
-    // ── Tồn kỳ trước (LUÔN VLOOKUP sheet snapshot — không có sheet DS nào để SUMIF, xem mkVlSnap) ──
-    0: r => mkVlSnap(3, r),  1: r => mkVlSnap(4, r),   // ĐT tồn trước Vụ/BC
-    34: r => mkVlSnap(5, r), 35: r => mkVlSnap(6, r),  // TT tồn trước Vụ/BC
-    65: r => mkVlSnap(7, r), 66: r => mkVlSnap(8, r),  // XX tồn trước Vụ/BC
-    // ── Tồn kỳ này: kỳ ĐÃ CHỐT → VLOOKUP sheet snapshot (ảnh chụp cố định); kỳ CHƯA chốt → công
-    // thức log-based tồn trước + vào − ra (mkTonNayVu/mkTonNayBc, xem giải thích bug đã sửa ở đó —
-    // KHÔNG còn tham chiếu thẳng "DS tồn ĐT/TT/XX" vì sheet đó là số LIVE, có thể lệch với log) ──
-    2: r => b10KyTonTD ? mkVlSnap(9, r) : mkTonNayVu("dieu_tra", r),
-    3: r => b10KyTonTD ? mkVlSnap(10, r) : mkTonNayBc("dieu_tra", r),
-    36: r => b10KyTonTD ? mkVlSnap(11, r) : mkTonNayVu("truy_to", r),
-    37: r => b10KyTonTD ? mkVlSnap(12, r) : mkTonNayBc("truy_to", r),
-    67: r => b10KyTonTD ? mkVlSnap(13, r) : mkTonNayVu("xet_xu", r),
-    68: r => b10KyTonTD ? mkVlSnap(14, r) : mkTonNayBc("xet_xu", r),
+    // ── Tồn kỳ trước — SUMIF/COUNTIFS trực tiếp vào "DS tồn cuối kỳ trước {gs}" (RPC as-of kỳ
+    // trước, xem TEN_SHEET_TON_TRUOC_GD) — ĐỒNG NHẤT 1 công thức, không còn phân biệt đã chốt/chưa ──
+    0: r => mkSfVu(TEN_SHEET_TON_TRUOC_GD.dieu_tra, r),  1: r => mkCfBc(TEN_SHEET_TON_TRUOC_GD.dieu_tra, r),
+    34: r => mkSfVu(TEN_SHEET_TON_TRUOC_GD.truy_to, r),  35: r => mkCfBc(TEN_SHEET_TON_TRUOC_GD.truy_to, r),
+    65: r => mkSfVu(TEN_SHEET_TON_TRUOC_GD.xet_xu, r),   66: r => mkCfBc(TEN_SHEET_TON_TRUOC_GD.xet_xu, r),
+    // ── Tồn kỳ này — SUMIF/COUNTIFS trực tiếp vào "DS tồn cuối kỳ {gs}" (RPC as-of kỳ đang xuất) ──
+    2: r => mkSfVu(TEN_SHEET_TON_NAY_GD.dieu_tra, r),  3: r => mkCfBc(TEN_SHEET_TON_NAY_GD.dieu_tra, r),
+    36: r => mkSfVu(TEN_SHEET_TON_NAY_GD.truy_to, r),  37: r => mkCfBc(TEN_SHEET_TON_NAY_GD.truy_to, r),
+    67: r => mkSfVu(TEN_SHEET_TON_NAY_GD.xet_xu, r),   68: r => mkCfBc(TEN_SHEET_TON_NAY_GD.xet_xu, r),
     // ── "Tổng thụ lý" (C3/C4, C33/C34, C60/C61) — xem mkThuLyVu/mkThuLyBc + bieu_B10_mo_ta.md 3.2 ──
     4:  r => mkThuLyVu("dieu_tra", r),  // C3 Tổng thụ lý ĐT — Vụ
     5:  r => mkThuLyBc("dieu_tra", r),  // C4 Tổng thụ lý ĐT — Bị can
@@ -11363,17 +11311,16 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // bên dưới) VẪN tham chiếu "DS bổ sung BC ĐT" (event-sourced, 2 người) — "Tồn cuối (tính)" ra
     // 782 trong khi "Tồn cuối (chốt)" (G, đọc thẳng tonCuoiBiCanKy) đã đúng 810 → tự nhiên báo
     // Chênh lệch = -28 (SAI, không phải dữ liệu thật thiếu kỳ — chỉ là 2 công thức lệch NGUỒN bổ
-    // sung). Đổi "DS bổ sung BC ĐT" → "DS bổ sung BC ĐT (tồn)" (sheet MỚI, xem VAO_TON_GD/
-    // mkTonNayBc) — VAO_SHEETS_GD ở ĐÂY là hằng số RIÊNG (không phải DT_VAO dùng cho "Tổng thụ lý"
-    // C3/C4, dù cùng nội dung ban đầu) nên đổi an toàn, không ảnh hưởng "Tổng thụ lý".
+    // sung). Đổi "DS bổ sung BC ĐT" → "DS bổ sung BC ĐT (tồn)" (sheet MỚI) — VAO_SHEETS_GD ở ĐÂY là
+    // hằng số RIÊNG (không phải DT_VAO dùng cho "Tổng thụ lý" C3/C4, dù cùng nội dung ban đầu) nên
+    // đổi an toàn, không ảnh hưởng "Tổng thụ lý". CHỈ dùng cho "Cân đối số liệu" — B10 "Tồn kỳ này"
+    // đã ĐỔI sang SUMIF trực tiếp "DS tồn cuối kỳ {gs}" từ 2026-08-06 (xem TEN_SHEET_TON_NAY_GD),
+    // không còn dùng VAO_SHEETS_GD/hằng số song song VAO_TON_GD (đã bỏ hẳn) nữa.
     const VAO_SHEETS_GD = {
       dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT (tồn)"],
       truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT (tồn)"],
       xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX (tồn)"],
     };
-    // ⚠ VAO_TON_GD/RA_TON_GD (đầu file, dùng cho "Tồn kỳ này" B10 khi kỳ chưa chốt — xem
-    // mkTonNayVu/mkTonNayBc) chép lại Y HỆT VAO_SHEETS_GD/RA_SHEETS_GD ở đây (không tham chiếu
-    // thẳng được vì khai báo TRƯỚC điểm này) — sửa 1 trong 2 cặp thì nhớ sửa cặp còn lại cho khớp.
     const RA_SHEETS_GD = {
       dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
       truy_to:  ["DS TT chuyển XX","DS TT trả ĐT","DS đã xét xử TT","DS chuyển đi TT","DS tạm đình chỉ TT","DS đình chỉ TT","DS án huỷ TT","DS nhập vụ TT"],
@@ -11502,17 +11449,38 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // bổ sung bị can ở kỳ SAU làm trôi lệch (xem tinhDsTonTheoKy). KHÔNG đụng/đổi "DS tồn {gđ}" —
     // sheet đó vẫn nuôi đúng công thức "Số tồn hiện tại"/"TK tội danh"/B10 kỳ chưa chốt như cũ.
     const { list: dsTonCK, live: dsTonCKLive } = dsTonCuoiKyTheoGD[gd];
-    const wsTonCK = addSheetVu(`DS tồn cuối kỳ ${GD_VIET_TAT[gd]}`,
+    const wsTonCK = addSheetVu(TEN_SHEET_TON_NAY_GD[gd],
       dsTonCKLive ? dsTon : dsTonCK, [], () => [], true);
     if (dsTonCKLive) {
       wsTonCK.addRow([]);
       const rCanhBao = wsTonCK.addRow([
-        `⚠ Chưa dựng được danh sách tồn cuối kỳ cho kỳ này (kỳ liền trước cũng chưa chạy "Sửa lại ` +
-        `tồn cuối kỳ theo tội danh..." ở Cài đặt → Import Excel) — sheet này TẠM THỜI hiện số LIVE ` +
-        `giống "DS tồn ${GD_VIET_TAT[gd]}", có thể KHÔNG khớp "Tồn cuối (chốt)" ở Cân đối số liệu. ` +
-        `Chạy công cụ trên rồi xuất lại báo cáo để có số đúng.`,
+        `⚠ RPC không gọi được lúc xuất báo cáo này (mất mạng/Postgres lỗi) — sheet này TẠM THỜI ` +
+        `hiện số LIVE giống "DS tồn ${GD_VIET_TAT[gd]}", có thể KHÔNG khớp "Tồn cuối (chốt)" ở Cân ` +
+        `đối số liệu/Biểu B10. Xuất lại báo cáo khi có kết nối ổn định để có số đúng.`,
       ]);
       rCanhBao.font = { bold: true, color: { argb: "FFDC2626" } };
+    }
+
+    // "DS tồn cuối kỳ TRƯỚC {gđ}" (2026-08-06, thay hẳn sheet "Tồn theo ĐL (snapshot)" cũ — theo
+    // yêu cầu Dũng "dọn dẹp tàn dư hệ thống cũ") — cùng cơ chế RPC as-of nhưng tính tới HẾT kỳ
+    // TRƯỚC. ẨN MẶC ĐỊNH (không cần cán bộ mở xem trực tiếp — chỉ để B10 SUMIF/COUNTIFS vào, xem
+    // TEN_SHEET_TON_TRUOC_GD/B10_FORMULA) — khác "DS tồn cuối kỳ {gđ}" ở trên (CỐ Ý hiện sẵn, hữu
+    // ích để cán bộ tự tra cứu). Không có kỳ trước (kỳ đầu tiên) hoặc RPC lỗi → sheet rỗng + cảnh
+    // báo, KHÔNG có "live" fallback hợp lý nào cho 1 kỳ TRƯỚC (khác "DS tồn {gđ}" hiện tại).
+    const { list: dsTonTruocCK, live: dsTonTruocCKLive } = dsTonTruocTheoGD[gd];
+    const wsTonTruocCK = addSheetVu(TEN_SHEET_TON_TRUOC_GD[gd], dsTonTruocCKLive ? [] : dsTonTruocCK, [], () => [], true);
+    wsTonTruocCK.state = "hidden";
+    if (dsTonTruocCKLive) {
+      wsTonTruocCK.addRow([]);
+      const rCanhBaoTruoc = wsTonTruocCK.addRow([
+        kyTruoc
+          ? `⚠ RPC không gọi được lúc xuất báo cáo này (mất mạng/Postgres lỗi) — cột "Tồn kỳ trước" ` +
+            `của Biểu B10 giai đoạn ${NHAN_GIAI_DOAN[gd]} sẽ rơi về số dự phòng (có thể kém chính xác). ` +
+            `Xuất lại báo cáo khi có kết nối ổn định để có số đúng.`
+          : `Đây là kỳ ĐẦU TIÊN (không có kỳ trước) — sheet này để trống, Biểu B10 "Tồn kỳ trước" ` +
+            `hiện đúng 0 cho mọi điều luật.`,
+      ]);
+      rCanhBaoTruoc.font = { bold: true, color: { argb: kyTruoc ? "FFDC2626" : "FF6B7280" } };
     }
   }
 
@@ -11712,12 +11680,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       dsSheetChiTiet.push({ ws: addSheetBoSungBiCan(`DS bổ sung BC ĐT (C7-C24)`, b10DtBoSungBc || []), gd });
     }
 
-    // Sheet RIÊNG cho "Tồn kỳ này" B10 (2026-08-04, xem bcBoSungTonTheoGD/boSungTonTheoGD ở
-    // tinhBieu10 + VAO_TON_GD ở trên) — CẢ 3 giai đoạn (khác sheet C7-C24 ở trên, chỉ Điều tra).
-    // Nguồn CŨNG so kỳ trực tiếp như sheet C7-C24, nhưng phạm vi hẹp hơn: CHỈ vụ ĐANG TỒN (không
-    // phải vụ mới/đã ra của kỳ này) — để cộng vào "Tồn kỳ này" (mkTonNayBc) không đếm đúp với phần
-    // đã trừ qua RA_TON_GD. Không gộp chung với sheet C7-C24 vì 2 sheet có phạm vi vụ khác nhau
-    // (C7-C24 cố ý GỒM CẢ vụ đã ra, ở đây cố ý LOẠI vụ đã ra).
+    // Sheet RIÊNG cho "Cân đối số liệu" (2026-08-04, xem bcBoSungTonTheoGD/boSungTonTheoGD ở
+    // tinhBieu10 + VAO_SHEETS_GD ở trên) — CẢ 3 giai đoạn (khác sheet C7-C24 ở trên, chỉ Điều tra).
+    // B10 "Tồn kỳ này" KHÔNG còn dùng sheet này nữa (đã đổi sang SUMIF trực tiếp "DS tồn cuối kỳ
+    // {gs}" từ 2026-08-06 — RPC tự đúng cả bổ sung, không cần theo dõi riêng). Nguồn CŨNG so kỳ
+    // trực tiếp như sheet C7-C24, nhưng phạm vi hẹp hơn: CHỈ vụ ĐANG TỒN (không phải vụ mới/đã ra
+    // của kỳ này) — để cộng vào "Cân đối số liệu" không đếm đúp với phần đã trừ qua RA_SHEETS_GD.
+    // Không gộp chung với sheet C7-C24 vì 2 sheet có phạm vi vụ khác nhau (C7-C24 cố ý GỒM CẢ vụ đã
+    // ra, ở đây cố ý LOẠI vụ đã ra).
     dsSheetChiTiet.push({ ws: addSheetBoSungBiCan(`DS bổ sung BC ${gs} (tồn)`, b10BoSungTonTheoGD?.[gd] || []), gd });
 
     // ── RA: chuyển giai đoạn tiến (từ giai đoạn này lên giai đoạn tiếp theo) ──
