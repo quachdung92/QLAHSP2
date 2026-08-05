@@ -75,6 +75,186 @@ thật (chuỗi ISO, không phải `{toMillis(){}}`) sau khi rút kinh nghiệm 
 **Đã deploy `qlahsp2.web.app` (production)** sau khi Dũng xác nhận qua chat — smoke test sau deploy
 (trang đăng nhập tải sạch, 0 lỗi console ngoài cảnh báo Babel kích thước file vô hại đã biết).
 
+**⚠ Ghi chú lúc merge (2026-08-04, máy khác)** — nhánh này được viết trên 1 MÁY KHÁC, độc lập với
+loạt fix "Sửa gốc bug B10 'Tồn kỳ này'"/"C7-C24 lần 3" ngay dưới đây (cùng ngày, máy này). Cả 2 bên
+đều tự phát hiện VÀ tự sửa (khác cách) đúng cùng 1 lớp vấn đề — bị can bổ sung vào vụ đã có không
+được log-based ledger đếm đúng — trên CÙNG 1 vùng code (`taiTaoTonCuoiKyTheoTDTatCa`/
+`xuatBaoCaoThangExcel`/`tinhBieu10`). Xem mục "Merge 2 nhánh sửa thống kê song song" ở đầu file để
+biết cách đã gộp + phần còn thiếu sau khi gộp cả 2. Dòng tiêu đề mục này ghi "CHƯA deploy
+production" nhưng nội dung bên dưới lại nói đã deploy — khả năng cao là do đã deploy SAU KHI viết
+tiêu đề, không kịp cập nhật lại — **không chắc production `qlahsp2.web.app` hiện đang chạy code
+của máy nào** (máy này hay máy đang gộp) tại thời điểm bắt đầu merge, cần deploy lại sau khi gộp
+xong để đảm bảo.
+
+## Sửa gốc bug B10 "Tồn kỳ này" — công thức Excel đổi từ tham chiếu "DS tồn {gs}" (live) sang log-based (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Tiếp theo mục "Bug đã sửa: Biểu B10 'Tồn kỳ này' thiếu bị can bổ sung..." ngay dưới đây — Dũng phát
+hiện tiếp: filter tay sheet "DS tồn ĐT" (loại bỏ dòng "(Chưa có BC)") đếm ra **818** bị can, không
+khớp **812** mà Kỳ báo cáo/B10 đang hiển thị — dù bản sửa buổi sáng (mục ngay dưới) đã xác nhận
+812 đúng qua console.
+
+**Nguyên nhân thật**: bản sửa buổi sáng (`tonTheoLogD`, commit `a60eacc`) chỉ sửa đúng **"result"
+CACHE** của ô Excel — nhưng công thức "Tồn kỳ này" (khi kỳ CHƯA CHỐT) từ trước tới giờ luôn dùng
+SUMIF/COUNTIFS **THẲNG vào sheet "DS tồn {gs}"** (số LIVE, đúng `baoCao[gd].ds.tonHienTai` tại
+đúng thời điểm xuất báo cáo) — hoàn toàn KHÔNG liên quan gì tới `tonTheoLogD`. Khi Dũng mở file
+Excel THẬT, công thức tự tính lại theo "DS tồn ĐT" (818, LIVE), không đọc "result" cache (812) —
+đúng bài học đã ghi nhiều lần ở mục "cột -BC...": ExcelJS đọc lại không tính lại công thức, chỉ
+Excel thật mới tính, nên CHỈ sửa JS là không đủ, phải sửa cả CÔNG THỨC.
+
+**818 (live) > 812 (log-based) vì sao**: có bị can bổ sung vào vụ ĐÃ CÓ TỪ TRƯỚC KHI có sự kiện
+`bo_sung_bican` (migration 2026-08-03) — không có sự kiện "vào" tương ứng nên log-based không đếm
+được, nhưng vẫn LIVE có mặt trong vụ đang tồn hiện tại.
+
+**Đã sửa**: thêm `mkTonNayVu`/`mkTonNayBc` (đặt cạnh `mkThuLyVu`/`mkThuLyBc`) — đổi công thức "Tồn
+kỳ này" (kỳ chưa chốt) từ tham chiếu thẳng "DS tồn {gs}" sang CÔNG THỨC LOG-BASED thật sự (tồn kỳ
+trước + Σvào qua `VAO_TON_GD` − Σra qua `RA_TON_GD`, y hệt cách `mkThuLyVu`/`mkThuLyBc` đã làm cho
+"Tổng thụ lý" C3/C4 — chỉ khác tập "ra" dùng ĐẦY ĐỦ `RA_SHEETS_GD` 7-8 sheet thay vì `RA_THULY_GD`
+chỉ 3 sheet). `VAO_TON_GD`/`RA_TON_GD` là bản chép lại y hệt `VAO_SHEETS_GD`/`RA_SHEETS_GD` (khai
+báo Ở DƯỚI trong file nên không tham chiếu thẳng được — sửa 1 trong 2 cặp nhớ sửa cặp còn lại).
+
+**Đã kiểm chứng SÂU trên dữ liệu Supabase thật** (`qlahs-sup.web.app`) — KHÔNG chỉ tin "result"
+cache (đúng bài học đã rút ra): xuất Excel thật, đọc trực tiếp CHUỖI CÔNG THỨC ở ô G13 (Điều 174,
+"Tồn kỳ này BC") xác nhận đã đổi đúng sang tổng COUNTIFS qua 7 sheet vào − 7 sheet ra (không còn
+tham chiếu "DS tồn ĐT"); rồi TỰ TÁI TẠO TAY phép tính COUNTIFS đó bằng cách đọc THẲNG dữ liệu thô
+(cột V) của cả 14 sheet liên quan (không dùng cache nào) — ra đúng 768 (tồn trước) + 163 (vào, gồm
+2 bổ sung) − 119 (ra) = **812**, khớp CHÍNH XÁC với cả "result" cache (812) lẫn
+`baoCao.tonCuoiBiCanKy` bên ngoài. Compile-check qua `@babel/core`+`@babel/preset-react` — sạch.
+Đã deploy `qlahs-sup.web.app` (test) rồi `qlahsp2.web.app` (production).
+
+## Bug đã sửa: Biểu B10 "Tồn kỳ này" thiếu bị can bổ sung khi vụ rời giai đoạn trong kỳ (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Dũng phát hiện qua đối chiếu trực tiếp: Kỳ báo cáo (ngoài B10) báo "Tồn cuối kỳ" Điều tra kỳ
+07/2026 = 318 vụ/812 BC (Truy tố 43/219, Xét xử 50/328 — 2 giai đoạn này khớp đúng), nhưng tổng
+Biểu B10 (cộng dồn `vals[3]` — "Tồn kỳ này" BC — qua mọi dòng điều luật) chỉ ra **810 BC** ở Điều
+tra — thiếu đúng 2 người, dù số VỤ (318) vẫn khớp.
+
+**Nguyên nhân**: `tinhBaoCaoKyTuLog` cộng riêng "vào" cho bị can bổ sung vào 1 vụ ĐÃ CÓ (sự kiện
+`bo_sung_bican`, field `soMoi.boSungBiCan` — CHỈ cộng bị can, không cộng vụ, vì vụ đó không phải
+"mới"). `tonTheoLogD` (hàm nội bộ `tinhBieu10`, tính "Tồn kỳ này" theo TỪNG điều luật khi kỳ chưa
+chốt — xem mục "Bug tiếp theo... Tồn kỳ này theo tội danh" cũ) hoàn toàn không biết tới nguồn "vào"
+này — nếu vụ chứa bị can bổ sung đó RỜI giai đoạn NGAY TRONG CÙNG KỲ (VD Điều tra → Truy tố),
+`bcCoD(raArr, D)` vẫn trừ ĐỦ cả các bị can bổ sung (đọc số bị can bổ sung SỐNG hiện tại của vụ, kể
+cả người vừa thêm — đúng), nhưng không có gì cộng bù tương ứng ở vế "vào" — tồn kỳ này bị hụt đúng
+bằng số bị can bổ sung của những vụ rời giai đoạn trong kỳ đó (ví dụ thực tế: vụ
+`QLVA_E01.53_2412_0062` khởi tố kỳ 06, bổ sung 2 bị can trong kỳ 07 rồi chuyển ngay sang Truy tố
+cũng trong kỳ 07 — 2 người này bị "trừ ra" khi vụ rời Điều tra nhưng chưa từng được "cộng vào").
+
+**Đã sửa** (`tonTheoLogD`): thêm `bcCoDBoSung(d.boSungBiCan, D)` — đếm CHÍNH XÁC theo cùng nguồn
+`d.boSungBiCan` mà `tinhBaoCaoKyTuLog` dùng cho `soMoi.boSungBiCan` (không đổi sang nguồn "so kỳ
+trực tiếp" như bản sửa C7-C24 sáng cùng ngày — ở đây mục tiêu là khớp CHÍNH XÁC với con số bên
+ngoài, phải cùng 1 nguồn dữ liệu) — cộng vào vế "vào" của riêng BC, KHÔNG cộng vụ (đúng như
+`soMoi.boSungBiCan` không cộng `soMoi.tong`). Cũng bổ sung quét `d.boSungBiCan` vào bước gom
+`tatCaDieuLuat` (phòng vụ chứa bị can bổ sung không rơi vào bất kỳ nhóm `allVu` nào khác của kỳ,
+tránh thiếu hẳn dòng D để cộng bù vào).
+
+**Đã kiểm chứng bằng dữ liệu Supabase thật** (`qlahs-sup.web.app`) — kỳ 07/2026 (đang mở): trước
+sửa B10 Điều tra = 318 vụ/**810** BC (thiếu 2, đúng 2 bị can bổ sung của vụ `QLVA_E01.53_2412_0062`
+rời sang Truy tố trong kỳ); sau sửa B10 Điều tra = 318 vụ/**812** BC, khớp CHÍNH XÁC với
+`baoCao.tonCuoiKy`/`tonCuoiBiCanKy` ở cả 3 giai đoạn (ĐT 318/812, TT 43/219, XX 50/328). Kỳ
+06/2026 (đã chốt, dùng nhánh `kyTonTD` snapshot khác hẳn `tonTheoLogD`, không đụng tới) vẫn khớp
+đúng 310/768 như trước — không hồi quy. C7 (Điều 174, kỳ 07 — khối C7-C24 sửa sáng cùng ngày, xem
+mục ngay dưới) vẫn = 21, không đổi — xác nhận 2 phần code hoàn toàn độc lập nhau. Xuất Excel báo
+cáo tháng thật vẫn chạy trơn tru, không lỗi. Compile-check qua `@babel/core`+`@babel/preset-react`
+— sạch. Đã deploy `qlahs-sup.web.app` (test) rồi `qlahsp2.web.app` (production).
+
+## Biểu B10 C7-C24 bị can bổ sung — sửa lại lần 3: đơn giản hoá công thức, tách riêng "mới"/"bổ sung" (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Tiếp theo mục "sửa lại lần 2" ngay dưới đây — bản đó đúng số liệu (gộp "mới"+"bổ sung" thành 1
+danh sách `dt_bcMoiKyToanBo`, quét toàn bộ 9 nhóm vụ Điều tra liên quan tới kỳ rồi khử trùng theo
+id bị can) nhưng Dũng phản hồi trực tiếp: **"công thức tính bị can KT mới phức tạp quá"** — khó
+đối chiếu bằng mắt so với thiết kế BAN ĐẦU (2 phần tách riêng, dễ đọc: "mới" = từ `dt.khoiToTrucTiep`
+như cũ, "bổ sung" = từ 1 nguồn riêng). Yêu cầu cụ thể: **"để như ban đầu nhưng thay đổi sheet DS bổ
+sung BC để đảm bảo lọc lấy từ nguồn tất cả các bị can có ngày nhập mới tháng 07/2026, nhưng ngày vụ
+án khác tháng 07/2026"** — tức quay lại kiến trúc 2 phần đơn giản, chỉ đổi NGUỒN của phần "bổ sung"
+từ sự kiện `bo_sung_bican` (đã bị bỏ ở lần sửa 2 vì quá thưa) sang so sánh kỳ TRỰC TIẾP: kỳ khởi tố
+của CHÍNH bị can khác kỳ khởi tố của VỤ.
+
+**Đã sửa** (`tinhBieu10`): thay `dt_bcMoiKyToanBo` bằng `dt_boSungBc` — vẫn quét `allVuDT` (như bản
+2), nhưng giờ **BỎ QUA vụ có kỳ khởi tố (`vuKyKhoiToMap`) TRÙNG kỳ báo cáo** (những vụ đó là "mới",
+đã tính riêng qua `dt.khoiToTrucTiep`) — chỉ giữ lại vụ có kỳ khởi tố KHÁC kỳ báo cáo, rồi mới gom
+bị can có kỳ khởi tố CỦA CHÍNH HỌ khớp kỳ báo cáo. Trong per-D loop, `dt_ktBcMoiKy` quay lại thành
+1 phép CỘNG 2 mảng rõ ràng: `[...bcCoD(dt.khoiToTrucTiep, D).filter(kỳ khớp), ...dt_boSungBcRaw.filter(D
+khớp)]` — dễ đọc/đối chiếu hơn hẳn 1 danh sách gộp sẵn không phân biệt nguồn. Tương tự cho
+`dtKtoCaNhan` (khối cảnh báo thiếu Năm sinh/Trình độ).
+
+**Hàm mới `fetchKyKhoiToVu(vuIds)`** (đặt cạnh `fetchKyKhoiToBiCan`) — trả `Map<maVuAn, kyThongKe>`,
+nguồn từ 2 loại sự kiện: `khoi_to_vu` (vụ mở bình thường, khoá `maVuAn`) VÀ `tach_vu` (vụ TÁCH RA —
+không có sự kiện `khoi_to_vu` riêng, "kỳ mở" của nó chính là kỳ của sự kiện tách, field
+`vuTachRa` — xem `idVuThatCuaLog`, mục "sự kiện tách vụ gán nhầm bị can" bên dưới). **Thiếu nhánh
+`tach_vu` này sẽ khiến MỌI vụ tách bị coi nhầm "không xác định được kỳ mở"** (`vuKyKhoiToMap.get()`
+trả `undefined`, luôn KHÁC bất kỳ kỳ báo cáo nào) → tự động rơi vào "bổ sung" dù vụ đó vừa mới tách
+ra ĐÚNG trong kỳ đang xét — 1 dạng lỗi âm thầm dễ bỏ sót nếu chỉ query `khoi_to_vu`.
+
+**Excel**: `DT_KTO` quay lại danh sách đơn giản 3 sheet (như thiết kế ban đầu):
+`["DS khởi tố ĐT", "DS phục hồi ĐT", "DS bổ sung BC ĐT (C7-C24)"]`. Sheet thứ 3 là **sheet MỚI**
+(`addSheetBoSungBiCan`, dựng từ `dt_boSungBc`) — **KHÁC HẲN** sheet `"DS bổ sung BC ĐT"` đã có sẵn
+từ trước (nguồn sự kiện `bo_sung_bican`, dùng riêng cho "Tổng thụ lý"/"Cân đối số liệu" qua
+`DT_VAO`) — **GIỮ NGUYÊN sheet cũ không đổi**, tránh rủi ro ảnh hưởng cơ chế ledger/`_bcCutoff` đã
+được kiểm chứng kỹ ở nhánh `tra-dtbs-tach-bican-cu-moi` (xem mục bên dưới) mà yêu cầu lần này không
+hề nhắc tới. 2 sheet cùng tên gần giống nhau nhưng phục vụ 2 mục đích khác nhau, không gộp chung.
+
+**Đã kiểm chứng bằng dữ liệu Supabase thật qua console** (`qlahs-sup.web.app`) — gọi trực tiếp
+`tinhBieu10()`: C7 "Điều 174 BLHS 2025" kỳ 07/2026 vẫn = **21** (khớp y hệt bản sửa lần 2, xác
+nhận đổi kiến trúc KHÔNG đổi kết quả); `fetchKyKhoiToVu()` xác nhận đúng vụ `QLVA_E01.53_2412_0062`
+có kỳ khởi tố = kỳ 06 (khác kỳ báo cáo 07) → rơi đúng vào "bổ sung" (chứa đúng Hoàng Văn Triệu/
+Nguyễn Huy Hoàng); test riêng 1 vụ tách thật (`QLVA_E01.53_2510_0014_1`) xác nhận resolve đúng kỳ
+qua nhánh `tach_vu`, không bị `undefined`. **Xuất Excel thật** (chặn `URL.createObjectURL`, nạp
+lại bằng `new ExcelJS.Workbook().xlsx.load(...)` ngay trong trình duyệt) — sheet mới
+`"DS bổ sung BC ĐT (C7-C24)"` có đúng **32 dòng** (khớp `dt_boSungBc.length`), cột "Kỳ TK BC" đúng
+"07/2026", cột "Đếm vụ" rỗng (không đếm đúp sang cột Vụ của "Tổng thụ lý" nếu lỡ dùng nhầm); sheet
+cũ `"DS bổ sung BC ĐT"` vẫn giữ nguyên đúng 2 dòng (event-sourced, không bị đụng tới). Compile-check
+qua `@babel/core`+`@babel/preset-react` — sạch. Đã deploy `qlahs-sup.web.app` (test) rồi
+`qlahsp2.web.app` (production) qua `./deploy.sh sup` rồi `./deploy.sh prod`.
+
+## Bug đã sửa: Biểu B10 C7-C24 bỏ sót bị can bổ sung vào vụ ĐÃ CÓ — sửa lại lần 2, bỏ phụ thuộc `bo_sung_bican` (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Người dùng phát hiện qua audit trực tiếp: khối "Phân tích bị can mới khởi tố" (C7-C24, chỉ Điều
+tra) của Biểu B10 không tính bị can được **thêm bổ sung vào 1 vụ ĐÃ CÓ SẴN** (VD vụ khởi tố kỳ
+06/2026, tháng sau "Thêm bị can" 2 người vào đúng vụ đó ở kỳ 07/2026) — 2 người này bị bỏ sót
+hoàn toàn khỏi thống kê nhân khẩu học (tuổi/trình độ/dân tộc/giới tính...) của kỳ họ thực sự được
+khởi tố, dù họ VẪN được tính đúng vào "Tổng thụ lý" (nhờ sự kiện `bo_sung_bican`, xem mục
+`tra-dtbs-tach-bican-cu-moi` ngay dưới — 2 khối thống kê khác nhau, sửa riêng).
+
+**Bản sửa ĐẦU TIÊN (commit `5c74544`, đã bị thay thế) dựa vào sự kiện `bo_sung_bican`** — chỉ
+quét `ds.boSungBiCan` (nguồn dữ liệu từ đúng sự kiện log mới thêm 2026-08-03, xem mục
+`tra-dtbs-tach-bican-cu-moi`) để tìm bị can bổ sung. Người dùng phản hồi trực tiếp: cách này
+**"sẽ miss rất nhiều"** — đúng, vì `bo_sung_bican` chỉ có ĐÚNG 3 sự kiện trên toàn hệ thống lúc
+đó (mới thêm gần đây, KHÔNG backfill cho dữ liệu cũ, Import Excel cũng không tạo ra sự kiện này).
+
+**Logic đúng theo yêu cầu người dùng**: "chỉ cần so sánh vụ án khởi tố mới vào kỳ 06/2026 thì
+tất cả bị can khởi tố vào kì 07/2026 là khởi tố bổ sung. nghĩa là ko trùng kì sau kì báo cáo của
+vụ án thì tính là bổ sung" — tức so kỳ khởi tố **CỦA TỪNG BỊ CAN** (qua sự kiện `khoi_to_bican`,
+LUÔN tồn tại kể cả dữ liệu cũ/import — khác `bo_sung_bican`) với kỳ đang tính báo cáo, hoàn toàn
+độc lập với việc vụ thuộc nhóm nào (mới/tồn/đã ra) hay có sự kiện `bo_sung_bican` hay không.
+
+**Đã sửa lại** (`tinhBieu10`): thêm `dt_bcMoiKyToanBo` — quét **TOÀN BỘ vụ Điều tra liên quan tới
+kỳ** (`allVuDT`, hợp nhất MỌI nhóm: khởi tố trực tiếp/tách vụ/chuyển đến/trả về/tồn hiện tại/
+chuyển đi/trả đi/nhập vụ/hoàn thành — không chỉ riêng nhóm "mới" như bản đầu), gom bị can có
+`bcKyKhoiToMap.get(bc.id)` khớp kỳ báo cáo, khử trùng qua `id`. `dt_ktBcMoiKy` (theo từng điều
+luật, dùng cho C7-C24) và `dtKtoCaNhan` (cảnh báo thiếu Năm sinh/Trình độ) đều lọc từ danh sách
+chung này thay vì gộp riêng lẻ theo từng nhóm như trước. Bỏ hẳn `bcCoDBoSung`/`bcTuBoSung` (dead
+code sau khi thay bằng cách tiếp cận tổng quát hơn).
+
+**Excel**: `DT_KTO` đổi từ `["DS khởi tố ĐT","DS phục hồi ĐT","DS bổ sung BC ĐT"]` sang
+`["DS tồn ĐT"]` + `RA_SHEETS_GD.dieu_tra` (7 sheet: DS ĐT chuyển TT/DS đã xét xử ĐT/DS chuyển đi
+ĐT/DS tạm đình chỉ ĐT/DS đình chỉ ĐT/DS án huỷ ĐT/DS nhập vụ ĐT) — đúng phân vùng LOẠI TRỪ LẪN
+NHAU (1 vụ Điều tra tại 1 thời điểm chỉ có thể "đang tồn" HOẶC "đã ra", không thể cả 2), tránh
+đếm trùng vì `mkCfBcKy` cộng dồn COUNTIFS qua nhiều sheet KHÔNG khử trùng — nếu giữ "DS bổ sung BC
+ĐT" song song với "DS tồn ĐT" sẽ đếm 2 lần đúng những bị can bổ sung vào vụ vẫn còn đang tồn.
+
+**Đã kiểm chứng bằng dữ liệu Supabase production thật qua console** (`qlahs-sup.web.app`, gọi
+trực tiếp `tinhBaoCaoKyTuLog`+`tinhBieu10` — các hàm này lộ ra ở phạm vi global của thẻ script,
+gọi được thẳng từ console) — vụ `QLVA_E01.53_2412_0062` khởi tố kỳ 06/2026, bổ sung 2 bị can
+(Hoàng Văn Triệu, Nguyễn Huy Hoàng) với `khoi_to_bican` gắn kỳ 07/2026: gọi `tinhBieu10()` xác
+nhận **C7 của "Điều 174 BLHS 2025" kỳ 07 = 21**, khớp CHÍNH XÁC với phép đếm thủ công độc lập
+(tự quét toàn bộ vụ liên quan qua `collectVuIdsFromBaoCao`/`batchLayBiCanList`/
+`fetchKyKhoiToBiCan` rồi lọc tay, không gọi lại `tinhBieu10`) — có đủ cả 2 bị can trong danh sách
+khớp, **dù vụ này ĐÃ chuyển sang Truy tố trong kỳ 07** (không còn nằm trong "DS tồn ĐT", chỉ nằm
+trong nhóm "chuyển đi"/`RA_SHEETS_GD`) và bất kể có hay không có sự kiện `bo_sung_bican` — chứng
+minh cách sửa mới không còn phụ thuộc sự kiện đó, đúng yêu cầu người dùng. Compile-check qua
+`@babel/core`+`@babel/preset-react` — sạch. Đã deploy `qlahs-sup.web.app` (test) rồi
+`qlahsp2.web.app` (production) qua `./deploy.sh sup` rồi `./deploy.sh prod`.
+
 ## Nhánh `tra-dtbs-tach-bican-cu-moi` — sửa gốc: bị can bổ sung vào vụ đã có không được ghi "vào" ở Tổng thụ lý/Cân đối số liệu (2026-08-03, `qlahs-sup.html`, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: 4 tab mới ở "Án đã giải quyết" (Kết thúc điều tra/VKS trả ĐTBS/Kết thúc
