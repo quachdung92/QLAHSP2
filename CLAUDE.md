@@ -2,6 +2,65 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Chuyển hệ thống thống kê "tồn" từ snapshot-chốt-kỳ sang query động (as-of) qua RPC Postgres — Phase 1 (2026-08-05, nhánh `feature/tong-ke-dong`, RPC ĐÃ chạy lên Supabase thật, CHƯA nối vào `qlahs-sup.html`)
+
+Theo yêu cầu Dũng: hệ thống hiện tại tính "tồn cuối kỳ" bằng cách CHỐT rồi LƯU TĨNH
+(`kybaocao.tonCuoiKy`/`tonCuoiBiCan`/`tonCuoiKyTheoTD`/`tonCuoiKyIds`), mỗi kỳ sau CHUYỀN TAY số
+kỳ trước làm "tồn đầu kỳ" — đúng nguyên nhân gốc của cả chuỗi bug đã sửa trong ngày (xem mục
+"Gộp nhánh fix-thong-ke-may2..." ngay dưới). Trước đây né việc "tính lại từ đầu" vì lo tốn lượt
+đọc Firestore — nay đã chuyển hẳn Supabase/Postgres, không còn giới hạn đó. Dũng đưa ra 1 đề xuất
+kỹ thuật cụ thể (RPC Postgres, `SELECT DISTINCT ON` theo `kyThongKe`) — đã đối chiếu với code/schema
+thật, xác nhận ĐÚNG HƯỚNG (RPC theo `kyThongKe` chứ không theo `ngaySuKien`, khớp nguyên tắc #2/#3
+"kỳ báo cáo do cán bộ tự quyết"), nhưng có vài lỗ hổng kỹ thuật đã sửa trước khi code — xem plan đầy
+đủ đã duyệt (lưu tại phiên làm việc, không còn giữ file plan sau khi merge) và phần dưới đây.
+
+**RPC mới `layTrangThaiVuTaiKy(p_ky_id)`** (`supabase/rpc_tong_ke_dong_2026-08-05.sql`) — với MỌI
+vụ từng chạm giai đoạn, trả về trạng thái CUỐI CÙNG tính tới hết kỳ `p_ky_id` (kỳ nào cũng ra số
+ngay, không cần kỳ nào đứng trước phải "chốt"). Chỉ lọc đúng 8/14 `loaiSuKien` thật sự đổi giai
+đoạn (`khoi_to_vu`/`tach_vu`/`chuyen_giai_doan`/`tra_ho_so`/`phuc_hoi`/`nhan_lai_chuyen_di`/
+`hoan_thanh`/`nhap_vu`) TRƯỚC khi `DISTINCT ON` — nếu không, 1 dòng `giao_nhan_ho_so` ghi SAU
+`hoan_thanh` (rất hay xảy ra, nộp lưu trữ luôn diễn ra sau khi vụ đã xong) sẽ thắng và bị tính nhầm
+còn tồn. Xếp hạng theo (1) kỳ — `kybaocao.ngayBatDau`, kỳ `loai='luu_tru'` luôn coi là SỚM NHẤT
+(-infinity, vì là backfill dữ liệu cũ không có vị trí thật trên trục thời gian báo cáo); (2) trong
+CÙNG 1 kỳ, CHỈ `thoiDiemGhi` (xem bài học tie-break ngay dưới — KHÔNG dùng `ngaySuKien`); (3) khi cả
+`thoiDiemGhi` cũng trùng hệt, ưu tiên sự kiện RA (`hoan_thanh`/`nhap_vu`) thắng. `SECURITY INVOKER`
+mặc định (không cần DEFINER — đã xác nhận qua `rls.sql`: mọi user `authenticated` đã có quyền
+SELECT toàn bộ `lichsuChuyenGiaiDoan`/`kybaocao`). Thêm index
+`lichsuChuyenGiaiDoan_maVuAn_kyThongKe_idx` — index cũ chỉ có `(maVuAn,thoiDiemGhi)`, không đủ cho
+kiểu truy vấn "theo từng vụ, lấy hàng mới nhất tính tới kỳ K".
+
+**Bài học tie-break quan trọng, đã THỬ SAI 2 LẦN trước khi ra bản đúng** — kiểm chứng lần đầu trên
+dữ liệu Supabase thật (đối chiếu RPC vs `kybaocao.tonCuoiKyIds` của kỳ 06/2026, kỳ ĐÃ chốt duy nhất)
+ra lệch +4 Điều tra/+2 Xét xử. Đào sâu: 6 vụ có CẢ `hoan_thanh` lẫn `khoi_to_vu` cùng ghi bởi 1 lượt
+dựng-lại-lịch-sử hàng loạt (`thoiDiemGhi` giống hệt nhau tới milli-giây, cùng 1 transaction — xác
+nhận qua đọc `::text` full-precision, không phải làm tròn hiển thị của driver `pg`), nhưng
+`ngaySuKien` của `hoan_thanh` (tự khai, dữ liệu cũ) LẠI SỚM HƠN `khoi_to_vu` — vô lý logic (hoàn
+thành trước khi khởi tố) nhưng vẫn là dữ liệu đã lưu thật. **Thử lần 1** (ưu tiên `ngaySuKien` trước
+`thoiDiemGhi`, theo đúng suy luận ban đầu "ngày quyết định thật quan trọng hơn ngày ghi log") — SAI,
+chọn nhầm `khoi_to_vu` là mới nhất cho cả 6 vụ dù `vuan.trangThai` (nguồn live, không qua log) xác
+nhận đã hoàn thành từ lâu. **Thử lần 2** (đổi ưu tiên `thoiDiemGhi` trước, `ngaySuKien` làm tiêu chí
+PHỤ sau đó — tưởng đã đúng, sửa được 2/6 vụ) — VẪN SAI: với 4/6 vụ còn lại, `thoiDiemGhi` tuy trùng
+(rơi vào nhánh tie-break phụ) nhưng `ngaySuKien` (tiêu chí phụ) vẫn khác nhau và vẫn chọn nhầm —
+giữ `ngaySuKien` làm BẤT KỲ tiêu chí xếp hạng nào (kể cả chỉ làm phụ) đều không an toàn. **Bản đúng
+(lần 3)**: bỏ HẲN `ngaySuKien` khỏi `ORDER BY`, chỉ dùng `thoiDiemGhi` + tie-break "sự kiện RA
+thắng" khi `thoiDiemGhi` cũng trùng — kiểm chứng lại: kỳ 06/2026 khớp CHÍNH XÁC 310/45/49 (Điều
+tra/Truy tố/Xét xử, đúng `tonCuoiKy` đã chốt); kỳ 07/2026 (đang mở, CHƯA từng chốt) RPC tự tính ra
+đúng 318/43/50 — khớp CHÍNH XÁC con số đã xác nhận nhiều lần trong ngày qua đường JS cũ, chứng minh
+RPC hoạt động đúng cho CẢ kỳ đã chốt lẫn kỳ đang mở, không cần snapshot/chuỗi nào.
+
+**Giới hạn đã biết, chưa xử lý (Phase sau)**: sự kiện có `kyThongKe IS NULL` (dữ liệu cũ dựng lại
+lịch sử chưa gán kỳ) bị `INNER JOIN` loại thẳng — vụ mà MỌI sự kiện đổi giai đoạn đều thiếu
+`kyThongKe` sẽ không xuất hiện trong kết quả RPC (không tính tồn ở đâu cả) — đúng hành vi ĐÃ CÓ TỪ
+TRƯỚC (Cân đối số liệu hiện tại cũng loại các dòng này), nhưng cần bước "Data cleansing" (quét vụ
+`trangThai != dang_giai_quyet` thiếu `hoan_thanh` log, bù từ `ngayQuyetDinh`/`kyHoanThanh` sẵn có
+trên `vuan`) chạy TRƯỚC khi coi RPC là nguồn số liệu chính thức.
+
+**CHƯA làm**: RPC bị can-level (`layTrangThaiBiCanTaiKy`, phase 2 — phần khó nhất, thay thế toàn bộ
+`bcKyKhoiToMap`/`vuKyKhoiToMap`/`locBiCanTheoCutoff`/bổ sung-tồn đã vá tay trong ngày); nối RPC vào
+`qlahs-sup.html` (bắt đầu ở `tinhDsTonTheoKy`/sheet "DS tồn cuối kỳ" — rủi ro thấp nhất); công cụ
+"So sánh RPC vs snapshot cũ" để đối chiếu TRƯỚC KHI gỡ `TaiTaoTonTheoTDTool`. Chưa đụng gì tới
+`qlahs-sup.html`/`qlahsp2.web.app` ở phase này — mới chỉ có RPC + index chạy trên Supabase thật.
+
 ## Gộp nhánh `fix-thong-ke-may2` + `ds-ton-cuoi-ky` (2 phiên song song) — sửa gốc bug "Tồn kỳ này" thiếu bị can bổ sung ở đúng phần TỒN (không phải "vào"/"ra"), + sự cố ghi đè dữ liệu thật rồi tự khôi phục (2026-08-05, `qlahs-sup.html`, nhánh `ds-ton-cuoi-ky`, ĐÃ deploy `qlahs-sup.web.app`, **CHƯA deploy production** — chờ Dũng xác nhận số liệu đúng)
 
 **Bối cảnh**: 2 phiên Claude Code chạy song song trên máy khác nhau cùng sửa thống kê B10/Kỳ báo
