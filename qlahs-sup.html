@@ -9731,19 +9731,29 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     };
     const dt_tp_vu = tonTD_truoc[D]?.dieu_tra?.vuAn ?? 0;
     const dt_tp_bc = tonTD_truoc[D]?.dieu_tra?.biCan ?? 0;
+    // "Tồn kỳ này" (2026-08-05, ĐỔI ƯU TIÊN sang RPC — xem CLAUDE.md "nối RPC vào Biểu B10") — RPC
+    // (rpcTonTheoTD, tính as-of-kỳ TRỰC TIẾP từ log mỗi lần) giờ là NGUỒN CHÍNH, thay cho chuỗi
+    // kyTonTD (snapshot chốt kỳ, có thể "trôi" nếu 1 lượt chạy lại công cụ backfill trên code cũ —
+    // đã xảy ra thật, xem sự cố 738 vs 735 kiểm chứng qua UI thật cùng ngày) hoặc tonTheoLogD (công
+    // thức cộng dồn đã vá tay nhiều lần). `dt_tnRpc` phân biệt "RPC nói 0" (rpcTonList có nhưng D
+    // này không có entry — hợp lệ, dùng {vu:0,bc:0}) với "RPC không khả dụng" (rpcTonList=null, ví
+    // dụ mất mạng/PostgREST lỗi lúc xuất — rơi về công thức CŨ làm dự phòng, xem cảnh báo bên dưới).
     const dt_tnLog = kyTonTD ? null : tonTheoLogD(dt, dt_moi, D, dt_tp_vu, dt_tp_bc, bcBoSungTonTheoGD.dieu_tra);
-    const dt_tn_vu = kyTonTD ? (kyTonTD[D]?.dieu_tra?.vuAn ?? 0) : dt_tnLog.vu;
-    const dt_tn_bc = kyTonTD ? (kyTonTD[D]?.dieu_tra?.biCan ?? 0) : dt_tnLog.bc;
+    const dt_tnRpc = rpcTonList ? (rpcTonTheoTD.dieu_tra[D] || { vu: 0, bc: 0 }) : null;
+    const dt_tn_vu = dt_tnRpc ? dt_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.dieu_tra?.vuAn ?? 0) : dt_tnLog.vu);
+    const dt_tn_bc = dt_tnRpc ? dt_tnRpc.bc : (kyTonTD ? (kyTonTD[D]?.dieu_tra?.biCan ?? 0) : dt_tnLog.bc);
     const tt_tp_vu = tonTD_truoc[D]?.truy_to?.vuAn ?? 0;
     const tt_tp_bc = tonTD_truoc[D]?.truy_to?.biCan ?? 0;
     const tt_tnLog = kyTonTD ? null : tonTheoLogD(tt, tt_moi, D, tt_tp_vu, tt_tp_bc, bcBoSungTonTheoGD.truy_to);
-    const tt_tn_vu = kyTonTD ? (kyTonTD[D]?.truy_to?.vuAn ?? 0) : tt_tnLog.vu;
-    const tt_tn_bc = kyTonTD ? (kyTonTD[D]?.truy_to?.biCan ?? 0) : tt_tnLog.bc;
+    const tt_tnRpc = rpcTonList ? (rpcTonTheoTD.truy_to[D] || { vu: 0, bc: 0 }) : null;
+    const tt_tn_vu = tt_tnRpc ? tt_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.truy_to?.vuAn ?? 0) : tt_tnLog.vu);
+    const tt_tn_bc = tt_tnRpc ? tt_tnRpc.bc : (kyTonTD ? (kyTonTD[D]?.truy_to?.biCan ?? 0) : tt_tnLog.bc);
     const xx_tp_vu = tonTD_truoc[D]?.xet_xu?.vuAn ?? 0;
     const xx_tp_bc = tonTD_truoc[D]?.xet_xu?.biCan ?? 0;
     const xx_tnLog = kyTonTD ? null : tonTheoLogD(xx, xx_moi, D, xx_tp_vu, xx_tp_bc, bcBoSungTonTheoGD.xet_xu);
-    const xx_tn_vu = kyTonTD ? (kyTonTD[D]?.xet_xu?.vuAn ?? 0) : xx_tnLog.vu;
-    const xx_tn_bc = kyTonTD ? (kyTonTD[D]?.xet_xu?.biCan ?? 0) : xx_tnLog.bc;
+    const xx_tnRpc = rpcTonList ? (rpcTonTheoTD.xet_xu[D] || { vu: 0, bc: 0 }) : null;
+    const xx_tn_vu = xx_tnRpc ? xx_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.xet_xu?.vuAn ?? 0) : xx_tnLog.vu);
+    const xx_tn_bc = xx_tnRpc ? xx_tnRpc.bc : (kyTonTD ? (kyTonTD[D]?.xet_xu?.biCan ?? 0) : xx_tnLog.bc);
 
     // ── Điều tra ──
     const dt_moiBc = bcCoD(dt_moi, D);
@@ -9929,20 +9939,14 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     }
     // Lệch dương (tongTheoTD > tonThucTe): đúng thiết kế, không cảnh báo
 
-    // Đối chiếu RPC động (2026-08-05, ĐÍNH KÈM, không thay vals/công thức Excel) — so TỔNG "Tồn kỳ
-    // này" (vụ + BC, cộng dồn qua mọi điều luật) giữa công thức log cũ (tongTheoTD ở trên, qua
-    // tonTheoLogD đã vá tay nhiều lần trong ngày) và RPC (tính TRỰC TIẾP as-of-kỳ từ log, không qua
-    // chuỗi tonTD_truoc/kyTonTD/snapshot). Lệch ở đây là tín hiệu công thức log còn sai sót mà RPC
-    // không mắc phải — KHÔNG tự động sửa vals, chỉ cảnh báo để cán bộ/phiên sau đối chiếu.
-    if (rpcTonList) {
-      const idxBc = idx + 1;
-      const tongBcTheoTD = rows.reduce((s, r) => s + (r.vals[idxBc] || 0), 0);
-      const rpcVals = Object.values(rpcTonTheoTD[gd]);
-      const rpcVu = rpcVals.reduce((s, r) => s + r.vu, 0);
-      const rpcBc = rpcVals.reduce((s, r) => s + r.bc, 0);
-      if (rpcVu !== tongTheoTD || rpcBc !== tongBcTheoTD) {
-        canhBao.push(`${NHAN_GIAI_DOAN[gd]}: Đối chiếu RPC động — Tồn kỳ này theo B10 (log)=${tongTheoTD} vụ/${tongBcTheoTD} BC, RPC (as-of)=${rpcVu} vụ/${rpcBc} BC — có lệch, cần kiểm tra lại công thức log hoặc dữ liệu điều luật.`);
-      }
+    // Cảnh báo dùng công thức dự phòng (2026-08-06, sau khi "Tồn kỳ này" ĐỔI ƯU TIÊN sang RPC —
+    // xem CLAUDE.md "nối RPC vào Biểu B10"). Trước đây khối này SO SÁNH log vs RPC để phát hiện
+    // lệch (đã bắt đúng sự cố thật 738 vs 735 qua kiểm chứng UI thật, xác nhận RPC đáng tin hơn) —
+    // giờ `vals` CHÍNH LÀ số RPC khi có sẵn nên so sánh cũ luôn khớp 1 cách vô nghĩa (tự so nó với
+    // chính nó). Đổi sang cảnh báo khi RPC KHÔNG gọi được (mất mạng/PostgREST lỗi lúc xuất) — lúc
+    // đó "Tồn kỳ này" rơi về công thức cũ (kyTonTD/tonTheoLogD), có thể kém chính xác hơn.
+    if (!rpcTonList) {
+      canhBao.push(`${NHAN_GIAI_DOAN[gd]}: RPC không khả dụng lúc xuất báo cáo này — "Tồn kỳ này" đang dùng công thức dự phòng (snapshot/log), có thể kém chính xác hơn RPC (xem CLAUDE.md). Nên xuất lại khi có kết nối ổn định.`);
     }
   }
 

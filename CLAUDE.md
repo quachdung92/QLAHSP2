@@ -2,52 +2,68 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Nối RPC vào Biểu B10 — ĐÍNH KÈM cross-check "Tồn kỳ này", CHƯA thay công thức log cũ (2026-08-05, nhánh `feature/tong-ke-dong`, CHƯA deploy, CHƯA kiểm chứng bằng dữ liệu thật)
+## Nối RPC vào Biểu B10 — "Tồn kỳ này" ĐÃ ĐỔI ƯU TIÊN sang RPC, xác nhận đúng qua dữ liệu thật (2026-08-05/06, nhánh `feature/tong-ke-dong`, CHƯA deploy production, CHƯA kiểm chứng lại lần 2 sau khi đổi ưu tiên)
 
 Tiếp theo phần "CHƯA làm" đã ghi ở mục Phase 1+2 ngay dưới đây — B10 (breakdown theo TỪNG điều
-luật) vẫn dùng công thức log cũ (`tonTheoLogD`, đã vá tay rất nhiều lần trong ngày 2026-08-04/05:
-`tonTD_truoc`/`kyTonTD`/`bcBoSungTonTheoGD`...) làm nguồn số liệu CHÍNH THỨC ghi ra Excel — CHƯA
-thay thế bằng RPC như đã làm cho `tinhBaoCaoKyTuLog`/sheet "DS tồn cuối kỳ", vì đây là phần rủi ro
-cao nhất (breakdown theo điều luật, không chỉ theo giai đoạn). Bước này chỉ làm phần AN TOÀN trước:
-**đính kèm 1 cross-check RPC vào cảnh báo cuối sheet B10**, để có tín hiệu thực tế (chạy trên dữ
-liệu thật) về việc công thức log cũ và RPC có khớp nhau hay không, trước khi dám thay hẳn.
+luật) trước đây dùng công thức log cũ (`tonTheoLogD`, đã vá tay rất nhiều lần trong ngày 2026-08-04/
+05: `tonTD_truoc`/`kyTonTD`/`bcBoSungTonTheoGD`...) làm nguồn số liệu CHÍNH THỨC ghi ra Excel.
+
+**Bước 1 (an toàn, đã kiểm chứng)**: đính kèm 1 cross-check RPC vào cảnh báo cuối sheet B10, KHÔNG
+đụng `vals`/công thức Excel — chỉ để lộ tín hiệu lệch. Dũng deploy/chạy thử NGAY qua UI thật (local,
+không cần tôi deploy) trên dữ liệu Supabase production thật, gửi lại ảnh chụp: dòng cảnh báo bắn
+đúng **"Điều tra: Đối chiếu RPC động — Tồn kỳ này theo B10 (log)=310 vụ/735 BC, RPC (as-of)=310
+vụ/738 BC — có lệch"** — số vụ khớp tuyệt đối (310=310), chỉ bị can lệch đúng 3 người (735 vs 738).
+**Đây KHÔNG phải bug mới** — khớp CHÍNH XÁC sự cố đã ghi nhận ở mục Phase 1+2 ngay dưới ("Phát hiện
+phụ": `kybaocao.tonCuoiBiCan` của kỳ 06 Điều tra đã "trôi" về 735 do 1 phiên khác chạy lại công cụ
+backfill cũ trên code chưa có bản vá, 738 mới là số đúng). Cross-check vừa thêm đã TỰ PHÁT HIỆN LẠI
+đúng lỗi dữ liệu thật đã biết, bằng dữ liệu thật, không cần dò tay — xác nhận RPC đáng tin hơn hẳn
+snapshot/chuỗi cộng dồn cũ.
+
+**Bước 2 (đã làm ngay sau đó, theo chỉ đạo trực tiếp của Dũng)**: hỏi Dũng có muốn chạy lại công cụ
+"Sửa lại tồn cuối kỳ theo tội danh" để vá snapshot 735→738 không — Dũng trả lời **"tôi đã chuyển
+sang tính theo kết quả số liệu chính xác, không quan tâm snapshot hay sửa làm thế nào, cho kết quả
+đúng là được"** — tức KHÔNG cần vá snapshot cũ, mà ĐỔI HẲN "Tồn kỳ này" sang lấy trực tiếp từ RPC
+làm nguồn chính (không còn đọc `kyTonTD`/snapshot khi RPC có sẵn) — đúng tinh thần cả đợt redesign
+này (bỏ hẳn phụ thuộc snapshot dễ vỡ, không phải chỉ dò lỗi rồi vá tay tiếp).
 
 **Đã code (`tinhBieu10`, `qlahs-sup.html`)**:
-1. Thêm tham số thứ 9 `rpcTonList` (mặc định `null`) — nhận `{dieu_tra, truy_to, xet_xu}`, mỗi phần
-   tử là mảng vụ đã có sẵn `_bcIdsTon` (Set maBiCan đang tồn TÍNH TỚI ĐÚNG kỳ K theo RPC) — chính là
+1. Tham số thứ 9 `rpcTonList` (mặc định `null`) — nhận `{dieu_tra, truy_to, xet_xu}`, mỗi phần tử là
+   vụ đã có sẵn `_bcIdsTon` (Set maBiCan đang tồn TÍNH TỚI ĐÚNG kỳ K theo RPC) — chính là
    `dsTonCuoiKyTheoGD[gd].list` **ĐÃ TÍNH SẴN** ở `xuatBaoCaoThangExcel` cho sheet "DS tồn cuối kỳ"
-   (không gọi RPC lần 2).
-2. `rpcTonTheoTD` — 1 pass duy nhất qua `rpcTonList`, gộp theo điều luật (dùng lại đúng `getDL`/
-   `normTen` đã có, chọn bị can chính theo `loaiKhoiTo==="ban_dau"` giống hệt `vuPrimaryDL`) ra
-   `{gd: {D: {vu, bc}}}` — **THUẦN TÍNH TOÁN, KHÔNG đụng `vals`/`rows`** (mảng ghi thẳng ra ô Excel
-   qua công thức `SUMIF` vẫn y nguyên).
-3. Trong vòng lặp cảnh báo theo giai đoạn (đã có sẵn, so `tongTheoTD` với `tonThucTe`) — thêm 1
-   nhánh mới: cộng dồn `rpcTonTheoTD[gd]` thành tổng vụ/BC rồi so với `tongTheoTD`/`tongBcTheoTD`
-   (JS-log). Lệch → đẩy 1 dòng cảnh báo mới "Đối chiếu RPC động — ... có lệch" vào `canhBao` (cơ chế
-   hiện có, tự hiện ở ghi chú cuối sheet B10 khi xuất Excel) — **KHÔNG tự sửa `vals`**, chỉ để lộ tín
-   hiệu lệch cho người xem/phiên sau.
-4. `xuatBaoCaoThangExcel` — chỉ truyền `rpcTonList` khi `rpcTonKyNay` (đã gọi cho sheet "DS tồn cuối
-   kỳ") thành công; RPC lỗi (mất mạng/PostgREST down) thì truyền `null` để KHÔNG bắn cảnh báo giả
-   "lệch RPC" hàng loạt (khác hẳn "RPC chạy đúng nhưng ra 0 vụ" — trường hợp đó vẫn hợp lệ để so).
-5. `tinhBieu10` trả thêm `rpcTonTheoTD` trong object kết quả (chưa có nơi dùng, để dành debug/phiên
-   sau nếu cần soi chi tiết theo từng điều luật thay vì chỉ xem tổng).
+   (không gọi RPC lần 2). `xuatBaoCaoThangExcel` chỉ truyền khi `rpcTonKyNay` (gọi cho sheet đó)
+   thành công — RPC lỗi mạng/PostgREST thì truyền `null`.
+2. `rpcTonTheoTD` — 1 pass qua `rpcTonList`, gộp theo điều luật (dùng lại `getDL`/`normTen`, chọn bị
+   can chính theo `loaiKhoiTo==="ban_dau"` giống `vuPrimaryDL`) ra `{gd: {D: {vu, bc}}}`.
+3. **`dt_tn_vu`/`dt_tn_bc`/`tt_*`/`xx_*` (giá trị THẬT SỰ ghi vào `vals`/Excel) ĐỔI ƯU TIÊN**: có
+   `rpcTonList` → luôn dùng `rpcTonTheoTD[gd][D]` (kể cả khi D không có entry — nghĩa là RPC nói
+   "0 người", dùng thẳng `{vu:0,bc:0}`, KHÔNG rơi về fallback — phải phân biệt rõ "RPC nói 0" với
+   "RPC không khả dụng"); KHÔNG có `rpcTonList` (RPC lỗi) → giữ nguyên chuỗi fallback CŨ (`kyTonTD`
+   nếu kỳ đã chốt, `tonTheoLogD` nếu kỳ đang mở) — không đổi hành vi khi RPC không gọi được.
+4. Cảnh báo cũ (so `tongTheoTD` log vs RPC) đã **thay hẳn** — vì `vals` giờ CHÍNH LÀ số RPC khi có
+   sẵn nên so nó với chính nó vô nghĩa. Cảnh báo mới: RPC KHÔNG khả dụng lúc xuất → bắn dòng "RPC
+   không khả dụng lúc xuất báo cáo này — 'Tồn kỳ này' đang dùng công thức dự phòng... nên xuất lại
+   khi có kết nối ổn định" — để cán bộ biết báo cáo đang chạy chế độ dự phòng kém tin cậy hơn.
+5. `tinhBieu10` vẫn trả thêm `rpcTonTheoTD` trong object kết quả (debug/phiên sau nếu cần).
 
-**Mức độ kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong
-scratchpad, gỡ sau khi test) — sạch cú pháp. **Test cô lập mới** (`test_b10_rpc_crosscheck.js`,
-scratchpad, không commit) — trích NGUYÊN VĂN `chuanHoaMaDieuLuat`/`chuanHoaTenToiDanh`/
-`taoDanhMucByTen`/`layMaDieuLuatBiCan` từ file thật, tái tạo đúng đoạn code mới (`rpcTonTheoTD`) —
-8/8 PASS: vụ có bị can đã rời giai đoạn trước kỳ K bị RPC loại đúng khỏi `_bcIdsTon` (không đếm
-nhầm điều luật của người đã rời); vụ 0 BC tồn dùng fallback `vu.dieuLuat` đúng; 2 vụ khác điều luật
-cộng dồn không lẫn nhau; `rpcTonList=null` (RPC lỗi) không throw, trả rỗng; mô phỏng so sánh tổng
-JS-log vs RPC ra đúng cả 2 nhánh khớp/lệch. **CHƯA xuất thử Excel trên dữ liệu Supabase thật** (cần
-đăng nhập `qlahs-sup.web.app` bằng tài khoản thật — phiên này không có sẵn credentials, và deploy
-lên site đó/thao tác trên dữ liệu thật cần Dũng xác nhận trước) để xem dòng cảnh báo "Đối chiếu RPC
-động" có bắn hay không, và nếu bắn thì lệch bao nhiêu/có giải thích được không — đây là bước bắt
-buộc TRƯỚC KHI cân nhắc thay hẳn `tonTheoLogD` bằng RPC. Việc cần làm ở phiên sau (có credentials):
-`./deploy.sh sup`, đăng nhập, xuất Excel báo cáo tháng cho vài kỳ đã chốt (dùng chính công cụ "So
-sánh RPC vs snapshot cũ" đã có làm tài liệu đối chiếu song song), mở sheet B10, xem phần ghi chú
-cảnh báo cuối sheet có dòng "Đối chiếu RPC động" không — có thì đọc số lệch cụ thể, đối chiếu bằng
-tay ở 1-2 điều luật để hiểu nguyên nhân trước khi quyết định thay công thức.
+**Mức độ kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm scratchpad) —
+sạch cú pháp cả 2 vòng sửa. **Test cô lập** (`test_b10_rpc_crosscheck.js`, scratchpad, không commit)
+— 12/12 PASS: 8 assertion đầu cho `rpcTonTheoTD` (gộp đúng theo điều luật, loại đúng bị can đã rời,
+fallback vụ 0 BC, không lẫn giữa các điều luật, `rpcTonList=null` không throw); 4 assertion mới cho
+logic CHỌN NGUỒN (`chonNguonTonKyNay`, trích y hệt biểu thức đã sửa) — xác nhận đủ 4 nhánh: RPC có
+entry → dùng RPC (bỏ qua kyTonTD/log dù khác); RPC có sẵn nhưng D không có entry → 0 thật, KHÔNG
+fallback (điểm dễ sai nhất nếu lẫn "RPC nói 0" với "RPC lỗi"); RPC lỗi + kỳ đã chốt → fallback đúng
+snapshot; RPC lỗi + kỳ chưa chốt → fallback đúng công thức log.
+
+**Xác nhận thực tế bằng dữ liệu Supabase production thật (bước 1, TRƯỚC khi đổi ưu tiên)** — Dũng tự
+chạy (không qua tôi, tôi không có credentials/chưa deploy) trên `qlahs-sup.web.app`/local, gửi ảnh
+chụp sheet B10 kỳ 06 xác nhận dòng cảnh báo bắn đúng như mô tả ở "Bước 1" trên.
+
+**CHƯA làm sau bước 2 (đổi ưu tiên)**: chưa xuất lại Excel trên dữ liệu thật để xác nhận cột "Tồn kỳ
+này" của kỳ 06 Điều tra giờ ra đúng 738 (không còn 735) và dòng cảnh báo cũ không còn bắn (vì giờ
+`vals` = RPC trực tiếp) — chỉ mới kiểm chứng bằng compile-check + test cô lập. Việc cần làm ở phiên
+sau (có credentials/Dũng tự làm): xuất lại báo cáo kỳ 06, xác nhận B10 Điều tra ra 738 BC đúng, đối
+chiếu thêm 1-2 kỳ khác đã chốt để chắc chắn không có giai đoạn/điều luật nào bị lệch theo hướng
+khác (VD RPC trả 0 sai cho 1 D nào đó do lỗi phân loại điều luật khác với log cũ).
 
 ## Chuyển hệ thống thống kê "tồn" sang query động — Phase 1+2 ĐÃ NỐI VÀO `qlahs-sup.html`, đã kiểm chứng qua UI thật (2026-08-05, nhánh `feature/tong-ke-dong`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
 
