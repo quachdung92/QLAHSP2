@@ -3254,6 +3254,113 @@ function BackfillNgayQuyetDinhGiaoNhanTool() {
   );
 }
 
+// Data cleansing cho hệ thống thống kê query động (2026-08-05, xem CLAUDE.md mục "Chuyển hệ thống
+// thống kê 'tồn' từ snapshot-chốt-kỳ sang query động") — `layTrangThaiVuTaiKy` xác định 1 vụ RỜI
+// giai đoạn (không còn tồn) DUY NHẤT qua sự kiện log `hoan_thanh`/`nhap_vu` — vụ nào đã giải quyết
+// (`vuan.trangThai != dang_giai_quyet`) nhưng THIẾU hẳn dòng `hoan_thanh` tương ứng (dữ liệu cũ
+// dựng lại lịch sử/import thiếu sót) sẽ bị RPC tính NHẦM là còn tồn mãi mãi (vụ không bao giờ có
+// sự kiện "ra" để loại nó khỏi tập tồn). Quét toàn bộ vụ thiếu log này, bù vào từ chính field đã
+// có sẵn trên `vuan` (`ngayQuyetDinh`/`kyHoanThanh`/số quyết định tương ứng qua
+// `fieldSoQuyetDinhTrenVuAn`) — ĐÚNG hình dạng sự kiện `taoSuKien` mà `HoanThanhVuAnModal` vẫn
+// tạo khi thao tác bình thường (xem dòng ~4729). KHÔNG áp dụng cho `trangThai === "da_nhap"` (vụ
+// đã bị nhập vào vụ khác dùng sự kiện `nhap_vu` riêng, không phải `hoan_thanh` — ngoài phạm vi
+// công cụ này, xem `NhapVuModal`). CHỈ ĐỌC rồi GHI THÊM (không sửa/xoá gì có sẵn) — an toàn chạy
+// lại nhiều lần (vụ đã có `hoan_thanh` sẽ tự động bị loại khỏi danh sách "cần bù" ở lần sau).
+async function backfillHoanThanhConThieu(onTienDo) {
+  const HINH_THUC_HOP_LE = ["da_xet_xu", "chuyen_di", "tam_dinh_chi", "dinh_chi", "an_huy"];
+  const [vuSnap, logSnap] = await Promise.all([
+    db.collection("vuan").where("trangThai", "in", HINH_THUC_HOP_LE).get(),
+    db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "==", "hoan_thanh").get(),
+  ]);
+  const daCoHoanThanh = new Set(logSnap.docs.map(d => d.data().maVuAn));
+  const canBu = vuSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(v => !v.daXoa && !daCoHoanThanh.has(v.id));
+
+  const now = new Date();
+  const nguoiThucHien = auth.currentUser?.email || "";
+  let batch = db.batch(); let cnt = 0;
+  let daBu = 0, thieuNgayQuyetDinh = 0, thieuKy = 0;
+  const commitNeu = async () => { if (cnt >= 400) { await batch.commit(); batch = db.batch(); cnt = 0; } };
+  for (let i = 0; i < canBu.length; i++) {
+    const v = canBu[i];
+    if (onTienDo) onTienDo(i + 1, canBu.length);
+    if (!v.ngayQuyetDinh) { thieuNgayQuyetDinh++; continue; } // không có ngày thì không suy đoán được
+    if (!v.kyHoanThanh) thieuKy++; // vẫn ghi (kyThongKe=null) — RPC coi sự kiện này KHÔNG hợp lệ để
+    // xác định "ra" (loại thẳng qua INNER JOIN, xem rpc_tong_ke_dong_2026-08-05.sql), chỉ cảnh báo
+    // để Dũng biết cần "Sửa kỳ" (Nhật ký thao tác) gán lại kỳ cho đúng, không tự đoán kỳ.
+    const field = fieldSoQuyetDinhTrenVuAn(v.trangThai);
+    batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+      maVuAn: v.id, loaiSuKien: "hoan_thanh", hinhThucHoanThanh: v.trangThai,
+      soQuyetDinh: (field && v[field]) || "", ngaySuKien: v.ngayQuyetDinh,
+      kyThongKe: v.kyHoanThanh || null,
+      ghiChu: "Bù log 'hoan_thanh' còn thiếu (data cleansing cho hệ thống thống kê query động).",
+      nguoiThucHien, thoiDiemGhi: now,
+    }));
+    cnt++; daBu++;
+    await commitNeu();
+  }
+  if (cnt > 0) await batch.commit();
+  return { tongCanBu: canBu.length, daBu, thieuNgayQuyetDinh, thieuKy };
+}
+
+function BackfillHoanThanhConThieuTool() {
+  const [dangChay, setDangChay] = useState(false);
+  const [tienDo, setTienDo] = useState(null);
+  const [ketQua, setKetQua] = useState(null);
+  const [loi, setLoi] = useState("");
+
+  const chay = async () => {
+    setDangChay(true); setLoi(""); setKetQua(null); setTienDo(null);
+    try {
+      const kq = await backfillHoanThanhConThieu((da, tong) => setTienDo({ da, tong }));
+      setKetQua(kq);
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi: " + err.message);
+    } finally {
+      setDangChay(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <h3 className="font-semibold text-slate-800 mb-1">Bù log "Hoàn thành" còn thiếu (chuẩn bị cho hệ thống thống kê query động)</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Vụ đã giải quyết (khác "Đang giải quyết") nhưng thiếu hẳn dòng sự kiện "Hoàn thành" trong
+        lịch sử (dữ liệu cũ dựng lại/import thiếu sót) sẽ bị RPC thống kê động tính NHẦM là còn
+        tồn mãi mãi. Chạy công cụ này TRƯỚC khi tin tưởng "So sánh RPC vs snapshot cũ" bên dưới.
+        An toàn chạy lại nhiều lần.
+      </p>
+      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-3 mb-3">{loi}</div>}
+      {dangChay && tienDo && (
+        <div className="text-xs text-slate-500 mb-3">Đang quét {tienDo.da}/{tienDo.tong}...</div>
+      )}
+      {ketQua && (
+        <div className="bg-green-50 border border-green-200 text-green-700 text-xs rounded-lg p-3 mb-3">
+          Đã bù {ketQua.daBu}/{ketQua.tongCanBu} vụ thiếu log "Hoàn thành".
+          {ketQua.thieuNgayQuyetDinh > 0 && (
+            <div className="mt-1 text-amber-700">
+              ⚠ {ketQua.thieuNgayQuyetDinh} vụ KHÔNG bù được vì thiếu "Ngày giải quyết" trên vụ án —
+              cần sửa thông tin vụ án để bổ sung ngày, rồi chạy lại.
+            </div>
+          )}
+          {ketQua.thieuKy > 0 && (
+            <div className="mt-1 text-amber-700">
+              ⚠ {ketQua.thieuKy} vụ đã bù nhưng KHÔNG có kỳ báo cáo (thiếu "kyHoanThanh" trên vụ) —
+              vào Nhật ký thao tác, dùng "Sửa kỳ" gán đúng kỳ cho các sự kiện vừa bù nếu cần.
+            </div>
+          )}
+        </div>
+      )}
+      <button onClick={chay} disabled={dangChay}
+              className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+        {dangChay ? "Đang bù..." : "Quét và bù log 'Hoàn thành' còn thiếu"}
+      </button>
+    </div>
+  );
+}
+
 // Sửa dữ liệu tonCuoiKyTheoTD/tonCuoiBiCan đã bị ghi sai bởi bug cũ (tinhLaiBaoCaoLuu từng chụp
 // ảnh LIVE hiện tại thay vì lịch sử — đã sửa code 2026-07-13 để không sai THÊM, nhưng dữ liệu đã
 // ghi sai trước đó không tự phục hồi). Chạy 1 lần để tính lại ĐÚNG từ log cho toàn bộ kỳ đã chốt,
@@ -4060,6 +4167,7 @@ function ImportExcelModule() {
       <BackfillTrinhDoTool />
       <BackfillTomTatBiCanTool />
       <BackfillNgayQuyetDinhGiaoNhanTool />
+      <BackfillHoanThanhConThieuTool />
       <TaiTaoTonTheoTDTool />
       <SoSanhRPCTonKyTool />
     </div>
