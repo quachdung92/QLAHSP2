@@ -9392,7 +9392,7 @@ function hangDsVuAn(v) {
 // vuChuaDL: { dieu_tra, truy_to, xet_xu } — mảng vụ trong tồn hiện tại chưa xác định được điều luật
 // (nguyên nhân gây lệch âm giữa B10 và báo cáo). Lệch dương = đúng thiết kế (1 vụ nhiều tội).
 // canhBao: chỉ cảnh báo khi có vụ chưa có điều luật (lệch âm thực sự), không cảnh báo lệch dương.
-function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new Map(), kyIdSetTrongBaoCao = null, vuKyKhoiToMap = new Map()) {
+function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new Map(), kyIdSetTrongBaoCao = null, vuKyKhoiToMap = new Map(), rpcTonList = null) {
   // Mặc định (không truyền) = báo cáo 1 kỳ, coi "trong kỳ này" = đúng ky.id. Báo cáo tổng hợp
   // nhiều kỳ (TongHopNhieuKyModal) truyền set đầy đủ id các kỳ đã gộp — xem xuatBaoCaoThangExcel.
   const _kyIdSet = kyIdSetTrongBaoCao || new Set([ky.id]);
@@ -9644,6 +9644,34 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
 
   const danhMucMap = Object.fromEntries(danhMuc.map(d => [d.dieuLuat, d]));
   const rows = [];
+
+  // RPC-based "Tồn kỳ này" theo điều luật (2026-08-05, ĐÍNH KÈM để đối chiếu — KHÔNG thay
+  // tonTheoLogD/vals/công thức Excel hiện có, xem CLAUDE.md "nối RPC vào Biểu B10"). rpcTonList =
+  // dsTonCuoiKyTheoGD đã tính SẴN ở xuatBaoCaoThangExcel (qua layTonTheoKyRPC + tinhDsTonTheoKy,
+  // KHÔNG gọi RPC lần 2 ở đây) — mỗi vụ có _bcIdsTon (Set maBiCan đang tồn TÍNH TỚI ĐÚNG kỳ K theo
+  // RPC, không phụ thuộc chuỗi tonTD_truoc/kyTonTD/tonTheoLogD đã vá tay nhiều lần trong ngày).
+  // Gộp theo điều luật giống hệt cách vuPrimaryDL/getDL làm ở nhánh JS-log, để so sánh táo với táo.
+  const rpcTonTheoTD = { dieu_tra: {}, truy_to: {}, xet_xu: {} };
+  if (rpcTonList) {
+    for (const gd of THU_TU_GIAI_DOAN) {
+      for (const vu of (rpcTonList[gd] || [])) {
+        const bcIdsTon = vu._bcIdsTon || new Set();
+        const bcTon = (biCanByVu[vu.id] || []).filter(bc => bcIdsTon.has(bc.id));
+        const bcChinh = bcTon.length ? (bcTon.find(bc => bc.loaiKhoiTo === "ban_dau") || bcTon[0]) : null;
+        const vuDL = bcChinh ? getDL(bcChinh) : (normTen((vu.dieuLuat || "").split(";")[0].trim()) || "");
+        if (vuDL) {
+          if (!rpcTonTheoTD[gd][vuDL]) rpcTonTheoTD[gd][vuDL] = { vu: 0, bc: 0 };
+          rpcTonTheoTD[gd][vuDL].vu++;
+        }
+        for (const bc of bcTon) {
+          const bcDL = getDL(bc);
+          if (!bcDL) continue;
+          if (!rpcTonTheoTD[gd][bcDL]) rpcTonTheoTD[gd][bcDL] = { vu: 0, bc: 0 };
+          rpcTonTheoTD[gd][bcDL].bc++;
+        }
+      }
+    }
+  }
 
   for (const D of tatCaDieuLuatChuan) {
     if (!D) continue;
@@ -9900,6 +9928,22 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       canhBao.push(`${NHAN_GIAI_DOAN[gd]}: B10 tổng tồn=${tongTheoTD} < thực tế=${tonThucTe} — kiểm tra lại dữ liệu`);
     }
     // Lệch dương (tongTheoTD > tonThucTe): đúng thiết kế, không cảnh báo
+
+    // Đối chiếu RPC động (2026-08-05, ĐÍNH KÈM, không thay vals/công thức Excel) — so TỔNG "Tồn kỳ
+    // này" (vụ + BC, cộng dồn qua mọi điều luật) giữa công thức log cũ (tongTheoTD ở trên, qua
+    // tonTheoLogD đã vá tay nhiều lần trong ngày) và RPC (tính TRỰC TIẾP as-of-kỳ từ log, không qua
+    // chuỗi tonTD_truoc/kyTonTD/snapshot). Lệch ở đây là tín hiệu công thức log còn sai sót mà RPC
+    // không mắc phải — KHÔNG tự động sửa vals, chỉ cảnh báo để cán bộ/phiên sau đối chiếu.
+    if (rpcTonList) {
+      const idxBc = idx + 1;
+      const tongBcTheoTD = rows.reduce((s, r) => s + (r.vals[idxBc] || 0), 0);
+      const rpcVals = Object.values(rpcTonTheoTD[gd]);
+      const rpcVu = rpcVals.reduce((s, r) => s + r.vu, 0);
+      const rpcBc = rpcVals.reduce((s, r) => s + r.bc, 0);
+      if (rpcVu !== tongTheoTD || rpcBc !== tongBcTheoTD) {
+        canhBao.push(`${NHAN_GIAI_DOAN[gd]}: Đối chiếu RPC động — Tồn kỳ này theo B10 (log)=${tongTheoTD} vụ/${tongBcTheoTD} BC, RPC (as-of)=${rpcVu} vụ/${rpcBc} BC — có lệch, cần kiểm tra lại công thức log hoặc dữ liệu điều luật.`);
+      }
+    }
   }
 
   // ── Kiểm tra tổng các khối "Phân tích bị can là cá nhân..." (Điều tra C7-C24 VÀ Truy tố C43-C52)
@@ -9967,7 +10011,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // tonTD_truoc/kyTonTD (đã chuẩn hoá key ở trên) trả kèm ra ngoài để xuatBaoCaoThangExcel dựng
   // sheet "Tồn theo ĐL (snapshot)" bằng ĐÚNG cùng 1 nguồn dữ liệu đã dùng để tính vals[] — tránh
   // viết lại logic chuẩn hoá 1 lần nữa ở nơi khác rồi lệch nhau.
-  return { rows, canhBao, vuChuaDL, tonTD_truoc, kyTonTD, dt_boSungBc, boSungTonTheoGD };
+  return { rows, canhBao, vuChuaDL, tonTD_truoc, kyTonTD, dt_boSungBc, boSungTonTheoGD, rpcTonTheoTD };
 }
 
 // Tính lại ĐÚNG tonCuoiKyTheoTD/tonCuoiBiCan cho TẤT CẢ kỳ đã chốt, theo thứ tự thời gian, từ
@@ -10399,7 +10443,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     .map(([td,s]) => [td, s.vuM, s.bcM, s.tgM, s.bcM-s.tgM, s.vuT, s.bcT, s.tgT, s.bcT-s.tgT, s.vuG, s.bcG]);
 
   // ---- Sheet 1: Biểu B10 (72 cột + phụ, động theo điều luật thực tế trong kỳ) ----
-  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, tonTD_truoc: b10TonTruoc, kyTonTD: b10KyTonTD, dt_boSungBc: b10DtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap);
+  // rpcTonKyNay null = RPC lỗi (mất mạng/PostgREST down) — KHÔNG truyền rpcTonList trong trường
+  // hợp đó (khác "RPC chạy đúng nhưng ra 0 vụ", trường hợp đó vẫn hợp lệ để đối chiếu) để tránh
+  // cảnh báo giả "lệch RPC" hàng loạt do bản thân RPC không gọi được, không phải do sai công thức.
+  const b10RpcTonList = rpcTonKyNay ? {
+    dieu_tra: dsTonCuoiKyTheoGD.dieu_tra.list, truy_to: dsTonCuoiKyTheoGD.truy_to.list, xet_xu: dsTonCuoiKyTheoGD.xet_xu.list,
+  } : null;
+  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, tonTD_truoc: b10TonTruoc, kyTonTD: b10KyTonTD, dt_boSungBc: b10DtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList);
   // Dòng Tổng
   const b10Tong = Array(B10_HEADER_CHI_TIET.length - 2).fill(0);
   for (const row of b10Rows) { row.vals.forEach((v, i) => { b10Tong[i] = (b10Tong[i] || 0) + v; }); }
