@@ -2,6 +2,102 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Audit toàn hệ thống "tồn cuối kỳ" — `tinhBaoCaoKy` (nguồn dùng chung cho MỌI nơi hiển thị/xuất) ĐỔI ƯU TIÊN sang RPC, liệt kê đầy đủ phần đã/chưa chuyển (2026-08-06, nhánh `feature/tong-ke-dong`, CHƯA deploy production, CHƯA kiểm chứng lại qua UI thật lần này)
+
+Theo yêu cầu Dũng sau khi xác nhận cross-check B10 hoạt động đúng (mục "Nối RPC vào Biểu B10" ngay
+dưới): "fix cả các sheet số tồn, kiểm tra lại toàn bộ hệ thống xem còn bất kỳ thành phần nào còn lọc
+theo hệ thống cũ, đã chuyển hết việc tính toán theo kỳ báo cáo chưa". Đã grep toàn bộ 99 chỗ dùng
+`tonCuoiKy`/`tonCuoiBiCan`/`tonCuoiKyTheoTD`/`tonCuoiKyRPC` trong `qlahs-sup.html`, phân loại từng
+nơi, sửa đúng CHOKEPOINT (1 hàm dùng chung, không phải sửa rải rác từng sheet) để mọi consumer tự
+động hưởng lợi.
+
+**Phát hiện quan trọng**: `tinhBaoCaoKy(ky, kyTruoc)` là hàm DUY NHẤT mọi nơi hiển thị/xuất báo cáo
+đều gọi (màn hình `KyChiTietModal`/`BangBaoCaoChiTiet`, Excel "Tổng hợp báo cáo"/"Cân đối số liệu",
+B10's `tonThucTe` cross-check, báo cáo tổng hợp nhiều kỳ) — sửa ĐÚNG 1 hàm này thay vì sửa từng sheet
+riêng lẻ như đã làm cho B10 hôm trước (đó là fix RIÊNG cho breakdown-theo-điều-luật, KHÔNG đụng tới
+`tonCuoiKy`/`tonCuoiBiCanKy` tổng — 2 việc bổ sung nhau, không trùng lặp).
+
+**Đã sửa (`tinhBaoCaoKy`, `qlahs-sup.html`)**:
+1. **"Tồn cuối kỳ"** — cả 2 nhánh (kỳ đã chốt có `baoCaoLuu` / kỳ chưa chốt) giờ gọi
+   `layTonTheoKyRPC(ky.id)` và ƯU TIÊN dùng số RPC cho `tonCuoiKy`/`tonCuoiBiCanKy`, chỉ rơi về
+   `baoCaoLuu`/snapshot cũ khi RPC lỗi (mất mạng/PostgREST down). Nhánh "chưa chốt" tái dùng
+   `tonCuoiKyRPC`/`tonCuoiBiCanKyRPC` đã được `tinhBaoCaoKyTuLog` tự đính kèm sẵn (Phase 1+2), KHÔNG
+   gọi RPC lần 2 cho cùng 1 kỳ. Mỗi giai đoạn có field mới `_tonCuoiKyNguon` ("rpc"/"duphong") để UI
+   biết đang hiện số nào.
+2. **"Tồn đầu kỳ"** — MỚI, trước đây hoàn toàn CHƯA được audit (khác "Tồn cuối kỳ" đã có cross-check
+   Phase 1+2 từ trước). "Tồn đầu kỳ" của kỳ K vốn = "Tồn cuối kỳ" của kỳ K−1, nhưng đọc trực tiếp
+   field `kyTruoc.tonCuoiKy` (RAW, đã lưu tĩnh) — chính là con số ĐÃ BIẾT có thể "trôi" (738→735).
+   Đã thêm gọi `layTonTheoKyRPC(kyTruoc.id)` (as-of ĐÚNG thời điểm kỳ trước kết thúc) và ghi đè
+   `tonDauKy`/`tonDauBiCan` cho CẢ 2 nhánh qua 1 helper dùng chung `apDungRpcTonDau` — không có
+   `kyTruoc` (kỳ đầu tiên) hoặc RPC lỗi thì giữ nguyên hành vi cũ.
+3. **Sửa 1 lỗ hổng phụ phát hiện lúc audit** — báo cáo TỔNG HỢP NHIỀU KỲ (`tinhBaoCaoTongHopNhieuKy`)
+   trước đây CHỈ gộp `tonCuoiKy` (vụ) từ kỳ muộn nhất, HOÀN TOÀN THIẾU `tonCuoiBiCanKy` (bị can) —
+   dòng "Tồn cuối kỳ" của báo cáo gộp nhiều kỳ luôn hiện rỗng/0 ở cột bị can. Đã thêm
+   `tonCuoiBiCanKy`/`_tonCuoiKyNguon` vào object gộp (lấy từ kỳ muộn nhất, tự động đúng nhờ `cuoiKy`
+   đến từ `tinhBaoCaoKy` đã sửa ở mục 1-2).
+4. **Cập nhật UI/label không còn đúng sau khi đổi ưu tiên** — banner "Kỳ đã chốt" cũ khẳng định "Tồn
+   cuối kỳ đã cố định vĩnh viễn, không bao giờ đổi kể cả khi Tính lại số liệu" (SAI sau khi đổi —
+   giờ tự tính lại qua RPC mỗi lần xem, tự lành nếu dữ liệu bị sửa retroactive); banner "Kỳ đang mở"
+   nói tồn cuối kỳ chỉ tính qua công thức cộng dồn cũ; tooltip nút "Tính lại số liệu"; nhãn dòng Excel
+   "Tổng hợp báo cáo" ("snapshot chốt kỳ này/trước" → "as-of ..., ưu tiên RPC") — tất cả đã sửa lại
+   cho khớp hành vi mới, tránh đánh lừa cán bộ về độ tin cậy/cơ chế của số liệu.
+5. Khối cảnh báo `tonThucTe` trong `tinhBieu10` (dùng để phát hiện "vụ chưa xác định điều luật") giờ
+   ưu tiên `rpcTonList[gd].length` thay vì đọc `ky.tonCuoiKy`/`baoCao[gd].tonCuoiKy` — cùng nguồn với
+   `tongTheoTD` (đã RPC-hoá hôm trước) để 2 vế so sánh táo với táo, tránh cảnh báo giả do khác nguồn.
+
+**Vì sao KHÔNG sửa `chotKyBaoCao`/`tinhBaoCaoKyTuLog` trực tiếp (chỉ sửa wrapper `tinhBaoCaoKy`)** —
+cân nhắc kỹ: RPC bị can-level (`layTrangThaiBiCanTaiKy`) đọc cutoff từ `kybaocao.ngayChot` NGAY TRONG
+DATABASE — tại thời điểm `chotKyBaoCao` đang CHẠY (trước khi `.update()` ghi `ngayChot` mới), cột đó
+vẫn `NULL`, RPC sẽ fallback sang "kỳ kế tiếp đã tồn tại" hoặc `now()` thay vì đúng `ngayChot` sắp
+được chọn — rủi ro sai lệch hẹp nhưng thật nếu chốt trễ + chưa có kỳ sau + có bị can thêm giữa
+`ngayChot` và lúc bấm chốt. Sửa ở `tinhBaoCaoKy` (chỉ dùng để ĐỌC/hiển thị, gọi SAU khi kỳ đã chốt —
+`ky.ngayChot` đã chắc chắn có trong DB) né hoàn toàn rủi ro này, đổi lại KHÔNG thay đổi con số được
+GHI VÀO doc `kybaocao` lúc chốt (`tonCuoiKy`/`tonCuoiBiCan` vẫn snapshot theo công thức log cũ như
+trước) — nhưng vì mọi nơi ĐỌC lại số này đều qua `tinhBaoCaoKy` (đã ưu tiên RPC), tác dụng thực tế
+với người dùng là như nhau, chỉ khác ở tầng lưu trữ.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Test cô lập mới
+(`test_tinhbaocaoky_rpc.js`, scratchpad) — 17/17 PASS: nhánh cached ưu tiên đúng RPC (mô phỏng đúng
+kịch bản 735→738 đã xác nhận thật), fallback đúng khi RPC lỗi, nhánh live tái dùng
+`tonCuoiKyRPC`/`tonCuoiBiCanKyRPC` đã đính kèm sẵn (không gọi RPC 2 lần), `_tonCuoiKyNguon` đánh dấu
+đúng theo TỪNG giai đoạn riêng biệt (không phải toàn kỳ), `apDungRpcTonDau` tính đúng tồn đầu kỳ từ
+RPC as-of kỳ trước và không ghi đè khi không có kỳ trước/RPC lỗi. **CHƯA xuất thử Excel/mở Kỳ chi
+tiết trên dữ liệu Supabase thật** sau đợt sửa này — cần Dũng kiểm tra lại tương tự lần trước (mở kỳ
+06, xác nhận "Tồn cuối kỳ" Điều tra hiện 738 BC không còn 735, "Tồn đầu kỳ" của kỳ 07 khớp đúng với
+"Tồn cuối kỳ" của kỳ 06).
+
+**Đã audit đầy đủ, phân loại RÕ RÀNG những gì CÒN dùng hệ thống cũ (cố ý hoặc chưa kịp làm)**:
+1. **B10 "Tồn kỳ TRƯỚC" (`tonTD_truoc`, khác "Tồn kỳ này" đã sửa hôm trước) — VẪN đọc
+   `kyTruoc?.tonCuoiKyTheoTD` (snapshot per-điều-luật cũ, CHƯA RPC-hoá)**. Đây là gap LỚN NHẤT còn
+   lại — vì B10 kỳ K's "Tồn kỳ này" (đã RPC-hoá) và kỳ K+1's "Tồn kỳ trước" đáng lẽ phải là CÙNG 1
+   con số nhưng giờ tính từ 2 nguồn khác nhau. Muốn sửa đúng cần: gọi thêm `layTonTheoKyRPC(kyTruoc.id)`,
+   fetch vụ+bị can cho tập tồn as-of kỳ trước (tương tự máy `tinhDsTonTheoKy` đã làm cho kỳ hiện tại),
+   rồi tính `rpcTonTheoTD`-kiểu-tương-tự cho kỳ trước — khối lượng công việc TƯƠNG ĐƯƠNG lần sửa
+   "Tồn kỳ này" hôm trước, cần 1 phiên riêng có đủ thời gian thiết kế + test, không làm vội ở đây.
+2. **Dashboard — biểu đồ xu hướng theo kỳ** (`DashboardModule`, đọc `k.tonCuoiKy`/`k.tonCuoiBiCan`
+   trực tiếp từ MỌI doc `kybaocao` để vẽ chart) — CHƯA RPC-hoá. Sửa đúng cần gọi RPC cho TỪNG kỳ hiện
+   trên biểu đồ (có thể hàng chục nếu xem cả năm) — khả thi (RPC nhanh, đa số kỳ <1000 dòng nên chỉ
+   1 trang) nhưng thêm độ trễ tải Dashboard, cần cân nhắc UX (loading state/cache) — để dành phiên
+   sau, KHÔNG làm vội vì đây là biểu đồ minh hoạ xu hướng, ít nhạy cảm hơn báo cáo B10/Xuất Excel.
+3. **Danh sách kỳ (`KyBaoCaoModule`, cột xem nhanh "X / Y / Z" theo giai đoạn ở mỗi dòng kỳ)** — đọc
+   raw `ky.tonCuoiKy` để hiện nhanh, KHÔNG gọi RPC (sẽ tốn N lần gọi RPC cho N dòng kỳ hiển thị cùng
+   lúc). Chấp nhận là bản xem nhanh/preview — số chính xác nằm ở báo cáo chi tiết (đã sửa) khi bấm
+   vào từng kỳ. CHƯA thêm ghi chú "có thể chưa cập nhật" cạnh cột này — nên làm ở phiên sau nếu muốn
+   rõ ràng hơn cho cán bộ.
+4. **CỐ Ý GIỮ NGUYÊN (không phải gap, là thiết kế đúng)**:
+   - `SoSanhRPCTonKyTool` ("So sánh RPC vs snapshot cũ", Cài đặt → Import Excel) — CHỦ ĐÍCH đọc raw
+     `ky.tonCuoiKy`/`tonCuoiBiCan` để SO SÁNH với RPC, không phải để sửa. Giữ nguyên.
+   - `taiTaoTonCuoiKyTheoTDTatCa`/`TaiTaoTonTheoTDTool` ("Sửa lại tồn cuối kỳ theo tội danh") — công
+     cụ backfill/vá tay CŨ cho `tonCuoiKyTheoTD`, coi `ky.tonCuoiKy` là "neo tin cậy tuyệt đối" — vẫn
+     GIỮ NGUYÊN theo đúng plan Phase 1+2 ("chỉ gỡ SAU KHI đối chiếu sạch qua nhiều kỳ và Dũng xác
+     nhận"). Bản thân khái niệm "neo tin cậy tuyệt đối" giờ đã bị nghi ngờ (chính field này là thứ
+     "trôi" trong sự cố 738/735) — công cụ này nên được xem lại/thay thế hẳn bằng RPC khi làm gap #1.
+   - `tinhTonHienTaiTheoGD`/"Số tồn hiện tại"/"DS tồn {gđ}" (live) — CỐ Ý luôn sống real-time, KHÁC
+     khái niệm "tồn cuối kỳ" (as-of 1 thời điểm cố định) — không cần và không nên đổi sang RPC.
+   - `tinhSnapTonTheoTD` (gọi bởi `chotKyBaoCao` để ghi `tonCuoiKyTheoTD` lúc chốt LẦN ĐẦU) — vẫn
+     query LIVE trạng thái `vuan` NGAY LÚC CHỐT, đúng vì đó chính là thời điểm cần chụp. Không đổi.
+
+
 ## Nối RPC vào Biểu B10 — "Tồn kỳ này" ĐÃ ĐỔI ƯU TIÊN sang RPC, xác nhận đúng qua dữ liệu thật (2026-08-05/06, nhánh `feature/tong-ke-dong`, CHƯA deploy production, CHƯA kiểm chứng lại lần 2 sau khi đổi ưu tiên)
 
 Tiếp theo phần "CHƯA làm" đã ghi ở mục Phase 1+2 ngay dưới đây — B10 (breakdown theo TỪNG điều
