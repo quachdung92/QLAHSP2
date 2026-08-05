@@ -2,6 +2,66 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Chuyển hệ thống thống kê "tồn" sang query động — Phase 1+2 ĐÃ NỐI VÀO `qlahs-sup.html`, đã kiểm chứng qua UI thật (2026-08-05, nhánh `feature/tong-ke-dong`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
+
+Tiếp theo mục "Phase 1" ngay dưới đây (RPC vụ-level, chưa nối vào app) — đã hoàn thành cả Phase 2
+(RPC bị can-level) VÀ nối cả 2 RPC vào `qlahs-sup.html` theo đúng nguyên tắc "giữ song song với hệ
+cũ" đã thống nhất trong plan.
+
+**Đã code + nối vào app**:
+1. `layTonTheoKyRPC(kyId)` (hàm JS mới, gọi cả 2 RPC 1 lần dùng chung) + `goiRpcPhanTrang` (xem bug
+   thật ở dưới).
+2. `tinhDsTonTheoKy` (sheet Excel "DS tồn cuối kỳ {gđ}") — đổi HẲN sang dùng RPC thay chuỗi
+   `tonCuoiKyIds`/`apDungThayDoiVuTheoThoiGian` — không còn phụ thuộc kỳ trước phải backfill.
+   `addSheetVu` thêm nhánh lọc bị can theo `_bcIdsTon` (Set từ RPC) bên cạnh `_bcCutoff` cũ (sheet
+   khác không đổi).
+3. `tinhBaoCaoKyTuLog` — CHỈ ĐÍNH KÈM `tonCuoiKyRPC`/`tonCuoiBiCanKyRPC` vào kết quả (KHÔNG thay
+   `tonCuoiKy`/`tonCuoiBiCanKy` hiện có — Dashboard/B10/Danh sách vụ án không bị ảnh hưởng).
+   `BangBaoCaoChiTiet` (màn hình xem báo cáo kỳ) hiện thêm dòng "Đối chiếu RPC động" dưới bảng, tô
+   vàng nếu lệch — CHỈ hoạt động cho kỳ tính live (kỳ chưa chốt, hoặc chốt nhưng chưa có
+   `baoCaoLuu`); kỳ đã chốt có cache thì đọc thẳng `baoCaoLuu` cũ, không tự chạy lại RPC (cần bấm
+   "Tính lại số liệu" để thấy) — dùng `SoSanhRPCTonKyTool` (mục 4) để đối chiếu không phụ thuộc cache.
+4. 2 công cụ mới trong Cài đặt → Import Excel: **`BackfillHoanThanhConThieuTool`** ("Bù log 'Hoàn
+   thành' còn thiếu") — data cleansing bắt buộc TRƯỚC khi tin RPC (vụ đã giải quyết nhưng thiếu
+   dòng `hoan_thanh` sẽ bị RPC tính tồn mãi mãi); **`SoSanhRPCTonKyTool`** ("So sánh RPC vs
+   snapshot cũ") — chỉ đọc, chạy RPC trên MỌI kỳ đã chốt, so với `tonCuoiKy`/`tonCuoiBiCan`.
+
+**Bug thật phát hiện + sửa qua kiểm chứng UI thật (không phải chỉ pg trực tiếp)**: gọi RPC không
+phân trang từ trình duyệt (qua `sb.rpc()`, khác kết nối `pg` trực tiếp dùng role `postgres`
+superuser lúc code/test RPC) chỉ nhận về ĐÚNG **1000 dòng** dù hệ thống có ~2176 vụ — PostgREST giới
+hạn cứng `db-max-rows`, KHÔNG báo lỗi (`error: null`), âm thầm cắt cụt. "So sánh RPC vs snapshot cũ"
+lúc đó ra sai lệch nặng (22 thay vì 310 vụ Điều tra kỳ06) — nếu không bắt qua UI thật (chỉ tin kiểm
+chứng qua kết nối `pg` trực tiếp, vốn KHÔNG bị giới hạn này vì chạy với quyền superuser bỏ qua
+PostgREST) sẽ không bao giờ phát hiện ra. Đã sửa bằng `goiRpcPhanTrang` — lặp `.range(from, from+999)`
+tới khi 1 trang trả về ít hơn 1000 dòng. Kiểm chứng lại: kỳ06 khớp CHÍNH XÁC 310/45/49 vụ.
+
+**Phát hiện phụ (không phải bug của RPC/redesign — hiện tượng CHÍNH nó minh chứng)**: sau khi sửa
+pagination, "So sánh" vẫn báo lệch Điều tra bị can kỳ06: RPC=738, snapshot=735 — kiểm tra trực tiếp
+`kybaocao.tonCuoiBiCan` xác nhận snapshot đã TRÔI VỀ 735 (giá trị SAI trước khi sửa, xem mục "Gộp
+nhánh..." dưới đây), dù đã xác nhận ghi đúng 738 lúc trước trong ngày — nhiều khả năng do 1 phiên
+khác chạy lại `taiTaoTonCuoiKyTheoTDTatCa` trên code CHƯA có narrow-fix (branch khác). **KHÔNG tự ý
+sửa lại** (đúng nguyên tắc không unilaterally ghi đè dữ liệu chung khi nghi có phiên khác đang làm
+— xem [[qlahsp2-main-concurrent-edits]]) — đây CHÍNH LÀ minh chứng sống cho lý do làm redesign này:
+RPC tính lại từ log mỗi lần, KHÔNG bị ảnh hưởng bởi việc snapshot cũ bị phiên khác ghi đè sai. Xác
+nhận thêm qua màn hình Kỳ báo cáo kỳ 07/2026 (đang mở): "Đối chiếu RPC động" hiện đúng Điều tra
+810 BC (RPC, khớp con số đã xác nhận chính xác trong ngày qua tái tạo tay công thức Excel) vs 807
+BC (chuỗi JS cũ — 735 (tồn đầu, đã trôi) + 191 − 119 = 807, SAI đúng bằng đúng khoản trôi 3 người).
+
+**Đã kiểm chứng qua UI thật trên `qlahs-sup.web.app`** (đăng nhập thật) sau khi sửa pagination: cả
+3 công cụ mới hiện đúng trong Cài đặt → Import Excel; "So sánh RPC vs snapshot cũ" chạy đúng qua
+nút thật; màn Kỳ báo cáo kỳ 07/2026 hiện đúng dòng "Đối chiếu RPC động"; Xuất Excel báo cáo tháng
+kỳ 07/2026 qua nút thật vẫn chạy thành công (736KB, 0 lỗi console ngoài cảnh báo Babel vô hại) —
+**chưa nạp lại workbook để đọc chi tiết sheet "DS tồn cuối kỳ"** (`ExcelJS.load()` bị treo trong môi
+trường kiểm chứng — cùng loại hạn chế đã ghi nhận trước đây khi monkey-patch `writeBuffer`, không
+phải bug ứng dụng) — nên mở thử file tải về bằng Excel thật trước khi deploy production.
+
+**CHƯA làm (ranh giới phạm vi có chủ đích, không phải thiếu sót)**: `tinhBieu10` (Biểu B10, breakdown
+theo TỪNG điều luật) CHƯA nối RPC — RPC hiện chỉ trả list phẳng theo vụ/bị can, chưa gộp theo tội
+danh; B10 vẫn dùng `tonTheoLogD` cũ. Đây là phần khó nhất còn lại (đúng lớp bug bổ sung bị can đã
+vá tay suốt cả ngày) — để dành 1 phiên riêng, có đủ thời gian thiết kế + kiểm chứng kỹ, không làm
+vội trong lúc token sắp cạn. `taiTaoTonCuoiKyTheoTDTatCa`/`TaiTaoTonTheoTDTool` GIỮ NGUYÊN (không
+gỡ) đúng theo plan — chỉ gỡ SAU KHI đối chiếu sạch qua nhiều kỳ và Dũng xác nhận.
+
 ## Chuyển hệ thống thống kê "tồn" từ snapshot-chốt-kỳ sang query động (as-of) qua RPC Postgres — Phase 1 (2026-08-05, nhánh `feature/tong-ke-dong`, RPC ĐÃ chạy lên Supabase thật, CHƯA nối vào `qlahs-sup.html`)
 
 Theo yêu cầu Dũng: hệ thống hiện tại tính "tồn cuối kỳ" bằng cách CHỐT rồi LƯU TĨNH
