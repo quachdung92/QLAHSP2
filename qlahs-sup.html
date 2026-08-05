@@ -8464,10 +8464,29 @@ function apDungThayDoiVuTheoThoiGian(baseSet, moiList, raList) {
 // "Chuyển hệ thống thống kê 'tồn' từ snapshot-chốt-kỳ sang query động (as-of) qua RPC Postgres") —
 // tính TRỰC TIẾP từ lichsuChuyenGiaiDoan, KHÔNG cần kỳ nào đứng trước phải "chốt", KHÔNG phụ thuộc
 // `tonCuoiKyIds`/chuỗi snapshot cũ.
+// PostgREST/Supabase GIỚI HẠN CỨNG 1000 dòng/lần gọi RPC (db-max-rows, không đổi được qua SQL) —
+// bug thật phát hiện qua kiểm chứng UI thật (2026-08-05): kỳ có ~2176 vụ hệ thống, gọi RPC không
+// phân trang chỉ trả về 1000 dòng ĐẦU (không báo lỗi gì, `error: null` — âm thầm cắt cụt!), khiến
+// "So sánh RPC vs snapshot cũ" ra kết quả sai LỆCH NẶNG (22 thay vì 310 vụ Điều tra). Phải tự phân
+// trang bằng `.range(from, to)` cho tới khi 1 trang trả về ÍT HƠN kích thước trang (hết dữ liệu).
+const RPC_TRANG_SIZE = 1000;
+async function goiRpcPhanTrang(tenHam, params) {
+  let all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await sb.rpc(tenHam, params).range(from, from + RPC_TRANG_SIZE - 1);
+    if (error) return { data: null, error };
+    all = all.concat(data || []);
+    if (!data || data.length < RPC_TRANG_SIZE) break;
+    from += RPC_TRANG_SIZE;
+  }
+  return { data: all, error: null };
+}
+
 async function layTonTheoKyRPC(kyId) {
   const [{ data: vuRows, error: e1 }, { data: bcRows, error: e2 }] = await Promise.all([
-    sb.rpc("layTrangThaiVuTaiKy", { p_ky_id: kyId }),
-    sb.rpc("layTrangThaiBiCanTaiKy", { p_ky_id: kyId }),
+    goiRpcPhanTrang("layTrangThaiVuTaiKy", { p_ky_id: kyId }),
+    goiRpcPhanTrang("layTrangThaiBiCanTaiKy", { p_ky_id: kyId }),
   ]);
   if (e1 || e2) {
     console.error("layTonTheoKyRPC lỗi:", e1 || e2);
