@@ -33,14 +33,21 @@ liệu thật) về việc công thức log cũ và RPC có khớp nhau hay khô
    sau nếu cần soi chi tiết theo từng điều luật thay vì chỉ xem tổng).
 
 **Mức độ kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong
-scratchpad, gỡ sau khi test) — sạch cú pháp. Đã trace tay 1 kịch bản nhỏ (1 vụ 3 bị can, 1 người đã
-rời giai đoạn trước kỳ K nên bị RPC loại khỏi `_bcIdsTon`) xác nhận đúng logic gộp. **CHƯA xuất thử
-Excel trên dữ liệu Supabase thật** để xem dòng cảnh báo "Đối chiếu RPC động" có bắn hay không, và
-nếu bắn thì lệch bao nhiêu/có giải thích được không — đây là bước bắt buộc TRƯỚC KHI cân nhắc thay
-hẳn `tonTheoLogD` bằng RPC. Việc cần làm ở phiên sau: xuất Excel báo cáo tháng cho vài kỳ đã chốt
-(dùng chính công cụ "So sánh RPC vs snapshot cũ" đã có làm tài liệu đối chiếu song song), mở sheet
-B10, xem phần ghi chú cảnh báo cuối sheet có dòng "Đối chiếu RPC động" không — có thì đọc số lệch cụ
-thể, đối chiếu bằng tay ở 1-2 điều luật để hiểu nguyên nhân trước khi quyết định thay công thức.
+scratchpad, gỡ sau khi test) — sạch cú pháp. **Test cô lập mới** (`test_b10_rpc_crosscheck.js`,
+scratchpad, không commit) — trích NGUYÊN VĂN `chuanHoaMaDieuLuat`/`chuanHoaTenToiDanh`/
+`taoDanhMucByTen`/`layMaDieuLuatBiCan` từ file thật, tái tạo đúng đoạn code mới (`rpcTonTheoTD`) —
+8/8 PASS: vụ có bị can đã rời giai đoạn trước kỳ K bị RPC loại đúng khỏi `_bcIdsTon` (không đếm
+nhầm điều luật của người đã rời); vụ 0 BC tồn dùng fallback `vu.dieuLuat` đúng; 2 vụ khác điều luật
+cộng dồn không lẫn nhau; `rpcTonList=null` (RPC lỗi) không throw, trả rỗng; mô phỏng so sánh tổng
+JS-log vs RPC ra đúng cả 2 nhánh khớp/lệch. **CHƯA xuất thử Excel trên dữ liệu Supabase thật** (cần
+đăng nhập `qlahs-sup.web.app` bằng tài khoản thật — phiên này không có sẵn credentials, và deploy
+lên site đó/thao tác trên dữ liệu thật cần Dũng xác nhận trước) để xem dòng cảnh báo "Đối chiếu RPC
+động" có bắn hay không, và nếu bắn thì lệch bao nhiêu/có giải thích được không — đây là bước bắt
+buộc TRƯỚC KHI cân nhắc thay hẳn `tonTheoLogD` bằng RPC. Việc cần làm ở phiên sau (có credentials):
+`./deploy.sh sup`, đăng nhập, xuất Excel báo cáo tháng cho vài kỳ đã chốt (dùng chính công cụ "So
+sánh RPC vs snapshot cũ" đã có làm tài liệu đối chiếu song song), mở sheet B10, xem phần ghi chú
+cảnh báo cuối sheet có dòng "Đối chiếu RPC động" không — có thì đọc số lệch cụ thể, đối chiếu bằng
+tay ở 1-2 điều luật để hiểu nguyên nhân trước khi quyết định thay công thức.
 
 ## Chuyển hệ thống thống kê "tồn" sang query động — Phase 1+2 ĐÃ NỐI VÀO `qlahs-sup.html`, đã kiểm chứng qua UI thật (2026-08-05, nhánh `feature/tong-ke-dong`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
 
