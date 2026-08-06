@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Chỉnh phạm vi 5 nhóm cột Biểu B10 (C6-C7/C25-C26/C36-C37/C58-C59/C71-C72) theo yêu cầu Dũng (2026-08-06, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, CHƯA deploy — chỉ mới compile-check + test cô lập)
+## Chỉnh phạm vi 5 nhóm cột Biểu B10 (C6-C7/C25-C26/C36-C37/C58-C59/C71-C72) theo yêu cầu Dũng (2026-08-06, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, **ĐÃ deploy `qlahs-sup.web.app` + `qlahsp2.web.app` theo yêu cầu trực tiếp của Dũng** — CHƯA kiểm chứng bằng dữ liệu Supabase thật, chỉ mới compile-check + test cô lập, xem checklist cuối mục)
 
 Theo yêu cầu trực tiếp của Dũng, `tinhBieu10` trước đây tính 5 nhóm cột RỘNG HƠN đúng ý nghĩa
 nghiệp vụ thật (đếm mọi sự kiện log khớp loại/giai đoạn trong kỳ, không phân biệt "lần đầu" hay
