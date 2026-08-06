@@ -2,6 +2,75 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Chỉnh phạm vi 5 nhóm cột Biểu B10 (C6-C7/C25-C26/C36-C37/C58-C59/C71-C72) theo yêu cầu Dũng (2026-08-06, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, CHƯA deploy — chỉ mới compile-check + test cô lập)
+
+Theo yêu cầu trực tiếp của Dũng, `tinhBieu10` trước đây tính 5 nhóm cột RỘNG HƠN đúng ý nghĩa
+nghiệp vụ thật (đếm mọi sự kiện log khớp loại/giai đoạn trong kỳ, không phân biệt "lần đầu" hay
+"đã từng đi vòng"). Đã thu hẹp đúng phạm vi:
+- **C6-C7** (ĐT khởi tố mới) — bỏ 2/4 nguồn "án nơi khác chuyển đến"/"phục hồi điều tra" (vụ ĐÃ CÓ
+  từ trước, không phải khởi tố MỚI thật) khỏi `dt.khoiToTrucTiep` — chỉ còn "án khởi tố mới"/"tin
+  báo khởi tố lên" (`dtKhoiToMoiThat`, lọc theo `vu.nguon`). Cascade tự động sang C8-C24 (nhân khẩu
+  học) vì đều phái sinh từ `dt_ktBcMoiKy`.
+- **C25-C26** (ĐT hoàn thành → TT) — chỉ tính vụ kết thúc điều tra LẦN ĐẦU (`dtChuyenDi_LanDau`) —
+  loại vụ đã từng bị trả điều tra bổ sung (`tra_ho_so` denGiaiDoan=dieu_tra) rồi hoàn thành lại.
+- **C36-C37** (TT hoàn thành → XX) — chỉ tính vụ truy tố LẦN ĐẦU + CHƯA TỪNG bị trả điều tra bổ sung
+  (dù đang ở lần TT→XX đầu tiên, vẫn loại nếu trước đó từng đi vòng qua ĐTBS) + KHÔNG có
+  `uyQuyenXetXu` (`ttChuyenDi_LanDau`). Cascade sang C38-C52/C39-C42 (nhân khẩu + mức độ NT) vì đều
+  phái sinh từ `tt_truToBc`/`tt_truToVu`.
+- **C58-C59** (TT trả ĐT) — chỉ tính "VKS trả trực tiếp": loại chuỗi "tòa trả viện rồi viện trả
+  công an" (kiểm tra sự kiện GẦN NHẤT trước đó đưa vụ vào TT — nếu là `tra_ho_so` denGiaiDoan=
+  truy_to thì loại) + loại round-trip "viện trả công an, công an trả lại viện" NGAY TRONG cùng kỳ
+  (`ttTraDi_TrucTiep`).
+- **C71-C72** (XX trả TT) — loại round-trip "tòa trả viện, viện trả lại tòa" NGAY TRONG cùng kỳ
+  (`xxTraDi_KhongLapKy`).
+
+**Cơ chế "lần đầu"/"trực tiếp" cần lịch sử ĐẦY ĐỦ (mọi kỳ, không chỉ kỳ đang xuất)** — hàm mới
+`fetchLichSuChuyenTraTheoVu(vuIds)` (đặt cạnh `fetchKyKhoiToVu`) fetch toàn bộ sự kiện
+`chuyen_giai_doan`/`tra_ho_so` (không lọc `kyThongKe`) cho các vụ liên quan, trả về
+`Map<maVuAn, [...]>` sắp XƯA→MỚI. `xuatBaoCaoThangExcel` fetch trước (chỉ với vụ xuất hiện trong 4
+mảng `chuyenDi`(ĐT)/`chuyenDi`(TT)/`traDi`(TT)/`traDi`(XX) của kỳ đang xuất — không cần toàn bộ
+`_vuIdsChoBaoCao`), truyền vào `tinhBieu10` làm tham số thứ 11 (`lichSuChuyenTraMap`). 3 hàm dùng
+chung mới trong `tinhBieu10`: `_laLanDauChuyenToi(vu, denGD)` (không có sự kiện `chuyen_giai_doan`
+cùng `denGiaiDoan` nào SỚM HƠN), `_chuaTungTraVeDT(vu)` (không có `tra_ho_so` denGiaiDoan=dieu_tra
+nào TRƯỚC thời điểm đang xét — dùng mốc `<` chứ không phải "ever", để KHÔNG bị nhiễm bởi sự kiện
+XẢY RA SAU relative to kỳ đang tính, tránh 1 lần ĐTBS ở TƯƠNG LAI làm sai lệch báo cáo của kỳ QUÁ
+KHỨ), `_laTrucTiepVaoTT(vu)` (tìm sự kiện GẦN NHẤT trước đó, nếu là `tra_ho_so` denGiaiDoan=truy_to
+["tòa trả về"] thì không phải trực tiếp; không có sự kiện nào thì coi là trực tiếp — khởi tố thẳng
+vào TT).
+
+**Excel formula tự kiểm chứng — theo đúng bài học "sửa JS không đủ, phải sửa cả công thức Excel"
+đã ghi nhiều lần trong file này** — không chỉ đổi giá trị JS, đã tạo **5 sheet MỚI** riêng cho B10
+(KHÔNG đụng "DS khởi tố ĐT"/"DS phục hồi ĐT"/"DS chuyển đến TT"/"DS chuyển đến XX"/"DS trả về ĐT"/
+"DS trả về TT"/"DS ĐT chuyển TT"/"DS TT chuyển XX"/"DS TT trả ĐT"/"DS XX trả TT" đã có — các sheet
+đó GIỮ NGUYÊN, vẫn phục vụ "Tổng thụ lý"/"Cân đối số liệu"/"Tổng hợp báo cáo"/"TK tội danh", cố ý
+KHÔNG thu hẹp phạm vi đó): `"DS khởi tố ĐT (mới thật)"`, `"DS ĐT chuyển TT (lần đầu)"`,
+`"DS TT chuyển XX (lần đầu)"`, `"DS TT trả ĐT (trực tiếp)"`, `"DS XX trả TT (không lặp kỳ)"` — dựng
+từ đúng 5 mảng đã lọc (`dtKhoiToMoiThat`/`dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/
+`ttTraDi_TrucTiep`/`xxTraDi_KhongLapKy`, `tinhBieu10` trả thêm ra ngoài). `B10_FORMULA` (C6/C7/C25-
+C27/C36-C38/C39-C52/C58-C59/C71-C72, và `DT_KTO` dùng cho C7-C24) đổi sang tham chiếu 5 sheet mới
+này thay vì sheet cũ.
+
+**Đã kiểm chứng**: biên dịch qua `@babel/core`+`@babel/preset-react@7.25.6` — sạch. Test cô lập
+mới (`test_b10_c25_c58.js`, trích nguyên `_laLanDauChuyenToi`/`_chuaTungTraVeDT`/
+`_laTrucTiepVaoTT`/nguồn filter từ file thật) — 12/12 PASS, gồm đúng các kịch bản biên đã bàn: vụ
+hoàn thành ĐT lần 1 (lần đầu=true) vs lần 2 sau ĐTBS (lần đầu=false); vụ TT→XX lần đầu-tới-XX
+NHƯNG từng ĐTBS trước đó (đúng bị loại dù `_laLanDauChuyenToi`=true riêng lẻ, vì
+`_chuaTungTraVeDT`=false); VKS trả trực tiếp (true) vs chuỗi tòa trả viện→viện trả CA (false); vụ
+khởi tố thẳng vào TT không có lịch sử (trực tiếp=true, không suy đoán relay khi thiếu dữ liệu).
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** (phiên này không có tài khoản đăng nhập/quyền
+truy cập trình duyệt tới `qlahs-sup.web.app`) — trước khi deploy, nên: (1) xuất Excel báo cáo tháng
+1 kỳ có ít nhất 1 vụ từng trả điều tra bổ sung rồi hoàn thành lại (kỳ 07/2026 có sẵn, xem lịch sử
+`QLVA_E01.53_2412_0062` ở các mục cũ), xác nhận vụ đó KHÔNG còn xuất hiện trong sheet "DS ĐT chuyển
+TT (lần đầu)"/C25-C26 (nhưng VẪN còn trong sheet cũ "DS ĐT chuyển TT" không đổi, dùng cho Cân đối
+số liệu); (2) đối chiếu B10 C6/C7 Điều tra kỳ đó với số vụ THẬT có nguồn "an_khoi_to_moi"/
+"tin_bao_khoi_to_len" (đếm tay qua Bảng dữ liệu Excel, filter cột Nguồn); (3) mở file Excel THẬT
+bằng Excel (không chỉ đọc lại qua ExcelJS) để xác nhận công thức SUMIF/COUNTIFS trên 5 sheet mới
+tính lại đúng khi Excel recalc (đúng bài học "cột -BC"/"Tồn kỳ này" — ExcelJS đọc lại KHÔNG tính
+lại công thức, ExcelJS ghi `result` cache đúng không chứng minh công thức Excel đúng); (4) xác nhận
+"Cân đối số liệu"/"Tổng thụ lý" (C3/C4/C33/C34/C60/C61) KHÔNG đổi so với trước (các sheet nguồn của
+2 khối đó cố tình giữ nguyên, không lọc). Chưa deploy `qlahs-sup.web.app`/`qlahsp2.web.app`.
+
 ## Hệ thống thống kê "tồn" ĐÃ chuyển hoàn toàn sang RPC query động — trạng thái cuối + dọn tàn dư hệ thống cũ (2026-08-06, nhánh `feature/tong-ke-dong`, **ĐÃ DEPLOY `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production)**, theo yêu cầu trực tiếp của Dũng — CHƯA kiểm chứng qua Excel thật SAU deploy, xem checklist cuối mục)
 
 **⚠ Deploy production lần này đi TRƯỚC bước kiểm chứng bằng Excel thật** — quy trình thường lệ của
