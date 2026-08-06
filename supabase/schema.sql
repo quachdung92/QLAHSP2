@@ -94,6 +94,9 @@ create table "kybaocao" (
   "tonCuoiKy"        jsonb,                    -- {dieu_tra, truy_to, xet_xu} → số vụ
   "tonCuoiBiCan"     jsonb,                    -- cùng hình dạng, số bị can
   "tonCuoiKyTheoTD"  jsonb,                    -- { [toiDanh]: { [giaiDoan]: {vuAn, biCan} } }
+  "tonCuoiKyIds"     jsonb,                    -- {dieu_tra:[maVuAn,...], truy_to:[...], xet_xu:[...]}
+                                                -- — dựng bởi taiTaoTonCuoiKyTheoTDTatCa, dùng cho
+                                                -- sheet "DS tồn cuối kỳ" (add_ton_cuoi_ky_ids_2026-08-04.sql)
   "baoCaoLuu"        jsonb,                    -- báo cáo đầy đủ đã tính, cache cho kỳ đã chốt
   "thoiDiemTinhLai"  timestamptz,              -- chỉ có khi đã bấm "Tính lại số liệu"
   -- 3 cột dưới đây phát hiện qua export dữ liệu thật (Phase 4) — bỏ sót ở audit text-based ban đầu.

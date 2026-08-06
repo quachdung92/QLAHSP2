@@ -2,6 +2,552 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Hệ thống thống kê "tồn" ĐÃ chuyển hoàn toàn sang RPC query động — trạng thái cuối + dọn tàn dư hệ thống cũ (2026-08-06, nhánh `feature/tong-ke-dong`, **ĐÃ DEPLOY `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production)**, theo yêu cầu trực tiếp của Dũng — CHƯA kiểm chứng qua Excel thật SAU deploy, xem checklist cuối mục)
+
+**⚠ Deploy production lần này đi TRƯỚC bước kiểm chứng bằng Excel thật** — quy trình thường lệ của
+dự án là kiểm chứng trên `qlahs-sup.web.app` trước rồi mới lên production, nhưng Dũng chủ động chọn
+"Deploy production luôn" khi được hỏi (dùng `AskUserQuestion`, có nêu rõ rủi ro chưa kiểm chứng
+formula B10 mới trước khi hỏi). Đã `git push` + `./deploy.sh sup` + `./deploy.sh prod` thành công,
+cả 2 URL đều đang chạy code mới nhất của nhánh `feature/tong-ke-dong`. **Việc cần làm ngay khi có
+thể**: chạy đủ checklist ở cuối mục này trên chính `qlahsp2.web.app` (dữ liệu thật) — nếu phát hiện
+sai số, sửa + deploy lại ngay, đừng để cán bộ dùng số liệu B10 sai mà không biết.
+
+**Bối cảnh** (xem đầy đủ lý do kỹ thuật/lịch sử ở mục "Chuyển hệ thống thống kê 'tồn' từ snapshot-
+chốt-kỳ sang query động — Phase 1" ngay dưới đây, KHÔNG lặp lại ở đây): hệ thống cũ tính "tồn cuối
+kỳ" bằng cách CHỐT rồi LƯU TĨNH (snapshot), mỗi kỳ sau CHUYỀN TAY số kỳ trước làm "tồn đầu kỳ" —
+chuỗi cộng dồn dễ "trôi" nếu 1 khâu trung gian tính sai (đã xảy ra thật: `kybaocao.tonCuoiBiCan`
+kỳ 06 Điều tra trôi từ 738 xuống 735 do 1 lượt chạy công cụ backfill cũ). Đã thay bằng 2 RPC Postgres
+(`layTrangThaiVuTaiKy`/`layTrangThaiBiCanTaiKy`) tính TRỰC TIẾP "as-of" 1 kỳ bất kỳ từ toàn bộ log
+`lichsuChuyenGiaiDoan`, không phụ thuộc kỳ nào đứng trước phải "chốt" — mỗi lần xem là tính lại,
+tự lành nếu dữ liệu được sửa retroactive.
+
+**Kiến trúc CUỐI CÙNG (sau 2 ngày, nhiều vòng sửa)** — mọi nơi hiển thị/xuất "tồn" giờ ưu tiên RPC,
+fallback về snapshot cũ CHỈ khi RPC không gọi được (mất mạng/PostgREST lỗi):
+1. **`tinhBaoCaoKy(ky, kyTruoc)`** — chokepoint DUY NHẤT mọi nơi hiển thị/xuất báo cáo gọi (màn hình
+   `KyChiTietModal`/`BangBaoCaoChiTiet`, Excel "Tổng hợp báo cáo"/"Cân đối số liệu", báo cáo gộp
+   nhiều kỳ) — ưu tiên RPC cho CẢ "Tồn cuối kỳ" (`tonCuoiKy`/`tonCuoiBiCanKy`) LẪN "Tồn đầu kỳ"
+   (`tonDauKy`/`tonDauBiCan`, qua RPC as-of kỳ TRƯỚC). Field `_tonCuoiKyNguon` ("rpc"/"duphong") báo
+   UI biết đang hiện nguồn nào — banner cảnh báo màu hổ phách khi rơi về dự phòng.
+2. **`tinhBieu10`** — "Tồn kỳ này" VÀ "Tồn kỳ trước" (theo TỪNG điều luật) đều ưu tiên RPC qua hàm
+   dùng chung `gomRpcTheoTD` (nhận `rpcTonList`/`rpcTonTruocList` — kỳ hiện tại/kỳ trước).
+3. **Excel — B10_FORMULA** ghi công thức `SUMIF`/`COUNTIFS` TRỰC TIẾP vào 2 sheet ẩn "DS tồn cuối
+   kỳ (trước) {gs}" (RPC as-of) thay vì `VLOOKUP` vào sheet snapshot tĩnh — **1 công thức duy nhất
+   cho MỌI trường hợp**, không còn phân nhánh "đã chốt/chưa chốt".
+4. Sheet "DS tồn cuối kỳ {gs}" (hiện, dùng tra cứu) + "DS tồn cuối kỳ trước {gs}" (ẨN, chỉ để B10
+   SUMIF vào) — cả 2 dựng qua `tinhDsTonTheoKy`/`addSheetVu`, thuần RPC.
+
+**Bài học quan trọng nhất phát hiện giữa chừng (giữ lại — dễ tái phạm nếu quên)**: sửa GIÁ TRỊ JS
+(`dt_tn_vu`/`vals[]`) KHÔNG đủ để sửa số hiện trên Excel THẬT nếu ô đó đang ghi CÔNG THỨC (không
+phải giá trị tĩnh) — Excel thật LUÔN tính lại theo formula khi mở file, bỏ qua "result" cache JS đã
+tính (đúng bài học "cột -BC..." đã ghi nhiều lần trong file này). Vòng sửa đầu (B10 "Tồn kỳ này"
+"đổi ưu tiên RPC") chỉ đổi đúng `vals[]`/dòng cảnh báo — các Ô B10 THẬT vẫn tiếp tục hiện số cũ vì
+công thức Excel (`mkVlSnap`/`mkTonNayVu`) hoàn toàn độc lập với `vals[]`. Phải đào tới tận
+`B10_FORMULA` (nơi sinh CHUỖI CÔNG THỨC ghi vào ô) mới sửa dứt điểm. **Khi sửa bất kỳ số liệu nào
+xuất hiện trong sheet Excel có SUMIF/COUNTIFS/VLOOKUP, luôn kiểm tra xem ô đó ghi giá trị tĩnh hay
+công thức trước khi kết luận đã sửa xong.**
+
+**Đã dọn tàn dư hệ thống cũ (2026-08-06, theo yêu cầu Dũng "cái gì thừa thì cắt hết")**:
+1. Xoá hẳn sheet Excel "Tồn theo ĐL (snapshot)" + hàm `mkVlSnap`/`mkTonNayVu`/`mkTonNayBc`/
+   `VAO_TON_GD`/`RA_TON_GD` (B10 không còn cần theo dõi bị can bổ sung qua sự kiện/sheet phụ riêng
+   — RPC so trực tiếp `ngayKhoiTo` với cutoff, tự đúng cả "ban đầu" lẫn "bổ sung").
+2. Ngừng ghi `kybaocao.tonCuoiKyIds` (`taiTaoTonCuoiKyTheoTDTatCa`) — field này TỪNG được
+   `tinhDsTonTheoKy` đọc trước khi có RPC; đã grep xác nhận KHÔNG còn nơi nào đọc field này nữa
+   (cột Postgres vẫn còn trên schema, chỉ không ghi thêm dữ liệu mới).
+3. **Dashboard — biểu đồ xu hướng theo kỳ** đổi sang gọi RPC song song cho TỪNG kỳ hiển thị (thay vì
+   đọc thẳng `k.tonCuoiKy`/`k.tonCuoiBiCan` snapshot) — cache theo `kyId` trong state, fallback về
+   snapshot/số live nếu RPC lỗi cho 1 kỳ cụ thể.
+4. Danh sách kỳ (`KyBaoCaoModule`, cột xem nhanh "Tồn cuối kỳ ĐT/TT/XX") — CHƯA đổi sang RPC (N lượt
+   gọi cho N dòng kỳ hiển thị cùng lúc, tốn hơn lợi ích của 1 cột "xem nhanh") — thêm icon ⓘ + tooltip
+   giải thích "số xem nhanh, có thể chưa cập nhật — bấm vào 1 kỳ để xem số chính xác qua RPC".
+5. Cập nhật lại toàn bộ mô tả/tooltip của 2 công cụ Cài đặt → Import Excel còn nhắc tới vai trò CŨ:
+   - **"Sửa lại tồn cuối kỳ theo tội danh"** (`TaiTaoTonTheoTDTool`) — đổi tên/mô tả rõ: giờ CHỈ còn
+     là dữ liệu DỰ PHÒNG khi RPC lỗi, không còn là nguồn chính cho B10 hay "DS tồn cuối kỳ" nữa.
+   - **"So sánh RPC vs snapshot cũ"** (`SoSanhRPCTonKyTool`) — đổi vai trò từ "đối chiếu trước khi
+     thay thế" (đã xong) sang "rà soát sức khoẻ dữ liệu định kỳ" (kỳ nào lệch không còn ảnh hưởng số
+     liệu cán bộ thấy, chỉ là dấu hiệu snapshot dự phòng cũ, không khẩn cấp).
+
+**CỐ Ý GIỮ NGUYÊN, KHÔNG PHẢI TÀN DƯ (đã audit kỹ, xác nhận vẫn cần)**:
+- `tinhTonHienTaiTheoGD`/"Số tồn hiện tại"/"DS tồn {gđ}" (live) — CỐ Ý luôn sống real-time, KHÁC hẳn
+  khái niệm "tồn cuối kỳ" (as-of 1 thời điểm cố định).
+- `tinhSnapTonTheoTD` (gọi bởi `chotKyBaoCao` lúc chốt LẦN ĐẦU) — query LIVE trạng thái `vuan` NGAY
+  LÚC CHỐT, đúng vì đó chính là thời điểm cần chụp — không đổi.
+- `VAO_SHEETS_GD`/`RA_SHEETS_GD`/"DS bổ sung BC {gs} (tồn)" (sheet "Cân đối số liệu") — cơ chế audit
+  CỐ Ý dùng công thức cộng dồn KHÁC B10 để tự đối chiếu chéo ngay trong Excel, không phải trùng lặp.
+- `chotKyBaoCao`/`tinhBaoCaoKyTuLog` vẫn GHI `tonCuoiKy`/`tonCuoiBiCan`/`tonCuoiKyTheoTD` theo công
+  thức cũ lúc chốt — CỐ Ý không đổi (RPC bị can-level đọc `kybaocao.ngayChot` NGAY TRONG DB, cột đó
+  chưa kịp ghi khi đang chốt → rủi ro sai cutoff hẹp nhưng thật) — chỉ sửa tầng ĐỌC (`tinhBaoCaoKy`,
+  luôn gọi SAU khi đã chốt xong, `ngayChot` chắc chắn có trong DB), không sửa tầng GHI.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` sạch qua nhiều vòng. 2 file
+test cô lập (scratchpad, không commit) — `test_b10_rpc_crosscheck.js` 15/15 PASS (gộp theo điều
+luật, loại đúng bị can đã rời, logic chọn nguồn "Tồn kỳ này"/"Tồn kỳ trước" đủ 4 nhánh mỗi bên: RPC
+có entry/RPC có sẵn nhưng D không có entry (0 thật, không fallback)/RPC lỗi+kỳ chốt/RPC lỗi+kỳ chưa
+chốt); `test_tinhbaocaoky_rpc.js` 17/17 PASS (nhánh cached/live, `_tonCuoiKyNguon`, `apDungRpcTonDau`).
+**Xác nhận thực tế 1 lần bằng dữ liệu Supabase production thật** (Dũng tự chạy, gửi ảnh chụp) — dòng
+cảnh báo B10 kỳ 06 Điều tra bắt đúng "log=735 BC, RPC=738 BC" TRƯỚC khi đổi ưu tiên, khớp chính xác
+sự cố dữ liệu đã biết.
+
+**CHƯA kiểm chứng lại bằng Excel thật SAU đợt dọn tàn dư cuối cùng này** (đổi công thức B10, xoá
+sheet snapshot, Dashboard RPC hoá) — đây là các thay đổi RỦI RO CAO (đổi cấu trúc sheet/công thức
+gốc, không chỉ đính kèm JS). **ĐÃ deploy production TRƯỚC khi chạy checklist này** (quyết định của
+Dũng) — nên chạy SỚM NHẤT có thể trên chính `qlahsp2.web.app`:
+1. Xuất báo cáo kỳ 06 (đã chốt) VÀ 1 kỳ đang mở — mở bằng Excel THẬT (không phải ExcelJS.load).
+2. Biểu B10 "Tồn kỳ trước"/"Tồn kỳ này" ra đúng số đã biết (VD Điều tra kỳ06 = 738 BC ngay trong ô,
+   không chỉ ở dòng cảnh báo).
+3. Sheet "Tồn theo ĐL (snapshot)" không còn; 2 sheet ẩn "DS tồn cuối kỳ trước {gs}" tồn tại (Unhide
+   để xem), dữ liệu đối chiếu tay vài dòng đúng.
+4. "Cân đối số liệu" vẫn Chênh lệch = 0.
+5. Dashboard tải được, biểu đồ xu hướng ra số hợp lý (không bị treo do gọi RPC cho nhiều kỳ).
+6. Danh sách kỳ (Kỳ báo cáo) hiện đúng icon ⓘ + tooltip ở cột "Tồn cuối kỳ".
+
+## Chuyển hệ thống thống kê "tồn" sang query động — Phase 1+2 ĐÃ NỐI VÀO `qlahs-sup.html`, đã kiểm chứng qua UI thật (2026-08-05, nhánh `feature/tong-ke-dong`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
+
+Tiếp theo mục "Phase 1" ngay dưới đây (RPC vụ-level, chưa nối vào app) — đã hoàn thành cả Phase 2
+(RPC bị can-level) VÀ nối cả 2 RPC vào `qlahs-sup.html` theo đúng nguyên tắc "giữ song song với hệ
+cũ" đã thống nhất trong plan.
+
+**Đã code + nối vào app**:
+1. `layTonTheoKyRPC(kyId)` (hàm JS mới, gọi cả 2 RPC 1 lần dùng chung) + `goiRpcPhanTrang` (xem bug
+   thật ở dưới).
+2. `tinhDsTonTheoKy` (sheet Excel "DS tồn cuối kỳ {gđ}") — đổi HẲN sang dùng RPC thay chuỗi
+   `tonCuoiKyIds`/`apDungThayDoiVuTheoThoiGian` — không còn phụ thuộc kỳ trước phải backfill.
+   `addSheetVu` thêm nhánh lọc bị can theo `_bcIdsTon` (Set từ RPC) bên cạnh `_bcCutoff` cũ (sheet
+   khác không đổi).
+3. `tinhBaoCaoKyTuLog` — CHỈ ĐÍNH KÈM `tonCuoiKyRPC`/`tonCuoiBiCanKyRPC` vào kết quả (KHÔNG thay
+   `tonCuoiKy`/`tonCuoiBiCanKy` hiện có — Dashboard/B10/Danh sách vụ án không bị ảnh hưởng).
+   `BangBaoCaoChiTiet` (màn hình xem báo cáo kỳ) hiện thêm dòng "Đối chiếu RPC động" dưới bảng, tô
+   vàng nếu lệch — CHỈ hoạt động cho kỳ tính live (kỳ chưa chốt, hoặc chốt nhưng chưa có
+   `baoCaoLuu`); kỳ đã chốt có cache thì đọc thẳng `baoCaoLuu` cũ, không tự chạy lại RPC (cần bấm
+   "Tính lại số liệu" để thấy) — dùng `SoSanhRPCTonKyTool` (mục 4) để đối chiếu không phụ thuộc cache.
+4. 2 công cụ mới trong Cài đặt → Import Excel: **`BackfillHoanThanhConThieuTool`** ("Bù log 'Hoàn
+   thành' còn thiếu") — data cleansing bắt buộc TRƯỚC khi tin RPC (vụ đã giải quyết nhưng thiếu
+   dòng `hoan_thanh` sẽ bị RPC tính tồn mãi mãi); **`SoSanhRPCTonKyTool`** ("So sánh RPC vs
+   snapshot cũ") — chỉ đọc, chạy RPC trên MỌI kỳ đã chốt, so với `tonCuoiKy`/`tonCuoiBiCan`.
+
+**Bug thật phát hiện + sửa qua kiểm chứng UI thật (không phải chỉ pg trực tiếp)**: gọi RPC không
+phân trang từ trình duyệt (qua `sb.rpc()`, khác kết nối `pg` trực tiếp dùng role `postgres`
+superuser lúc code/test RPC) chỉ nhận về ĐÚNG **1000 dòng** dù hệ thống có ~2176 vụ — PostgREST giới
+hạn cứng `db-max-rows`, KHÔNG báo lỗi (`error: null`), âm thầm cắt cụt. "So sánh RPC vs snapshot cũ"
+lúc đó ra sai lệch nặng (22 thay vì 310 vụ Điều tra kỳ06) — nếu không bắt qua UI thật (chỉ tin kiểm
+chứng qua kết nối `pg` trực tiếp, vốn KHÔNG bị giới hạn này vì chạy với quyền superuser bỏ qua
+PostgREST) sẽ không bao giờ phát hiện ra. Đã sửa bằng `goiRpcPhanTrang` — lặp `.range(from, from+999)`
+tới khi 1 trang trả về ít hơn 1000 dòng. Kiểm chứng lại: kỳ06 khớp CHÍNH XÁC 310/45/49 vụ.
+
+**Phát hiện phụ (không phải bug của RPC/redesign — hiện tượng CHÍNH nó minh chứng)**: sau khi sửa
+pagination, "So sánh" vẫn báo lệch Điều tra bị can kỳ06: RPC=738, snapshot=735 — kiểm tra trực tiếp
+`kybaocao.tonCuoiBiCan` xác nhận snapshot đã TRÔI VỀ 735 (giá trị SAI trước khi sửa, xem mục "Gộp
+nhánh..." dưới đây), dù đã xác nhận ghi đúng 738 lúc trước trong ngày — nhiều khả năng do 1 phiên
+khác chạy lại `taiTaoTonCuoiKyTheoTDTatCa` trên code CHƯA có narrow-fix (branch khác). **KHÔNG tự ý
+sửa lại** (đúng nguyên tắc không unilaterally ghi đè dữ liệu chung khi nghi có phiên khác đang làm
+— xem [[qlahsp2-main-concurrent-edits]]) — đây CHÍNH LÀ minh chứng sống cho lý do làm redesign này:
+RPC tính lại từ log mỗi lần, KHÔNG bị ảnh hưởng bởi việc snapshot cũ bị phiên khác ghi đè sai. Xác
+nhận thêm qua màn hình Kỳ báo cáo kỳ 07/2026 (đang mở): "Đối chiếu RPC động" hiện đúng Điều tra
+810 BC (RPC, khớp con số đã xác nhận chính xác trong ngày qua tái tạo tay công thức Excel) vs 807
+BC (chuỗi JS cũ — 735 (tồn đầu, đã trôi) + 191 − 119 = 807, SAI đúng bằng đúng khoản trôi 3 người).
+
+**Đã kiểm chứng qua UI thật trên `qlahs-sup.web.app`** (đăng nhập thật) sau khi sửa pagination: cả
+3 công cụ mới hiện đúng trong Cài đặt → Import Excel; "So sánh RPC vs snapshot cũ" chạy đúng qua
+nút thật; màn Kỳ báo cáo kỳ 07/2026 hiện đúng dòng "Đối chiếu RPC động"; Xuất Excel báo cáo tháng
+kỳ 07/2026 qua nút thật vẫn chạy thành công (736KB, 0 lỗi console ngoài cảnh báo Babel vô hại) —
+**chưa nạp lại workbook để đọc chi tiết sheet "DS tồn cuối kỳ"** (`ExcelJS.load()` bị treo trong môi
+trường kiểm chứng — cùng loại hạn chế đã ghi nhận trước đây khi monkey-patch `writeBuffer`, không
+phải bug ứng dụng) — nên mở thử file tải về bằng Excel thật trước khi deploy production.
+
+**CHƯA làm (ranh giới phạm vi có chủ đích, không phải thiếu sót)**: `tinhBieu10` (Biểu B10, breakdown
+theo TỪNG điều luật) CHƯA nối RPC — RPC hiện chỉ trả list phẳng theo vụ/bị can, chưa gộp theo tội
+danh; B10 vẫn dùng `tonTheoLogD` cũ. Đây là phần khó nhất còn lại (đúng lớp bug bổ sung bị can đã
+vá tay suốt cả ngày) — để dành 1 phiên riêng, có đủ thời gian thiết kế + kiểm chứng kỹ, không làm
+vội trong lúc token sắp cạn. `taiTaoTonCuoiKyTheoTDTatCa`/`TaiTaoTonTheoTDTool` GIỮ NGUYÊN (không
+gỡ) đúng theo plan — chỉ gỡ SAU KHI đối chiếu sạch qua nhiều kỳ và Dũng xác nhận.
+
+## Chuyển hệ thống thống kê "tồn" từ snapshot-chốt-kỳ sang query động (as-of) qua RPC Postgres — Phase 1 (2026-08-05, nhánh `feature/tong-ke-dong`, RPC ĐÃ chạy lên Supabase thật, CHƯA nối vào `qlahs-sup.html`)
+
+Theo yêu cầu Dũng: hệ thống hiện tại tính "tồn cuối kỳ" bằng cách CHỐT rồi LƯU TĨNH
+(`kybaocao.tonCuoiKy`/`tonCuoiBiCan`/`tonCuoiKyTheoTD`/`tonCuoiKyIds`), mỗi kỳ sau CHUYỀN TAY số
+kỳ trước làm "tồn đầu kỳ" — đúng nguyên nhân gốc của cả chuỗi bug đã sửa trong ngày (xem mục
+"Gộp nhánh fix-thong-ke-may2..." ngay dưới). Trước đây né việc "tính lại từ đầu" vì lo tốn lượt
+đọc Firestore — nay đã chuyển hẳn Supabase/Postgres, không còn giới hạn đó. Dũng đưa ra 1 đề xuất
+kỹ thuật cụ thể (RPC Postgres, `SELECT DISTINCT ON` theo `kyThongKe`) — đã đối chiếu với code/schema
+thật, xác nhận ĐÚNG HƯỚNG (RPC theo `kyThongKe` chứ không theo `ngaySuKien`, khớp nguyên tắc #2/#3
+"kỳ báo cáo do cán bộ tự quyết"), nhưng có vài lỗ hổng kỹ thuật đã sửa trước khi code — xem plan đầy
+đủ đã duyệt (lưu tại phiên làm việc, không còn giữ file plan sau khi merge) và phần dưới đây.
+
+**RPC mới `layTrangThaiVuTaiKy(p_ky_id)`** (`supabase/rpc_tong_ke_dong_2026-08-05.sql`) — với MỌI
+vụ từng chạm giai đoạn, trả về trạng thái CUỐI CÙNG tính tới hết kỳ `p_ky_id` (kỳ nào cũng ra số
+ngay, không cần kỳ nào đứng trước phải "chốt"). Chỉ lọc đúng 8/14 `loaiSuKien` thật sự đổi giai
+đoạn (`khoi_to_vu`/`tach_vu`/`chuyen_giai_doan`/`tra_ho_so`/`phuc_hoi`/`nhan_lai_chuyen_di`/
+`hoan_thanh`/`nhap_vu`) TRƯỚC khi `DISTINCT ON` — nếu không, 1 dòng `giao_nhan_ho_so` ghi SAU
+`hoan_thanh` (rất hay xảy ra, nộp lưu trữ luôn diễn ra sau khi vụ đã xong) sẽ thắng và bị tính nhầm
+còn tồn. Xếp hạng theo (1) kỳ — `kybaocao.ngayBatDau`, kỳ `loai='luu_tru'` luôn coi là SỚM NHẤT
+(-infinity, vì là backfill dữ liệu cũ không có vị trí thật trên trục thời gian báo cáo); (2) trong
+CÙNG 1 kỳ, CHỈ `thoiDiemGhi` (xem bài học tie-break ngay dưới — KHÔNG dùng `ngaySuKien`); (3) khi cả
+`thoiDiemGhi` cũng trùng hệt, ưu tiên sự kiện RA (`hoan_thanh`/`nhap_vu`) thắng. `SECURITY INVOKER`
+mặc định (không cần DEFINER — đã xác nhận qua `rls.sql`: mọi user `authenticated` đã có quyền
+SELECT toàn bộ `lichsuChuyenGiaiDoan`/`kybaocao`). Thêm index
+`lichsuChuyenGiaiDoan_maVuAn_kyThongKe_idx` — index cũ chỉ có `(maVuAn,thoiDiemGhi)`, không đủ cho
+kiểu truy vấn "theo từng vụ, lấy hàng mới nhất tính tới kỳ K".
+
+**Bài học tie-break quan trọng, đã THỬ SAI 2 LẦN trước khi ra bản đúng** — kiểm chứng lần đầu trên
+dữ liệu Supabase thật (đối chiếu RPC vs `kybaocao.tonCuoiKyIds` của kỳ 06/2026, kỳ ĐÃ chốt duy nhất)
+ra lệch +4 Điều tra/+2 Xét xử. Đào sâu: 6 vụ có CẢ `hoan_thanh` lẫn `khoi_to_vu` cùng ghi bởi 1 lượt
+dựng-lại-lịch-sử hàng loạt (`thoiDiemGhi` giống hệt nhau tới milli-giây, cùng 1 transaction — xác
+nhận qua đọc `::text` full-precision, không phải làm tròn hiển thị của driver `pg`), nhưng
+`ngaySuKien` của `hoan_thanh` (tự khai, dữ liệu cũ) LẠI SỚM HƠN `khoi_to_vu` — vô lý logic (hoàn
+thành trước khi khởi tố) nhưng vẫn là dữ liệu đã lưu thật. **Thử lần 1** (ưu tiên `ngaySuKien` trước
+`thoiDiemGhi`, theo đúng suy luận ban đầu "ngày quyết định thật quan trọng hơn ngày ghi log") — SAI,
+chọn nhầm `khoi_to_vu` là mới nhất cho cả 6 vụ dù `vuan.trangThai` (nguồn live, không qua log) xác
+nhận đã hoàn thành từ lâu. **Thử lần 2** (đổi ưu tiên `thoiDiemGhi` trước, `ngaySuKien` làm tiêu chí
+PHỤ sau đó — tưởng đã đúng, sửa được 2/6 vụ) — VẪN SAI: với 4/6 vụ còn lại, `thoiDiemGhi` tuy trùng
+(rơi vào nhánh tie-break phụ) nhưng `ngaySuKien` (tiêu chí phụ) vẫn khác nhau và vẫn chọn nhầm —
+giữ `ngaySuKien` làm BẤT KỲ tiêu chí xếp hạng nào (kể cả chỉ làm phụ) đều không an toàn. **Bản đúng
+(lần 3)**: bỏ HẲN `ngaySuKien` khỏi `ORDER BY`, chỉ dùng `thoiDiemGhi` + tie-break "sự kiện RA
+thắng" khi `thoiDiemGhi` cũng trùng — kiểm chứng lại: kỳ 06/2026 khớp CHÍNH XÁC 310/45/49 (Điều
+tra/Truy tố/Xét xử, đúng `tonCuoiKy` đã chốt); kỳ 07/2026 (đang mở, CHƯA từng chốt) RPC tự tính ra
+đúng 318/43/50 — khớp CHÍNH XÁC con số đã xác nhận nhiều lần trong ngày qua đường JS cũ, chứng minh
+RPC hoạt động đúng cho CẢ kỳ đã chốt lẫn kỳ đang mở, không cần snapshot/chuỗi nào.
+
+**Giới hạn đã biết, chưa xử lý (Phase sau)**: sự kiện có `kyThongKe IS NULL` (dữ liệu cũ dựng lại
+lịch sử chưa gán kỳ) bị `INNER JOIN` loại thẳng — vụ mà MỌI sự kiện đổi giai đoạn đều thiếu
+`kyThongKe` sẽ không xuất hiện trong kết quả RPC (không tính tồn ở đâu cả) — đúng hành vi ĐÃ CÓ TỪ
+TRƯỚC (Cân đối số liệu hiện tại cũng loại các dòng này), nhưng cần bước "Data cleansing" (quét vụ
+`trangThai != dang_giai_quyet` thiếu `hoan_thanh` log, bù từ `ngayQuyetDinh`/`kyHoanThanh` sẵn có
+trên `vuan`) chạy TRƯỚC khi coi RPC là nguồn số liệu chính thức.
+
+**CHƯA làm**: RPC bị can-level (`layTrangThaiBiCanTaiKy`, phase 2 — phần khó nhất, thay thế toàn bộ
+`bcKyKhoiToMap`/`vuKyKhoiToMap`/`locBiCanTheoCutoff`/bổ sung-tồn đã vá tay trong ngày); nối RPC vào
+`qlahs-sup.html` (bắt đầu ở `tinhDsTonTheoKy`/sheet "DS tồn cuối kỳ" — rủi ro thấp nhất); công cụ
+"So sánh RPC vs snapshot cũ" để đối chiếu TRƯỚC KHI gỡ `TaiTaoTonTheoTDTool`. Chưa đụng gì tới
+`qlahs-sup.html`/`qlahsp2.web.app` ở phase này — mới chỉ có RPC + index chạy trên Supabase thật.
+
+## Gộp nhánh `fix-thong-ke-may2` + `ds-ton-cuoi-ky` (2 phiên song song) — sửa gốc bug "Tồn kỳ này" thiếu bị can bổ sung ở đúng phần TỒN (không phải "vào"/"ra"), + sự cố ghi đè dữ liệu thật rồi tự khôi phục (2026-08-05, `qlahs-sup.html`, nhánh `ds-ton-cuoi-ky`, ĐÃ deploy `qlahs-sup.web.app`, **CHƯA deploy production** — chờ Dũng xác nhận số liệu đúng)
+
+**Bối cảnh**: 2 phiên Claude Code chạy song song trên máy khác nhau cùng sửa thống kê B10/Kỳ báo
+cáo — 1 phiên làm trên nhánh `ds-ton-cuoi-ky` (thêm sheet "DS tồn cuối kỳ {gđ}" khớp số đã chốt,
+xem mục ngay dưới đây; sửa `apDungThayDoiVuTheoThoiGian` xử lý đúng thứ tự thời gian + bug
+`.toMillis?.()` luôn ra 0 với timestamp dạng chuỗi ISO của Supabase), phiên này làm trực tiếp trên
+`main` (tiếp tục sửa B10 "Tồn kỳ này" thiếu bị can bổ sung khi vụ rời giai đoạn trong kỳ — xem các
+mục "Sửa gốc bug B10..."/"Bug đã sửa: Biểu B10..." phía dưới). Theo đúng yêu cầu Dũng: đưa việc
+đang làm dở sang nhánh riêng `fix-thong-ke-may2` (không commit thẳng vào `main`), rồi merge với
+`ds-ton-cuoi-ky` (`git merge --no-ff`, xung đột nhỏ ở CLAUDE.md, đã gộp cả 2 khối tài liệu). Sau
+merge, ĐỌC LẠI TOÀN BỘ vùng code thống kê đã gộp (không chỉ tin git merge "sạch" — merge chỉ diff
+theo dòng, không hiểu ngữ nghĩa báo cáo) để xác nhận 2 phần sửa không xung đột LOGIC.
+
+**Phát hiện lỗ hổng CÒN SÓT sau khi đọc lại**: bug "Tồn kỳ này" thiếu bị can bổ sung (đã sửa ở
+`tinhBieu10`/`tonTheoLogD`, xem mục "Bug đã sửa: Biểu B10..." dưới đây) **CHỈ sửa đúng phần "Tồn
+kỳ này" theo TỪNG điều luật của B10** — nhưng KHÔNG lan sang: (1) `tinhBaoCaoKyTuLog`'s
+`tonCuoiKy`/`tonCuoiBiCanKy` (dùng ở Kỳ báo cáo/Dashboard/Danh sách vụ án — con số TỔNG không theo
+điều luật), và (2) sheet "Cân đối số liệu" (tự SUM theo sheet Excel, không gọi lại JS). Query trực
+tiếp Supabase xác nhận: B10 (`dt_bc_b10`) ra 807 (đã tính bổ sung), nhưng `tinhBaoCaoKyTuLog` ra
+779 (chưa tính) — 2 nguồn cùng nói về "Tồn kỳ này" của kỳ 07 nhưng lệch nhau 28 người.
+
+**Nguyên tắc scoping bổ sung ĐÃ RÚT RA và ÁP DỤNG THỐNG NHẤT ở cả 3 nơi**: chỉ đếm bị can bổ sung
+của vụ **VẪN CÒN TỒN, KHÔNG PHẢI "mới" (đã tính đủ qua đường khác) VÀ KHÔNG PHẢI "ra" (đã bị trừ
+hết qua số live/hiện tại) trong đúng kỳ này** — tức `vuTonConLai = dsTon.filter(v => !moiIds.has(v.id)
+&& !raIds.has(v.id))`, rồi so `bcKyKhoiToMap.get(bc.id) === ky.id` cho TỪNG bị can của nhóm này qua
+`fetchKyKhoiToBiCan`. Cố tình KHÔNG mở rộng sang vụ "ra" (đã thử — xem mục "sự cố" dưới đây, gây
+overshoot). Biến kết quả `b10BoSungTonTheoGD`/`bcBoSungTonTheoGD` được **tính ĐÚNG 1 LẦN bên trong
+`tinhBieu10`**, rồi TÁI SỬ DỤNG (không tính lại) ở cả `tinhBaoCaoKyTuLog` (cộng vào `bcMoi`) và sheet
+"Cân đối số liệu" (`xuatBaoCaoThangExcel`, đổi `VAO_SHEETS_GD` cục bộ của sheet này trỏ sang sheet
+Excel mới `"DS bổ sung BC {gs} (tồn)"` thay vì sheet cũ `"DS bổ sung BC {gs}"` — sheet CŨ vẫn giữ
+nguyên dùng riêng cho "Tổng thụ lý" C3/C4, KHÔNG gộp chung 2 sheet dù tên gần giống nhau).
+
+**⚠ SỰ CỐ THẬT trên dữ liệu Supabase chia sẻ với production, ĐÃ TỰ PHÁT HIỆN + TỰ KHÔI PHỤC**: lần
+sửa `taiTaoTonCuoiKyTheoTDTatCa` (công cụ "Sửa lại tồn cuối kỳ theo tội danh") đầu tiên quét RỘNG
+`d.tonHienTai` (chỉ loại trừ `moiList`/`raList`) cho MỌI kỳ trong vòng lặp lịch sử tuần tự — chạy
+thật trên Supabase (dữ liệu DÙNG CHUNG với production) ra `tonCuoiBiCan.dieu_tra = 788` cho kỳ
+06/2026 (đáng ra chỉ +3 thành 738, thực tế +53 thành 788 — overshoot). Nguyên nhân: kỳ06 là kỳ ĐẦU
+TIÊN xử lý (`tonTruoc={}`), vụ có `khoi_to_vu` trỏ vào kỳ lưu trữ (bị loại khỏi mọi kỳ "mới") vẫn
+xuất hiện trong `tonHienTai` — quét rộng coi nhầm bị can sẵn có của các vụ đó là "bổ sung trong
+kỳ". **Đã REVERT NGAY LẬP TỨC, deploy lại, chạy lại công cụ để khôi phục đúng giá trị trước đó
+(735)** — xác nhận qua đọc lại Supabase (`Điều tra: 735, Truy tố: 442, Xét xử: 148` — TT/XX không
+hề bị ảnh hưởng suốt cả 2 lần chạy, chỉ ĐT bị đụng). Báo cáo minh bạch với Dũng, được yêu cầu điều
+tra tìm ĐÚNG người/nguyên nhân trước khi thử sửa lại (không đoán mò lần 2).
+
+**Tìm ra ĐÚNG 3 người gây lệch 735→738** qua so sánh 2 phương pháp trên CÙNG 1 `moiList`: cách A
+(cutoff = `ky.ngayChot`, áp dụng chung cho mọi vụ trong `moiList`) ra 738; cách B (cutoff = từng
+`vu._bcCutoff` như code cũ) ra 735 — lệch đúng 3 người: Bùi Khánh Thương (vụ "Trần Duy Dũng và đồng
+phạm", `QLVA_E01.53_2410_0133`), Trần Hùng (vụ "Phùng Duy Anh và đồng phạm",
+`QLVA_E01.53_2512_0056`), Nguyễn Đức Huy (vụ "Nguyễn Đức Huy", `QLVA_E01.53_2511_0047`) — cả 3 đều
+là bị can BỔ SUNG vào 1 vụ VỪA MỚI vào kỳ06 (`moiList`), nhưng thêm SAU thời điểm vụ được ghi nhận
+"mới" (`_bcCutoff`) mà TRƯỚC khi kỳ06 chốt (29/06/2026) — đúng là "bổ sung trong cùng kỳ vụ mới
+mở", `_bcCutoff` (chốt tại thời điểm sự kiện vào vụ) bỏ sót nhóm này.
+
+**Đã sửa ĐÚNG PHẠM VI, hẹp hơn hẳn lần thử đầu**: `gomTheoTD` (trong `taiTaoTonCuoiKyTheoTDTatCa`)
+thêm tham số `cutoffOverride` — chỉ áp dụng cho **`moiList`** (dùng `ky.ngayChot` làm cutoff thay
+`vu._bcCutoff`, bắt đúng bị can bổ sung SAU khi vụ mở nhưng TRONG cùng kỳ), **`raList` GIỮ NGUYÊN
+KHÔNG ĐỔI** (không lặp lại lỗi overshoot). Kết quả trên dữ liệu thật: `canhBao: []`,
+`tonCuoiBiCan.dieu_tra = 738` — khớp CHÍNH XÁC con số Dũng đã xác nhận là đúng.
+
+**Đã kiểm chứng bằng công thức Excel THẬT (không chỉ tin "result" cache — đúng yêu cầu của Dũng:
+"số liệu và biểu báo cáo phải trùng khớp chứ ko phải đơn thuần cộng trừ ước tính... nếu sai với sổ
+thực tế tôi mới có căn cứ để rà soát")** — xuất báo cáo kỳ 07/2026 thật, chặn `URL.createObjectURL`
+bắt Blob thật, nạp lại bằng `new ExcelJS.Workbook().xlsx.load(...)`, đọc THẲNG chuỗi công thức ô
+D4/E4 sheet "Cân đối số liệu" (Vào/Ra kỳ, Bị can, Điều tra) xác nhận đúng tham chiếu sheet mới
+`'DS bổ sung BC ĐT (tồn)'`; rồi **TỰ TÁI TẠO TAY** (đọc thẳng cột M từng dòng của cả 14 sheet liên
+quan, không dùng cache nào) — Điều tra: 738 (tồn đầu, đã xác nhận qua `kybaocao.tonCuoiBiCan` của
+kỳ06) + 191 (vào, gồm đúng 30 bổ sung) − 119 (ra) = **810**; Truy tố: 442 + 135 − 358 = **219**;
+Xét xử: 148 + 295 − 115 = **328** — TT/XX khớp CHÍNH XÁC với con số "Kỳ báo cáo" gốc Dũng đã nêu
+lúc đầu (43 vụ/219 BC, 50 vụ/328 BC), xác nhận 2 giai đoạn này chưa từng sai, chỉ ĐT bị lệch (812
+cũ → 810 mới, là hệ quả ĐÚNG của việc sửa gốc kỳ06 từ giá trị sai sang 738 đã xác nhận, không phải
+số tuỳ tiện). Cả 6 dòng "Cân đối số liệu" (Vụ+BC × 3 giai đoạn) đều Chênh lệch = 0.
+
+**CHƯA xong**: chưa cập nhật lại `bieu_B10_mo_ta.md`/tài liệu nếu cần; **CHƯA deploy production**
+(`qlahsp2.web.app`) — chờ Dũng xác nhận số liệu đúng theo đúng yêu cầu minh bạch đã đặt ra; nhánh
+`fix-thong-ke-may2` VÀ `ds-ton-cuoi-ky` chưa xoá, chờ xác nhận trước khi dọn.
+
+## Thêm sheet "DS tồn cuối kỳ {gđ}" khớp đúng số tồn đã chốt/công thức của kỳ đang xuất + 2 bug thật phát hiện trong lúc làm (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
+
+Dũng phát hiện: mở lại báo cáo Excel của 1 kỳ (kỳ 06/2026, đã chốt), "Cân đối số liệu" báo tồn cuối
+kỳ Điều tra đúng số đã chốt, nhưng sheet **"DS tồn ĐT"** trong CHÍNH file đó lại ra số THẤP HƠN,
+không biết "lọt" vụ nào. Nguyên nhân gốc: sheet "DS tồn {gđ}" lấy từ `tinhTonHienTaiTheoGD` — số
+**LIVE tại đúng lúc bấm xuất Excel** (thiết kế CỐ Ý cho dòng "Số tồn hiện tại", tách biệt "Tồn cuối
+kỳ" đã chốt — xem nhiều đoạn ghi chú "cố ý luôn sống theo thời gian thực" trong file này) — mở lại
+báo cáo 1 kỳ CŨ sau khi có vụ rời giai đoạn ở kỳ SAU sẽ luôn lệch, không có cách nào biết vụ nào.
+
+**Giải pháp: THÊM sheet mới, KHÔNG đổi sheet cũ** — "DS tồn {gđ}" (live) giữ nguyên 100% (đang nuôi
+công thức "Số tồn hiện tại"/"TK tội danh"/B10 kỳ chưa chốt, sửa thẳng sẽ vỡ 3 chỗ đó). Thêm 3 sheet
+**"DS tồn cuối kỳ ĐT/TT/XX"** ngay cạnh, dựng bằng cách CỘNG DỒN qua từng kỳ theo đúng công thức
+`tonCuoiKy` đã có (tồn đầu kỳ trước + mới trong kỳ − ra trong kỳ) nhưng theo dõi **tập hợp ID vụ**
+thay vì chỉ đếm — y hệt cách `taiTaoTonCuoiKyTheoTDTatCa` (công cụ "Sửa lại tồn cuối kỳ theo tội
+danh...", nay đổi tên "...+ danh sách vụ") đã làm cho tồn theo tội danh, chỉ khác theo dõi Set thay
+vì Map theo D.
+
+**Hạ tầng**: cột mới `kybaocao.tonCuoiKyIds` (jsonb, `{dieu_tra:[maVuAn,...],...}`,
+`add_ton_cuoi_ky_ids_2026-08-04.sql`, ĐÃ chạy lên Supabase thật) — persist bởi
+`taiTaoTonCuoiKyTheoTDTatCa` (mở rộng, chạy CÙNG lúc với `tonCuoiKyTheoTD` cũ, không thêm lượt
+duyệt lịch sử mới). Hàm mới `tinhDsTonTheoKy(gd, ky, kyTruoc, baoCaoGd)`: kỳ đã có
+`tonCuoiKyIds` → dùng thẳng; kỳ chưa có nhưng `kyTruoc` có (hoặc `kyTruoc==null`, kỳ đầu tiên) →
+dựng tạm từ `kyTruoc.tonCuoiKyIds` + mới/ra CỦA CHÍNH kỳ này (đã có sẵn trong `baoCaoGd.ds`, không
+query thêm); không có gì cả → trả `live:true`, sheet Excel tự fallback về số live kèm cảnh báo đỏ
+"chưa backfill" thay vì âm thầm hiện sai. Bị can lọc theo `locBiCanTheoCutoff(bcList, ky.ngayChot)`
+(kỳ đã chốt) hoặc không lọc (kỳ chưa chốt) — loại đúng bo_sung_bican thêm SAU khi kỳ đã chốt.
+
+**Bug thật #1 phát hiện qua chính cross-check mới thêm — `gomTheoTD` (dùng bởi
+`taiTaoTonCuoiKyTheoTDTatCa` để tính `tonCuoiKyTheoTD`/`tonCuoiBiCan`) KHÔNG áp dụng cutoff
+`bo_sung_bican` dù nhận vụ đã có sẵn `_bcCutoff` từ `vuAnTuLogDocs`** — mỗi lần công cụ "Sửa lại
+tồn cuối kỳ..." chạy lại, nó ÂM THẦM GHI ĐÈ `tonCuoiBiCan` (số ĐÃ CHỐT, đáng lẽ bất biến) bằng bị
+can LIVE của vụ tại đúng lúc chạy, kể cả bị can mới "Thêm sau" ở 1 kỳ SAU đã chốt — phát hiện thật:
+kỳ 06/2026 Điều tra bị nâng từ 738 (đúng, theo cutoff ngày chốt 29/06) lên 768 (30 bị can thêm
+trong tháng 7, SAU khi kỳ đã chốt). Đã sửa `gomTheoTD` dùng `locBiCanTheoCutoff(bcs, vu._bcCutoff)`
+thay vì bị can live thẳng — chạy lại còn 735 (chênh 3, do gap #2 dưới đây, chưa sửa).
+**Gap #2 CÒN LẠI, CHƯA SỬA (ngoài phạm vi, để dành phiên sau)**: `moiList`/`raList` trong
+`taiTaoTonCuoiKyTheoTDTatCa` KHÔNG bao gồm `d.boSungBiCan` (bị can bổ sung vào vụ ĐÃ CÓ trong CÙNG
+kỳ, trước khi chốt — hợp lệ, phải tính) — thiếu khoản này làm `tonCuoiBiCan` hụt nhẹ (3 bị can ở kỳ
+06/2026 Điều tra). Nút "Sửa lại tồn cuối kỳ..." tự cảnh báo rõ khi gặp (không âm thầm sai).
+
+**Bug thật #2 phát hiện khi kiểm chứng qua UI thật — thứ tự add/remove SAI khi 1 vụ có CẢ 2 sự
+kiện vào/ra trong CÙNG 1 kỳ (VD chuyển giai đoạn ra rồi bị trả hồ sơ về lại, cùng kỳ)**: bản đầu
+`moiList.forEach(add)` RỒI MỚI `raList.forEach(remove)` — vô điều kiện, không quan tâm thứ tự thời
+gian thật, nên 1 vụ "ra ngày 14, vào lại ngày 15" (cùng kỳ) bị XOÁ NHẦM khỏi tồn cuối kỳ dù thực tế
+đã quay lại trước khi kỳ kết thúc. Sửa bằng hàm dùng chung mới `apDungThayDoiVuTheoThoiGian` — gộp
+2 mảng thành 1 danh sách sự kiện có mốc thời gian, sắp XƯA→MỚI rồi áp add/remove tuần tự đúng lịch
+sử thật. **Bẫy thứ 2 trong CHÍNH lần sửa bug này**: bản sửa ĐẦU TIÊN dùng `_log.thoiDiemGhi?.toMillis?.()`
+(kiểu Firestore Timestamp) — nhưng qua shim Supabase, `thoiDiemGhi`/`ngaySuKien` là **CHUỖI ISO
+thường**, không có `.toMillis()` → mọi sự kiện đều rơi về t=0 → sort không có tác dụng gì, bug vẫn y
+nguyên dù tưởng đã sửa. Phát hiện được NHỜ kiểm chứng bằng dữ liệu Supabase thật (không dừng ở test
+cô lập dùng mock sai hình dạng `{toMillis(){}}` — mock đó khiến test PASS giả tạo). Sửa đúng bằng
+fallback `new Date(t).getTime()` (đúng pattern `locBiCanTheoCutoff` đã dùng sẵn ở nơi khác).
+
+**Đã kiểm chứng đầy đủ bằng dữ liệu Supabase production thật** (mở `qlahs-sup.html` triển khai tại
+`qlahs-sup.web.app`, đăng nhập `admin@qlva.local`) — trước khi backfill hàng loạt, chạy
+`gh workflow run backup-supabase.yml` lấy backup mới, đợi "success". Chạy "Sửa lại tồn cuối kỳ..."
+qua UI thật (không phải giả lập): kỳ 06/2026 (kỳ đã chốt duy nhất) — `tonCuoiKyIds.dieu_tra` đúng
+310 ID, khớp CHÍNH XÁC `tonCuoiKy.dieu_tra` (không lệch, không cần gộp "(chưa xác định)"). Xuất
+Excel kỳ 07/2026 (đang mở) qua nút thật, chặn `URL.createObjectURL` bắt Blob thật, nạp lại bằng
+`new ExcelJS.Workbook().xlsx.load(...)` NGAY TRONG TRÌNH DUYỆT — xác nhận CẢ 3 giai đoạn "DS tồn
+cuối kỳ {gđ}" khớp CHÍNH XÁC con số "Tồn cuối kỳ" hiển thị trên màn hình (ĐT 318 vụ/810 BC, TT 43
+vụ/219 BC, XX 50 vụ/328 BC) — và diff với "DS tồn {gđ}" (live, 318/318/42/43/51/50) chỉ còn ĐÚNG 2
+vụ khác biệt cho Điều tra, cả 2 đều giải thích được chính xác qua log: 1 vụ arrived dưới kỳ 08 (tự
+động bị loại khỏi tồn cuối kỳ 07 — ĐÚNG) và 1 vụ chỉ rời đi ở kỳ 08 (vẫn đúng tồn tại trong tồn
+cuối kỳ 07 dù đã rời trong LIVE — ĐÚNG) — không còn vụ "lọt" nào không giải thích được.
+
+**Test cô lập** (`test_ds_ton_cuoi_ky.js`, scratchpad, không commit) — 17/17 PASS, trích nguyên
+`locBiCanTheoCutoff`/`apDungThayDoiVuTheoThoiGian` từ file thật, dùng mock ĐÚNG hình dạng dữ liệu
+thật (chuỗi ISO, không phải `{toMillis(){}}`) sau khi rút kinh nghiệm từ bẫy bug #2 ở trên.
+
+**Đã deploy `qlahsp2.web.app` (production)** sau khi Dũng xác nhận qua chat — smoke test sau deploy
+(trang đăng nhập tải sạch, 0 lỗi console ngoài cảnh báo Babel kích thước file vô hại đã biết).
+
+**⚠ Ghi chú lúc merge (2026-08-04, máy khác)** — nhánh này được viết trên 1 MÁY KHÁC, độc lập với
+loạt fix "Sửa gốc bug B10 'Tồn kỳ này'"/"C7-C24 lần 3" ngay dưới đây (cùng ngày, máy này). Cả 2 bên
+đều tự phát hiện VÀ tự sửa (khác cách) đúng cùng 1 lớp vấn đề — bị can bổ sung vào vụ đã có không
+được log-based ledger đếm đúng — trên CÙNG 1 vùng code (`taiTaoTonCuoiKyTheoTDTatCa`/
+`xuatBaoCaoThangExcel`/`tinhBieu10`). Xem mục "Merge 2 nhánh sửa thống kê song song" ở đầu file để
+biết cách đã gộp + phần còn thiếu sau khi gộp cả 2. Dòng tiêu đề mục này ghi "CHƯA deploy
+production" nhưng nội dung bên dưới lại nói đã deploy — khả năng cao là do đã deploy SAU KHI viết
+tiêu đề, không kịp cập nhật lại — **không chắc production `qlahsp2.web.app` hiện đang chạy code
+của máy nào** (máy này hay máy đang gộp) tại thời điểm bắt đầu merge, cần deploy lại sau khi gộp
+xong để đảm bảo.
+
+## Sửa gốc bug B10 "Tồn kỳ này" — công thức Excel đổi từ tham chiếu "DS tồn {gs}" (live) sang log-based (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Tiếp theo mục "Bug đã sửa: Biểu B10 'Tồn kỳ này' thiếu bị can bổ sung..." ngay dưới đây — Dũng phát
+hiện tiếp: filter tay sheet "DS tồn ĐT" (loại bỏ dòng "(Chưa có BC)") đếm ra **818** bị can, không
+khớp **812** mà Kỳ báo cáo/B10 đang hiển thị — dù bản sửa buổi sáng (mục ngay dưới) đã xác nhận
+812 đúng qua console.
+
+**Nguyên nhân thật**: bản sửa buổi sáng (`tonTheoLogD`, commit `a60eacc`) chỉ sửa đúng **"result"
+CACHE** của ô Excel — nhưng công thức "Tồn kỳ này" (khi kỳ CHƯA CHỐT) từ trước tới giờ luôn dùng
+SUMIF/COUNTIFS **THẲNG vào sheet "DS tồn {gs}"** (số LIVE, đúng `baoCao[gd].ds.tonHienTai` tại
+đúng thời điểm xuất báo cáo) — hoàn toàn KHÔNG liên quan gì tới `tonTheoLogD`. Khi Dũng mở file
+Excel THẬT, công thức tự tính lại theo "DS tồn ĐT" (818, LIVE), không đọc "result" cache (812) —
+đúng bài học đã ghi nhiều lần ở mục "cột -BC...": ExcelJS đọc lại không tính lại công thức, chỉ
+Excel thật mới tính, nên CHỈ sửa JS là không đủ, phải sửa cả CÔNG THỨC.
+
+**818 (live) > 812 (log-based) vì sao**: có bị can bổ sung vào vụ ĐÃ CÓ TỪ TRƯỚC KHI có sự kiện
+`bo_sung_bican` (migration 2026-08-03) — không có sự kiện "vào" tương ứng nên log-based không đếm
+được, nhưng vẫn LIVE có mặt trong vụ đang tồn hiện tại.
+
+**Đã sửa**: thêm `mkTonNayVu`/`mkTonNayBc` (đặt cạnh `mkThuLyVu`/`mkThuLyBc`) — đổi công thức "Tồn
+kỳ này" (kỳ chưa chốt) từ tham chiếu thẳng "DS tồn {gs}" sang CÔNG THỨC LOG-BASED thật sự (tồn kỳ
+trước + Σvào qua `VAO_TON_GD` − Σra qua `RA_TON_GD`, y hệt cách `mkThuLyVu`/`mkThuLyBc` đã làm cho
+"Tổng thụ lý" C3/C4 — chỉ khác tập "ra" dùng ĐẦY ĐỦ `RA_SHEETS_GD` 7-8 sheet thay vì `RA_THULY_GD`
+chỉ 3 sheet). `VAO_TON_GD`/`RA_TON_GD` là bản chép lại y hệt `VAO_SHEETS_GD`/`RA_SHEETS_GD` (khai
+báo Ở DƯỚI trong file nên không tham chiếu thẳng được — sửa 1 trong 2 cặp nhớ sửa cặp còn lại).
+
+**Đã kiểm chứng SÂU trên dữ liệu Supabase thật** (`qlahs-sup.web.app`) — KHÔNG chỉ tin "result"
+cache (đúng bài học đã rút ra): xuất Excel thật, đọc trực tiếp CHUỖI CÔNG THỨC ở ô G13 (Điều 174,
+"Tồn kỳ này BC") xác nhận đã đổi đúng sang tổng COUNTIFS qua 7 sheet vào − 7 sheet ra (không còn
+tham chiếu "DS tồn ĐT"); rồi TỰ TÁI TẠO TAY phép tính COUNTIFS đó bằng cách đọc THẲNG dữ liệu thô
+(cột V) của cả 14 sheet liên quan (không dùng cache nào) — ra đúng 768 (tồn trước) + 163 (vào, gồm
+2 bổ sung) − 119 (ra) = **812**, khớp CHÍNH XÁC với cả "result" cache (812) lẫn
+`baoCao.tonCuoiBiCanKy` bên ngoài. Compile-check qua `@babel/core`+`@babel/preset-react` — sạch.
+Đã deploy `qlahs-sup.web.app` (test) rồi `qlahsp2.web.app` (production).
+
+## Bug đã sửa: Biểu B10 "Tồn kỳ này" thiếu bị can bổ sung khi vụ rời giai đoạn trong kỳ (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Dũng phát hiện qua đối chiếu trực tiếp: Kỳ báo cáo (ngoài B10) báo "Tồn cuối kỳ" Điều tra kỳ
+07/2026 = 318 vụ/812 BC (Truy tố 43/219, Xét xử 50/328 — 2 giai đoạn này khớp đúng), nhưng tổng
+Biểu B10 (cộng dồn `vals[3]` — "Tồn kỳ này" BC — qua mọi dòng điều luật) chỉ ra **810 BC** ở Điều
+tra — thiếu đúng 2 người, dù số VỤ (318) vẫn khớp.
+
+**Nguyên nhân**: `tinhBaoCaoKyTuLog` cộng riêng "vào" cho bị can bổ sung vào 1 vụ ĐÃ CÓ (sự kiện
+`bo_sung_bican`, field `soMoi.boSungBiCan` — CHỈ cộng bị can, không cộng vụ, vì vụ đó không phải
+"mới"). `tonTheoLogD` (hàm nội bộ `tinhBieu10`, tính "Tồn kỳ này" theo TỪNG điều luật khi kỳ chưa
+chốt — xem mục "Bug tiếp theo... Tồn kỳ này theo tội danh" cũ) hoàn toàn không biết tới nguồn "vào"
+này — nếu vụ chứa bị can bổ sung đó RỜI giai đoạn NGAY TRONG CÙNG KỲ (VD Điều tra → Truy tố),
+`bcCoD(raArr, D)` vẫn trừ ĐỦ cả các bị can bổ sung (đọc số bị can bổ sung SỐNG hiện tại của vụ, kể
+cả người vừa thêm — đúng), nhưng không có gì cộng bù tương ứng ở vế "vào" — tồn kỳ này bị hụt đúng
+bằng số bị can bổ sung của những vụ rời giai đoạn trong kỳ đó (ví dụ thực tế: vụ
+`QLVA_E01.53_2412_0062` khởi tố kỳ 06, bổ sung 2 bị can trong kỳ 07 rồi chuyển ngay sang Truy tố
+cũng trong kỳ 07 — 2 người này bị "trừ ra" khi vụ rời Điều tra nhưng chưa từng được "cộng vào").
+
+**Đã sửa** (`tonTheoLogD`): thêm `bcCoDBoSung(d.boSungBiCan, D)` — đếm CHÍNH XÁC theo cùng nguồn
+`d.boSungBiCan` mà `tinhBaoCaoKyTuLog` dùng cho `soMoi.boSungBiCan` (không đổi sang nguồn "so kỳ
+trực tiếp" như bản sửa C7-C24 sáng cùng ngày — ở đây mục tiêu là khớp CHÍNH XÁC với con số bên
+ngoài, phải cùng 1 nguồn dữ liệu) — cộng vào vế "vào" của riêng BC, KHÔNG cộng vụ (đúng như
+`soMoi.boSungBiCan` không cộng `soMoi.tong`). Cũng bổ sung quét `d.boSungBiCan` vào bước gom
+`tatCaDieuLuat` (phòng vụ chứa bị can bổ sung không rơi vào bất kỳ nhóm `allVu` nào khác của kỳ,
+tránh thiếu hẳn dòng D để cộng bù vào).
+
+**Đã kiểm chứng bằng dữ liệu Supabase thật** (`qlahs-sup.web.app`) — kỳ 07/2026 (đang mở): trước
+sửa B10 Điều tra = 318 vụ/**810** BC (thiếu 2, đúng 2 bị can bổ sung của vụ `QLVA_E01.53_2412_0062`
+rời sang Truy tố trong kỳ); sau sửa B10 Điều tra = 318 vụ/**812** BC, khớp CHÍNH XÁC với
+`baoCao.tonCuoiKy`/`tonCuoiBiCanKy` ở cả 3 giai đoạn (ĐT 318/812, TT 43/219, XX 50/328). Kỳ
+06/2026 (đã chốt, dùng nhánh `kyTonTD` snapshot khác hẳn `tonTheoLogD`, không đụng tới) vẫn khớp
+đúng 310/768 như trước — không hồi quy. C7 (Điều 174, kỳ 07 — khối C7-C24 sửa sáng cùng ngày, xem
+mục ngay dưới) vẫn = 21, không đổi — xác nhận 2 phần code hoàn toàn độc lập nhau. Xuất Excel báo
+cáo tháng thật vẫn chạy trơn tru, không lỗi. Compile-check qua `@babel/core`+`@babel/preset-react`
+— sạch. Đã deploy `qlahs-sup.web.app` (test) rồi `qlahsp2.web.app` (production).
+
+## Biểu B10 C7-C24 bị can bổ sung — sửa lại lần 3: đơn giản hoá công thức, tách riêng "mới"/"bổ sung" (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Tiếp theo mục "sửa lại lần 2" ngay dưới đây — bản đó đúng số liệu (gộp "mới"+"bổ sung" thành 1
+danh sách `dt_bcMoiKyToanBo`, quét toàn bộ 9 nhóm vụ Điều tra liên quan tới kỳ rồi khử trùng theo
+id bị can) nhưng Dũng phản hồi trực tiếp: **"công thức tính bị can KT mới phức tạp quá"** — khó
+đối chiếu bằng mắt so với thiết kế BAN ĐẦU (2 phần tách riêng, dễ đọc: "mới" = từ `dt.khoiToTrucTiep`
+như cũ, "bổ sung" = từ 1 nguồn riêng). Yêu cầu cụ thể: **"để như ban đầu nhưng thay đổi sheet DS bổ
+sung BC để đảm bảo lọc lấy từ nguồn tất cả các bị can có ngày nhập mới tháng 07/2026, nhưng ngày vụ
+án khác tháng 07/2026"** — tức quay lại kiến trúc 2 phần đơn giản, chỉ đổi NGUỒN của phần "bổ sung"
+từ sự kiện `bo_sung_bican` (đã bị bỏ ở lần sửa 2 vì quá thưa) sang so sánh kỳ TRỰC TIẾP: kỳ khởi tố
+của CHÍNH bị can khác kỳ khởi tố của VỤ.
+
+**Đã sửa** (`tinhBieu10`): thay `dt_bcMoiKyToanBo` bằng `dt_boSungBc` — vẫn quét `allVuDT` (như bản
+2), nhưng giờ **BỎ QUA vụ có kỳ khởi tố (`vuKyKhoiToMap`) TRÙNG kỳ báo cáo** (những vụ đó là "mới",
+đã tính riêng qua `dt.khoiToTrucTiep`) — chỉ giữ lại vụ có kỳ khởi tố KHÁC kỳ báo cáo, rồi mới gom
+bị can có kỳ khởi tố CỦA CHÍNH HỌ khớp kỳ báo cáo. Trong per-D loop, `dt_ktBcMoiKy` quay lại thành
+1 phép CỘNG 2 mảng rõ ràng: `[...bcCoD(dt.khoiToTrucTiep, D).filter(kỳ khớp), ...dt_boSungBcRaw.filter(D
+khớp)]` — dễ đọc/đối chiếu hơn hẳn 1 danh sách gộp sẵn không phân biệt nguồn. Tương tự cho
+`dtKtoCaNhan` (khối cảnh báo thiếu Năm sinh/Trình độ).
+
+**Hàm mới `fetchKyKhoiToVu(vuIds)`** (đặt cạnh `fetchKyKhoiToBiCan`) — trả `Map<maVuAn, kyThongKe>`,
+nguồn từ 2 loại sự kiện: `khoi_to_vu` (vụ mở bình thường, khoá `maVuAn`) VÀ `tach_vu` (vụ TÁCH RA —
+không có sự kiện `khoi_to_vu` riêng, "kỳ mở" của nó chính là kỳ của sự kiện tách, field
+`vuTachRa` — xem `idVuThatCuaLog`, mục "sự kiện tách vụ gán nhầm bị can" bên dưới). **Thiếu nhánh
+`tach_vu` này sẽ khiến MỌI vụ tách bị coi nhầm "không xác định được kỳ mở"** (`vuKyKhoiToMap.get()`
+trả `undefined`, luôn KHÁC bất kỳ kỳ báo cáo nào) → tự động rơi vào "bổ sung" dù vụ đó vừa mới tách
+ra ĐÚNG trong kỳ đang xét — 1 dạng lỗi âm thầm dễ bỏ sót nếu chỉ query `khoi_to_vu`.
+
+**Excel**: `DT_KTO` quay lại danh sách đơn giản 3 sheet (như thiết kế ban đầu):
+`["DS khởi tố ĐT", "DS phục hồi ĐT", "DS bổ sung BC ĐT (C7-C24)"]`. Sheet thứ 3 là **sheet MỚI**
+(`addSheetBoSungBiCan`, dựng từ `dt_boSungBc`) — **KHÁC HẲN** sheet `"DS bổ sung BC ĐT"` đã có sẵn
+từ trước (nguồn sự kiện `bo_sung_bican`, dùng riêng cho "Tổng thụ lý"/"Cân đối số liệu" qua
+`DT_VAO`) — **GIỮ NGUYÊN sheet cũ không đổi**, tránh rủi ro ảnh hưởng cơ chế ledger/`_bcCutoff` đã
+được kiểm chứng kỹ ở nhánh `tra-dtbs-tach-bican-cu-moi` (xem mục bên dưới) mà yêu cầu lần này không
+hề nhắc tới. 2 sheet cùng tên gần giống nhau nhưng phục vụ 2 mục đích khác nhau, không gộp chung.
+
+**Đã kiểm chứng bằng dữ liệu Supabase thật qua console** (`qlahs-sup.web.app`) — gọi trực tiếp
+`tinhBieu10()`: C7 "Điều 174 BLHS 2025" kỳ 07/2026 vẫn = **21** (khớp y hệt bản sửa lần 2, xác
+nhận đổi kiến trúc KHÔNG đổi kết quả); `fetchKyKhoiToVu()` xác nhận đúng vụ `QLVA_E01.53_2412_0062`
+có kỳ khởi tố = kỳ 06 (khác kỳ báo cáo 07) → rơi đúng vào "bổ sung" (chứa đúng Hoàng Văn Triệu/
+Nguyễn Huy Hoàng); test riêng 1 vụ tách thật (`QLVA_E01.53_2510_0014_1`) xác nhận resolve đúng kỳ
+qua nhánh `tach_vu`, không bị `undefined`. **Xuất Excel thật** (chặn `URL.createObjectURL`, nạp
+lại bằng `new ExcelJS.Workbook().xlsx.load(...)` ngay trong trình duyệt) — sheet mới
+`"DS bổ sung BC ĐT (C7-C24)"` có đúng **32 dòng** (khớp `dt_boSungBc.length`), cột "Kỳ TK BC" đúng
+"07/2026", cột "Đếm vụ" rỗng (không đếm đúp sang cột Vụ của "Tổng thụ lý" nếu lỡ dùng nhầm); sheet
+cũ `"DS bổ sung BC ĐT"` vẫn giữ nguyên đúng 2 dòng (event-sourced, không bị đụng tới). Compile-check
+qua `@babel/core`+`@babel/preset-react` — sạch. Đã deploy `qlahs-sup.web.app` (test) rồi
+`qlahsp2.web.app` (production) qua `./deploy.sh sup` rồi `./deploy.sh prod`.
+
+## Bug đã sửa: Biểu B10 C7-C24 bỏ sót bị can bổ sung vào vụ ĐÃ CÓ — sửa lại lần 2, bỏ phụ thuộc `bo_sung_bican` (2026-08-04, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY PRODUCTION)
+
+Người dùng phát hiện qua audit trực tiếp: khối "Phân tích bị can mới khởi tố" (C7-C24, chỉ Điều
+tra) của Biểu B10 không tính bị can được **thêm bổ sung vào 1 vụ ĐÃ CÓ SẴN** (VD vụ khởi tố kỳ
+06/2026, tháng sau "Thêm bị can" 2 người vào đúng vụ đó ở kỳ 07/2026) — 2 người này bị bỏ sót
+hoàn toàn khỏi thống kê nhân khẩu học (tuổi/trình độ/dân tộc/giới tính...) của kỳ họ thực sự được
+khởi tố, dù họ VẪN được tính đúng vào "Tổng thụ lý" (nhờ sự kiện `bo_sung_bican`, xem mục
+`tra-dtbs-tach-bican-cu-moi` ngay dưới — 2 khối thống kê khác nhau, sửa riêng).
+
+**Bản sửa ĐẦU TIÊN (commit `5c74544`, đã bị thay thế) dựa vào sự kiện `bo_sung_bican`** — chỉ
+quét `ds.boSungBiCan` (nguồn dữ liệu từ đúng sự kiện log mới thêm 2026-08-03, xem mục
+`tra-dtbs-tach-bican-cu-moi`) để tìm bị can bổ sung. Người dùng phản hồi trực tiếp: cách này
+**"sẽ miss rất nhiều"** — đúng, vì `bo_sung_bican` chỉ có ĐÚNG 3 sự kiện trên toàn hệ thống lúc
+đó (mới thêm gần đây, KHÔNG backfill cho dữ liệu cũ, Import Excel cũng không tạo ra sự kiện này).
+
+**Logic đúng theo yêu cầu người dùng**: "chỉ cần so sánh vụ án khởi tố mới vào kỳ 06/2026 thì
+tất cả bị can khởi tố vào kì 07/2026 là khởi tố bổ sung. nghĩa là ko trùng kì sau kì báo cáo của
+vụ án thì tính là bổ sung" — tức so kỳ khởi tố **CỦA TỪNG BỊ CAN** (qua sự kiện `khoi_to_bican`,
+LUÔN tồn tại kể cả dữ liệu cũ/import — khác `bo_sung_bican`) với kỳ đang tính báo cáo, hoàn toàn
+độc lập với việc vụ thuộc nhóm nào (mới/tồn/đã ra) hay có sự kiện `bo_sung_bican` hay không.
+
+**Đã sửa lại** (`tinhBieu10`): thêm `dt_bcMoiKyToanBo` — quét **TOÀN BỘ vụ Điều tra liên quan tới
+kỳ** (`allVuDT`, hợp nhất MỌI nhóm: khởi tố trực tiếp/tách vụ/chuyển đến/trả về/tồn hiện tại/
+chuyển đi/trả đi/nhập vụ/hoàn thành — không chỉ riêng nhóm "mới" như bản đầu), gom bị can có
+`bcKyKhoiToMap.get(bc.id)` khớp kỳ báo cáo, khử trùng qua `id`. `dt_ktBcMoiKy` (theo từng điều
+luật, dùng cho C7-C24) và `dtKtoCaNhan` (cảnh báo thiếu Năm sinh/Trình độ) đều lọc từ danh sách
+chung này thay vì gộp riêng lẻ theo từng nhóm như trước. Bỏ hẳn `bcCoDBoSung`/`bcTuBoSung` (dead
+code sau khi thay bằng cách tiếp cận tổng quát hơn).
+
+**Excel**: `DT_KTO` đổi từ `["DS khởi tố ĐT","DS phục hồi ĐT","DS bổ sung BC ĐT"]` sang
+`["DS tồn ĐT"]` + `RA_SHEETS_GD.dieu_tra` (7 sheet: DS ĐT chuyển TT/DS đã xét xử ĐT/DS chuyển đi
+ĐT/DS tạm đình chỉ ĐT/DS đình chỉ ĐT/DS án huỷ ĐT/DS nhập vụ ĐT) — đúng phân vùng LOẠI TRỪ LẪN
+NHAU (1 vụ Điều tra tại 1 thời điểm chỉ có thể "đang tồn" HOẶC "đã ra", không thể cả 2), tránh
+đếm trùng vì `mkCfBcKy` cộng dồn COUNTIFS qua nhiều sheet KHÔNG khử trùng — nếu giữ "DS bổ sung BC
+ĐT" song song với "DS tồn ĐT" sẽ đếm 2 lần đúng những bị can bổ sung vào vụ vẫn còn đang tồn.
+
+**Đã kiểm chứng bằng dữ liệu Supabase production thật qua console** (`qlahs-sup.web.app`, gọi
+trực tiếp `tinhBaoCaoKyTuLog`+`tinhBieu10` — các hàm này lộ ra ở phạm vi global của thẻ script,
+gọi được thẳng từ console) — vụ `QLVA_E01.53_2412_0062` khởi tố kỳ 06/2026, bổ sung 2 bị can
+(Hoàng Văn Triệu, Nguyễn Huy Hoàng) với `khoi_to_bican` gắn kỳ 07/2026: gọi `tinhBieu10()` xác
+nhận **C7 của "Điều 174 BLHS 2025" kỳ 07 = 21**, khớp CHÍNH XÁC với phép đếm thủ công độc lập
+(tự quét toàn bộ vụ liên quan qua `collectVuIdsFromBaoCao`/`batchLayBiCanList`/
+`fetchKyKhoiToBiCan` rồi lọc tay, không gọi lại `tinhBieu10`) — có đủ cả 2 bị can trong danh sách
+khớp, **dù vụ này ĐÃ chuyển sang Truy tố trong kỳ 07** (không còn nằm trong "DS tồn ĐT", chỉ nằm
+trong nhóm "chuyển đi"/`RA_SHEETS_GD`) và bất kể có hay không có sự kiện `bo_sung_bican` — chứng
+minh cách sửa mới không còn phụ thuộc sự kiện đó, đúng yêu cầu người dùng. Compile-check qua
+`@babel/core`+`@babel/preset-react` — sạch. Đã deploy `qlahs-sup.web.app` (test) rồi
+`qlahsp2.web.app` (production) qua `./deploy.sh sup` rồi `./deploy.sh prod`.
+
 ## Nhánh `tra-dtbs-tach-bican-cu-moi` — sửa gốc: bị can bổ sung vào vụ đã có không được ghi "vào" ở Tổng thụ lý/Cân đối số liệu (2026-08-03, `qlahs-sup.html`, CHƯA merge vào `main`)
 
 Theo yêu cầu người dùng: 4 tab mới ở "Án đã giải quyết" (Kết thúc điều tra/VKS trả ĐTBS/Kết thúc
