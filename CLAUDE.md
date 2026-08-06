@@ -2,7 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Hệ thống thống kê "tồn" ĐÃ chuyển hoàn toàn sang RPC query động — trạng thái cuối + dọn tàn dư hệ thống cũ (2026-08-05/06, nhánh `feature/tong-ke-dong`, CHƯA deploy production, CHƯA kiểm chứng lại qua UI thật sau đợt dọn dẹp cuối)
+## Hệ thống thống kê "tồn" ĐÃ chuyển hoàn toàn sang RPC query động — trạng thái cuối + dọn tàn dư hệ thống cũ (2026-08-06, nhánh `feature/tong-ke-dong`, **ĐÃ DEPLOY `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production)**, theo yêu cầu trực tiếp của Dũng — CHƯA kiểm chứng qua Excel thật SAU deploy, xem checklist cuối mục)
+
+**⚠ Deploy production lần này đi TRƯỚC bước kiểm chứng bằng Excel thật** — quy trình thường lệ của
+dự án là kiểm chứng trên `qlahs-sup.web.app` trước rồi mới lên production, nhưng Dũng chủ động chọn
+"Deploy production luôn" khi được hỏi (dùng `AskUserQuestion`, có nêu rõ rủi ro chưa kiểm chứng
+formula B10 mới trước khi hỏi). Đã `git push` + `./deploy.sh sup` + `./deploy.sh prod` thành công,
+cả 2 URL đều đang chạy code mới nhất của nhánh `feature/tong-ke-dong`. **Việc cần làm ngay khi có
+thể**: chạy đủ checklist ở cuối mục này trên chính `qlahsp2.web.app` (dữ liệu thật) — nếu phát hiện
+sai số, sửa + deploy lại ngay, đừng để cán bộ dùng số liệu B10 sai mà không biết.
 
 **Bối cảnh** (xem đầy đủ lý do kỹ thuật/lịch sử ở mục "Chuyển hệ thống thống kê 'tồn' từ snapshot-
 chốt-kỳ sang query động — Phase 1" ngay dưới đây, KHÔNG lặp lại ở đây): hệ thống cũ tính "tồn cuối
@@ -81,7 +89,8 @@ sự cố dữ liệu đã biết.
 
 **CHƯA kiểm chứng lại bằng Excel thật SAU đợt dọn tàn dư cuối cùng này** (đổi công thức B10, xoá
 sheet snapshot, Dashboard RPC hoá) — đây là các thay đổi RỦI RO CAO (đổi cấu trúc sheet/công thức
-gốc, không chỉ đính kèm JS) — checklist cần làm trước khi deploy production:
+gốc, không chỉ đính kèm JS). **ĐÃ deploy production TRƯỚC khi chạy checklist này** (quyết định của
+Dũng) — nên chạy SỚM NHẤT có thể trên chính `qlahsp2.web.app`:
 1. Xuất báo cáo kỳ 06 (đã chốt) VÀ 1 kỳ đang mở — mở bằng Excel THẬT (không phải ExcelJS.load).
 2. Biểu B10 "Tồn kỳ trước"/"Tồn kỳ này" ra đúng số đã biết (VD Điều tra kỳ06 = 738 BC ngay trong ô,
    không chỉ ở dòng cảnh báo).
