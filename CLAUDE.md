@@ -2,6 +2,36 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Bug đã sửa: "Chi tiết số liệu" nhóm nhầm "(Chưa có tội danh)" dù bị can có đủ tội danh (2026-08-07, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, ĐÃ deploy sup + production)
+
+Dũng phát hiện ngay sau khi test tính năng "hồi tố" (mục ngay dưới đây): mở "Tổng số mới — Điều
+tra" (`ChiTietSoLieuModal`) thấy nhóm "(Chưa có tội danh)" chứa 3 dòng, nhưng bấm mở từng vụ ra đều
+thấy Điều luật/tội danh đầy đủ (VD "Tội lừa đảo chiếm đoạt tài sản", "Tội đánh bạc").
+
+**Nguyên nhân — KHÔNG liên quan tới tính năng hồi tố mới thêm, mà là lỗ hổng CÓ SẴN từ 2026-08-03**:
+`vuBiCanTuLogDocs` (hàm dùng chung dựng danh sách "1 dòng/bị can" cho `ds.boSungBiCan` — và nay
+thêm `ds.hoiToVao`/`ds.hoiToRa` của tính năng hồi tố) hoàn toàn THIẾU field `_toiDanhChinh` trên kết
+quả trả về — trong khi `ChiTietSoLieuModal` nhóm theo `v._toiDanhChinh || "(Chưa có tội danh)"` —
+MỌI entry từ hàm này luôn rơi vào nhóm "chưa có" bất kể bị can thật sự có tội danh hay không. 3 vụ
+Dũng thấy đều là bị can **bổ sung vào vụ đã có** (`ds.boSungBiCan`, sự kiện có từ 2026-08-03, không
+phải hồi tố mới) — 2 dòng trùng "Trương Văn Tú" là 2 bị can KHÁC NHAU cùng thêm vào 1 vụ cùng ngày
+(dòng chỉ hiện tên VỤ, không hiện tên bị can, nên nhìn giống trùng lặp — không phải bug đúp dữ liệu).
+
+**Đã sửa**: `vuBiCanTuLogDocs` giờ set `_toiDanhChinh: toiDanhChinhCuaVu(vu, bc.toiDanh?.[0] || "")`
+— dùng ĐÚNG helper `toiDanhChinhCuaVu` đã có sẵn (fallback về `dieuLuat` cấp vụ nếu bị can cụ thể
+thiếu tội danh), khớp CHÍNH XÁC cách `vuAnTuLogDocs`/4 nơi khác trong file đã làm — chỉ khác ở đây
+đã biết SẴN đúng 1 bị can cụ thể (`bc`) nên không cần `chonBiCanChinh` dò lại cả vụ như
+`layBiCanInfo`. Sửa 1 chỗ, tự động fix cho CẢ `ds.boSungBiCan` (bug đã tồn tại từ 2026-08-03,
+Dũng chỉ mới phát hiện hôm nay) LẪN `ds.hoiToVao`/`ds.hoiToRa` (tính năng hồi tố mới, phòng ngừa
+trước khi 2 mảng này được hiển thị ở đâu đó tương tự sau này).
+
+**Đã kiểm chứng**: test cô lập mới `test_vubicantulogdocs.js` (3/3 PASS, trích nguyên
+`vuBiCanTuLogDocs`+`toiDanhChinhCuaVu`, mock Firestore tối thiểu) — xác nhận bị can có tội danh trả
+đúng tội danh đó (không còn rơi vào "Chưa có tội danh"), bị can thiếu tội danh fallback đúng về
+`dieuLuat` cấp vụ (vẫn không rỗng). Chạy lại toàn bộ 130 assertion khác trong ngày (B10/Biểu2-3/hồi
+tố) — không có gì bị phá vỡ. Compile-check sạch. **CHƯA kiểm chứng qua UI thật** — nên mở lại đúng
+màn "Chi tiết số liệu" đã chụp ảnh, xác nhận 3 vụ đó không còn rơi vào "(Chưa có tội danh)" nữa.
+
 ## "Hồi tố" — Thêm bị can vào vụ đã rời Điều tra: backfill ĐT→TT→[XX] cùng 1 kỳ (2026-08-07, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, ĐÃ deploy sup + production theo yêu cầu trực tiếp của Dũng — CHƯA kiểm chứng bằng thao tác UI thật)
 
 Theo yêu cầu Dũng: nghiệp vụ thật chỉ thêm mới/tách bị can khi vụ CÒN Ở Điều tra, nhưng đôi khi sơ

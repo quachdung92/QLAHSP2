@@ -8224,7 +8224,15 @@ async function vuBiCanTuLogDocs(logDocs) {
     const vu = vuanMap[l.maVuAn];
     const bc = bicanMap[l.maBiCan];
     if (!vu || !bc) return null;
-    return { ...vu, _log: l, _bican: bc };
+    // Bug thật đã sửa (2026-08-07, Dũng phát hiện qua "Chi tiết số liệu" → nhóm "(Chưa có tội
+    // danh)" dù mở vụ ra vẫn thấy đủ tội danh) — thiếu hẳn `_toiDanhChinh` ở đây khiến MỌI entry từ
+    // hàm này (ds.boSungBiCan từ 2026-08-03, và ds.hoiToVao/ds.hoiToRa mới thêm hôm nay) luôn rơi
+    // vào "(Chưa có tội danh)" trong `ChiTietSoLieuModal` (nhóm theo `v._toiDanhChinh || "(Chưa có
+    // tội danh)"`) — khác hẳn `vuAnTuLogDocs`/các hàm dùng chung khác đều đã set field này qua
+    // `toiDanhChinhCuaVu`. Ở đây đã biết SẴN đúng 1 bị can cụ thể (`bc`, không cần `chonBiCanChinh`
+    // dò cả vụ như layBiCanInfo) nên dùng thẳng `bc.toiDanh[0]`, fallback `dieuLuat` cấp vụ nếu
+    // thiếu (đúng `toiDanhChinhCuaVu`, khớp mọi nơi khác trong file).
+    return { ...vu, _log: l, _bican: bc, _toiDanhChinh: toiDanhChinhCuaVu(vu, bc.toiDanh?.[0] || "") };
   }).filter(Boolean);
 }
 
