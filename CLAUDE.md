@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## "Hồi tố" — Thêm bị can vào vụ đã rời Điều tra: backfill ĐT→TT→[XX] cùng 1 kỳ (2026-08-07, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, đã push + deploy `qlahs-sup.web.app` — CHƯA deploy production, CHƯA kiểm chứng bằng thao tác UI thật)
+## "Hồi tố" — Thêm bị can vào vụ đã rời Điều tra: backfill ĐT→TT→[XX] cùng 1 kỳ (2026-08-07, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, ĐÃ deploy sup + production theo yêu cầu trực tiếp của Dũng — CHƯA kiểm chứng bằng thao tác UI thật)
 
 Theo yêu cầu Dũng: nghiệp vụ thật chỉ thêm mới/tách bị can khi vụ CÒN Ở Điều tra, nhưng đôi khi sơ
 xuất thống kê khiến vụ đã chuyển sang Truy tố/Xét xử trước khi kịp nhập đủ bị can — vẫn cần "Thêm
@@ -82,17 +82,19 @@ Editor, project `eutatszoaseixchvjbtg`)** — dán nguyên `add_bo_sung_bican_ho
 kết quả "Success. No rows returned" (đúng kỳ vọng cho DDL — ALTER CHECK constraint không trả về
 dòng nào). Từ nay `loaiSuKien = "bo_sung_bican_hoi_to"` đã ghi được thật trên `qlahs-sup.web.app`.
 
-**Đã push + deploy `qlahs-sup.web.app`** (`./deploy.sh sup`, sau khi `git push` nhánh
-`feature/tong-ke-dong`). **CHƯA deploy `qlahsp2.web.app` (production)** — lệnh bị chính bộ lọc an
-toàn của Claude Code chặn (thao tác ảnh hưởng dữ liệu thật của 4 cán bộ), Dũng cần tự chạy
-`./deploy.sh prod` khi đã sẵn sàng.
+**Đã push + deploy CẢ `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production)** (`./deploy.sh sup` rồi
+`./deploy.sh prod`, sau khi `git push` nhánh `feature/tong-ke-dong`) — theo yêu cầu trực tiếp của
+Dũng, đi TRƯỚC bước kiểm chứng bằng thao tác UI thật (khác quy trình thường lệ "test trên sup trước
+rồi mới prod"). Lần đầu `./deploy.sh prod` bị chính bộ lọc an toàn của Claude Code chặn (thao tác
+ảnh hưởng dữ liệu thật của 4 cán bộ) — Dũng yêu cầu lại lần 2, chạy thành công.
 
-**CHƯA kiểm chứng bằng thao tác UI thật** (không có quyền truy cập trình duyệt/tài khoản trong
-phiên này, dù migration đã chạy thật) — trước khi deploy production, nên: (1) tạo 1 vụ test thật
-trên `qlahs-sup.web.app`, đưa qua ĐT→TT (hoặc TT→XX), dùng "Thêm bị can" ở giai đoạn hiện tại (xác
+**⚠ CHƯA kiểm chứng bằng thao tác UI thật trên production** (không có quyền truy cập trình duyệt/
+tài khoản trong phiên này, dù migration đã chạy thật và deploy đã xong) — nên làm SỚM NHẤT có thể:
+(1) tạo 1 vụ test thật, đưa qua ĐT→TT (hoặc TT→XX), dùng "Thêm bị can" ở giai đoạn hiện tại (xác
 nhận banner cảnh báo hiện đúng, lưu không còn lỗi constraint), xuất Excel báo cáo tháng của đúng kỳ
 đã chọn, đối chiếu B10 C6/7/25/26 (và tương ứng TT/XX) tăng đúng BC không tăng Vụ; (2) xác nhận
-"Cân đối số liệu" vẫn Chênh lệch = 0 (không bị ảnh hưởng, vì hồi tố không đụng `VAO_SHEETS_GD`).
+"Cân đối số liệu" vẫn Chênh lệch = 0 (không bị ảnh hưởng, vì hồi tố không đụng `VAO_SHEETS_GD`); (3)
+dọn sạch vụ test sau khi kiểm chứng.
 
 ## Đối chiếu "Danh sách quy tắc biểu 10/2/3" chính thức — sửa bug thật ở C3/C4 (Tổng thụ lý ĐT) + D72/D270-273 (Biểu 2) + D17/18 (Biểu 3) (2026-08-06, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, CHƯA deploy — chỉ mới compile-check + test cô lập)
 
