@@ -2,6 +2,267 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## "Hồi tố" — Thêm bị can vào vụ đã rời Điều tra: backfill ĐT→TT→[XX] cùng 1 kỳ (2026-08-07, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, CHƯA deploy — chỉ mới compile-check + test cô lập)
+
+Theo yêu cầu Dũng: nghiệp vụ thật chỉ thêm mới/tách bị can khi vụ CÒN Ở Điều tra, nhưng đôi khi sơ
+xuất thống kê khiến vụ đã chuyển sang Truy tố/Xét xử trước khi kịp nhập đủ bị can — vẫn cần "Thêm
+bị can" NGAY tại giai đoạn hiện tại (không lùi cả vụ về ĐT, tránh đụng các bị can khác đã đúng), nhưng
+về THỐNG KÊ phải tính bị can đó đầy đủ như đã đi qua đúng trình tự thật (mới khởi tố ĐT → kết thúc ĐT
+chuyển TT → [kết thúc TT chuyển XX]), TẤT CẢ gộp vào ĐÚNG 1 kỳ cán bộ chọn lúc thêm. Việc **tách** bị
+can (Tách vụ án) ở TT/XX đơn giản hơn — audit code (`tachVuAn`/`TachVuAnModal`) xác nhận ĐÃ ĐÚNG từ
+trước (vụ tách kế thừa `coQuanThuLy` hiện tại + `kyThongKe` chọn), **không cần sửa gì**.
+
+**Audit trước khi thiết kế — xác định đúng phạm vi cần vá**: đọc `layTrangThaiVuTaiKy`/
+`layTrangThaiBiCanTaiKy` (2 RPC "Tồn") xác nhận lớp "Tồn cuối kỳ" (Dashboard/B10's Tồn kỳ này-trước/
+"DS tồn cuối kỳ") tính HOÀN TOÀN từ `bican.ngayKhoiTo` so với ngày chốt của từng kỳ + lịch sử giai
+đoạn THẬT của vụ — **không đọc `kyThongKe` của bất kỳ sự kiện log nào** — nên **không cần sửa gì** ở
+lớp này (miễn cán bộ nhập đúng Ngày khởi tố bị can như hiện nay, lớp Tồn tự đúng ở mọi kỳ). Khoảng
+trống THẬT chỉ nằm ở lớp "FLOW theo kỳ" (B10's C6/C7 khởi tố mới, C25/C26 kết thúc ĐT→TT, C36/C37
+kết thúc TT→XX, Tổng thụ lý C3/4/33/34/60/61, và dòng tương ứng Biểu 2/3) — các cột này scan sự kiện
+log theo `kyThongKe==K`, và vụ đang ở TT/XX (đã rời ĐT ở 1 kỳ CŨ) không xuất hiện ở đâu cả trong dữ
+liệu "vào" của ĐT cho kỳ K, dù bị can mới thêm có `khoi_to_bican.kyThongKe=K` đúng.
+
+**Sự kiện log mới `bo_sung_bican_hoi_to`** (bị-can-level, cùng hình dạng `bo_sung_bican` đã có —
+migration `add_bo_sung_bican_hoi_to_2026-08-07.sql`, ALTER CHECK constraint theo đúng bài học "thêm
+loaiSuKien mới luôn cần sửa constraint trước") — **mô hình "hop"**: mỗi bản ghi có CẢ `tuGiaiDoan`
+LẪN `denGiaiDoan` (giống `chuyen_giai_doan` thật), ghi trong `ThemBiCanForm` khi
+`vuAn.coQuanThuLy !== "dieu_tra"` (tự động, kèm banner giải thích — theo lựa chọn của Dũng qua
+`AskUserQuestion`, KHÔNG cần tích xác nhận riêng vì đây LUÔN là kịch bản sơ xuất thống kê):
+- Luôn có 1 bản ghi "arrival" `{tuGiaiDoan: null, denGiaiDoan: "dieu_tra"}` — mới khởi tố ĐT.
+- 1 bản ghi "hop" cho MỖI cặp giai đoạn liên tiếp đã đi qua: `{tuGiaiDoan:"dieu_tra",
+  denGiaiDoan:"truy_to"}` (nếu vụ đang ở TT/XX), thêm `{tuGiaiDoan:"truy_to",
+  denGiaiDoan:"xet_xu"}` (nếu vụ đang ở XX).
+
+**Mô hình "hop" tận dụng ĐÚNG pattern query "vào"(`denGiaiDoan==gd`)/"ra"(`tuGiaiDoan==gd`) đã có sẵn
+cho `chuyen_giai_doan`/`bo_sung_bican`** — không cần code branching "đây có phải giai đoạn cuối
+không": 1 sự kiện hop tự nhiên vừa là "ra" của giai đoạn nguồn vừa là "vào" của giai đoạn đích, nên ở
+giai đoạn TRUNG GIAN (đã đi qua rồi rời ngay), "vào" và "ra" tự triệt tiêu (mới+giải quyết = net 0
+đúng ý nghĩa), còn giai đoạn CUỐI (nơi vụ đang thật sự đứng) chỉ có "vào", không "ra" — đúng tự nhiên
+mà KHÔNG cần biết trước "đây có phải cuối chuỗi hay không".
+
+**`tinhBaoCaoKyTuLog`**: thêm 2 query song song mỗi gd (`denGiaiDoan==gd`/`tuGiaiDoan==gd`), dựng
+`ds.hoiToVao`/`ds.hoiToRa` (qua `vuBiCanTuLogDocs`, giống `ds.boSungBiCan`) — **CỐ Ý KHÔNG cộng vào
+`soMoi`/`bcMoi`/`tonCuoiKy` của chính hàm này** (chỉ đính kèm cho `tinhBieu10`/Excel dùng): ở giai
+đoạn CUỐI (hiện tại của vụ), bị can hồi tố đã được `boSungTonBc` (nhánh "kỳ chưa chốt", so kỳ khởi
+tố bị can trực tiếp qua `dsTon`/`bcKyKhoiToMapTon`) tự động đếm đúng rồi — cộng thêm sẽ đếm đúp.
+
+**`tinhBieu10`**: hoisted D-independent `dtHoiToVaoBc`/`dtHoiToRaBc`/`ttHoiToVaoBc`/`ttHoiToRaBc`/
+`xxHoiToVaoBc` (map từ `baoCao[gd].ds.hoiToVao/hoiToRa` sang bị can thuần, kèm `_namKTVA`) — cộng
+trực tiếp (concat mảng, KHÔNG "mở rộng allVuDT" như ý tưởng ban đầu — đơn giản hơn nhiều) vào ĐÚNG
+các mảng BC-only đã có sẵn: `dt_moiBc`(C4)/`dt_ktBcMoiKy`(C6-C24, TRỪ C6 vụ)/`dt_dnttBc`(C25-C27, TRỪ
+C25 vụ)/`tt_moiBc`(C33-C35, TRỪ C33 vụ)/`tt_truToBc`(C36-C52, TRỪ C36/C39-42 vụ)/`xx_moiBc`(C60-C62,
+TRỪ C60 vụ) — **tuyệt đối không cộng cột Vụ nào**, đúng bất biến `bo_sung_bican` đã áp dụng. Cũng bổ
+sung `dtKtoCaNhan`/`ttTruyToCaNhan` (khối audit "thiếu Năm sinh") và quét thêm `tatCaDieuLuat` (phòng
+vụ hồi tố không rơi vào bất kỳ nhóm `allVu` nào khác của kỳ, tránh thiếu hẳn dòng D để cộng bù).
+
+**Excel — 5 sheet mới** `"DS bị can hồi tố ĐT/TT/XX (vào)"` + `"DS bị can hồi tố ĐT/TT (ra)"` (dựng
+qua `addSheetBoSungBiCan` có sẵn, từ `baoCao[gd].ds.hoiToVao/hoiToRa` — cột "Kỳ TK" (AF) tự khớp vị
+trí với sheet "DS khởi tố ĐT (mới thật)" vì CÙNG layout cột, nên `mkCfBcKy` dùng được thẳng không cần
+sửa). Đưa vào ĐÚNG các danh sách RIÊNG của B10 (`DT_VAO_THULY`/`DT_KTO`/`TT_VAO_THULY`/`XX_VAO_THULY`
+mới + thêm sheet "ra" vào các `mkCfBcM([SHEET_*_CHUYEN_*_LAN_DAU], r)` của C26-C27/C37-C38/C43-C52) —
+**TUYỆT ĐỐI KHÔNG đưa vào `DT_VAO`/`TT_VAO`/`XX_VAO` gốc** (dùng chung cho "Cân đối số liệu"/"Tổng
+hợp báo cáo"/"TK tội danh" qua `VAO_SHEETS_GD`/`ALL_VAO`) — 2 nơi đó đã tự đúng từ trước qua
+`bcBoSungTonTheoGD`/RPC (cùng lý do "tự auto-catch ở giai đoạn cuối" đã audit ở trên), thêm vào sẽ
+đếm đúp và làm "Cân đối số liệu" mất cân bằng (Chênh lệch ≠ 0).
+
+**Biểu 2/3 KHÔNG sửa trực tiếp** — cả 2 đọc từ `baoCao[gd]`/mảng trả về của `tinhBieu10` (VD
+`b10Tong[8]` = tổng cột C7 đã cộng dồn hồi tố), tự động khớp theo cơ chế nguồn dữ liệu chung.
+
+**Đã kiểm chứng**: biên dịch qua `@babel/core`+`@babel/preset-react` — sạch. Test cô lập mới
+(`test_hoi_to.js`, trích nguyên `tinhBieu10` từ file thật) — 17/17 PASS, 2 kịch bản: (1) vụ hồi tố
+đủ 3 hop (ĐT→TT→XX) — C7/C4 ĐT=1, C25vụ=0/C26BC=1, C33vụ=0/C34BC=1, C36vụ=0/C37BC=1, C60vụ=0/
+C61BC=1 (mọi cột Vụ giữ nguyên 0, chỉ cột BC tăng đúng 1 ở MỌI giai đoạn đã đi qua); (2) vụ dừng ở
+Truy tố (chỉ 1 hop ĐT→TT) — xác nhận C34(TT)=1 nhưng C37(TT→XX)=0/C61(XX)=0 (không lan sang XX khi
+chưa từng hồi tố tới đó). Chạy lại toàn bộ 113 assertion hồi quy có sẵn (`test_b10_c3_c4.js`/
+`test_b10_c25_c58.js`/`test_bieu2_3.js`/`test_bieu_rows_sanity.js`/`test_theme_sheet.js`) — không có
+gì bị phá vỡ.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** (không có quyền truy cập trình duyệt/tài khoản trong
+phiên này) — trước khi deploy, nên: (1) chạy migration `add_bo_sung_bican_hoi_to_2026-08-07.sql`
+qua Session pooler/Dashboard; (2) tạo 1 vụ test thật, đưa qua ĐT→TT (hoặc TT→XX), dùng "Thêm bị can"
+ở giai đoạn hiện tại (xác nhận banner cảnh báo hiện đúng), xuất Excel báo cáo tháng của đúng kỳ đã
+chọn, đối chiếu B10 C6/7/25/26 (và tương ứng TT/XX) tăng đúng BC không tăng Vụ; (3) xác nhận "Cân
+đối số liệu" vẫn Chênh lệch = 0 (không bị ảnh hưởng, vì hồi tố không đụng `VAO_SHEETS_GD`).
+
+## Đối chiếu "Danh sách quy tắc biểu 10/2/3" chính thức — sửa bug thật ở C3/C4 (Tổng thụ lý ĐT) + D72/D270-273 (Biểu 2) + D17/18 (Biểu 3) (2026-08-06, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, CHƯA deploy — chỉ mới compile-check + test cô lập)
+
+Dũng cung cấp 3 file `Danh_sach_quy_tac_bieu_10.md`/`_bieu_2.md`/`_bieu_3.md` — quy tắc validate
+CHÍNH THỨC của hệ thống báo cáo ngành (mã dòng có hậu tố `_10238`=Biểu 2, `_10239`=Biểu 3,
+`_10173`=Biểu 3→10), trả lời trực tiếp câu hỏi "Tổng thụ lý có tính trả hồ sơ ĐTBS nhận lại là mới
+không" đã nêu ở mục ngay dưới đây.
+
+**Phát hiện + sửa bug THẬT ở B10's C3/C4 (Tổng thụ lý ĐT) — ĐÃ deploy production trước đó, giờ mới
+phát hiện sai** — quy tắc chính thức `D77_10238-D59_10238=C3` (D77="Tổng số CQĐT thụ lý điều tra",
+D59="Số vụ án mới nhận lại để điều tra bổ sung" = `dt.traVe`) xác nhận: C3 **PHẢI TRỪ** traVe, và
+vì D77 tự nó KHÔNG có số hạng án huỷ, C3 cũng **KHÔNG được trừ án huỷ**. Code cũ (`dt_moi`, dùng
+chung cho cả C3/C4 LẪN `tonTheoLogD`'s "Tồn kỳ này") có traVe VÀ trừ án huỷ — SAI với quy tắc chính
+thức. Đây CHÍNH LÀ điều "Công cụ tính Biểu 10.xlsx" của Dũng đã ngụ ý ở mục audit trước (`=C82-C64`)
+— giờ có thêm nguồn ĐỘC LẬP (file quy tắc chính thức) xác nhận, đủ tin cậy để sửa.
+
+**Đã sửa CHỈ ĐÚNG C3/C4 (ĐT), KHÔNG đụng `dt_moi` gốc** (biến đó vẫn dùng cho `tonTheoLogD`'s "Tồn
+kỳ này" — 1 vụ trả về ĐTBS rồi CHƯA rời đi lại trong kỳ vẫn đúng là "đang tồn ĐT", khái niệm KHÁC
+hẳn "Tổng thụ lý" hẹp hơn của mẫu ngành) — thêm biến mới `dt_thuLyMoi` (= tách+TĐCphụchồi+
+`dtKhoiToMoiThat`+`dtNoiKhac`, hoisted D-independent cạnh `dtKhoiToMoiThat`), C3/C4 đổi sang dùng
+biến này, bỏ hẳn trừ án huỷ. **⚠ D58 ("Số vụ án mới nhận để điều tra lại" — vụ bị huỷ án nhận lại
+điều tra LẠI, KHÁC hẳn trả hồ sơ ĐTBS) CHƯA có tính năng theo dõi** — công thức mới coi D58=0, sẽ
+THIẾU nếu thực tế có vụ loại này trong kỳ (hiếm nhưng cần biết, note lại trong code).
+
+**Excel formula cũng phải sửa theo (bài học "sửa JS không đủ" lặp lại lần nữa)** — `VAO_GD.dieu_tra`
+đổi từ `DT_VAO` (7 sheet, dùng chung cho Cân đối số liệu/Tổng hợp báo cáo — GIỮ NGUYÊN không đổi)
+sang `DT_VAO_THULY` MỚI (chỉ 3 sheet: "DS khởi tố ĐT"/"DS vụ tách ĐT"/"DS phục hồi TĐC ĐT" — cả 3
+ĐÃ CÓ SẴN, không cần tạo sheet mới), `RA_THULY_GD.dieu_tra` bỏ "DS án huỷ ĐT" (chỉ còn "DS nhập vụ
+ĐT"/"DS chuyển đi ĐT"). TT/XX (`VAO_GD.truy_to/xet_xu`) GIỮ NGUYÊN — chưa sửa cùng đợt (xem dưới).
+
+**Bug thật đã sửa ở `tinhBieu2` (2 lỗi, phát hiện qua đối chiếu quy tắc chính thức)**:
+1. **D270-273 ("mới thụ lý"/"nhận lại do CQĐT hoàn lại sau ĐTBS", giai đoạn TT) dùng NHẦM
+   `ttChuyenDi_LanDau` (phía TT, dòng chảy TT→XX)** — nhưng D270-273 mô tả dòng chảy ĐT→TT (TT
+   NHẬN từ ĐT), phải dùng `dtChuyenDi_LanDau`/`dt.chuyenDi` (phía ĐT). Quy tắc `D93=D272`/`D96=D273`
+   xác nhận: D272/273 phải bằng CHÍNH XÁC D93/D96 (cùng 1 tập "chưa lần đầu" của `dt.chuyenDi`) —
+   đã sửa bằng alias trực tiếp `m.set(272, m.get(93))`/`m.set(273, m.get(96))` thay vì tính lại.
+2. **D72 ("Số bị can mới khởi tố") dùng `soBc(dtKhoiToMoiThat)` (thiếu "bổ sung")** — quy tắc
+   `D72_10238=C7` xác nhận D72 phải bằng ĐÚNG tổng cột C7 của B10 (cộng dồn qua mọi tội danh) =
+   `dt_ktBcMoiKy` = "mới" (kỳ khớp riêng theo BC) + "bổ sung" (BC thêm vào vụ đã có) — sửa bằng cách
+   truyền thẳng `b10Tong[8]` (tổng C7 đã cộng dồn sẵn ở `xuatBaoCaoThangExcel`) làm tham số mới
+   `tongC7` của `tinhBieu2`, tránh tính lại logic phức tạp 1 lần nữa.
+
+**D17/18 (Biểu 3, Tổng thụ lý XX) chuyển từ "cần xác nhận" sang TỰ TÍNH** — quy tắc
+`D17_10239=C60`/`D18_10239=C61` (KHÔNG cần trừ gì thêm, khác ĐT/TT) — dùng thẳng `b10Tong[69]`/
+`b10Tong[70]` (C60/C61 đã cộng dồn) làm tham số mới `tongC60`/`tongC61` của `tinhBieu3`, tránh phải
+tự dựng lại công thức `D1+D2+D3+D4+D9-D15` (D2/D3 "hủy/ĐTBS mới nhận lại" CHƯA tracked, sẽ thiếu).
+
+**⚠ CHƯA sửa TT's C33/C34 (Tổng thụ lý TT)** dù quy tắc `D280-D262=C33`/`D281-D267=C34` đã biết —
+đào sâu công thức đầy đủ của D280 (`D280=D260+D261+D262+D263-D264+D270+D272+D274-D276-D278`) phát
+hiện 2 thành phần MỚI, PHỨC TẠP hơn hẳn ĐT: D274 ("nơi khác chuyển đến" TT — nguồn dữ liệu CHƯA rõ,
+không có field/nguồn tương ứng rõ ràng như ĐT's `nguon` flag) và D278 ("TT trả hồ sơ ĐTBS chưa nhận
+lại TRONG KỲ" — cần 1 mảng lọc round-trip MỚI khác hẳn `ttTraDi_TrucTiep` đã có, tương tự
+`xxTraDi_KhongLapKy` nhưng cho chiều TT→ĐT thay vì XX→TT). Để dành phiên sau khi đã làm rõ 2 điểm
+này với Dũng, KHÔNG sửa vội khi còn 2 thành phần chưa chắc chắn.
+
+**Đã kiểm chứng**: biên dịch sạch. Test cô lập mới `test_b10_c3_c4.js` (2/2 PASS, trích nguyên
+`tinhBieu10` + mọi hàm dùng chung nó cần) — mock khớp ĐÚNG số liệu mẫu, xác nhận C3=809 (khớp H8
+mapping của Dũng) và C4=1658 (khớp I8 mapping: C84-C71=2373-715=1658), KHÔNG còn tính traVe/án huỷ.
+Cập nhật lại `test_bieu2_3.js` (58/58 PASS, sửa lại kỳ vọng D72/D270-273 theo đúng bug fix) và
+`test_bieu_rows_sanity.js` (27/27 PASS, 2 dòng B3:17/18 không còn trong BIEU23_CAN_XAC_NHAN vì đã
+tự tính được). **CHƯA kiểm chứng bằng dữ liệu Supabase thật** — đây là sửa CÔNG THỨC GỐC của B10
+C3/C4 (đã deploy production từ trước với công thức CŨ) — trước khi deploy lại, nên: (1) xuất báo
+cáo 1 kỳ thật, đối chiếu C3/C4 mới với số liệu tay (tồn đầu+tách+TĐCphụchồi+khởitốmớithật+
+nơikhácchuyểnđến−nhậpvụ−chuyểnđinơikhác, KHÔNG còn traVe/án huỷ); (2) mở Excel THẬT (không chỉ
+ExcelJS) xác nhận công thức SUMIF mới (`DT_VAO_THULY`) tính lại đúng khi recalc; (3) đối chiếu Biểu
+2 D72/D270-273 sau sửa với số liệu thật.
+
+## Thêm Biểu 2 & Biểu 3 làm sheet mới trong "Xuất Excel báo cáo tháng", bên cạnh Biểu 10 (2026-08-06, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, CHƯA deploy — chỉ mới compile-check + test cô lập, xem checklist cuối mục)
+
+Theo yêu cầu Dũng (kèm file tham khảo `Công cụ tính Biểu 10.xlsx`, `Biểu 2 (T7.26).xlsx`,
+`Biểu 3 (T7.26).xlsx`): breakdown 2 biểu mẫu ngành phải làm "bên cạnh Biểu 10" — Biểu 2 ("THỐNG KÊ
+KẾT QUẢ CÔNG TỐ VÀ KIỂM SÁT VIỆC KHỞI TỐ, ĐIỀU TRA, TRUY TỐ...", 396 mã dòng) và Biểu 3 ("...KIỂM
+SÁT XÉT XỬ SƠ THẨM...", 150 mã dòng) — dòng nào tính được thì làm, dòng nào chưa có dữ liệu thì ghi
+chú lại để bổ sung tính năng dần dần.
+
+**Kết luận breakdown**: đối chiếu TỪNG mã dòng (546 dòng tổng cộng) với schema hiện có
+(`vuan`/`bican`/`lichsuChuyenGiaiDoan`) — CHỈ ~56 dòng (chủ yếu khối "tồn đầu/mới/tổng thụ lý/giải
+quyết/đình chỉ/tạm đình chỉ/tồn cuối" của 3 giai đoạn ĐT/TT/XX, đúng logic đã có sẵn cho B10/Kỳ báo
+cáo) tính được ngay từ log hiện có. **Phần LỚN (~475 dòng) hoàn toàn CHƯA có tính năng theo dõi**:
+bắt giữ/tạm giữ, biện pháp ngăn chặn (phê chuẩn lệnh bắt/tạm giam/gia hạn tạm giữ), biện pháp cưỡng
+chế (kê biên/phong toả), luật sư/người bào chữa, lý do đình chỉ/tạm đình chỉ chi tiết theo từng
+khoản luật (BLHS/BLTTHS), hoạt động điều tra/kiểm sát cụ thể (khám nghiệm hiện trường/tử thi, đối
+chất, nhận dạng, khám xét, thực nghiệm điều tra, giám định...), kháng nghị phúc thẩm, kiến nghị,
+thỉnh thị, thủ tục rút gọn, án trọng điểm, quá thời hạn luật định — đây LÀ những mảng nghiệp vụ hoàn
+toàn mới (bắt giữ/biện pháp ngăn chặn/cưỡng chế đặc biệt lớn, ~54 dòng chỉ riêng phần đó), cần thiết
+kế UI/schema mới hoàn toàn nếu muốn tự động hoá, không phải sửa công thức.
+
+**Quyết định kiến trúc — KHÔNG tạo nút xuất riêng, thêm thẳng 2 sheet "Biểu 2"/"Biểu 3" vào workbook
+"Xuất Excel báo cáo tháng" đã có** (đúng nghĩa "làm bên cạnh Biểu 10" — ngay trong file B10 vẫn
+dùng) — tái dùng NGUYÊN `baoCao` (đã tính bởi `tinhBaoCaoKyTuLog`) và `biCanByVu` đã có sẵn trong
+`xuatBaoCaoThangExcel`, KHÔNG query thêm gì. Mỗi sheet 4 cột: **Tiêu chí | Mã dòng | Số liệu |
+Trạng thái** — liệt kê ĐỦ TOÀN BỘ 396/150 dòng chính thức (kể cả dòng chưa tính được), mỗi dòng có
+1 trong 3 trạng thái:
+- **✓ Tự động tính** (xanh) — có giá trị JS, tính từ `baoCao`.
+- **❓ Cần xác nhận công thức** (vàng cam) — ĐÃ có manh mối công thức (qua chính file
+  `Công cụ tính Biểu 10.xlsx` của Dũng) nhưng CHƯA chắc chắn khớp 100% định nghĩa chính thức (VD
+  "Tổng số VKS/Toà án thụ lý" ở TT/XX — có 1 thành phần "trả hồ sơ ĐTBS mới nhận lại" mà ý nghĩa
+  nghiệp vụ CHƯA rõ, số mẫu không tự khớp phép cộng trừ đơn giản khi thử — xem `BIEU23_CAN_XAC_NHAN`).
+- **⚠ Chưa có dữ liệu — cần bổ sung tính năng** (xám) — hoàn toàn chưa có field/sự kiện log tương
+  ứng, Dũng tự nhập tay.
+
+**BẢN THÂN FILE EXCEL LÀ BẢN BREAKDOWN** (cố ý, thay vì viết 1 tài liệu riêng) — Dũng mở file xuất
+ra là thấy ngay dòng nào tính rồi/dòng nào cần nhập tay/dòng nào cần xác nhận, đúng workflow thật
+(không phải đọc thêm 1 tài liệu tách rời) — 2 sheet luôn hiện đủ khi mở "Xuất Excel báo cáo tháng",
+không ẩn mặc định như các sheet "DS ..." (khác các sheet chi tiết khác, vì đây LÀ báo cáo chính,
+không phải phụ lục đối chiếu).
+
+**Công thức đã dùng (tính từ `baoCao[gd]`, KHÔNG tính lại riêng)** — 3 hàm mới `tinhBieu2`/
+`tinhBieu3`/`themSheetBieu2Va3` (đặt cạnh `B10_HEADER_CHI_TIET`, trước `xuatBaoCaoThangExcel`):
+- Tồn đầu/tồn cuối vụ+BC mỗi giai đoạn = `baoCao[gd].tonDauKy/tonDauBiCan/tonCuoiKy/tonCuoiBiCanKy`
+  (y hệt Kỳ báo cáo/B10, không có gì mới).
+- "Mới nhận lại ĐTBS"/"tách"/"nhập"/"TĐC phục hồi" = đếm/Σ`_soBiCan` trực tiếp trên
+  `baoCao[gd].ds.{traVe,tachVu,nhapVu(soNhapVu),phucHoi}` có sẵn.
+- **"Số vụ/bị can mới khởi tố" (Biểu 2 dòng 71-72, ĐT) = TÁI DÙNG THẲNG `dtKhoiToMoiThat` của B10**
+  (đã lọc nguồn "an_khoi_to_moi"/"tin_bao_khoi_to_len", xem mục B10 ngay trên) — xác nhận qua đối
+  chiếu số mẫu: Biểu 2 mẫu ngành TỰ NÓ đã tách "mới khởi tố" (D71) ra khỏi "nơi khác chuyển đến"
+  (D73, riêng) và "TĐC phục hồi" (D62, riêng) — đúng CHÍNH XÁC ý nghĩa hẹp mà B10 C6/C7 vừa được
+  chỉnh trong mục ngay trên, KHÔNG phải trùng hợp — 2 việc CÙNG áp dụng đúng 1 khái niệm nghiệp vụ.
+- **"Số vụ/BC đề nghị truy tố"/"truy tố" (Biểu 2 dòng 92-96 ĐT, 292-297 TT) — cặp dòng "tổng" +
+  "trong đó kỳ trước do ĐTBS" TÁI DÙNG THẲNG `dtChuyenDi_LanDau`/`ttChuyenDi_LanDau` của B10**: dòng
+  "tổng" = đếm KHÔNG lọc (`dt.chuyenDi`/`tt.chuyenDi` thô), dòng "trong đó kỳ trước do ĐTBS" =
+  tổng − lần đầu (`dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`). Đã đối chiếu khớp CHÍNH XÁC số mẫu
+  (247−158=89, khớp đúng dòng 93 mẫu=89; tương tự dòng 292/293=194/8) — xác nhận thêm 1 lần nữa
+  logic "lần đầu" vừa sửa cho B10 hoàn toàn khớp với cách chính mẫu ngành tách "tổng"/"trong đó lặp
+  lại" — không phải chỉ đúng theo suy luận riêng của phiên làm việc trước.
+- **"TA trả hồ sơ ĐTBS ... CHƯA NHẬN LẠI" (Biểu 3 dòng 15-16, XX)** — TÁI DÙNG `xxTraDi_KhongLapKy`
+  của B10 (loại round-trip cùng kỳ) — đối chiếu khớp qua phép tính ngược: D17(Tổng số TA thụ lý,
+  mẫu=207) = D1(76)+D2(0)+D3(11)+D4(2)+D9(128)−D15(mẫu=10) → xác nhận D15 ĐÚNG LÀ khái niệm
+  "round-trip chưa quay lại trong kỳ" mà `xxTraDi_KhongLapKy` đã tính cho C71-C72 của B10.
+- **"VKS trả hồ sơ ĐTBS (không tính vụ do Toà án yêu cầu)" (Biểu 2 dòng 352/361/367/368, TT)** — TÁI
+  DÙNG `ttTraDi_TrucTiep` của B10. Lưu ý NHỎ đã ghi rõ trong code: B10 C58-C59 loại THÊM round-trip
+  cùng kỳ mà Biểu 2 dòng 352 không yêu cầu loại — chấp nhận sai khác cực hiếm này, không tách riêng
+  1 bộ filter thứ 3 chỉ vì 1 edge-case hiếm khi xảy ra.
+- **"Tổng số CQĐT thụ lý điều tra" (Biểu 2 dòng 77/79, ĐT)** — công thức RIÊNG của Biểu 2 (tồn đầu +
+  traVe+tách+TĐCphụchồi+khởitốmới+nơikhácchuyểnđến − nhậpvụ − chuyểnđinơikhác), **KHÁC câu hỏi
+  "B10's Tổng thụ lý C3 có nên khớp D77 hay D77−D59"** (câu hỏi đó CHƯA trả lời được, xem dưới) —
+  2 câu hỏi độc lập, D77 tự nó tính đúng dù còn nghi vấn về việc B10 có khớp nó hay không.
+- **D97/98 (Biểu 2, "Số bị can là đảng viên"/"đảng viên giữ chức vụ quản lý" trong nhóm đề nghị truy
+  tố)** — duyệt trực tiếp `biCanByVu` lọc `dangVien==="co"`/`dangVienGiuChucVu===true`, cùng field
+  đã dùng cho B10 C21/C22.
+
+**Phát hiện QUAN TRỌNG cần Dũng xác nhận (KHÔNG tự ý quyết định)** — đối chiếu "Công cụ tính Biểu
+10.xlsx" của chính Dũng phát hiện: dòng H8 (mapping "Tổng thụ lý ĐT" của B10 → Biểu 2) ghi công
+thức `=C82-C64` (dòng 77 TRỪ dòng 59, tức TRỪ "mới nhận lại ĐTBS") — nghĩa là bản đồ tham chiếu của
+CHÍNH Dũng ngụ ý B10's "Tổng thụ lý" (C3/C33/C60) KHÔNG nên tính "trả hồ sơ ĐTBS nhận lại" là "mới",
+nhưng code HIỆN TẠI của `tinhBieu10` (`dt_moi` bao gồm cả `dt.traVe`) THÌ CÓ tính. Đây CÓ THỂ là 1
+sai lệch thật giữa B10 và kỳ vọng của Dũng, HOẶC "Công cụ tính..." chỉ là 1 bản đối chiếu CŨ từ 1
+giai đoạn audit B10 trước đây (rất nhiều vòng sửa "Tổng thụ lý" đã ghi trong CLAUDE.md) không còn
+khớp định nghĩa MỚI NHẤT. **KHÔNG tự ý sửa B10's "Tổng thụ lý" dựa trên phát hiện này** — cần hỏi
+Dũng trực tiếp: "trả hồ sơ điều tra bổ sung nhận lại" có nên tính là "mới" trong Tổng thụ lý hay
+không? Cùng câu hỏi áp dụng cho TT (dòng 262 Biểu 2, "Số vụ án mới nhận lại để điều tra bổ sung" ở
+MỤC TRUY TỐ — ý nghĩa CHƯA rõ, khác hẳn dòng 272 "nhận lại do CQĐT hoàn lại sau ĐTBS" đã xác định
+rõ — 2 dòng gần giống tên nhau nhưng số liệu không khớp phép cộng trừ đơn giản khi thử) và Biểu 3
+(dòng 2/3, "hủy mới nhận để xét xử lại"/"điều tra bổ sung mới nhận lại" — CHƯA rõ nguồn dữ liệu nào
+trong hệ thống tương ứng, có thể liên quan tới khái niệm "án huỷ, xét xử lại" hoàn toàn chưa được
+mô hình hoá).
+
+**Đã kiểm chứng**: biên dịch qua `@babel/core`+`@babel/preset-react@7.25.6` — sạch. 3 test cô lập
+mới (trích nguyên hàm từ file thật, KHÔNG viết lại):
+- `test_bieu2_3.js` (56/56 PASS) — mock `baoCao` khớp ĐÚNG số liệu mẫu trong "Công cụ tính Biểu
+  10.xlsx" (tồn đầu 501, traVeTu 62, tách 21, nhập 325, phục hồi 268, khởi tố mới 314/885, nơi khác
+  chuyển đến 70/119...), đối chiếu TỪNG dòng đã tính (D57,59,60-62,64,66,69,71-77,79,83,86,92-96,
+  100,117,134,141,154,156 ĐT; D260,270-273,292-293,296-297,344,346,352,361,367,368 TT; D1,4,9,12,
+  15-16,22,52,70,84,86 XX) khớp CHÍNH XÁC — bao gồm phát hiện + sửa ngay 1 lỗi thật (D77/D79 ban
+  đầu bị đưa nhầm vào "cần xác nhận" dù công thức đã tự kiểm chứng đúng — xem code).
+- `test_bieu_rows_sanity.js` (29/29 PASS) — xác nhận `BIEU2_ROWS`/`BIEU3_ROWS` đủ đúng 396/150
+  dòng, mã dòng liên tục 1..N không trùng/không thiếu, mọi entry trong `BIEU23_CAN_XAC_NHAN` khớp
+  đúng 1 dòng thật (không tham chiếu mã dòng không tồn tại).
+- `test_theme_sheet.js` (14/14 PASS) — mock ExcelJS Workbook/Worksheet, xác nhận `themSheetBieu2Va3`
+  tạo đúng 2 sheet 397/151 dòng (396/150 dữ liệu + header), hiện đúng 3 trạng thái (Tự động/Cần xác
+  nhận/Chưa có dữ liệu) đúng từng dòng mẫu.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** (không có tài khoản/quyền truy cập trình duyệt tới
+`qlahs-sup.web.app` trong phiên này) — trước khi deploy, nên: (1) xuất Excel báo cáo tháng 1 kỳ
+thật, mở 2 sheet "Biểu 2"/"Biểu 3" mới, xác nhận đủ 396/150 dòng với đúng 3 màu trạng thái; (2) đối
+chiếu vài dòng "✓ Tự động tính" (đặc biệt D57/59/71/77/92/93/154 ĐT) với số liệu thật xem qua Bảng
+dữ liệu Excel/Kỳ báo cáo; (3) hỏi Dũng câu hỏi "Tổng thụ lý có tính trả hồ sơ ĐTBS nhận lại là mới
+không" nêu ở trên trước khi coi B10's Tổng thụ lý là đã đúng tuyệt đối; (4) hỏi Dũng ý nghĩa dòng
+262 (Biểu 2)/dòng 2-3 (Biểu 3) để có thể tính thêm. Chưa deploy `qlahs-sup.web.app`/`qlahsp2.web.app`.
+
 ## Chỉnh phạm vi 5 nhóm cột Biểu B10 (C6-C7/C25-C26/C36-C37/C58-C59/C71-C72) theo yêu cầu Dũng (2026-08-06, `qlahs-sup.html`, nhánh `feature/tong-ke-dong`, **ĐÃ deploy `qlahs-sup.web.app` + `qlahsp2.web.app` theo yêu cầu trực tiếp của Dũng** — CHƯA kiểm chứng bằng dữ liệu Supabase thật, chỉ mới compile-check + test cô lập, xem checklist cuối mục)
 
 Theo yêu cầu trực tiếp của Dũng, `tinhBieu10` trước đây tính 5 nhóm cột RỘNG HƠN đúng ý nghĩa

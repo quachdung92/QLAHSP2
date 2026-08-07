@@ -262,7 +262,7 @@ create table "lichsuChuyenGiaiDoan" (
                              'khoi_to_vu','khoi_to_bican','chuyen_giai_doan','tra_ho_so',
                              'gia_han_dieu_tra','phuc_hoi','hoan_thanh','tach_vu','nhap_vu',
                              'duoc_nhap_vu','giao_nhan_ho_so','sua_thong_tin',
-                             'nhan_lai_chuyen_di','bo_sung_bican'
+                             'nhan_lai_chuyen_di','bo_sung_bican','bo_sung_bican_hoi_to'
                              -- 'nhan_lai_chuyen_di' (2026-08-01): NhanLaiChuyenDiModal — nhận lại
                              -- 1 vụ đã "Chuyển đi" (hoan_thanh/chuyen_di), chọn lại giai đoạn tiếp
                              -- tục xử lý qua field denGiaiDoan đã có sẵn ở cột dưới.
@@ -271,6 +271,12 @@ create table "lichsuChuyenGiaiDoan" (
                              -- khác) cần ghi thêm 1 "vào" riêng ở tầng Tổng thụ lý/Cân đối số liệu,
                              -- tránh lệch âm thầm khi vụ sau đó rời giai đoạn (xem
                              -- add_bo_sung_bican_2026-08-03.sql để biết đầy đủ bối cảnh).
+                             -- 'bo_sung_bican_hoi_to' (2026-08-07): ThemBiCanForm — thêm bị can vào
+                             -- 1 vụ ĐÃ RỜI Điều tra (đang ở Truy tố/Xét xử), vá lại sơ xuất thống kê
+                             -- (quên nhập bị can lúc còn ở ĐT) — 1 bản ghi/giai đoạn ĐÃ "đi qua"
+                             -- (luôn có dieu_tra, thêm truy_to/xet_xu tuỳ giai đoạn hiện tại của vụ),
+                             -- cùng kyThongKe do cán bộ chọn — xem
+                             -- add_bo_sung_bican_hoi_to_2026-08-07.sql.
                              -- 'ket_luan_dieu_tra'/'ket_luan_dieu_tra_bo_sung'/'cao_trang'/
                              -- 'cao_trang_bo_sung' CỐ Ý KHÔNG đưa vào — dead code, chưa từng
                              -- được ghi bởi code thật (đã xác nhận qua audit toàn bộ write-site)
