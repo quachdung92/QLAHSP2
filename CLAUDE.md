@@ -48,6 +48,45 @@ C39-C42, không thuộc phạm vi sửa lần này.
 **Đã deploy `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production)** theo yêu cầu trực tiếp của Dũng
 ("push deloy rồi tắt máy... ko cần tôi confirm lại vì tôi ngủ r").
 
+**⚠ Bug NGHIÊM TRỌNG HƠN phát hiện NGAY SAU KHI deploy, khi Dũng hỏi lại "sheet DS TT chuyển XX (nơi
+biểu 10 lấy dữ liệu) đã có cột mức độ NT của bị can chưa"** — rà lại phát hiện: bản sửa ở trên CHỈ
+sửa đúng GIÁ TRỊ JS (`row.vals[44..47]`, dùng làm "result" cache) — nhưng 4 ô C39-C42 trên Biểu B10
+KHÔNG BAO GIỜ dùng giá trị JS đó khi mở bằng Excel thật, vì `B10_FORMULA[44..47]` LUÔN ghi CÔNG THỨC
+Excel cho các ô này (không phân biệt kỳ đã chốt/chưa chốt, xem `cells.push(fml ? {formula, result} :
+...)`) — công thức là `SUMIFS('DS TT chuyển XX'!...,'DS TT chuyển XX'!$K:$K,"...")`, và **cột K của
+sheet "DS TT chuyển XX" chính là cột "Mức độ NT" trong `VU_H`/`vuBaseRow` — vẫn đọc `vu.mucDoNghiemTrong`
+CẤP VỤ, y hệt bug ban đầu** — nghĩa là sửa xong JS nhưng Excel THẬT mở lên vẫn tính SAI y như cũ.
+Đây đúng là "bài học quan trọng nhất" đã ghi nhiều lần trong file này (mục "Hệ thống thống kê 'tồn'…"
+ở dưới): sửa giá trị JS không đủ nếu ô đó đang ghi công thức, phải đào tới tận nơi SINH CHUỖI CÔNG
+THỨC — lần này tự tái phạm vì chỉ sửa `tinhBieu10` (nơi tính `vals[]`) mà quên tra `B10_FORMULA`.
+
+**Đã sửa tận gốc**: thêm cột phụ MỚI **"Mức độ NT (BC)"** (cột AJ, ở CUỐI sheet, sau `extraHeaders`
+gốc `["Kỳ TK","Ngày chuyển","Số QĐ"]`) cho sheet "DS TT chuyển XX" (và thêm y hệt cho "DS ĐT chuyển
+TT" để 2 sheet đối xứng, dù Điều tra không dùng tới cột này) — giá trị lấy qua hàm mới
+`vuPrimaryMucDoNT_xuat(vu)` (bản sao của `vuPrimaryMucDoNT` trong scope hàm xuất Excel, closure khác
+nên không tái dùng thẳng được — cùng đọc `bcChinh.mucDoNghiemTrong`). Đổi `B10_FORMULA[44..47]` từ
+tham chiếu `$K:$K` (cột "Mức độ NT" cấp vụ, GIỮ NGUYÊN không đổi — vẫn đúng vai trò hiển thị thông
+tin chung cho mọi sheet DS khác) sang `$AJ:$AJ` (cột mới, đúng dữ liệu bị can). Cột mới đặt Ở CUỐI
+(không chèn giữa) để không làm lệch vị trí các cột `BC_H` cố định (M/T/X/Y/Z/AA/AB/AC/AD/AE) mà
+nhiều công thức COUNTIFS khác (`mkCfBcM`, tuổi/giới tính/dân tộc/đảng viên...) đang tham chiếu.
+
+**Đã kiểm chứng lại bằng Excel THẬT sau khi sửa** (không chỉ tin "result" cache — đúng bài học vừa
+nêu): xuất lại báo cáo kỳ 08/2026, đọc THẲNG chuỗi công thức ở ô C39 của 3 dòng Điều 318/321/322 —
+xác nhận đã đổi đúng sang `'DS TT chuyển XX'!$AJ:$AJ`; đọc header sheet "DS TT chuyển XX" xác nhận
+cột 36 (AJ) = "Mức độ NT (BC)" đúng vị trí công thức tham chiếu, cột 11 (K) vẫn là "Mức độ NT" cũ
+không đổi; đọc mẫu 8 dòng dữ liệu xác nhận cột mới có giá trị hợp lệ (dù kỳ này toàn "Đặc biệt
+nghiêm trọng" vì chưa có vụ 318/321/322 nào ở Truy tố để thấy phân nhánh — hạn chế dữ liệu, không
+phải hạn chế kiểm chứng). "DS ĐT chuyển TT" cũng xác nhận có cột đối xứng.
+
+**Phát hiện phụ, CHƯA SỬA (ngoài phạm vi câu hỏi lần này, cần điều tra riêng)**: lúc kiểm chứng, đọc
+"Cân đối số liệu" thấy dòng Điều tra-Bị can lệch **814 (tính) vs 819 (chốt)** — chênh 5 người. Đã
+xác nhận đây KHÔNG phải do 2 lần sửa C39-C42 gây ra (cả 2 lần chỉ đụng cột cuối cùng của 2 sheet
+"chuyển giai đoạn", không đụng cột `BC_H` cố định nào dùng để đếm bị can) — nhiều khả năng là lệch
+có sẵn từ trước, chưa từng được rà tới. Cần Dũng hoặc phiên sau kiểm tra riêng (không phải bug do
+C39-C42 hôm nay).
+
+**Đã deploy lại `qlahs-sup.web.app` VÀ `qlahsp2.web.app`** sau bản sửa tận gốc này.
+
 ## Mức độ nghiêm trọng CỦA BỊ CAN (theo tội danh chính) — field mới trên `bican`, đã backfill dữ liệu cũ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng: field `mucDoNghiemTrong` trước đây CHỈ có ở cấp VỤ ÁN (`vuan.mucDoNghiemTrong`,
