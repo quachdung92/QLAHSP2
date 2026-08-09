@@ -200,6 +200,9 @@ create table "bican" (
   "gioiTinh"           text not null default 'nam' check ("gioiTinh" in ('nam','nu')),
   "toiDanh"            text[] not null default '{""}',  -- phần tử đầu = tội chính
   "dieuLuatBC"         text[] not null default '{}',    -- song song theo index với toiDanh
+  "mucDoNghiemTrong"   text not null default 'dac_biet_nghiem_trong'
+                         check ("mucDoNghiemTrong" in ('it_nghiem_trong','nghiem_trong','rat_nghiem_trong','dac_biet_nghiem_trong')),
+                       -- xác định theo tội danh CHÍNH của bị can (khác mucDoNghiemTrong cấp vụ ở dưới)
   "dangVien"           text not null default 'khong' check ("dangVien" in ('khong','co')),
   "dangVienGiuChucVu"  boolean not null default false,  -- chỉ có ý nghĩa khi dangVien='co'
   "diaChi"             text not null default '',

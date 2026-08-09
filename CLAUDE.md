@@ -2,6 +2,65 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Mức độ nghiêm trọng CỦA BỊ CAN (theo tội danh chính) — field mới trên `bican`, đã backfill dữ liệu cũ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
+
+Theo yêu cầu Dũng: field `mucDoNghiemTrong` trước đây CHỈ có ở cấp VỤ ÁN (`vuan.mucDoNghiemTrong`,
+dùng tính hạn điều tra Điều 172/174) — nay thêm 1 field CÙNG TÊN nhưng RIÊNG cho TỪNG BỊ CAN, xác
+định theo TỘI DANH CHÍNH (phần tử đầu `dieuLuatBC`) của người đó, vì 1 vụ nhiều bị can có thể mỗi
+người bị khởi tố tội khác nhau với mức độ nghiêm trọng khác nhau — khác hẳn field cấp vụ (1 giá trị
+chung cho cả vụ). 2 field hoàn toàn độc lập, không cái nào ghi đè cái nào.
+
+**Công thức mặc định** (hàm `mucDoNghiemTrongMacDinhTheoDieu(dieuLuat)`, đặt cạnh
+`NHAN_MUC_DO_NGHIEM_TRONG`) — mặc định "Đặc biệt nghiêm trọng", TRỪ vài điều luật BLHS 2025 phổ
+biến nhưng KHÔNG đặc biệt nghiêm trọng: Điều 318 (Gây rối TTCC)/321 (Đánh bạc) → "Nghiêm trọng";
+Điều 322 (Tổ chức đánh bạc hoặc gá bạc) → "Rất nghiêm trọng". **CHỈ áp dụng ngoại lệ khi đúng BLHS
+2025** (regex bắt buộc có "BLHS 2025" trong chuỗi điều luật) — BLHS 1999 đánh số HOÀN TOÀN khác,
+Điều 318/321/322 BLHS 1999 là tội quân sự không liên quan, áp nhầm ngoại lệ sẽ sai hoàn toàn.
+
+**Cột mới trên `bican`** (`supabase/add_bican_mucdonghiemtrong_2026-08-09.sql`) — text, CHECK 4 giá
+trị giống `vuan`, NOT NULL DEFAULT `'dac_biet_nghiem_trong'`.
+
+**UI — auto-gợi ý khi chọn tội danh chính, có bảo vệ chống ghi đè lựa chọn tay** (áp dụng cả 3 nơi
+nhập bị can: `ThemVuAnForm` dòng lồng trong form/`ThemBiCanForm`/`SuaBiCanForm`) — dropdown "Mức độ
+nghiêm trọng (theo tội danh chính)" đặt ngay dưới khối Tội danh (nhãn tự giải thích luôn, đúng yêu
+cầu "hướng dẫn người dùng là theo tội danh chính", không cần thêm caption riêng). Cờ mới
+`mucDoNghiemTrongDaSua` (per-bị-can ở `ThemVuAnForm`, per-form ở 2 form còn lại) theo dõi việc cán
+bộ đã TỰ TAY đổi dropdown chưa:
+- `ThemBiCanForm`/`ThemVuAnForm` (form TẠO MỚI, chưa có giá trị thật nào) — cờ khởi tạo `false`:
+  MỌI lần đổi tội danh CHÍNH (idx 0, qua `suaToiDanhVaDieuLuat`/`datToiChinh`/`xoaToiDanh`) tự động
+  gợi ý lại theo công thức, CHO TỚI KHI cán bộ tự tay đổi dropdown (khi đó cờ bật `true`, từ đó về
+  sau không tự gợi ý lại nữa dù đổi tội danh tiếp — tôn trọng lựa chọn tay).
+- `SuaBiCanForm` (form SỬA bị can ĐÃ CÓ) — cờ khởi tạo LUÔN `true` ngay từ đầu (coi giá trị đang có
+  sẵn trên DB — dù là mặc định hay đã backfill — là "đã quyết định", đúng nguyên tắc "dữ kiện lịch
+  sử" đã áp dụng cho các field khác trong file này) — sửa tội danh ở đây KHÔNG bao giờ tự động ghi
+  đè, chỉ đổi khi cán bộ tự tay chọn lại dropdown.
+
+**Đã backfill toàn bộ 3703 bị can hiện có** — script Node tạm trong scratchpad, **trích NGUYÊN VĂN
+hàm `mucDoNghiemTrongMacDinhTheoDieu` từ chính `qlahs-sup.html`** (không viết lại công thức riêng
+cho script, đảm bảo backfill và UI luôn cùng 1 nguồn logic) — chỉ UPDATE đúng 969 dòng khác mặc
+định (386 "Nghiêm trọng": 165 Điều 318 + 221 Điều 321; 583 "Rất nghiêm trọng": Điều 322 — đã xác
+nhận qua truy vấn mẫu, không có bị can BLHS 1999 nào lẫn vào 2 nhóm này), 2734 dòng còn lại giữ mặc
+định "Đặc biệt nghiêm trọng" — đúng khớp tổng 3703.
+
+**Đã kiểm chứng**: test cô lập 10/10 PASS cho `mucDoNghiemTrongMacDinhTheoDieu` (đủ 3 ngoại lệ +
+mặc định + đảm bảo KHÔNG áp ngoại lệ cho BLHS 1999 + không nhầm số điều chứa "318" là con số con
+VD "3180"). Compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Backup Supabase trước cả
+2 bước (thêm cột `31320934315`, xác nhận "success") — thêm cột và backfill chạy trong 1 phiên liền
+mạch nên dùng chung 1 lần backup. Xác nhận qua `information_schema` + REST API thật (200 OK).
+
+**Đã kiểm chứng đầy đủ qua UI thật trên `qlahs-sup.web.app`** (đăng nhập thật) — mở "+ Thêm vụ án",
+gõ "318" ở ô tội danh, chọn "Tội gây rối trật tự công cộng" (Điều 318 BLHS 2025) — xác nhận "Mức độ
+nghiêm trọng" TỰ ĐỘNG đổi từ "Đặc biệt nghiêm trọng" sang "Nghiêm trọng" ngay lập tức; tự tay đổi
+xuống "Ít nghiêm trọng"; đổi tội danh sang Điều 322 ("Tội tổ chức đánh bạc hoặc gá bạc") — xác nhận
+"Mức độ nghiêm trọng" VẪN GIỮ "Ít nghiêm trọng" (không bị ghi đè thành "Rất nghiêm trọng", đúng bảo
+vệ `mucDoNghiemTrongDaSua`). Mở "Sửa bị can" của 1 bị can thật đã backfill (Chu Văn Chung, Điều 322)
+— xác nhận dropdown hiện đúng "Rất nghiêm trọng" (khớp kết quả backfill). Đóng form qua "Huỷ" (không
+lưu dữ liệu test). 0 lỗi console thật (ngoại trừ cảnh báo Babel kích thước file vô hại đã biết).
+
+**Chưa làm (ngoài phạm vi lần này)**: field mới CHƯA được dùng ở bất kỳ tính toán/thống kê nào (Biểu
+B10, Dashboard...) — đây mới chỉ là bước thu thập dữ liệu, đúng scope yêu cầu ban đầu; bảng dữ liệu
+Excel (`BangExcelModule`) CHƯA thêm cột này cho bảng sửa hàng loạt.
+
 ## Biểu 2 — bắt đầu bổ sung trường còn thiếu: thông tin bắt/tạm giữ/tạm giam (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
 
 Theo yêu cầu Dũng — bắt đầu 1 loạt việc bổ sung trường còn thiếu cho "Biểu 2" (mẫu thống kê ngành,

@@ -1372,6 +1372,23 @@ function layNgayTamGiam(bc) {
 const NHAN_LOAI_BICAN = { ca_nhan: "Cá nhân", phap_nhan: "Pháp nhân" };
 const NHAN_MUC_DO_NGHIEM_TRONG = { it_nghiem_trong: "Ít nghiêm trọng", nghiem_trong: "Nghiêm trọng", rat_nghiem_trong: "Rất nghiêm trọng", dac_biet_nghiem_trong: "Đặc biệt nghiêm trọng" };
 
+// Mức độ nghiêm trọng CỦA BỊ CAN (2026-08-09, theo yêu cầu Dũng) — KHÁC field cùng tên trên `vuan`
+// (đã có từ trước, áp dụng chung cho cả vụ, dùng tính hạn điều tra) — field mới này xác định theo
+// TỘI DANH CHÍNH của TỪNG bị can (1 vụ nhiều bị can có thể mỗi người 1 tội khác mức độ khác nhau).
+// Mặc định "Đặc biệt nghiêm trọng", trừ vài điều luật BLHS 2025 phổ biến nhưng KHÔNG đặc biệt
+// nghiêm trọng: Điều 318 (Gây rối TTCC)/321 (Đánh bạc) → Nghiêm trọng; Điều 322 (Tổ chức đánh bạc/
+// gá bạc) → Rất nghiêm trọng. CHỈ áp dụng ngoại lệ khi đúng BLHS 2025 (BLHS 1999 đánh số hoàn toàn
+// khác — Điều 318/321/322 BLHS 1999 là tội quân sự, không liên quan).
+function mucDoNghiemTrongMacDinhTheoDieu(dieuLuat) {
+  const s = String(dieuLuat || "");
+  if (!/BLHS\s*2025/i.test(s)) return "dac_biet_nghiem_trong";
+  const m = s.match(/Điều\s+(\d+)/i);
+  const soDieu = m ? m[1] : null;
+  if (soDieu === "318" || soDieu === "321") return "nghiem_trong";
+  if (soDieu === "322") return "rat_nghiem_trong";
+  return "dac_biet_nghiem_trong";
+}
+
 // ============================================================================
 // THỜI HẠN ĐIỀU TRA — tự động tính theo Điều 172 (thời hạn cơ bản + gia hạn, kể từ khi khởi tố vụ
 // án) và Điều 174 khoản 1 (thời hạn điều tra tiếp + gia hạn, kể từ khi có QĐ phục hồi điều tra)
@@ -5436,6 +5453,7 @@ function moiBiCan(id) {
     dangVien: "khong", dangVienGiuChucVu: false,
     trinhDo: "", taiPham: "khong", loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
     diaChi: "", toiDanh: [""], dieuLuatBC: [""],
+    mucDoNghiemTrong: "dac_biet_nghiem_trong", mucDoNghiemTrongDaSua: false,
     bienPhapNganChan: "tai_ngoai", hanTamGiam: "", loaiBat: "", ngayBat: "",
     nguonGocTamGiam: "tu_tam_giu", ngayChuyenTamGiam: "", vksKhongPheChuan: false,
     ngayKhoiTo: "", soQdKtBiCan: "",
@@ -5531,16 +5549,24 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
     });
   };
   const themToiDanh = (id) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, toiDanh: [...r.toiDanh, ""], dieuLuatBC: [...(r.dieuLuatBC||[]), ""] } : r));
-  const xoaToiDanh = (id, idx) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, toiDanh: r.toiDanh.filter((_, i) => i !== idx), dieuLuatBC: (r.dieuLuatBC||[]).filter((_, i) => i !== idx) } : r));
+  const xoaToiDanh = (id, idx) => setBiCanRows(rows => rows.map(r => r.id !== id ? r : {
+    ...r,
+    toiDanh: r.toiDanh.filter((_, i) => i !== idx),
+    dieuLuatBC: (r.dieuLuatBC||[]).filter((_, i) => i !== idx),
+    ...(idx === 0 && !r.mucDoNghiemTrongDaSua ? { mucDoNghiemTrong: mucDoNghiemTrongMacDinhTheoDieu((r.dieuLuatBC||[]).filter((_, i) => i !== idx)[0] || "") } : {}),
+  }));
   const suaToiDanhVaDieuLuat = (id, idx, ten, dl) => setBiCanRows(rows => rows.map(r => r.id !== id ? r : {
     ...r,
     toiDanh: r.toiDanh.map((t, i) => i === idx ? ten : t),
     dieuLuatBC: (r.dieuLuatBC||[]).map((c, i) => i === idx ? dl : c),
+    // Tội danh CHÍNH (idx 0) đổi → tự gợi ý lại Mức độ nghiêm trọng, TRỪ khi cán bộ đã tự sửa tay.
+    ...(idx === 0 && !r.mucDoNghiemTrongDaSua ? { mucDoNghiemTrong: mucDoNghiemTrongMacDinhTheoDieu(dl) } : {}),
   }));
   const datToiChinh = (id, idx) => setBiCanRows(rows => rows.map(r => r.id !== id ? r : {
     ...r,
     toiDanh: datLamToiChinh(r.toiDanh, idx),
     dieuLuatBC: datLamToiChinh(r.dieuLuatBC || [], idx),
+    ...(!r.mucDoNghiemTrongDaSua ? { mucDoNghiemTrong: mucDoNghiemTrongMacDinhTheoDieu(datLamToiChinh(r.dieuLuatBC || [], idx)[0]) } : {}),
   }));
 
   const coBiCanHopLe = biCanRows.filter(r => r.hoTen.trim());
@@ -5641,6 +5667,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           maVuAn: maNoiSinh, hoTen: bc.hoTen.trim(), namSinh: bc.namSinh ? Number(bc.namSinh) : null,
           gioiTinh: bc.gioiTinh, toiDanh: toiDanhSach.length ? toiDanhSach : [""],
           dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
+          mucDoNghiemTrong: bc.mucDoNghiemTrong || "dac_biet_nghiem_trong",
           dangVien: bc.dangVien, dangVienGiuChucVu: bc.dangVien === "co" ? !!bc.dangVienGiuChucVu : false,
           danToc: bc.danToc.trim() || "Kinh", quocTich: bc.quocTich.trim() || "Việt Nam",
           trinhDo: trinhDoFinal, trinhDoUocTinh: trinhDoUocTinhFinal, taiPham: bc.taiPham || "khong",
@@ -5976,6 +6003,15 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
                   ))}
                 </div>
                 <button onClick={() => themToiDanh(bcHienTai.id)} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm tội danh</button>
+              </div>
+              <div className="mt-2 max-w-xs">
+                <Truong nhan="Mức độ nghiêm trọng (theo tội danh chính)">
+                  <select value={bcHienTai.mucDoNghiemTrong || "dac_biet_nghiem_trong"}
+                          onChange={e => suaBiCan(bcHienTai.id, { mucDoNghiemTrong: e.target.value, mucDoNghiemTrongDaSua: true })}
+                          className={oInput}>
+                    {Object.entries(NHAN_MUC_DO_NGHIEM_TRONG).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </Truong>
               </div>
 
               <NhomTruong so={3} ten="Biện pháp ngăn chặn" />
@@ -6434,17 +6470,36 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
   const [ngayKhoiTo, setNgayKhoiTo] = useState(toInputDate(biCan.ngayKhoiTo));
   const [toiDanh, setToiDanh] = useState(biCan.toiDanh && biCan.toiDanh.length ? biCan.toiDanh : [""]);
   const [dieuLuatBC, setDieuLuatBC] = useState(biCan.dieuLuatBC && biCan.dieuLuatBC.length ? biCan.dieuLuatBC : [""]);
+  const [mucDoNghiemTrong, setMucDoNghiemTrong] = useState(biCan.mucDoNghiemTrong || "dac_biet_nghiem_trong");
+  // Bị can ĐÃ CÓ sẵn giá trị (hoặc đã chạy backfill) — coi là "đã quyết định", không tự động ghi
+  // đè theo tội danh chính mỗi khi sửa (khác ThemBiCanForm — nơi CHƯA có giá trị thật nào cả).
+  const [mucDoNghiemTrongDaSua, setMucDoNghiemTrongDaSua] = useState(true);
   const [soQdKtBiCan, setSoQdKtBiCan] = useState(biCan.soQdKtBiCan || "");
   const [loi, setLoi] = useState("");
   const [dangLuu, setDangLuu] = useState(false);
 
   const themToiDanh = () => { setToiDanh(t => [...t, ""]); setDieuLuatBC(d => [...d, ""]); };
-  const xoaToiDanh = (i) => { setToiDanh(t => t.filter((_, idx) => idx !== i)); setDieuLuatBC(d => d.filter((_, idx) => idx !== i)); };
+  const xoaToiDanh = (i) => {
+    setToiDanh(t => t.filter((_, idx) => idx !== i));
+    setDieuLuatBC(d => d.filter((_, idx) => idx !== i));
+    if (i === 0 && !mucDoNghiemTrongDaSua) {
+      const nd = dieuLuatBC.filter((_, idx) => idx !== i);
+      setMucDoNghiemTrong(mucDoNghiemTrongMacDinhTheoDieu(nd[0] || ""));
+    }
+  };
   const suaToiDanhVaDieuLuat = (i, ten, dl) => {
     setToiDanh(t => t.map((x, idx) => idx === i ? ten : x));
     setDieuLuatBC(d => d.map((c, idx) => idx === i ? dl : c));
+    if (i === 0 && !mucDoNghiemTrongDaSua) setMucDoNghiemTrong(mucDoNghiemTrongMacDinhTheoDieu(dl));
   };
-  const datToiChinh = (idx) => { setToiDanh(t => datLamToiChinh(t, idx)); setDieuLuatBC(d => datLamToiChinh(d, idx)); };
+  const datToiChinh = (idx) => {
+    setToiDanh(t => datLamToiChinh(t, idx));
+    setDieuLuatBC(d => datLamToiChinh(d, idx));
+    if (!mucDoNghiemTrongDaSua) {
+      const nd = datLamToiChinh(dieuLuatBC, idx);
+      setMucDoNghiemTrong(mucDoNghiemTrongMacDinhTheoDieu(nd[0]));
+    }
+  };
 
   const luu = async () => {
     if (!hoTen.trim()) { setLoi("Cần nhập họ tên."); return; }
@@ -6490,6 +6545,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         soQdKtBiCan: soQdKtBiCan.trim(),
         toiDanh: toiDanhSach.length ? toiDanhSach : [""],
         dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
+        mucDoNghiemTrong: mucDoNghiemTrong || "dac_biet_nghiem_trong",
         ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
 
@@ -6593,6 +6649,13 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         </div>
         <button onClick={themToiDanh} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm tội danh</button>
       </div>
+      <div className="mb-3 max-w-xs">
+        <Truong nhan="Mức độ nghiêm trọng (theo tội danh chính)">
+          <select value={mucDoNghiemTrong} onChange={e => { setMucDoNghiemTrong(e.target.value); setMucDoNghiemTrongDaSua(true); }} className={oInput}>
+            {Object.entries(NHAN_MUC_DO_NGHIEM_TRONG).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </Truong>
+      </div>
 
       <NhomTruong so={3} ten="Biện pháp ngăn chặn" />
       <div className="grid grid-cols-4 gap-3 mb-3">
@@ -6670,17 +6733,34 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
   const [soQdKtBiCan, setSoQdKtBiCan] = useState("");
   const [toiDanh, setToiDanh] = useState([""]);
   const [dieuLuatBC, setDieuLuatBC] = useState([""]);
+  const [mucDoNghiemTrong, setMucDoNghiemTrong] = useState("dac_biet_nghiem_trong");
+  const [mucDoNghiemTrongDaSua, setMucDoNghiemTrongDaSua] = useState(false);
   const [loi, setLoi] = useState("");
   const [dangLuu, setDangLuu] = useState(false);
   const [hienModalKy, setHienModalKy] = useState(false);
 
   const themToiDanh = () => { setToiDanh(t => [...t, ""]); setDieuLuatBC(d => [...d, ""]); };
-  const xoaToiDanh = (i) => { setToiDanh(t => t.filter((_, idx) => idx !== i)); setDieuLuatBC(d => d.filter((_, idx) => idx !== i)); };
+  const xoaToiDanh = (i) => {
+    setToiDanh(t => t.filter((_, idx) => idx !== i));
+    setDieuLuatBC(d => d.filter((_, idx) => idx !== i));
+    if (i === 0 && !mucDoNghiemTrongDaSua) {
+      const nd = dieuLuatBC.filter((_, idx) => idx !== i);
+      setMucDoNghiemTrong(mucDoNghiemTrongMacDinhTheoDieu(nd[0] || ""));
+    }
+  };
   const suaToiDanhVaDieuLuat = (i, ten, dl) => {
     setToiDanh(t => t.map((x, idx) => idx === i ? ten : x));
     setDieuLuatBC(d => d.map((c, idx) => idx === i ? dl : c));
+    if (i === 0 && !mucDoNghiemTrongDaSua) setMucDoNghiemTrong(mucDoNghiemTrongMacDinhTheoDieu(dl));
   };
-  const datToiChinh = (idx) => { setToiDanh(t => datLamToiChinh(t, idx)); setDieuLuatBC(d => datLamToiChinh(d, idx)); };
+  const datToiChinh = (idx) => {
+    setToiDanh(t => datLamToiChinh(t, idx));
+    setDieuLuatBC(d => datLamToiChinh(d, idx));
+    if (!mucDoNghiemTrongDaSua) {
+      const nd = datLamToiChinh(dieuLuatBC, idx);
+      setMucDoNghiemTrong(mucDoNghiemTrongMacDinhTheoDieu(nd[0]));
+    }
+  };
 
   const kiemTra = () => {
     if (!hoTen.trim()) { setLoi("Cần nhập họ tên."); return false; }
@@ -6710,6 +6790,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         maVuAn: vuAn.id, hoTen: hoTen.trim(), namSinh: namSinh ? Number(namSinh) : null,
         gioiTinh, toiDanh: toiDanhSach.length ? toiDanhSach : [""],
         dieuLuatBC: dieuLuatBCSach.length ? dieuLuatBCSach : [""],
+        mucDoNghiemTrong: mucDoNghiemTrong || "dac_biet_nghiem_trong",
         dangVien, dangVienGiuChucVu: dangVien === "co" ? dangVienGiuChucVu : false,
         danToc: danToc.trim() || "Kinh", quocTich: quocTich.trim() || "Việt Nam",
         trinhDo: trinhDoFinal, trinhDoUocTinh: trinhDoUocTinhFinal, taiPham: taiPham || "khong",
@@ -6847,6 +6928,13 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
           ))}
         </div>
         <button onClick={themToiDanh} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm tội danh</button>
+      </div>
+      <div className="mb-3 max-w-xs">
+        <Truong nhan="Mức độ nghiêm trọng (theo tội danh chính)">
+          <select value={mucDoNghiemTrong} onChange={e => { setMucDoNghiemTrong(e.target.value); setMucDoNghiemTrongDaSua(true); }} className={oInput}>
+            {Object.entries(NHAN_MUC_DO_NGHIEM_TRONG).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </Truong>
       </div>
 
       <NhomTruong so={3} ten="Biện pháp ngăn chặn" />
