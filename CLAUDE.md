@@ -2,7 +2,53 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Mức độ nghiêm trọng CỦA BỊ CAN (theo tội danh chính) — field mới trên `bican`, đã backfill dữ liệu cũ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
+## Biểu B10 C39-C42 ("Phân loại tội phạm" ở Truy tố) — sửa đọc đúng mức độ nghiêm trọng CỦA BỊ CAN thay vì field cấp vụ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
+
+Theo yêu cầu Dũng, ngay sau khi thêm field `bican.mucDoNghiemTrong` (mục ngay dưới đây) — Dũng nói rõ
+mục đích tồn tại của field mới này: *"mức độ nghiêm trọng tội danh của bị can là để điền vào các cột
+C39-C42 của biểu 10"*. Đối chiếu `bieu_B10_mo_ta.md` xác nhận đúng: C39-C42 ("Phân loại tội phạm",
+Truy tố) mô tả rõ *"Đếm vụ ở C36 có điều luật với `mucDoNghiemTrong=...` (**tra danh mục tội
+danh**)"* — tức mẫu ngành muốn phân loại THEO TỘI DANH (tra cứu), không phải theo 1 field tự chọn
+tay của cán bộ không liên quan gì tới tội danh.
+
+**Bug thật phát hiện + sửa**: code cũ (`mdn`, trong `tinhBieu10`) đọc `v.mucDoNghiemTrong` — field
+CẤP VỤ ÁN, vốn CHỈ được dùng để tính hạn điều tra Điều 172/174 (chọn lúc tạo vụ, không liên quan gì
+tới phân loại tội phạm theo tội danh) — hoàn toàn SAI mục đích so với ý nghĩa mẫu ngành yêu cầu.
+Vì B10 đã nhóm theo TỪNG điều luật D (`vuCoD(vuArr, D)` lọc `vuPrimaryDL(vu) === D`, mỗi vụ chỉ
+thuộc ĐÚNG 1 dòng B10 theo tội danh chính), mọi vụ trong `tt_truToVu` của 1 dòng đều CÙNG tội danh
+D — nên mức độ nghiêm trọng đúng ra phải lấy từ CHÍNH bị can đại diện (người quyết định D là gì,
+qua `vuPrimaryDL`), không phải từ field rời rạc trên `vuan`.
+
+**Đã sửa**: thêm hàm `vuPrimaryMucDoNT(vu)` (đặt cạnh `vuCoD`, dùng lại đúng logic tìm bị can đại
+diện của `vuPrimaryDL` — BC `loaiKhoiTo==="ban_dau"` hoặc BC đầu tiên) — đọc `bcChinh.mucDoNghiemTrong`
+(field bị can vừa thêm, tôn trọng cả lựa chọn tay nếu cán bộ đã tự sửa qua dropdown "Mức độ nghiêm
+trọng (theo tội danh chính)"), fallback `mucDoNghiemTrongMacDinhTheoDieu(vuPrimaryDL(vu))` cho vụ
+0 bị can (hiếm, không có ai để tra). Đổi `mdn` từ đọc `(v.mucDoNghiemTrong || "dac_biet_nghiem_trong")`
+sang gọi `vuPrimaryMucDoNT(v)`.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch, 0 tham chiếu cũ
+`v.mucDoNghiemTrong` còn sót trong khối tính C39-C42. Xuất Excel báo cáo tháng THẬT trên
+`qlahs-sup.web.app` (kỳ 08/2026, chặn `URL.createObjectURL` bắt Blob thật, nạp lại bằng
+`new ExcelJS.Workbook().xlsx.load(...)` ngay trong trình duyệt) — đọc trực tiếp sheet "Biểu B10":
+mọi dòng có C36>0 (Điều 123/Tội giết người, Điều 174/Tội lừa đảo, 1 dòng "chưa xác định điều luật")
+đều đúng gộp hết vào C42 (không thuộc diện ngoại lệ 318/321/322 → mặc định "Đặc biệt nghiêm trọng"),
+tổng C39+C40+C41+C42 luôn khớp CHÍNH XÁC C36 ở mọi dòng — không có sai lệch/đếm trùng/sót. Riêng 3
+dòng Điều 318/321/322 kỳ này có C36=0 (không có vụ nào đang ở Truy tố với tội danh đó trong kỳ hiện
+tại) nên chưa quan sát trực tiếp được nhánh "Nghiêm trọng"/"Rất nghiêm trọng" qua báo cáo thật —
+nhưng đã xác nhận gián tiếp qua: (1) test cô lập 10/10 PASS cho `mucDoNghiemTrongMacDinhTheoDieu`
+(mục backfill ở dưới); (2) dữ liệu backfill thật xác nhận bị can "Chu Văn Chung" (Điều 322) có đúng
+`mucDoNghiemTrong="rat_nghiem_trong"`, đọc đúng qua `SuaBiCanForm` trên UI thật; (3) `vuPrimaryMucDoNT`
+chỉ đơn thuần đọc lại field đã backfill đúng, không có logic tính toán mới nào cần kiểm chứng thêm.
+
+**Cố ý KHÔNG đụng** dòng `NHAN_MUC_DO_NT[vu.mucDoNghiemTrong]` trong `vuBaseRow` (cột "Mức độ NT"
+hiển thị chung cho MỌI sheet "DS ..." trong Xuất Excel báo cáo tháng) — đây là cột hiển thị THÔNG
+TIN CHUNG của vụ (vẫn đúng mục đích ban đầu, dùng cho hạn điều tra), không phải logic phân loại
+C39-C42, không thuộc phạm vi sửa lần này.
+
+**Đã deploy `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production)** theo yêu cầu trực tiếp của Dũng
+("push deloy rồi tắt máy... ko cần tôi confirm lại vì tôi ngủ r").
+
+## Mức độ nghiêm trọng CỦA BỊ CAN (theo tội danh chính) — field mới trên `bican`, đã backfill dữ liệu cũ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng: field `mucDoNghiemTrong` trước đây CHỈ có ở cấp VỤ ÁN (`vuan.mucDoNghiemTrong`,
 dùng tính hạn điều tra Điều 172/174) — nay thêm 1 field CÙNG TÊN nhưng RIÊNG cho TỪNG BỊ CAN, xác
@@ -61,7 +107,7 @@ lưu dữ liệu test). 0 lỗi console thật (ngoại trừ cảnh báo Babel 
 B10, Dashboard...) — đây mới chỉ là bước thu thập dữ liệu, đúng scope yêu cầu ban đầu; bảng dữ liệu
 Excel (`BangExcelModule`) CHƯA thêm cột này cho bảng sửa hàng loạt.
 
-## Biểu 2 — bắt đầu bổ sung trường còn thiếu: thông tin bắt/tạm giữ/tạm giam (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
+## Biểu 2 — bắt đầu bổ sung trường còn thiếu: thông tin bắt/tạm giữ/tạm giam (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng — bắt đầu 1 loạt việc bổ sung trường còn thiếu cho "Biểu 2" (mẫu thống kê ngành,
 chưa có tài liệu mô tả riêng như `bieu_B10_mo_ta.md`), khởi đầu bằng các dòng 3-12 (Số người bị bắt
@@ -210,7 +256,7 @@ từ tạm giữ", xác nhận hiện thêm ô "Ngày chuyển tạm giam"; đ�
 nhận ô đó biến mất (không cần nhập); sửa 1 bị can đã có `ngayChuyenTamGiam`, đổi biện pháp đi rồi
 quay lại "Tạm giam"+"Chuyển từ tạm giữ" — xác nhận giá trị cũ vẫn còn (không bị xoá mất).
 
-## UI nhập/sửa bị can — tách 3 nhóm rõ ràng: Thông tin cá nhân / QĐ khởi tố bị can / Biện pháp ngăn chặn (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
+## UI nhập/sửa bị can — tách 3 nhóm rõ ràng: Thông tin cá nhân / QĐ khởi tố bị can / Biện pháp ngăn chặn (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng: "làm lại UI thông tin bị can tách ra làm 3 phần để dễ điền dễ quan sát" — form
 nhập bị can trước đây (`ThemVuAnForm`'s dòng bị can lồng trong form, `ThemBiCanForm`, `SuaBiCanForm`)
@@ -246,7 +292,7 @@ UI thật** — nên tự mở 1 trong 3 nơi (VD "+ Thêm bị can" ở 1 vụ 
 xác nhận thấy đúng 3 khối có tiêu đề số 1/2/3 rõ ràng, thứ tự đúng như trên, mọi progressive-
 disclosure (pháp nhân/đảng viên/tạm giam...) vẫn ẩn-hiện đúng như trước khi tách nhóm.
 
-## "Loại bắt" chỉ áp dụng cho Tạm giữ + master-detail cho bị can trong ThemVuAnForm + nút "Áp dụng giống" (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
+## "Loại bắt" chỉ áp dụng cho Tạm giữ + master-detail cho bị can trong ThemVuAnForm + nút "Áp dụng giống" (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo phản hồi trực tiếp của Dũng ngay sau mục "tách 3 nhóm" ở trên, gồm 3 việc:
 
@@ -319,7 +365,7 @@ test). 0 lỗi console thật (ngoại trừ cảnh báo Babel kích thước fi
 trình test. Toàn bộ 5 điểm trong checklist đề ra trước đó đều PASS — sẵn sàng để Dũng cân nhắc
 deploy production khi thấy phù hợp.
 
-## Danh sách vụ án — tab "Đang giải quyết" mặc định hiện vụ MỚI NHẬP lên trên cùng (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
+## Danh sách vụ án — tab "Đang giải quyết" mặc định hiện vụ MỚI NHẬP lên trên cùng (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng: tab "Đang giải quyết" (mặc định khi mở Danh sách vụ án) trước đây KHÔNG có
 `orderBy` nào — thứ tự dòng phụ thuộc thứ tự Postgres trả về (không đảm bảo ổn định/không phản ánh
@@ -353,10 +399,12 @@ tầng Postgres (vô hại, không phải nguyên nhân — chỉ ảnh hưởng
 **Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Test cô lập mô
 phỏng đúng kịch bản lỗi thật (mảng gồm bản ghi thiếu `ngayTao` xen giữa các bản ghi có `ngayTao`
 tăng dần) — xác nhận bản ghi mới nhất luôn lên đầu, bản ghi thiếu `ngayTao` luôn chìm xuống cuối,
-đúng như kỳ vọng. Đã đẩy lên `qlahs-sup.web.app` — **CHƯA có xác nhận cuối cùng từ Dũng sau bản sửa
-này** (đang chờ test lại), CHƯA deploy production.
+đúng như kỳ vọng. Đã đẩy lên `qlahs-sup.web.app` — **chưa có xác nhận riêng từ Dũng cho ĐÚNG tính
+năng này qua UI thật** (các lượt kiểm chứng UI sau đó tập trung vào những tính năng khác), nhưng đã
+deploy production CÙNG ĐỢT với các tính năng khác theo yêu cầu chung "push deploy, không cần xác
+nhận từng phần" (2026-08-09, cuối phiên).
 
-## Tự động tính "Hạn điều tra" theo Điều 172/174 khoản 1 BLHS 2025 + cảnh báo quá hạn có hành động (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
+## Tự động tính "Hạn điều tra" theo Điều 172/174 khoản 1 BLHS 2025 + cảnh báo quá hạn có hành động (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng, dẫn nguyên văn Điều 172 (Thời hạn điều tra) và Điều 174 (Thời hạn phục hồi điều
 tra, điều tra bổ sung, điều tra lại) BLHS 2025 — "xem xét lại cách tính thời hạn điều tra" và tự
@@ -500,7 +548,7 @@ phạm vi yêu cầu lần này, để dành nếu Dũng cần sau): 20 trườn
 nguyên trong Supabase — nếu Dũng tự xác minh được danh tính/Điều luật đúng cho các trường hợp đó,
 có thể nhờ sửa tiếp tương tự.
 
-## In bìa hồ sơ — mẫu dán bìa hồ sơ giấy, đặt cạnh nút "Lưu" ở Thêm/Sửa vụ án (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
+## In bìa hồ sơ — mẫu dán bìa hồ sơ giấy, đặt cạnh nút "Lưu" ở Thêm/Sửa vụ án (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng, tham khảo file `mẫu dán bìa hồ sơ.docx` (Downloads, không nằm trong repo) —
 mẫu Word gốc: 1 khung viền đôi khổ gần hết bề rộng A4, bên trái là Tên vụ án (cỡ lớn)/Điều luật/

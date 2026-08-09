@@ -10246,6 +10246,19 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     return getDL(bcChinh);
   };
   const vuCoD = (vuArr, D) => vuArr.filter(vu => vuPrimaryDL(vu) === D);
+  // Mức độ nghiêm trọng dùng cho C39-C42 (2026-08-09, theo yêu cầu Dũng: "mức độ nghiêm trọng tội
+  // danh của bị can là để điền vào cột C39-C42") — đọc đúng `mucDoNghiemTrong` của BỊ CAN ĐẠI DIỆN
+  // (cùng người dùng để suy `vuPrimaryDL` ở trên — tội danh chính của vụ CHÍNH LÀ tội danh của
+  // người này), tôn trọng cả lựa chọn tay nếu cán bộ đã tự sửa. TRƯỚC ĐÂY đọc nhầm `vu.mucDoNghiemTrong`
+  // (field cấp VỤ, vốn chỉ dùng tính hạn điều tra Điều 172/174 — hoàn toàn không liên quan tới phân
+  // loại tội phạm theo tội danh, đúng mẫu ngành ghi "tra danh mục tội danh" chứ không phải đọc field
+  // tự chọn tay của cán bộ khi tạo vụ). Vụ 0 bị can (hiếm) mới fallback sang công thức theo điều luật.
+  const vuPrimaryMucDoNT = (vu) => {
+    const bcs = biCanByVu[vu.id] || [];
+    if (!bcs.length) return mucDoNghiemTrongMacDinhTheoDieu(vuPrimaryDL(vu));
+    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
+    return bcChinh.mucDoNghiemTrong || "dac_biet_nghiem_trong";
+  };
 
   // BC trong vụ với getDL(bc)==D, kèm _namKTVA của vụ đó
   const bcCoD = (vuArr, D) => {
@@ -10597,7 +10610,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const C36 = tt_truToVu.length;
     const C37 = tt_truToBc.length;
     const C38 = tt_truToBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
-    const mdn = (muc) => tt_truToVu.filter(v => (v.mucDoNghiemTrong || "dac_biet_nghiem_trong") === muc).length;
+    const mdn = (muc) => tt_truToVu.filter(v => vuPrimaryMucDoNT(v) === muc).length;
     const C39 = mdn("it_nghiem_trong");
     const C40 = mdn("nghiem_trong");
     const C41 = mdn("rat_nghiem_trong");
