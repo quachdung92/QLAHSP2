@@ -2,6 +2,234 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Biểu 2 — bắt đầu bổ sung trường còn thiếu: thông tin bắt/tạm giữ/tạm giam (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
+
+Theo yêu cầu Dũng — bắt đầu 1 loạt việc bổ sung trường còn thiếu cho "Biểu 2" (mẫu thống kê ngành,
+chưa có tài liệu mô tả riêng như `bieu_B10_mo_ta.md`), khởi đầu bằng các dòng 3-12 (Số người bị bắt
++ "Trong đó" 5 loại bắt; Số trường hợp VKS không phê chuẩn + "Trong đó" 3 loại lệnh). Đã hỏi rõ 2
+quyết định thiết kế qua `AskUserQuestion` trước khi code (đều chọn phương án khuyến nghị): (1)
+"Tạm giữ" là 1 trạng thái Biện pháp ngăn chặn thứ 3 (không phải cờ phụ); (2) "Loại bắt" là 1 ô chọn
+DUY NHẤT mỗi bị can (không phải chọn nhiều).
+
+**Nguyên tắc cốt lõi "chỉ tính lần đầu tiên phát sinh"** (Dũng nêu rõ — tạm giam có thể gia hạn
+nhiều lần, không được tính lặp lại): lưu là **FIELD ĐƠN trên `bican`** (không phải sự kiện log) —
+gia hạn tạm giam chỉ sửa `hanTamGiam` (trường ĐÃ CÓ từ trước), không đụng tới các field mới này, nên
+TỰ NHIÊN không bị tính lại mỗi lần gia hạn mà không cần thêm logic riêng nào.
+
+**Thiết kế lại lần 2, ngay sau bản đầu tiên, theo phản hồi trực tiếp của Dũng** (bản đầu dùng 1
+dropdown "loại lệnh VKS không phê chuẩn" 4 giá trị — Dũng chê "gây phức tạp"): *"phần biện pháp
+ngăn chặn phải tách ra hẳn Tạm giữ, và Tạm giam — tạm giữ là trước khi tạm giam (người bị tạm giữ
+sau đó có thể bị áp dụng BPNC khác hoặc chuyển tạm giam); tạm giam thì có 2 loại phát sinh từ tạm
+giữ hoặc bắt tạm giam trực tiếp; phần không phê chuẩn thì chỉ cần là 1 ô tích ko cần cho chọn
+dropdown gây phức tạp, còn ko phê chuẩn loại gì thì base vào cái biện pháp ngăn chặn trc đó."* —
+tức tách "nguồn gốc tạm giam" thành 1 field riêng (không gộp vào "loại lệnh không phê chuẩn" như
+bản đầu), và đơn giản hoá "VKS không phê chuẩn" từ dropdown 4 giá trị xuống còn 1 CHECKBOX, để loại
+lệnh (dòng 10-12 của Biểu 2) tự SUY RA lúc tính báo cáo thay vì cán bộ phải tự chọn tay.
+
+**4 field trên `bican`** (`supabase/add_bat_tam_giu_tam_giam_2026-08-09.sql`, ĐÃ CHẠY THẬT lên
+Supabase cả 2 lần — bản đầu rồi bản sửa lại, xem xác nhận cuối mục):
+- `loaiBat` (dòng 4-8): `''`/`khan_cap`/`qua_tang`/`truy_na`/`dau_thu`/`tu_thu`.
+- `ngayBat`: ngày bắt/tạm giữ/tạm giam LẦN ĐẦU — dùng xác định kỳ thống kê "Số người bị bắt" sau này.
+- `nguonGocTamGiam` (chỉ có ý nghĩa khi `bienPhapNganChan === "giam"`): `''`/`tu_tam_giu` (tạm giữ
+  chuyển sang, đúng quy trình bình thường)/`bat_truc_tiep` (bắt tạm giam trực tiếp, không qua tạm
+  giữ) — field MỚI THÊM ở bản sửa lần 2, KHÔNG có ở bản đầu.
+- `vksKhongPheChuan` (boolean, mặc định `false`) — thay hẳn cho `vksKhongPheChuanLoaiLenh` (dropdown
+  4 giá trị của bản đầu, đã **DROP HẲN cột này khỏi DB** ở bản sửa lần 2, không giữ song song 2 cơ
+  chế). Loại lệnh cụ thể (dòng 10-12) suy ra bằng hàm mới `suyLoaiLenhKhongPheChuan(bc)`: `tam_giu`
+  → `"khan_cap"` (Lệnh bắt người bị giữ khẩn cấp); `giam` + `nguonGocTamGiam==="bat_truc_tiep"` →
+  `"bat_tam_giam"` (Lệnh bắt tạm giam); `giam` + còn lại → `"tam_giam"` (Lệnh tạm giam) — đúng ý
+  Dũng "loại gì thì base vào biện pháp ngăn chặn trước đó", không cần cán bộ tự chọn.
+- Mở rộng CHECK constraint `bienPhapNganChan` từ 2 giá trị (`giam`/`tai_ngoai`) thành 3
+  (`+tam_giu`) — **giữ nguyên tên field/giá trị cũ** (không đổi `"giam"` thành tên khác) để không
+  phải sửa dữ liệu cũ, mọi chỗ code cũ check `=== "giam"` tiếp tục đúng nguyên nghĩa "tạm giam".
+
+**Thiết kế UI "gọn nhẹ, tránh rối"** (theo đúng yêu cầu Dũng) — KHÔNG thêm ô/khu vực mới ngoài
+form đã có: mở rộng thẳng `<select>` "Biện pháp ngăn chặn" đã tồn tại thành 3 lựa chọn (Tại ngoại/
+Tạm giữ/Tạm giam). 2 khối progressive-disclosure lồng nhau: `bienPhapNganChan === "giam"` hiện thêm
+"Hạn tạm giam" (đã có từ trước) + **"Nguồn gốc tạm giam"** (mới); `bienPhapNganChan !== "tai_ngoai"`
+(tức Tạm giữ HOẶC Tạm giam) hiện "Loại bắt"/"Ngày bắt"/**"VKS không phê chuẩn" (checkbox, không còn
+dropdown)**. Áp dụng ở cả 3 nơi nhập bị can: `ThemVuAnForm` (dòng bị can lồng trong form),
+`ThemBiCanForm`, `SuaBiCanForm`.
+
+**Bug thiết kế tự phát hiện + sửa TRƯỚC KHI code xong (không phải sau khi test)**: bản đầu tiên gate
+việc lưu `loaiBat`/`ngayBat`/`vksKhongPheChuan` theo `bienPhapNganChan !== "tai_ngoai"` ở CẢ 3 form
+— đúng cho 2 form TẠO MỚI (`ThemVuAnForm`/`ThemBiCanForm`, hợp lý: đổi về "Tại ngoại" trước khi lưu
+nghĩa là chưa từng có lịch sử bắt/giam thật) nhưng SAI cho `SuaBiCanForm` (form SỬA bị can đã tồn
+tại): nếu 1 bị can đã có lịch sử bắt/tạm giam thật (đã lưu `loaiBat` từ trước), sau đó đổi biện
+pháp ngăn chặn VỀ "Tại ngoại" rồi lưu, gate này sẽ XOÁ MẤT vĩnh viễn dữ liệu "Số người bị bắt" của
+người đó — phá hỏng chính mục đích của Biểu 2. Đã sửa: `SuaBiCanForm` LUÔN lưu đúng giá trị đang có
+trên form cho cả `loaiBat`/`ngayBat`/`nguonGocTamGiam`/`vksKhongPheChuan` (không gate theo biện
+pháp hiện tại) — khác `hanTamGiam` (trạng thái HIỆN HÀNH, đúng khi xoá theo biện pháp hiện tại) vì
+4 field này là DỮ KIỆN LỊCH SỬ, không phải trạng thái hiện tại.
+
+**Cập nhật hiển thị/thống kê phụ thuộc `bienPhapNganChan` (rà bằng grep toàn file, không bỏ sót)**:
+Badge 2 nơi xem chi tiết vụ án (`ChiTietPanel`/`ChiTietVuAnModal`, gộp qua 2 hằng số dùng chung mới
+`NHAN_BIEN_PHAP_NGAN_CHAN`/`MAU_BIEN_PHAP_NGAN_CHAN` — trước là `=== "giam" ? đỏ : xám`, giờ 3 màu:
+xám/hổ phách/đỏ); 2 chỗ hiển thị text trong Excel (`xuatExcel`'s bảng phẳng, `bcCellsRow` dùng cho
+Xuất Excel báo cáo tháng); enum lựa chọn ở Bảng dữ liệu Excel (`NHOM_COT_BICAN` + ô `<select>` trong
+`DongBiCanBangExcel`); Import Excel (`parseWorkbookDanhSachAn`) nhận diện thêm text "tạm giữ" (trước
+chỉ nhận "tạm giam"). **Sửa thêm 1 bug thật phát hiện lúc rà**: `xuatExcel`'s thống kê "TK tội danh"
+đếm SỐ NHỊ PHÂN `tgTon`/`tnTon` (tạm giam/tại ngoại) — nếu không sửa, mọi bị can "tạm giữ" mới sẽ bị
+đếm NHẦM vào cột "Tại ngoại" (sai, vì tạm giữ vẫn đang bị giam giữ, không phải tại ngoại) — đã thêm
+nhánh thứ 3 `tgiTon` + cột "Tạm giữ" riêng trong sheet đó.
+
+**Chưa làm (ngoài phạm vi lần này, để dành)**: bảng dữ liệu Excel (`BangExcelModule`) CHƯA thêm cột
+mới (loaiBat/ngayBat/nguonGocTamGiam/vksKhongPheChuan) — chỉ cập nhật đúng enum "Biện pháp" cho
+khớp 3 trạng thái, việc thêm cột mới cho bảng sửa hàng loạt là việc riêng nếu Dũng cần sau; các dòng
+còn lại của Biểu 2 (ngoài dòng 3-12) và bản thân SHEET XUẤT BÁO CÁO cho Biểu 2 (giống Biểu B10 đã
+có, dùng `suyLoaiLenhKhongPheChuan` để gộp đúng cột 10-12) đều chưa làm — đây mới là bước ĐẦU TIÊN
+(thu thập dữ liệu), chưa tới bước tính/xuất báo cáo.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch, cả bản
+đầu lẫn sau khi thiết kế lại. Test cô lập 14 assertion (đủ số lượng nhãn theo đúng 5+3 loại của
+Biểu 2; mô phỏng đúng logic mapping Import Excel nhận diện "tạm giữ"; mô phỏng đúng logic đếm 3
+nhánh không sót/đếm trùng; xác nhận đúng hành vi khác biệt CỐ Ý giữa form TẠO MỚI (xoá sạch khi về
+"Tại ngoại") và form SỬA (giữ nguyên lịch sử); sau khi thiết kế lại — xác nhận `suyLoaiLenhKhongPheChuan`
+suy đúng cả 3 nhánh loại lệnh theo đúng tổ hợp `bienPhapNganChan`+`nguonGocTamGiam`, trả `""` khi
+`vksKhongPheChuan=false`).
+
+**Migration đã chạy thật lên Supabase 2 lần** (script Node tạm dùng package `pg` trong scratchpad,
+mật khẩu chỉ truyền qua biến môi trường lúc chạy, gỡ sạch ngay sau mỗi lần — đúng quy tắc
+`supabase/README.md`) — cả 2 lần đều backup trước (`gh workflow run backup-supabase.yml`, lần 1 xác
+nhận "success" run `31312397268`, lần 2 (sửa thiết kế) run `31313267496`).
+- **Lần 1** (thiết kế đầu, dropdown 4 giá trị): xác nhận qua `information_schema`/`pg_constraint` —
+  3 cột mới đúng kiểu/default, CHECK constraint đúng; dữ liệu hiện có (1259 "giam" + 2444
+  "tai_ngoai") vẫn hợp lệ với constraint mới, không mất bản ghi nào.
+- **Lần 2** (sửa lại theo phản hồi Dũng): trước khi drop, đã kiểm tra xác nhận **0 bản ghi nào**
+  từng dùng `vksKhongPheChuanLoaiLenh` khác rỗng (an toàn tuyệt đối để drop thẳng, không cần
+  migrate dữ liệu) — `DROP COLUMN "vksKhongPheChuanLoaiLenh"` + constraint của nó, `ADD COLUMN
+  "nguonGocTamGiam"` (text+CHECK) và `"vksKhongPheChuan"` (boolean, default false). Xác nhận lại
+  qua `information_schema.columns`/`pg_constraint` sau khi chạy: đúng 5 cột còn lại
+  (`bienPhapNganChan`/`loaiBat`/`ngayBat`/`nguonGocTamGiam`/`vksKhongPheChuan`), cột cũ đã biến
+  mất hoàn toàn. Xác nhận thêm qua ĐÚNG đường REST API app dùng (`GET /rest/v1/bican?select=id,
+  nguonGocTamGiam,vksKhongPheChuan` bằng anon key thật) — `200 OK` (không còn lỗi "column not
+  found"), xác nhận `notify pgrst,'reload schema'` đã có hiệu lực.
+
+**Đã deploy `qlahs-sup.web.app`** (sau khi migration lần 2 xong) qua `./deploy.sh sup`. **CHƯA
+deploy production + CHƯA kiểm chứng qua UI thật** (không có tài khoản đăng nhập trong phiên này) —
+nên tự thử trên `qlahs-sup.web.app` trước khi deploy `prod`: (1) thêm 1 bị can mới, chọn "Tạm giữ",
+xác nhận hiện đúng Loại bắt/Ngày bắt/VKS không phê chuẩn (checkbox), lưu thành công; (2) chọn "Tạm
+giam", xác nhận thêm hiện "Nguồn gốc tạm giam" (mặc định "Chuyển từ tạm giữ"), thử đổi sang "Bắt tạm
+giam trực tiếp", lưu; (3) mở "Sửa bị can" 1 người đang Tạm giam có Loại bắt, đổi về "Tại ngoại", lưu,
+rồi mở lại sửa — xác nhận Loại bắt/Ngày bắt/Nguồn gốc tạm giam VẪN CÒN (không bị xoá mất, đúng bug
+đã tự phát hiện+sửa ở trên); (4) Badge ở panel chi tiết hiện đúng màu/tên cho cả 3 trạng thái.
+
+## Danh sách vụ án — tab "Đang giải quyết" mặc định hiện vụ MỚI NHẬP lên trên cùng (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
+
+Theo yêu cầu Dũng: tab "Đang giải quyết" (mặc định khi mở Danh sách vụ án) trước đây KHÔNG có
+`orderBy` nào — thứ tự dòng phụ thuộc thứ tự Postgres trả về (không đảm bảo ổn định/không phản ánh
+thời gian nhập), khác hẳn tab "Tất cả" đã có sẵn `orderBy("ngayTao","desc")` từ trước. Dũng muốn
+vụ vừa nhập/cập nhật thêm nằm ngay trên cùng để dễ theo dõi đã nhập liệu tới đâu.
+
+**Đã sửa**: thêm `.orderBy("ngayTao", "desc")` vào query của `useDanhSachDangGiaiQuyet()` (hook dùng
+chung, cấp nguồn cho cả `DanhSachPanel` lẫn "Tìm thủ công" ở Giao nhận hồ sơ) — khớp đúng hành vi
+tab "Tất cả" đã có. Chỉ ảnh hưởng thứ tự MẶC ĐỊNH (`sortCot === null`) — bấm sort theo cột khác
+(Mã vụ/Ngày KTVA/Hạn ĐT) ở `DanhSachPanel` vẫn ghi đè bình thường, không đổi hành vi đó.
+
+**Xác nhận an toàn kỹ thuật** (đọc code, không đoán): shim Supabase (`_makeQuery`) dịch
+`.where().orderBy()` thành query Postgrest thông thường (không cần composite index như Firestore
+cũ — Postgres không bắt buộc index để chạy query, chỉ ảnh hưởng hiệu năng ở quy mô lớn hơn nhiều so
+với hiện tại); `.onSnapshot()` của query gọi lại `self.get()` (giữ NGUYÊN toàn bộ state
+`filters`/`orders` đã tích luỹ qua chain), nên mỗi lần Realtime tự tải lại (có vụ mới/sửa) vẫn tự áp
+dụng đúng `orderBy` này, không chỉ đúng ở lần tải đầu.
+
+**Bug thật gặp phải + đã sửa (2026-08-09, phát hiện qua Dũng test thật trên `qlahs-sup.web.app`)**:
+bản đầu tiên CHỈ dựa vào `.orderBy("ngayTao","desc")` ở tầng Postgres — Dũng phản hồi vụ nằm trên
+cùng ("Chu Văn Chung", QĐ KTVA 08/12/2025) KHÔNG phải vụ mới nhập gần đây. Nguyên nhân gốc: cột
+`"vuan"."ngayTao"` **CHO PHÉP NULL** (`supabase/schema.sql` dòng 175 — dữ liệu cũ/di trú từ Firestore
+chưa từng có field này), mà **Postgres mặc định xếp NULL lên ĐẦU khi `ORDER BY ... DESC`** (ngược
+trực giác — ASC mới xếp NULL xuống cuối theo mặc định) — mọi vụ THIẾU `ngayTao` (bất kể cũ đến đâu)
+nổi lên trên cùng, che mất đúng vụ mới nhất thật sự. Sửa TẬN GỐC bằng cách KHÔNG tin thứ tự Postgres
+trả về nữa — tự sắp lại hẳn ở tầng JS trong `sorted` (`DanhSachPanel`, áp dụng khi `sortCot ===
+null`), coi `ngayTao` thiếu = `0` (cũ nhất) để luôn chìm xuống dưới — đúng pattern `?? 0` đã dùng
+cho "Ngày KTVA"/"Hạn ĐT" ở `layGiaTriSort` ngay cạnh. Giữ nguyên `.orderBy("ngayTao","desc")` ở
+tầng Postgres (vô hại, không phải nguyên nhân — chỉ ảnh hưởng thứ tự ban đầu trước khi JS sắp lại).
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Test cô lập mô
+phỏng đúng kịch bản lỗi thật (mảng gồm bản ghi thiếu `ngayTao` xen giữa các bản ghi có `ngayTao`
+tăng dần) — xác nhận bản ghi mới nhất luôn lên đầu, bản ghi thiếu `ngayTao` luôn chìm xuống cuối,
+đúng như kỳ vọng. Đã đẩy lên `qlahs-sup.web.app` — **CHƯA có xác nhận cuối cùng từ Dũng sau bản sửa
+này** (đang chờ test lại), CHƯA deploy production.
+
+## Tự động tính "Hạn điều tra" theo Điều 172/174 khoản 1 BLHS 2025 + cảnh báo quá hạn có hành động (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
+
+Theo yêu cầu Dũng, dẫn nguyên văn Điều 172 (Thời hạn điều tra) và Điều 174 (Thời hạn phục hồi điều
+tra, điều tra bổ sung, điều tra lại) BLHS 2025 — "xem xét lại cách tính thời hạn điều tra" và tự
+động hoá, **CỐ Ý LOẠI TRỪ** trường hợp "trả điều tra bổ sung" (Điều 174 khoản 2 — Dũng nêu rõ "đây
+là thời hạn điều tra cơ bản không tính trường hợp trả điều tra bổ sung"): cơ chế đó có SỐ THÁNG CỐ
+ĐỊNH (VKS trả 2 tháng/Toà trả 1 tháng, không phụ thuộc mức độ nghiêm trọng) và KHÔNG có gia hạn,
+khác hẳn bản chất "gia hạn nhiều lần theo mức độ" của Điều 172/174.1 — vụ đang trong thời hạn điều
+tra bổ sung (`tra_ho_so`, `denGiaiDoan="dieu_tra"`) vẫn giữ nguyên hành vi CŨ (nhập tay hoàn toàn).
+
+**4 hằng số + 2 hàm dùng chung** (đặt cạnh `NHAN_MUC_DO_NGHIEM_TRONG`):
+- `THANG_DIEU_TRA_CO_BAN`/`GIOI_HAN_GIA_HAN_DIEU_TRA_CO_BAN` — Điều 172 khoản 1/2 (thời hạn cơ bản
+  2/3/4/4 tháng theo mức độ; số lần + độ dài mỗi lần gia hạn: ít NT 1 lần×2 tháng, nghiêm trọng 2
+  lần×[3,2] tháng, rất NT 2 lần×4 tháng, đặc biệt NT 3 lần×4 tháng — KHÔNG gồm lần gia hạn đặc biệt
+  của VKSNDTC ở khoản 3, vượt thẩm quyền theo dõi tự động).
+- `THANG_DIEU_TRA_PHUC_HOI`/`GIOI_HAN_GIA_HAN_DIEU_TRA_PHUC_HOI` — Điều 174 khoản 1 (thời hạn TIẾP
+  sau khi phục hồi điều tra, KHÁC HẲN bảng cơ bản: 2/2/3/3 tháng; gia hạn CHỈ 1 LẦN theo mức độ:
+  1/2/2/3 tháng).
+- `congThangTheoLuat(ngay, soThang)` — cộng N tháng ĐÚNG theo Điều 134 BLTTHS ("thời hạn hết vào
+  ngày trùng của tháng sau; nếu tháng đó không có ngày trùng thì hết vào ngày cuối cùng của tháng
+  đó") — KHÁC hành vi mặc định `Date.setMonth` (tự "tràn" sang tháng kế, VD 31/1+1 tháng ra 2-3/3
+  thay vì đúng luật 28/2). Đây là điểm SAI SÓT DỄ GẶP NHẤT nếu chỉ dùng `setMonth` trực tiếp.
+- `layMocDieuTraHienTai(maVuAn)` — tìm mốc BẮT ĐẦU của đợt điều tra HIỆN TẠI (khởi tố lần đầu, HOẶC
+  phục hồi gần nhất, HOẶC đang trong hạn điều tra bổ sung — 3 trường hợp loại trừ lẫn nhau, lấy mốc
+  GẦN NHẤT theo `thoiDiemGhi`) + đếm số lần đã gia hạn (`gia_han_dieu_tra`) KỂ TỪ mốc đó — quan
+  trọng nhất: gia hạn TRƯỚC 1 lần phục hồi KHÔNG được tính vào đợt MỚI (đúng bản chất Điều 174.1 là
+  1 đợt hoàn toàn riêng biệt với đợt điều tra ban đầu).
+
+**4 điểm tích hợp**:
+1. `ThemVuAnForm` (tạo vụ mới) — tự điền "Hạn điều tra" = Ngày QĐ KTVA + số tháng theo Mức độ
+   nghiêm trọng (Điều 172.1), CHỈ khi "Cơ quan đang thụ lý" = Điều tra, CHỈ khi cán bộ CHƯA tự tay
+   sửa ô này (`hanDieuTraDaSua`, đúng pattern `tenVuDaSua` đã có sẵn — không ghi đè can thiệp tay).
+2. `PhucHoiModal` — TRƯỚC ĐÂY hoàn toàn KHÔNG đụng tới `hanDieuTra` (lỗ hổng thật phát hiện lúc audit
+   — phục hồi 1 vụ Điều tra không hề tính lại hạn mới, để trống/giữ hạn cũ đã hết). Nay tự tính theo
+   Điều 174 khoản 1 ngay khi gõ ngày phục hồi (chỉ khi `vuAn.coQuanThuLy === "dieu_tra"`), vẫn cho
+   sửa tay tự do.
+3. `GiaHanDieuTraModal` — tải `layMocDieuTraHienTai` lúc mở modal, hiện rõ "đây là lần gia hạn thứ
+   mấy/tổng số lần cho phép" + tự điền hạn mới đề xuất (nối tiếp NGAY SAU hạn hiện hành, không phải
+   từ hôm nay — đúng tinh thần luật "gia hạn trước khi hết hạn"). Nếu đã gia hạn ĐỦ số lần luật cho
+   phép, đổi cảnh báo sang màu đỏ giải thích cần quyết định đặc biệt của cấp cao hơn (Điều 172.3) —
+   **KHÔNG chặn cứng** (đúng convention "cảnh báo, không chặn" xuyên suốt app — có thể là gia hạn
+   đặc biệt hợp pháp ngoài thẩm quyền theo dõi tự động của hệ thống). Đang trong hạn điều tra bổ
+   sung thì không gợi ý gì (đúng phạm vi loại trừ ở trên).
+4. **Dashboard** — cảnh báo hạn điều tra ĐÃ QUÁ HẠN (trước đây chỉ hiện "Quá hạn N ngày" suông) nay
+   thêm dòng hỏi thẳng: "Đã gia hạn thêm ngoài đời nhưng chưa cập nhật hệ thống, hay đã có kết quả
+   nhưng chưa báo cán bộ thống kê?" kèm 3 nút hành động NGAY tại chỗ (Gia hạn/Chuyển GĐ/Hoàn thành —
+   tái dùng nguyên `GiaHanDieuTraModal`/`ChuyenGiaiDoanModal`/`HoanThanhVuAnModal` đã có, không tạo
+   luồng ghi dữ liệu mới) — hệ thống KHÔNG THỂ tự biết đâu là nguyên nhân thật (dữ liệu ngoài đời
+   không đồng bộ với phần mềm), nên chỉ nêu câu hỏi + cho xử lý ngay, không đoán.
+
+**Tiện thể bổ sung nhất quán** (không phải yêu cầu chính, nhưng cùng mạch "xem lại cách tính"):
+- `SuaVuAnForm`/`ChiTietVuAnModal` (2 nơi sửa vụ án khác nhau) — thêm nút "🔄" cạnh ô Hạn điều tra,
+  bấm để tính lại theo Điều 172.1 từ Ngày QĐ KTVA hiện tại (không đụng các lần đã gia hạn — chỉ dùng
+  khi cần đối chiếu lại từ đầu, KHÔNG tự động, tránh ghi đè âm thầm giá trị đã có do gia hạn).
+- `ChiTietPanel`/`ChiTietVuAnModal` (2 nơi xem thông tin vụ án) — thêm dòng "Mức độ nghiêm trọng"
+  (trước đây HOÀN TOÀN không hiển thị ở đây, phải mở "Sửa thông tin" mới thấy) + tô màu dòng "Hạn
+  điều tra" theo `mauCanhBaoHan` đã có sẵn (đỏ nếu quá hạn, cam nếu còn ≤15 ngày) khi đang ở Điều tra.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch. Test cô
+lập trích NGUYÊN VĂN các hàm thật từ file (không viết lại) — 47/47 PASS:
+- `congThangTheoLuat` (7 assertion) — cộng tháng bình thường, kẹp cuối tháng khi thiếu ngày trùng cả
+  năm thường lẫn năm nhuận, cộng qua năm, cộng 0 tháng.
+- Bảng Điều 172.1/174.1 + logic tính "lần gia hạn thứ mấy/còn được mấy lần" mô phỏng đúng
+  `GiaHanDieuTraModal` (30 assertion) — đủ cả 4 mức độ nghiêm trọng × cả 2 bảng cơ bản/phục hồi,
+  xác nhận đúng ranh giới "vừa đủ số lần" vs "đã vượt số lần cho phép".
+- `layMocDieuTraHienTai` (6 kịch bản, mock Firestore tối thiểu) — chỉ khởi tố; khởi tố+2 lần gia
+  hạn; **khởi tố→gia hạn→phục hồi (xác nhận đúng: gia hạn TRƯỚC phục hồi KHÔNG bị tính vào đợt
+  phục hồi mới — đây là điểm dễ sai nhất nếu không tách biệt 2 đợt)**; phục hồi rồi gia hạn tiếp;
+  đang trong hạn điều tra bổ sung (trả về đúng không kèm bảng gia hạn); không có sự kiện nào.
+
+**CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật** (không có tài khoản đăng nhập trong phiên
+này) — nên tự thử trên `qlahs-sup.web.app` trước khi deploy `prod`: (1) tạo 1 vụ mới ở Điều tra,
+xác nhận "Hạn điều tra" tự điền đúng theo Mức độ nghiêm trọng đã chọn; (2) bấm "Gia hạn điều tra"
+1 vụ đang Điều tra, xác nhận hiện đúng "lần gia hạn thứ mấy" + tự điền hạn đề xuất; gia hạn tới khi
+vượt số lần cho phép, xác nhận cảnh báo đỏ hiện đúng nhưng vẫn lưu được nếu cần; (3) Tạm đình chỉ
+rồi Phục hồi 1 vụ đang Điều tra, xác nhận "Hạn điều tra mới" tự điền theo Điều 174.1; (4) Dashboard
+— tìm 1 vụ đã quá hạn điều tra, xác nhận hiện đúng dòng cảnh báo + 3 nút hành động, bấm thử 1 nút
+mở đúng modal tương ứng.
+
 ## Hiệu đính hàng loạt 162 bị can bị sai Tội danh, đối chiếu sổ chính thức bên ngoài (2026-08-09, DỮ LIỆU SUPABASE THẬT — ĐÃ ÁP DỤNG, không phải thay đổi code)
 
 Dũng cung cấp `Book1.xlsx` (Documents, không nằm trong repo) — Sheet1 là danh sách bị can trích từ

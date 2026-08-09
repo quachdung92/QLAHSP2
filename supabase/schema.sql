@@ -203,8 +203,14 @@ create table "bican" (
   "dangVien"           text not null default 'khong' check ("dangVien" in ('khong','co')),
   "dangVienGiuChucVu"  boolean not null default false,  -- chỉ có ý nghĩa khi dangVien='co'
   "diaChi"             text not null default '',
-  "bienPhapNganChan"   text check ("bienPhapNganChan" in ('giam','tai_ngoai')),
+  "bienPhapNganChan"   text check ("bienPhapNganChan" in ('giam','tai_ngoai','tam_giu')),
   "hanTamGiam"         timestamptz,                     -- chỉ khi bienPhapNganChan='giam'
+  -- Biểu 2 (2026-08-09) — thông tin LẦN ĐẦU TIÊN phát sinh bắt/tạm giữ/tạm giam, KHÔNG tính lại
+  -- khi gia hạn tạm giam (gia hạn chỉ sửa hanTamGiam ở trên, không đụng 4 field dưới đây).
+  "loaiBat"            text not null default '' check ("loaiBat" in ('','khan_cap','qua_tang','truy_na','dau_thu','tu_thu')),
+  "ngayBat"            timestamptz,
+  "nguonGocTamGiam"    text not null default '' check ("nguonGocTamGiam" in ('','tu_tam_giu','bat_truc_tiep')), -- chỉ có ý nghĩa khi bienPhapNganChan='giam'
+  "vksKhongPheChuan"   boolean not null default false, -- loại lệnh (dòng 10-12) tự suy ra từ bienPhapNganChan+nguonGocTamGiam, xem suyLoaiLenhKhongPheChuan
   "danToc"             text not null default 'Kinh',
   "quocTich"           text not null default 'Việt Nam',
   "trinhDo"            text default '' check ("trinhDo" in ('','khong_biet_chu','tieu_hoc','thcs','thpt','dh_tro_len')),

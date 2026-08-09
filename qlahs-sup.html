@@ -1323,8 +1323,113 @@ const NHAN_VAI_TRO = { ksv: "Kiểm sát viên", dtv: "Điều tra viên", can_b
 const NHAN_BLHS_NAM = { "2025": "BLHS 2025", "2015": "BLHS 2015", "1999": "BLHS 1999" };
 const NHAN_TRINH_DO = { khong_biet_chu: "Không biết chữ", tieu_hoc: "Tiểu học", thcs: "THCS", thpt: "THPT", dh_tro_len: "Đại học+" };
 const NHAN_TAI_PHAM = { khong: "Không", tai_pham: "Tái phạm", tai_pham_nguy_hiem: "Tái phạm nguy hiểm" };
+
+// Biểu 2 — thông tin bắt/tạm giữ/tạm giam (2026-08-09, bổ sung theo yêu cầu Dũng, bắt đầu từ các
+// dòng 3-12: Số người bị bắt + Trong đó loại bắt; Số trường hợp VKS không phê chuẩn + Trong đó
+// loại lệnh). CỐ Ý lưu là FIELD ĐƠN trên `bican` (không phải sự kiện log) — đây là thông tin của
+// LẦN ĐẦU TIÊN phát sinh (bắt/tạm giữ/tạm giam), theo đúng yêu cầu Dũng "chỉ tính lần đầu tiên
+// phát sinh" vì tạm giam có thể gia hạn nhiều lần — gia hạn chỉ sửa `hanTamGiam`, không đụng tới
+// các field này nên tự nhiên KHÔNG bị tính lại mỗi lần gia hạn, không cần thêm logic riêng nào.
+const NHAN_LOAI_BAT = {
+  khan_cap: "Bắt người bị giữ trong trường hợp khẩn cấp",
+  qua_tang: "Bắt người phạm tội quả tang",
+  truy_na: "Bắt người đang bị truy nã",
+  dau_thu: "Do người phạm tội đầu thú",
+  tu_thu: "Do người phạm tội tự thú",
+};
+// "giam" (tên field cũ, giữ nguyên để không phải sửa dữ liệu đã có) = Tạm giam.
+const NHAN_BIEN_PHAP_NGAN_CHAN = { tai_ngoai: "Tại ngoại", tam_giu: "Tạm giữ", giam: "Tạm giam" };
+const MAU_BIEN_PHAP_NGAN_CHAN = { tai_ngoai: "bg-slate-100 text-slate-600", tam_giu: "bg-amber-100 text-amber-700", giam: "bg-red-100 text-red-700" };
+
+// Tạm giam có 2 nguồn gốc phát sinh (theo phản hồi Dũng 2026-08-09, SỬA LẠI thiết kế lần đầu) —
+// quy trình bình thường: tạm giữ → chuyển tạm giam; hoặc bắt tạm giam trực tiếp (không qua tạm
+// giữ, VD đã có QĐ khởi tố bị can từ trước). CHỈ có ý nghĩa khi bienPhapNganChan === "giam".
+const NHAN_NGUON_GOC_TAM_GIAM = { tu_tam_giu: "Chuyển từ tạm giữ", bat_truc_tiep: "Bắt tạm giam trực tiếp" };
+
+// VKS không phê chuẩn — Dũng yêu cầu ĐƠN GIẢN HOÁ thành 1 Ô TÍCH (không cho chọn tay "loại lệnh"
+// qua dropdown, dễ rối) — "loại lệnh" (Biểu 2 dòng 10-12: khẩn cấp/tạm giam/bắt tạm giam) tự SUY RA
+// từ Biện pháp ngăn chặn (+ Nguồn gốc tạm giam nếu có) tại đúng thời điểm phát sinh, không hỏi tay.
+// Dùng khi TÍNH BÁO CÁO Biểu 2 sau này (chưa build ở đợt này) — giữ hàm ở đây để logic suy luận
+// nằm ĐÚNG 1 CHỖ, không lặp lại khi cần dùng.
+function suyLoaiLenhKhongPheChuan(bc) {
+  if (!bc || !bc.vksKhongPheChuan) return "";
+  if (bc.bienPhapNganChan === "tam_giu") return "khan_cap";       // Lệnh bắt người bị giữ khẩn cấp
+  if (bc.bienPhapNganChan === "giam") {
+    return bc.nguonGocTamGiam === "bat_truc_tiep" ? "bat_tam_giam" : "tam_giam";
+  }
+  return "";
+}
 const NHAN_LOAI_BICAN = { ca_nhan: "Cá nhân", phap_nhan: "Pháp nhân" };
 const NHAN_MUC_DO_NGHIEM_TRONG = { it_nghiem_trong: "Ít nghiêm trọng", nghiem_trong: "Nghiêm trọng", rat_nghiem_trong: "Rất nghiêm trọng", dac_biet_nghiem_trong: "Đặc biệt nghiêm trọng" };
+
+// ============================================================================
+// THỜI HẠN ĐIỀU TRA — tự động tính theo Điều 172 (thời hạn cơ bản + gia hạn, kể từ khi khởi tố vụ
+// án) và Điều 174 khoản 1 (thời hạn điều tra tiếp + gia hạn, kể từ khi có QĐ phục hồi điều tra)
+// BLHS 2025 (2026-08-09, theo yêu cầu Dũng). CỐ Ý KHÔNG bao gồm Điều 174 khoản 2 (thời hạn điều
+// tra bổ sung khi VKS/Toà trả hồ sơ) — Dũng nêu rõ "đây là thời hạn điều tra cơ bản, không tính
+// trường hợp trả điều tra bổ sung": cơ chế đó có SỐ THÁNG CỐ ĐỊNH (2 tháng nếu VKS trả, 1 tháng
+// nếu Toà trả — không phụ thuộc mức độ nghiêm trọng) và KHÔNG có gia hạn, khác hẳn bản chất "gia
+// hạn nhiều lần theo mức độ" ở đây — vụ đang trong thời hạn điều tra bổ sung (`tra_ho_so`,
+// `denGiaiDoan="dieu_tra"`) vẫn giữ nguyên hành vi CŨ (nhập tay hoàn toàn), xem `layMocDieuTraHienTai`.
+// ============================================================================
+
+// Điều 172 khoản 1 — thời hạn điều tra CƠ BẢN kể từ khi khởi tố vụ án cho tới khi kết thúc điều
+// tra (đơn vị: tháng), theo mức độ nghiêm trọng.
+const THANG_DIEU_TRA_CO_BAN = { it_nghiem_trong: 2, nghiem_trong: 3, rat_nghiem_trong: 4, dac_biet_nghiem_trong: 4 };
+
+// Điều 172 khoản 2 — mỗi mức độ được gia hạn tối đa BAO NHIÊU LẦN và ĐỘ DÀI TỐI ĐA của từng lần
+// (mảng theo đúng thứ tự lần 1/lần 2/lần 3...). KHÔNG gồm lần gia hạn đặc biệt của VKSNDTC (khoản
+// 3 — vượt thẩm quyền theo dõi tự động ở cấp huyện/tỉnh, cán bộ tự nhập tay nếu phát sinh).
+const GIOI_HAN_GIA_HAN_DIEU_TRA_CO_BAN = {
+  it_nghiem_trong: [2],
+  nghiem_trong: [3, 2],
+  rat_nghiem_trong: [4, 4],
+  dac_biet_nghiem_trong: [4, 4, 4],
+};
+
+// Điều 174 khoản 1 — thời hạn điều tra TIẾP kể từ khi có QĐ phục hồi điều tra (KHÁC hẳn bảng cơ
+// bản ở trên) — chỉ áp dụng khi vụ đang ở giai đoạn Điều tra và vừa được Phục hồi từ Tạm đình chỉ.
+const THANG_DIEU_TRA_PHUC_HOI = { it_nghiem_trong: 2, nghiem_trong: 2, rat_nghiem_trong: 3, dac_biet_nghiem_trong: 3 };
+
+// Điều 174 khoản 1 — gia hạn điều tra SAU KHI phục hồi: chỉ được gia hạn ĐÚNG 1 LẦN theo mức độ.
+const GIOI_HAN_GIA_HAN_DIEU_TRA_PHUC_HOI = {
+  it_nghiem_trong: [1], nghiem_trong: [2], rat_nghiem_trong: [2], dac_biet_nghiem_trong: [3],
+};
+
+// Cộng N tháng vào 1 ngày ĐÚNG theo Điều 134 BLTTHS ("khi tính thời hạn theo tháng thì thời hạn
+// hết vào ngày trùng của tháng sau; nếu tháng đó không có ngày trùng thì thời hạn hết vào ngày
+// cuối cùng của tháng đó") — KHÁC hành vi mặc định của JS `Date.setMonth` (tự "tràn" sang tháng kế
+// tiếp thay vì kẹp về cuối tháng đích, VD 31/1 cộng 1 tháng ra 2-3/3 thay vì đúng luật là 28/2).
+function congThangTheoLuat(ngay, soThang) {
+  const d = ngay?.toDate ? ngay.toDate() : (ngay instanceof Date ? ngay : new Date(ngay));
+  const ngayGoc = d.getDate();
+  const nam = d.getFullYear(), thangTho = d.getMonth() + soThang;
+  const soNgayThangDich = new Date(nam, thangTho + 1, 0).getDate();
+  return new Date(nam, thangTho, Math.min(ngayGoc, soNgayThangDich), d.getHours(), d.getMinutes(), d.getSeconds());
+}
+
+// Tìm mốc BẮT ĐẦU của đợt điều tra HIỆN TẠI (khởi tố lần đầu, HOẶC phục hồi gần nhất, HOẶC đang
+// trong thời hạn điều tra bổ sung — 3 trường hợp loại trừ lẫn nhau, lấy mốc GẦN NHẤT) + đếm số lần
+// đã gia hạn KỂ TỪ mốc đó — dùng để biết áp dụng bảng nào (cơ bản/phục hồi) và đây là lần gia hạn
+// thứ mấy. Trả `{loai:"tra_dtbs", ...}` (không kèm soLanGiaHan) nếu mốc gần nhất là trả hồ sơ điều
+// tra bổ sung — GiaHanDieuTraModal biết mà KHÔNG gợi ý gì (xem ghi chú phạm vi ở đầu khối này).
+async function layMocDieuTraHienTai(maVuAn) {
+  const snap = await db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", maVuAn).get();
+  const docs = snap.docs.map(d => d.data());
+  const layMillis = l => l.thoiDiemGhi?.toMillis ? l.thoiDiemGhi.toMillis() : new Date(l.thoiDiemGhi).getTime();
+  let moc = null;
+  for (const l of docs) {
+    let loai = null;
+    if (l.loaiSuKien === "khoi_to_vu") loai = "khoi_to";
+    else if (l.loaiSuKien === "phuc_hoi" && l.denGiaiDoan === "dieu_tra") loai = "phuc_hoi";
+    else if (l.loaiSuKien === "tra_ho_so" && l.denGiaiDoan === "dieu_tra") loai = "tra_dtbs";
+    if (!loai) continue;
+    if (!moc || layMillis(l) > layMillis(moc.suKien)) moc = { loai, suKien: l };
+  }
+  if (!moc || moc.loai === "tra_dtbs") return moc;
+  const soLanGiaHan = docs.filter(l => l.loaiSuKien === "gia_han_dieu_tra" && layMillis(l) > layMillis(moc.suKien)).length;
+  return { loai: moc.loai, ngayBatDau: moc.suKien.ngaySuKien, soLanGiaHan };
+}
 
 const DANH_MUC_TOI_DANH_MAM = [
   {id:"blhs2025_dieu108",soDieu:"108",tenToiDanh:"Tội phản bội Tổ quốc",dieuLuat:"Điều 108 BLHS 2025",namBLHS:"2025",thuTuHienThi:1},
@@ -2111,7 +2216,11 @@ function useDanhSachDangGiaiQuyet() {
   const [dangTai, setDangTai] = useState(true);
   useEffect(() => {
     setDangTai(true);
-    return db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").onSnapshot(
+    // orderBy("ngayTao","desc") (2026-08-09, theo yêu cầu Dũng) — mặc định hiện vụ MỚI NHẬP THÊM
+    // lên trên cùng để dễ quan sát đã nhập/cập nhật đến đâu, khớp đúng hành vi tab "Tất cả" đã có
+    // sẵn từ trước (query đó cũng orderBy ngayTao desc) — chỉ áp dụng khi CHƯA bấm sort cột nào
+    // khác (xem `sorted` trong DanhSachPanel, giữ nguyên thứ tự nguồn khi sortCot === null).
+    return db.collection("vuan").where("trangThai", "==", "dang_giai_quyet").orderBy("ngayTao", "desc").onSnapshot(
       snap => {
         setDs(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa));
         setDangTai(false);
@@ -3643,6 +3752,7 @@ function parseWorkbookDanhSachAn(wb) {
       const hanTG = parseExcelDate(r[21]);
       let bienPhap = "tai_ngoai";
       if (bienPhapRaw.includes("tạm giam")) bienPhap = "giam";
+      else if (bienPhapRaw.includes("tạm giữ")) bienPhap = "tam_giu";
       else if (!bienPhapRaw && hanTG) bienPhap = "giam";
       vuMap.get(groupKey).biCanList.push({
         hoTen: hoTenBC,
@@ -4387,6 +4497,39 @@ function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
   const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
 
+  // Gợi ý gia hạn theo Điều 172 khoản 2 (kể từ khi khởi tố) hoặc Điều 174 khoản 1 (kể từ khi phục
+  // hồi) BLHS 2025 (2026-08-09) — xem `layMocDieuTraHienTai`. `moc === undefined`: đang tải;
+  // `moc === null`/`moc.loai === "tra_dtbs"`: không xác định được/đang trong hạn điều tra bổ sung
+  // (Điều 174 khoản 2, không có bảng gia hạn) — cả 2 trường hợp không gợi ý gì, giữ hành vi CŨ
+  // (nhập tay hoàn toàn), không chặn thao tác.
+  const [moc, setMoc] = useState(undefined);
+  useEffect(() => {
+    let huy = false;
+    layMocDieuTraHienTai(vuAn.id).then(m => { if (!huy) setMoc(m); }).catch(err => { console.error(err); if (!huy) setMoc(null); });
+    return () => { huy = true; };
+  }, [vuAn.id]);
+
+  const goiY = React.useMemo(() => {
+    if (!moc || moc.loai === "tra_dtbs" || !vuAn.mucDoNghiemTrong) return null;
+    const bang = moc.loai === "khoi_to" ? GIOI_HAN_GIA_HAN_DIEU_TRA_CO_BAN : GIOI_HAN_GIA_HAN_DIEU_TRA_PHUC_HOI;
+    const dsThang = bang[vuAn.mucDoNghiemTrong] || [];
+    const vuotSoLan = moc.soLanGiaHan >= dsThang.length;
+    const soThangToiDa = vuotSoLan ? null : dsThang[moc.soLanGiaHan];
+    const hanGoiY = (!vuotSoLan && vuAn.hanDieuTra) ? congThangTheoLuat(vuAn.hanDieuTra, soThangToiDa) : null;
+    return {
+      lanNay: moc.soLanGiaHan + 1, tongSoLanChoPhep: dsThang.length, soThangToiDa, vuotSoLan, hanGoiY,
+      tenCanCu: moc.loai === "khoi_to" ? "Điều 172 khoản 2" : "Điều 174 khoản 1",
+    };
+  }, [moc, vuAn.mucDoNghiemTrong, vuAn.hanDieuTra]);
+
+  // Tự điền hạn mới đề xuất (nối tiếp NGAY SAU hạn hiện hành — đúng tinh thần luật, không phải từ
+  // ngày hôm nay) — chỉ 1 lần, không ghi đè nếu cán bộ đã tự gõ.
+  const [hanMoiDaSua, setHanMoiDaSua] = useState(false);
+  useEffect(() => {
+    if (goiY?.hanGoiY && !hanMoiDaSua) setHanMoi(toInputDate(goiY.hanGoiY));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goiY, hanMoiDaSua]);
+
   const luu = () => {
     if (!hanMoi) { hd.setLoi("Cần nhập hạn điều tra mới."); return; }
     hd.batDauXacNhanKy(async (kyId) => {
@@ -4409,8 +4552,32 @@ function GiaHanDieuTraModal({ vuAn, onDong, onXong }) {
     <KhungModalHanhDong tieuDe="Gia hạn điều tra">
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
       <div className="text-xs text-slate-500 mb-3">Hạn hiện hành: {fmtDate(vuAn.hanDieuTra)}</div>
+
+      {moc === undefined && <div className="text-xs text-slate-400 mb-3">Đang tính gợi ý theo luật...</div>}
+      {goiY && (
+        <div className={`text-xs rounded-lg p-3 mb-3 ${goiY.vuotSoLan ? "bg-red-50 border border-red-200 text-red-700" : "bg-indigo-50 border border-indigo-200 text-indigo-800"}`}>
+          {goiY.vuotSoLan ? (
+            <>⚠ Vụ này đã gia hạn đủ <b>{goiY.tongSoLanChoPhep}</b> lần theo {goiY.tenCanCu} BLHS 2025
+            (mức độ: {NHAN_MUC_DO_NGHIEM_TRONG[vuAn.mucDoNghiemTrong]}) — nếu vẫn cần gia hạn thêm,
+            phải có quyết định đặc biệt của cấp có thẩm quyền cao hơn (VD Điều 172 khoản 3), hệ
+            thống không tự tính được hạn gợi ý cho trường hợp này, tự nhập theo quyết định thực tế.</>
+          ) : (
+            <>Đây là lần gia hạn thứ <b>{goiY.lanNay}</b>/{goiY.tongSoLanChoPhep} theo {goiY.tenCanCu}{" "}
+            BLHS 2025 (mức độ: {NHAN_MUC_DO_NGHIEM_TRONG[vuAn.mucDoNghiemTrong]}) — tối đa <b>{goiY.soThangToiDa} tháng</b>.
+            {goiY.hanGoiY && <> Đã tự điền hạn đề xuất <b>{fmtDate(goiY.hanGoiY)}</b> bên dưới, có
+            thể sửa lại nếu quyết định thực tế khác.</>}</>
+          )}
+        </div>
+      )}
+      {moc && moc.loai === "tra_dtbs" && (
+        <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3 mb-3">
+          ⚠ Vụ này đang trong thời hạn điều tra bổ sung (Điều 174 khoản 2 — luật không quy định gia
+          hạn cho trường hợp này), hệ thống không tự tính gợi ý — tự nhập hạn theo quyết định thực tế.
+        </div>
+      )}
+
       <label className="text-xs text-slate-500 block mb-1">Hạn điều tra mới</label>
-      <NhapNgay value={hanMoi} onChange={e => setHanMoi(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
+      <NhapNgay value={hanMoi} onChange={e => { setHanMoi(e.target.value); setHanMoiDaSua(true); }} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định gia hạn điều tra</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
@@ -4432,6 +4599,19 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
   const [ngay, setNgay] = useState("");
   const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
+  // Tự tính hạn điều tra TIẾP theo Điều 174 khoản 1 BLHS 2025 (2026-08-09) — CHỈ áp dụng khi vụ
+  // đang ở giai đoạn Điều tra (Tạm đình chỉ có thể xảy ra ở giai đoạn khác, lúc đó không có khái
+  // niệm "hạn điều tra"). Auto-điền khi gõ ngày phục hồi, vẫn cho sửa tay tự do.
+  const apDungThoiHanDT = vuAn.coQuanThuLy === "dieu_tra";
+  const [hanDieuTraMoi, setHanDieuTraMoi] = useState("");
+  const [hanDaSua, setHanDaSua] = useState(false);
+  useEffect(() => {
+    if (!apDungThoiHanDT || !ngay || hanDaSua) return;
+    const soThang = THANG_DIEU_TRA_PHUC_HOI[vuAn.mucDoNghiemTrong];
+    if (!soThang) return;
+    setHanDieuTraMoi(toInputDate(congThangTheoLuat(fromInputDate(ngay), soThang)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ngay, apDungThoiHanDT, vuAn.mucDoNghiemTrong, hanDaSua]);
 
   const luu = () => {
     if (!ngay) { hd.setLoi("Cần nhập ngày phục hồi."); return; }
@@ -4439,7 +4619,10 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
       const batch = db.batch();
-      batch.update(db.collection("vuan").doc(vuAn.id), { trangThai: "dang_giai_quyet", ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
+      batch.update(db.collection("vuan").doc(vuAn.id), {
+        trangThai: "dang_giai_quyet", ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        ...(apDungThoiHanDT && hanDieuTraMoi ? { hanDieuTra: fromInputDate(hanDieuTraMoi) } : {}),
+      });
       // denGiaiDoan (2026-08-01, sửa lỗ hổng phát hiện khi audit "Nhận lại vụ chuyển đi") — Phục
       // hồi LUÔN ở lại đúng giai đoạn cũ (coQuanThuLy không đổi, không cho chọn khác), nhưng trước
       // đây sự kiện "phuc_hoi" không hề gắn denGiaiDoan nên tinhBaoCaoKyTuLog không truy vấn được,
@@ -4462,6 +4645,16 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
       <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định phục hồi điều tra</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
+      {apDungThoiHanDT && (
+        <>
+          <label className="text-xs text-slate-500 block mb-1">Hạn điều tra mới</label>
+          <NhapNgay value={hanDieuTraMoi} onChange={e => { setHanDieuTraMoi(e.target.value); setHanDaSua(true); }} className={oInput + " mb-1"} />
+          {vuAn.mucDoNghiemTrong && !hanDaSua && hanDieuTraMoi && (
+            <p className="text-[10px] text-slate-400 mb-3">Tự tính theo Điều 174 khoản 1 BLHS 2025, có thể sửa lại.</p>
+          )}
+          {(!vuAn.mucDoNghiemTrong || !hanDieuTraMoi) && <div className="mb-3" />}
+        </>
+      )}
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -5221,7 +5414,9 @@ function moiBiCan(id) {
     dangVien: "khong", dangVienGiuChucVu: false,
     trinhDo: "", taiPham: "khong", loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
     diaChi: "", toiDanh: [""], dieuLuatBC: [""],
-    bienPhapNganChan: "tai_ngoai", hanTamGiam: "", ngayKhoiTo: "", soQdKtBiCan: "",
+    bienPhapNganChan: "tai_ngoai", hanTamGiam: "", loaiBat: "", ngayBat: "",
+    nguonGocTamGiam: "tu_tam_giu", vksKhongPheChuan: false,
+    ngayKhoiTo: "", soQdKtBiCan: "",
   };
 }
 
@@ -5245,6 +5440,18 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const [vuanToiDanh, setVuanToiDanh] = useState([""]);
   const [vuanDieuLuat, setVuanDieuLuat] = useState([""]);
   const [mucDoNghiemTrong, setMucDoNghiemTrong] = useState("dac_biet_nghiem_trong");
+  // Tự tính hạn điều tra theo Điều 172 khoản 1 BLHS 2025 (Ngày QĐ KTVA + số tháng theo Mức độ
+  // nghiêm trọng) — CHỈ khi "Cơ quan đang thụ lý" = Điều tra (vụ khởi tố thẳng ở Truy tố/Xét xử
+  // không có khái niệm "hạn điều tra") VÀ cán bộ CHƯA tự tay sửa ô này (đúng pattern `tenVuDaSua`
+  // ở trên — không ghi đè nếu đã can thiệp tay).
+  const [hanDieuTraDaSua, setHanDieuTraDaSua] = useState(false);
+  useEffect(() => {
+    if (hanDieuTraDaSua || coQuanThuLy !== "dieu_tra" || !ngayQdKtva) return;
+    const soThang = THANG_DIEU_TRA_CO_BAN[mucDoNghiemTrong];
+    if (!soThang) return;
+    setHanDieuTra(toInputDate(congThangTheoLuat(fromInputDate(ngayQdKtva), soThang)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ngayQdKtva, mucDoNghiemTrong, coQuanThuLy, hanDieuTraDaSua]);
   const [anDiem, setAnDiem] = useState(false);
   const [uyQuyenXetXu, setUyQuyenXetXu] = useState("");
   const [phienToaRutKN, setPhienToaRutKN] = useState(false);
@@ -5401,6 +5608,10 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           maSoThue: bc.loaiBiCan === "phap_nhan" ? bc.maSoThue.trim() : "",
           diaChi: bc.diaChi.trim(), bienPhapNganChan: bc.bienPhapNganChan,
           hanTamGiam: bc.bienPhapNganChan === "giam" && bc.hanTamGiam ? fromInputDate(bc.hanTamGiam) : null,
+          loaiBat: bc.bienPhapNganChan !== "tai_ngoai" ? (bc.loaiBat || "") : "",
+          ngayBat: bc.bienPhapNganChan !== "tai_ngoai" && bc.ngayBat ? fromInputDate(bc.ngayBat) : null,
+          nguonGocTamGiam: bc.bienPhapNganChan === "giam" ? (bc.nguonGocTamGiam || "tu_tam_giu") : "",
+          vksKhongPheChuan: bc.bienPhapNganChan !== "tai_ngoai" ? !!bc.vksKhongPheChuan : false,
           ngayKhoiTo: ngayKT, soQdKtBiCan: (bc.soQdKtBiCan || "").trim(),
           loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
           ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
@@ -5492,7 +5703,10 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           </Truong>
 
           <Truong nhan="Hạn điều tra">
-            <NhapNgay value={hanDieuTra} onChange={e => setHanDieuTra(e.target.value)} className={oInput} />
+            <NhapNgay value={hanDieuTra} onChange={e => { setHanDieuTra(e.target.value); setHanDieuTraDaSua(true); }} className={oInput} />
+            {coQuanThuLy === "dieu_tra" && !hanDieuTraDaSua && hanDieuTra && (
+              <p className="text-[10px] text-slate-400 mt-0.5">Tự tính theo Điều 172 khoản 1 BLHS 2025, có thể sửa lại.</p>
+            )}
           </Truong>
           <Truong nhan="KSV chính">
             <input value={ksvChinh} onChange={e => setKsvChinh(e.target.value)} list="ds-ksv" className={oInput} />
@@ -5665,14 +5879,36 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
                 )}
                 <Truong nhan="Biện pháp ngăn chặn">
                   <select value={bc.bienPhapNganChan} onChange={e => suaBiCan(bc.id, { bienPhapNganChan: e.target.value })} className={oInput}>
-                    <option value="tai_ngoai">Tại ngoại</option><option value="giam">Tạm giam</option>
+                    <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
                   </select>
                 </Truong>
-                {bc.bienPhapNganChan === "giam" && (
+                {bc.bienPhapNganChan === "giam" && (<>
                   <Truong nhan="Hạn tạm giam">
                     <NhapNgay value={bc.hanTamGiam} onChange={e => suaBiCan(bc.id, { hanTamGiam: e.target.value })} className={oInput} />
                   </Truong>
-                )}
+                  <Truong nhan="Nguồn gốc tạm giam">
+                    <select value={bc.nguonGocTamGiam || "tu_tam_giu"} onChange={e => suaBiCan(bc.id, { nguonGocTamGiam: e.target.value })} className={oInput}>
+                      {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </Truong>
+                </>)}
+                {bc.bienPhapNganChan !== "tai_ngoai" && (<>
+                  <Truong nhan="Loại bắt">
+                    <select value={bc.loaiBat || ""} onChange={e => suaBiCan(bc.id, { loaiBat: e.target.value })} className={oInput}>
+                      <option value="">— chưa rõ —</option>
+                      {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </Truong>
+                  <Truong nhan="Ngày bắt">
+                    <NhapNgay value={bc.ngayBat} onChange={e => suaBiCan(bc.id, { ngayBat: e.target.value })} className={oInput} />
+                  </Truong>
+                  <Truong nhan="VKS không phê chuẩn">
+                    <label className="flex items-center gap-2 text-sm mt-1.5">
+                      <input type="checkbox" checked={!!bc.vksKhongPheChuan} onChange={e => suaBiCan(bc.id, { vksKhongPheChuan: e.target.checked })} />
+                      Có
+                    </label>
+                  </Truong>
+                </>)}
                 <Truong nhan="Ngày khởi tố bị can">
                   <NhapNgay value={bc.ngayKhoiTo} onChange={e => suaBiCan(bc.id, { ngayKhoiTo: e.target.value })}
                             onTachSo={so => suaBiCan(bc.id, { soQdKtBiCan: so })} className={oInput} />
@@ -5987,7 +6223,19 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
             <NhapNgay value={ngayQdKtva} onChange={e => setNgayQdKtva(e.target.value)} onTachSo={setSoQdKtva} className={oInput} />
           </Truong>
           <Truong nhan="Hạn điều tra">
-            <NhapNgay value={hanDieuTra} onChange={e => setHanDieuTra(e.target.value)} className={oInput} />
+            <div className="flex items-center gap-1">
+              <NhapNgay value={hanDieuTra} onChange={e => setHanDieuTra(e.target.value)} className={oInput} />
+              {vuAn.coQuanThuLy === "dieu_tra" && ngayQdKtva && (
+                <button type="button" title="Tính lại theo Điều 172 khoản 1 BLHS 2025 (từ Ngày QĐ KTVA + Mức độ nghiêm trọng, không tính các lần đã gia hạn)"
+                        onClick={() => {
+                          const soThang = THANG_DIEU_TRA_CO_BAN[mucDoNghiemTrong];
+                          if (soThang) setHanDieuTra(toInputDate(congThangTheoLuat(fromInputDate(ngayQdKtva), soThang)));
+                        }}
+                        className="shrink-0 text-xs px-2 py-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50">
+                  🔄
+                </button>
+              )}
+            </div>
           </Truong>
           <Truong nhan="KSV chính">
             <input value={ksvChinh} onChange={e => setKsvChinh(e.target.value)} list="ds-ksv-sua" className={oInput} />
@@ -6090,6 +6338,10 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
   const [diaChi, setDiaChi] = useState(biCan.diaChi || "");
   const [bienPhapNganChan, setBienPhapNganChan] = useState(biCan.bienPhapNganChan || "tai_ngoai");
   const [hanTamGiam, setHanTamGiam] = useState(toInputDate(biCan.hanTamGiam));
+  const [nguonGocTamGiam, setNguonGocTamGiam] = useState(biCan.nguonGocTamGiam || "tu_tam_giu");
+  const [loaiBat, setLoaiBat] = useState(biCan.loaiBat || "");
+  const [ngayBat, setNgayBat] = useState(toInputDate(biCan.ngayBat));
+  const [vksKhongPheChuan, setVksKhongPheChuan] = useState(!!biCan.vksKhongPheChuan);
   const [ngayKhoiTo, setNgayKhoiTo] = useState(toInputDate(biCan.ngayKhoiTo));
   const [toiDanh, setToiDanh] = useState(biCan.toiDanh && biCan.toiDanh.length ? biCan.toiDanh : [""]);
   const [dieuLuatBC, setDieuLuatBC] = useState(biCan.dieuLuatBC && biCan.dieuLuatBC.length ? biCan.dieuLuatBC : [""]);
@@ -6134,6 +6386,16 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         maSoThue: loaiBiCan === "phap_nhan" ? maSoThue.trim() : "",
         diaChi: diaChi.trim(), bienPhapNganChan,
         hanTamGiam: bienPhapNganChan === "giam" && hanTamGiam ? fromInputDate(hanTamGiam) : null,
+        // nguonGocTamGiam/loaiBat/ngayBat/vksKhongPheChuan KHÔNG bị xoá theo bienPhapNganChan hiện
+        // tại (khác hanTamGiam — trạng thái hiện hành) — đây là DỮ KIỆN LỊCH SỬ (lần bắt/tạm giữ/
+        // tạm giam ĐẦU TIÊN), phải giữ nguyên kể cả khi sau này đổi biện pháp ngăn chặn về "Tại
+        // ngoại" (VD được thay đổi biện pháp ngăn chặn) — nếu xoá theo trạng thái hiện tại sẽ mất
+        // luôn số liệu "Số người bị bắt trong kỳ" (Biểu 2) của người đó. Luôn lưu ĐÚNG giá trị đang
+        // có trên form.
+        nguonGocTamGiam: nguonGocTamGiam || "",
+        loaiBat: loaiBat || "",
+        ngayBat: ngayBat ? fromInputDate(ngayBat) : null,
+        vksKhongPheChuan: !!vksKhongPheChuan,
         ngayKhoiTo: ngayKhoiTo ? fromInputDate(ngayKhoiTo) : null,
         soQdKtBiCan: soQdKtBiCan.trim(),
         toiDanh: toiDanhSach.length ? toiDanhSach : [""],
@@ -6209,12 +6471,32 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         )}
         <Truong nhan="Biện pháp ngăn chặn">
           <select value={bienPhapNganChan} onChange={e => setBienPhapNganChan(e.target.value)} className={oInput}>
-            <option value="tai_ngoai">Tại ngoại</option><option value="giam">Tạm giam</option>
+            <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
           </select>
         </Truong>
-        {bienPhapNganChan === "giam" && (
+        {bienPhapNganChan === "giam" && (<>
           <Truong nhan="Hạn tạm giam"><NhapNgay value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
-        )}
+          <Truong nhan="Nguồn gốc tạm giam">
+            <select value={nguonGocTamGiam} onChange={e => setNguonGocTamGiam(e.target.value)} className={oInput}>
+              {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Truong>
+        </>)}
+        {bienPhapNganChan !== "tai_ngoai" && (<>
+          <Truong nhan="Loại bắt">
+            <select value={loaiBat} onChange={e => setLoaiBat(e.target.value)} className={oInput}>
+              <option value="">— chưa rõ —</option>
+              {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Truong>
+          <Truong nhan="Ngày bắt"><NhapNgay value={ngayBat} onChange={e => setNgayBat(e.target.value)} className={oInput} /></Truong>
+          <Truong nhan="VKS không phê chuẩn">
+            <label className="flex items-center gap-2 text-sm mt-1.5">
+              <input type="checkbox" checked={vksKhongPheChuan} onChange={e => setVksKhongPheChuan(e.target.checked)} />
+              Có
+            </label>
+          </Truong>
+        </>)}
         <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
         <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
         <Truong nhan="Địa chỉ" rong4>
@@ -6273,6 +6555,10 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
   const [diaChi, setDiaChi] = useState("");
   const [bienPhapNganChan, setBienPhapNganChan] = useState("tai_ngoai");
   const [hanTamGiam, setHanTamGiam] = useState("");
+  const [nguonGocTamGiam, setNguonGocTamGiam] = useState("tu_tam_giu");
+  const [loaiBat, setLoaiBat] = useState("");
+  const [ngayBat, setNgayBat] = useState("");
+  const [vksKhongPheChuan, setVksKhongPheChuan] = useState(false);
   const [ngayKhoiTo, setNgayKhoiTo] = useState("");
   const [soQdKtBiCan, setSoQdKtBiCan] = useState("");
   const [toiDanh, setToiDanh] = useState([""]);
@@ -6325,6 +6611,10 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         maSoThue: loaiBiCan === "phap_nhan" ? maSoThue.trim() : "",
         diaChi: diaChi.trim(), bienPhapNganChan,
         hanTamGiam: bienPhapNganChan === "giam" && hanTamGiam ? fromInputDate(hanTamGiam) : null,
+        loaiBat: bienPhapNganChan !== "tai_ngoai" ? (loaiBat || "") : "",
+        ngayBat: bienPhapNganChan !== "tai_ngoai" && ngayBat ? fromInputDate(ngayBat) : null,
+        nguonGocTamGiam: bienPhapNganChan === "giam" ? (nguonGocTamGiam || "tu_tam_giu") : "",
+        vksKhongPheChuan: bienPhapNganChan !== "tai_ngoai" ? !!vksKhongPheChuan : false,
         ngayKhoiTo: ngayKT, soQdKtBiCan: soQdKtBiCan.trim(),
         loaiKhoiTo: "bo_sung", ngayTao: now, nguoiTao: nguoiThucHien,
         ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
@@ -6418,12 +6708,32 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         )}
         <Truong nhan="Biện pháp ngăn chặn">
           <select value={bienPhapNganChan} onChange={e => setBienPhapNganChan(e.target.value)} className={oInput}>
-            <option value="tai_ngoai">Tại ngoại</option><option value="giam">Tạm giam</option>
+            <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
           </select>
         </Truong>
-        {bienPhapNganChan === "giam" && (
+        {bienPhapNganChan === "giam" && (<>
           <Truong nhan="Hạn tạm giam"><NhapNgay value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
-        )}
+          <Truong nhan="Nguồn gốc tạm giam">
+            <select value={nguonGocTamGiam} onChange={e => setNguonGocTamGiam(e.target.value)} className={oInput}>
+              {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Truong>
+        </>)}
+        {bienPhapNganChan !== "tai_ngoai" && (<>
+          <Truong nhan="Loại bắt">
+            <select value={loaiBat} onChange={e => setLoaiBat(e.target.value)} className={oInput}>
+              <option value="">— chưa rõ —</option>
+              {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Truong>
+          <Truong nhan="Ngày bắt"><NhapNgay value={ngayBat} onChange={e => setNgayBat(e.target.value)} className={oInput} /></Truong>
+          <Truong nhan="VKS không phê chuẩn">
+            <label className="flex items-center gap-2 text-sm mt-1.5">
+              <input type="checkbox" checked={vksKhongPheChuan} onChange={e => setVksKhongPheChuan(e.target.checked)} />
+              Có
+            </label>
+          </Truong>
+        </>)}
         <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
         <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
         <Truong nhan="Địa chỉ" rong4>
@@ -6803,7 +7113,21 @@ function DanhSachPanel({ selectedId, onSelect }) {
     return "";
   };
   const sorted = useMemo(() => {
-    if (!sortCot) return filtered;
+    if (!sortCot) {
+      // Mặc định (chưa bấm sort cột nào) — vụ MỚI TẠO lên đầu (2026-08-09, theo yêu cầu Dũng).
+      // ⚠ Bug thật gặp phải + đã sửa: ban đầu chỉ dựa vào `.orderBy("ngayTao","desc")` ở tầng
+      // Postgres (xem useDanhSachDangGiaiQuyet) — nhưng cột "ngayTao" trên "vuan" CHO PHÉP NULL
+      // (dữ liệu cũ/di trú từ Firestore chưa từng có field này), mà Postgres mặc định xếp NULL lên
+      // ĐẦU khi ORDER BY ... DESC → mọi vụ THIẾU ngayTao (không phải vụ mới) nổi lên trên cùng,
+      // che mất đúng vụ mới nhất thật sự. Sửa TẬN GỐC bằng cách tự sắp lại ở tầng JS (không tin
+      // thứ tự Postgres trả về), coi thiếu ngayTao = 0 (cũ nhất) để luôn chìm xuống dưới — đúng
+      // pattern `?? 0` đã dùng cho "Ngày KTVA"/"Hạn ĐT" ở `layGiaTriSort` ngay trên.
+      return [...filtered].sort((a, b) => {
+        const ma = a.ngayTao?.toMillis?.() ?? (a.ngayTao ? new Date(a.ngayTao).getTime() : 0);
+        const mb = b.ngayTao?.toMillis?.() ?? (b.ngayTao ? new Date(b.ngayTao).getTime() : 0);
+        return mb - ma;
+      });
+    }
     const arr = [...filtered];
     arr.sort((a, b) => {
       const va = layGiaTriSort(a, sortCot), vb = layGiaTriSort(b, sortCot);
@@ -7457,7 +7781,11 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
             <HangThongTin items={[["Đơn vị thụ lý", vuAn.donViThuLy]]} />
             <HangThongTin items={[["Điều luật", vuAn.dieuLuat]]} />
             <HangThongTin items={[["Số/ngày QĐ KTVA", `${vuAn.soQdKtva || "—"} — ${fmtDate(vuAn.ngayQdKtva)}`]]} />
-            <HangThongTin items={[["Hạn điều tra", fmtDate(vuAn.hanDieuTra)]]} />
+            <HangThongTin items={[["Mức độ nghiêm trọng", NHAN_MUC_DO_NGHIEM_TRONG[vuAn.mucDoNghiemTrong] || "—"]]} />
+            <HangThongTin items={[["Hạn điều tra",
+              vuAn.coQuanThuLy === "dieu_tra"
+                ? <span className={mauCanhBaoHan(vuAn.hanDieuTra)}>{fmtDate(vuAn.hanDieuTra)}</span>
+                : fmtDate(vuAn.hanDieuTra)]]} />
             <HangThongTin items={[["Án điểm", vuAn.anDiem ? "Có" : "Không"]]} />
             <HangThongTin items={[["Ghi chú", vuAn.ghiChu]]} />
           </tbody>
@@ -7515,8 +7843,8 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
                           <td className="p-2">{bc.namSinh || "—"}</td>
                           <td className="p-2">{(bc.toiDanh || []).filter(Boolean).join(", ") || "—"}</td>
                           <td className="p-2">
-                            <Badge mau={bc.bienPhapNganChan === "giam" ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600"}>
-                              {bc.bienPhapNganChan === "giam" ? "Tạm giam" : "Tại ngoại"}
+                            <Badge mau={MAU_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || MAU_BIEN_PHAP_NGAN_CHAN.tai_ngoai}>
+                              {NHAN_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || NHAN_BIEN_PHAP_NGAN_CHAN.tai_ngoai}
                             </Badge>
                           </td>
                           <td className="p-2">{bc.loaiKhoiTo === "bo_sung" ? "Bổ sung" : "Ban đầu"}</td>
@@ -7867,7 +8195,7 @@ async function xuatExcel(setDangXuat, setLoiXuat) {
           bc.gioiTinh==="nu"?"Nữ":"Nam", bc.danToc||"", bc.diaChi||"",
           (bc.toiDanh||[]).filter(Boolean).join("; ")||"",
           bc.dangVien==="co"?"x":"",
-          bc.bienPhapNganChan==="giam"?"Tạm giam":"Tại ngoại",
+          NHAN_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || NHAN_BIEN_PHAP_NGAN_CHAN.tai_ngoai,
           fmtDate(bc.hanTamGiam), fmtDate(bc.ngayKhoiTo),
           bc.loaiKhoiTo==="bo_sung"?"Bổ sung":"Ban đầu",
         ]));
@@ -7884,18 +8212,22 @@ async function xuatExcel(setDangXuat, setLoiXuat) {
       const vu = vuById[bc.maVuAn];
       if (!vu) continue;
       const td = (bc.toiDanh || [])[0] || vu.dieuLuat || "(Chưa xác định)";
-      if (!tkTD[td]) tkTD[td] = { vuGQ: new Set(), bcGQ: 0, vuTon: new Set(), bcTon: 0, tgTon: 0, tnTon: 0, vuAll: new Set(), bcAll: 0 };
+      if (!tkTD[td]) tkTD[td] = { vuGQ: new Set(), bcGQ: 0, vuTon: new Set(), bcTon: 0, tgTon: 0, tgiTon: 0, tnTon: 0, vuAll: new Set(), bcAll: 0 };
       const s = tkTD[td];
       s.vuAll.add(bc.maVuAn); s.bcAll++;
       if (vu.trangThai === "dang_giai_quyet") {
         s.vuTon.add(bc.maVuAn); s.bcTon++;
-        bc.bienPhapNganChan === "giam" ? s.tgTon++ : s.tnTon++;
+        // 3 nhánh (2026-08-09, thêm "tam_giu") — trước đây chỉ 2 nhánh giam/tại ngoại, "tạm giữ"
+        // mới thêm sẽ bị tính NHẦM vào "Tại ngoại" nếu vẫn giữ điều kiện nhị phân cũ.
+        if (bc.bienPhapNganChan === "giam") s.tgTon++;
+        else if (bc.bienPhapNganChan === "tam_giu") s.tgiTon++;
+        else s.tnTon++;
       } else { s.vuGQ.add(bc.maVuAn); s.bcGQ++; }
     }
-    const tkTDHeader = ["Tội danh", "Vụ tồn hiện tại", "BC tồn", "Tạm giam", "Tại ngoại", "Vụ đã GQ", "BC đã GQ", "Tổng vụ", "Tổng BC"];
+    const tkTDHeader = ["Tội danh", "Vụ tồn hiện tại", "BC tồn", "Tạm giam", "Tạm giữ", "Tại ngoại", "Vụ đã GQ", "BC đã GQ", "Tổng vụ", "Tổng BC"];
     const tkTDRows = Object.entries(tkTD)
       .sort((a, b) => b[1].bcAll - a[1].bcAll)
-      .map(([td, s]) => [td, s.vuTon.size, s.bcTon, s.tgTon, s.tnTon, s.vuGQ.size, s.bcGQ, s.vuAll.size, s.bcAll]);
+      .map(([td, s]) => [td, s.vuTon.size, s.bcTon, s.tgTon, s.tgiTon, s.tnTon, s.vuGQ.size, s.bcGQ, s.vuAll.size, s.bcAll]);
 
     // === Thống kê KSV (theo vụ đang giải quyết / đã giải quyết) ===
     const tkKSV = {};
@@ -9025,7 +9357,21 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
           <NhapNgay value={ed.ngayQdKtva} onChange={e => set("ngayQdKtva", e.target.value)} onTachSo={so => set("soQdKtva", so)} className={oInput} />
         </Truong>
         <Truong nhan="Hạn điều tra">
-          <NhapNgay value={ed.hanDieuTra} onChange={e => set("hanDieuTra", e.target.value)} className={oInput} />
+          <div className="flex items-center gap-1">
+            <NhapNgay value={ed.hanDieuTra} onChange={e => set("hanDieuTra", e.target.value)} className={oInput} />
+            {vuAn.coQuanThuLy === "dieu_tra" && ed.ngayQdKtva && (
+              // Đọc mucDoNghiemTrong từ `vuAn` gốc (KHÔNG phải `ed`) — modal này không cho sửa
+              // Mức độ nghiêm trọng nên field đó không có trong `ed`, dùng thẳng giá trị hiện có.
+              <button type="button" title="Tính lại theo Điều 172 khoản 1 BLHS 2025 (từ Ngày QĐ KTVA + Mức độ nghiêm trọng, không tính các lần đã gia hạn)"
+                      onClick={() => {
+                        const soThang = THANG_DIEU_TRA_CO_BAN[vuAn.mucDoNghiemTrong];
+                        if (soThang) set("hanDieuTra", toInputDate(congThangTheoLuat(fromInputDate(ed.ngayQdKtva), soThang)));
+                      }}
+                      className="shrink-0 text-xs px-2 py-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50">
+                🔄
+              </button>
+            )}
+          </div>
         </Truong>
         <Truong nhan="KSV chính">
           <input value={ed.ksvChinh} onChange={e => set("ksvChinh", e.target.value)} list="dl-ksv-ctvam" className={oInput} />
@@ -9134,7 +9480,11 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                     <HangThongTin items={[["Điều luật", vuAn.dieuLuat || "—"]]} />
                     <HangThongTin items={[["Số QĐ KTVA", vuAn.soQdKtva || "—"]]} />
                     <HangThongTin items={[["Ngày QĐ KTVA", fmtDate(vuAn.ngayQdKtva)]]} />
-                    <HangThongTin items={[["Hạn điều tra", fmtDate(vuAn.hanDieuTra)]]} />
+                    <HangThongTin items={[["Mức độ nghiêm trọng", NHAN_MUC_DO_NGHIEM_TRONG[vuAn.mucDoNghiemTrong] || "—"]]} />
+                    <HangThongTin items={[["Hạn điều tra",
+                      vuAn.coQuanThuLy === "dieu_tra"
+                        ? <span className={mauCanhBaoHan(vuAn.hanDieuTra)}>{fmtDate(vuAn.hanDieuTra)}</span>
+                        : fmtDate(vuAn.hanDieuTra)]]} />
                     <HangThongTin items={[["Đơn vị thụ lý", vuAn.donViThuLy || "—"]]} />
                     <HangThongTin items={[["Uỷ quyền xét xử", vuAn.uyQuyenXetXu || "—"]]} />
                     {(vuAn.anDiem || vuAn.phienToaRutKN) && (
@@ -9168,8 +9518,8 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                           <td className="p-2">{bc.namSinh || "—"}</td>
                           <td className="p-2">{(bc.toiDanh || []).filter(Boolean).join(", ") || "—"}</td>
                           <td className="p-2">
-                            <Badge mau={bc.bienPhapNganChan === "giam" ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600"}>
-                              {bc.bienPhapNganChan === "giam" ? "Tạm giam" : "Tại ngoại"}
+                            <Badge mau={MAU_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || MAU_BIEN_PHAP_NGAN_CHAN.tai_ngoai}>
+                              {NHAN_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || NHAN_BIEN_PHAP_NGAN_CHAN.tai_ngoai}
                             </Badge>
                           </td>
                         </tr>
@@ -10612,7 +10962,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     return [
       stt, bc.hoTen, bc.namSinh||"", bc.danToc||"", bc.diaChi||"",
       (bc.toiDanh||[]).filter(Boolean).join("; ")||"",
-      bc.bienPhapNganChan==="giam"?"Tạm giam":"Tại ngoại",
+      NHAN_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || NHAN_BIEN_PHAP_NGAN_CHAN.tai_ngoai,
       fmtDate(bc.hanTamGiam), bc.dangVien==="co"?"x":"",
       fmtDate(bc.ngayKhoiTo),                                             // U: Ngày KTBC
       _tkGetDL(bc),                                                        // V: Mã ĐL BC (criteria cho COUNTIFS B10)
@@ -15649,6 +15999,11 @@ function DashboardModule() {
   const [dem, setDem] = useState(null);
   const [demBiCan, setDemBiCan] = useState(null);
   const [canhBao, setCanhBao] = useState([]);
+  // Vụ quá hạn điều tra nhưng vẫn "đang giải quyết" — hệ thống KHÔNG có cách nào tự biết đây là
+  // "đã gia hạn/giải quyết thật ngoài đời nhưng chưa cập nhật phần mềm" hay "thực sự quá hạn luật
+  // định, cần xử lý ngay" (2026-08-09, theo yêu cầu Dũng). Chỉ nêu rõ câu hỏi + cho xử lý NGAY tại
+  // đây (mở thẳng đúng modal hành động, tái dùng nguyên vẹn — không tạo luồng ghi dữ liệu mới).
+  const [dangXuLy, setDangXuLy] = useState(null); // { vuAn, modal: "gia_han"|"chuyen_giai_doan"|"hoan_thanh" }
   // Riêng chiều "asc" (biểu đồ cần cũ→mới theo trục thời gian) — cacheKey khác "kybaocao:desc" ở
   // các module khác vì server phải trả đúng thứ tự này, không tự sort lại phía client.
   const kyList = useCollectionCache(
@@ -15778,16 +16133,47 @@ function DashboardModule() {
         {canhBao.length > 0 && (
           <div className="space-y-1">
             {canhBao.map(v => (
-              <div key={v.id} className="flex items-center justify-between text-sm py-1.5 border-b border-slate-50 last:border-0">
-                <div><span className="text-xs text-slate-400 mr-2">{hienThiMa(v)}</span>{v.tenVu}</div>
-                <div className={v.conLai < 0 ? "text-red-600 font-medium" : "text-amber-600 font-medium"}>
-                  {v.conLai < 0 ? `Quá hạn ${-v.conLai} ngày` : `Còn ${v.conLai} ngày`}
+              <div key={v.id} className="py-1.5 border-b border-slate-50 last:border-0">
+                <div className="flex items-center justify-between text-sm">
+                  <div><span className="text-xs text-slate-400 mr-2">{hienThiMa(v)}</span>{v.tenVu}</div>
+                  <div className={v.conLai < 0 ? "text-red-600 font-medium" : "text-amber-600 font-medium"}>
+                    {v.conLai < 0 ? `Quá hạn ${-v.conLai} ngày` : `Còn ${v.conLai} ngày`}
+                  </div>
                 </div>
+                {/* Vụ ĐÃ QUÁ HẠN — hệ thống không biết đây là "đã gia hạn/giải quyết thật nhưng
+                    chưa cập nhật" hay "thực sự quá hạn cần xử lý ngay", nên nêu rõ câu hỏi + cho
+                    xử lý NGAY tại đây (mở đúng modal hành động, không cần rời Dashboard đi tìm vụ). */}
+                {v.conLai < 0 && (
+                  <div className="mt-1 flex items-center justify-between gap-2 bg-red-50 border border-red-100 rounded-lg px-2 py-1.5">
+                    <div className="text-xs text-red-700">
+                      Đã gia hạn thêm ngoài đời nhưng chưa cập nhật hệ thống, hay đã có kết quả
+                      (chuyển giai đoạn/tạm đình chỉ/đình chỉ...) nhưng chưa báo cán bộ thống kê?
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={() => setDangXuLy({ vuAn: v, modal: "gia_han" })}
+                              className="text-xs px-2 py-1 rounded border border-red-300 text-red-700 hover:bg-red-100 whitespace-nowrap">Gia hạn</button>
+                      <button onClick={() => setDangXuLy({ vuAn: v, modal: "chuyen_giai_doan" })}
+                              className="text-xs px-2 py-1 rounded border border-red-300 text-red-700 hover:bg-red-100 whitespace-nowrap">Chuyển GĐ</button>
+                      <button onClick={() => setDangXuLy({ vuAn: v, modal: "hoan_thanh" })}
+                              className="text-xs px-2 py-1 rounded border border-red-300 text-red-700 hover:bg-red-100 whitespace-nowrap">Hoàn thành</button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {dangXuLy?.modal === "gia_han" && (
+        <GiaHanDieuTraModal vuAn={dangXuLy.vuAn} onDong={() => setDangXuLy(null)} onXong={() => setDangXuLy(null)} />
+      )}
+      {dangXuLy?.modal === "chuyen_giai_doan" && (
+        <ChuyenGiaiDoanModal vuAn={dangXuLy.vuAn} onDong={() => setDangXuLy(null)} onXong={() => setDangXuLy(null)} />
+      )}
+      {dangXuLy?.modal === "hoan_thanh" && (
+        <HoanThanhVuAnModal vuAnId={dangXuLy.vuAn.id} onDong={() => setDangXuLy(null)} onXong={() => setDangXuLy(null)} />
+      )}
     </div>
   );
 }
@@ -16571,7 +16957,7 @@ const NHOM_COT_BICAN = [
   ]},
   { nhom: "Địa chỉ & ngăn chặn", cols: [
     { id: "diaChi", label: "Địa chỉ", filter: "text", getValue: bc => bc.diaChi || "" },
-    { id: "bienPhapNganChan", label: "Biện pháp", filter: "enum", options: [["tai_ngoai", "Tại ngoại"], ["giam", "Tạm giam"]], getValue: bc => bc.bienPhapNganChan || "tai_ngoai" },
+    { id: "bienPhapNganChan", label: "Biện pháp", filter: "enum", options: Object.entries(NHAN_BIEN_PHAP_NGAN_CHAN), getValue: bc => bc.bienPhapNganChan || "tai_ngoai" },
     { id: "hanTamGiam", label: "Hạn tạm giam", filter: "date", getValue: bc => bc.hanTamGiam },
   ]},
   { nhom: "Khởi tố & tội danh", cols: [
@@ -16771,7 +17157,7 @@ function DongBiCanBangExcel({ bc, index, keo, suaBiCanTruong, danhMucTD }) {
       </td>
       <td {...oTd("bienPhapNganChan")}>
         <OSelectExcelEnum value={bc.bienPhapNganChan || "tai_ngoai"} onChange={v => suaBiCanTruong(bc, { bienPhapNganChan: v, ...(v !== "giam" ? { hanTamGiam: null } : {}) })}
-                          options={[["tai_ngoai", "Tại ngoại"], ["giam", "Tạm giam"]]} />
+                          options={Object.entries(NHAN_BIEN_PHAP_NGAN_CHAN)} />
         <TayKeoFill onBatDau={() => keo.batDauKeo(index, "bienPhapNganChan", bc.bienPhapNganChan || "tai_ngoai")} />
       </td>
       <td {...oTd("hanTamGiam")}>
