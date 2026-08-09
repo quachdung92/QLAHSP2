@@ -1359,6 +1359,16 @@ function suyLoaiLenhKhongPheChuan(bc) {
   }
   return "";
 }
+
+// Ngày bắt đầu TẠM GIAM thật sự (KHÁC `ngayBat` khi tạm giam đến từ tạm giữ — Dũng lưu ý
+// 2026-08-09: "tạm giữ xong chuyển tạm giam thì vẫn phải tính báo cáo cả tạm giữ và tạm giam" —
+// nếu chỉ có `ngayBat` (ngày tạm giữ, LUÔN sớm hơn) sẽ không tách đúng kỳ thống kê cho tạm giam khi
+// 2 sự kiện rơi vào 2 kỳ khác nhau). `bat_truc_tiep` thì tạm giam = bắt luôn, dùng thẳng `ngayBat`,
+// không cần field riêng (không bắt cán bộ nhập trùng 1 ngày 2 lần).
+function layNgayTamGiam(bc) {
+  if (!bc || bc.bienPhapNganChan !== "giam") return null;
+  return bc.nguonGocTamGiam === "bat_truc_tiep" ? (bc.ngayBat || null) : (bc.ngayChuyenTamGiam || null);
+}
 const NHAN_LOAI_BICAN = { ca_nhan: "Cá nhân", phap_nhan: "Pháp nhân" };
 const NHAN_MUC_DO_NGHIEM_TRONG = { it_nghiem_trong: "Ít nghiêm trọng", nghiem_trong: "Nghiêm trọng", rat_nghiem_trong: "Rất nghiêm trọng", dac_biet_nghiem_trong: "Đặc biệt nghiêm trọng" };
 
@@ -5415,7 +5425,7 @@ function moiBiCan(id) {
     trinhDo: "", taiPham: "khong", loaiBiCan: "ca_nhan", tenPhapNhan: "", maSoThue: "",
     diaChi: "", toiDanh: [""], dieuLuatBC: [""],
     bienPhapNganChan: "tai_ngoai", hanTamGiam: "", loaiBat: "", ngayBat: "",
-    nguonGocTamGiam: "tu_tam_giu", vksKhongPheChuan: false,
+    nguonGocTamGiam: "tu_tam_giu", ngayChuyenTamGiam: "", vksKhongPheChuan: false,
     ngayKhoiTo: "", soQdKtBiCan: "",
   };
 }
@@ -5611,6 +5621,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           loaiBat: bc.bienPhapNganChan !== "tai_ngoai" ? (bc.loaiBat || "") : "",
           ngayBat: bc.bienPhapNganChan !== "tai_ngoai" && bc.ngayBat ? fromInputDate(bc.ngayBat) : null,
           nguonGocTamGiam: bc.bienPhapNganChan === "giam" ? (bc.nguonGocTamGiam || "tu_tam_giu") : "",
+          ngayChuyenTamGiam: bc.bienPhapNganChan === "giam" && bc.nguonGocTamGiam === "tu_tam_giu" && bc.ngayChuyenTamGiam ? fromInputDate(bc.ngayChuyenTamGiam) : null,
           vksKhongPheChuan: bc.bienPhapNganChan !== "tai_ngoai" ? !!bc.vksKhongPheChuan : false,
           ngayKhoiTo: ngayKT, soQdKtBiCan: (bc.soQdKtBiCan || "").trim(),
           loaiKhoiTo: loaiKhoiToList[i], kyThongKeKhoiTo: kyId,
@@ -5891,6 +5902,11 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
                       {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
                     </select>
                   </Truong>
+                  {(bc.nguonGocTamGiam || "tu_tam_giu") === "tu_tam_giu" && (
+                    <Truong nhan="Ngày chuyển tạm giam">
+                      <NhapNgay value={bc.ngayChuyenTamGiam} onChange={e => suaBiCan(bc.id, { ngayChuyenTamGiam: e.target.value })} className={oInput} />
+                    </Truong>
+                  )}
                 </>)}
                 {bc.bienPhapNganChan !== "tai_ngoai" && (<>
                   <Truong nhan="Loại bắt">
@@ -6339,6 +6355,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
   const [bienPhapNganChan, setBienPhapNganChan] = useState(biCan.bienPhapNganChan || "tai_ngoai");
   const [hanTamGiam, setHanTamGiam] = useState(toInputDate(biCan.hanTamGiam));
   const [nguonGocTamGiam, setNguonGocTamGiam] = useState(biCan.nguonGocTamGiam || "tu_tam_giu");
+  const [ngayChuyenTamGiam, setNgayChuyenTamGiam] = useState(toInputDate(biCan.ngayChuyenTamGiam));
   const [loaiBat, setLoaiBat] = useState(biCan.loaiBat || "");
   const [ngayBat, setNgayBat] = useState(toInputDate(biCan.ngayBat));
   const [vksKhongPheChuan, setVksKhongPheChuan] = useState(!!biCan.vksKhongPheChuan);
@@ -6393,6 +6410,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
         // luôn số liệu "Số người bị bắt trong kỳ" (Biểu 2) của người đó. Luôn lưu ĐÚNG giá trị đang
         // có trên form.
         nguonGocTamGiam: nguonGocTamGiam || "",
+        ngayChuyenTamGiam: ngayChuyenTamGiam ? fromInputDate(ngayChuyenTamGiam) : null,
         loaiBat: loaiBat || "",
         ngayBat: ngayBat ? fromInputDate(ngayBat) : null,
         vksKhongPheChuan: !!vksKhongPheChuan,
@@ -6481,6 +6499,11 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
               {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </Truong>
+          {nguonGocTamGiam === "tu_tam_giu" && (
+            <Truong nhan="Ngày chuyển tạm giam">
+              <NhapNgay value={ngayChuyenTamGiam} onChange={e => setNgayChuyenTamGiam(e.target.value)} className={oInput} />
+            </Truong>
+          )}
         </>)}
         {bienPhapNganChan !== "tai_ngoai" && (<>
           <Truong nhan="Loại bắt">
@@ -6556,6 +6579,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
   const [bienPhapNganChan, setBienPhapNganChan] = useState("tai_ngoai");
   const [hanTamGiam, setHanTamGiam] = useState("");
   const [nguonGocTamGiam, setNguonGocTamGiam] = useState("tu_tam_giu");
+  const [ngayChuyenTamGiam, setNgayChuyenTamGiam] = useState("");
   const [loaiBat, setLoaiBat] = useState("");
   const [ngayBat, setNgayBat] = useState("");
   const [vksKhongPheChuan, setVksKhongPheChuan] = useState(false);
@@ -6614,6 +6638,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         loaiBat: bienPhapNganChan !== "tai_ngoai" ? (loaiBat || "") : "",
         ngayBat: bienPhapNganChan !== "tai_ngoai" && ngayBat ? fromInputDate(ngayBat) : null,
         nguonGocTamGiam: bienPhapNganChan === "giam" ? (nguonGocTamGiam || "tu_tam_giu") : "",
+        ngayChuyenTamGiam: bienPhapNganChan === "giam" && nguonGocTamGiam === "tu_tam_giu" && ngayChuyenTamGiam ? fromInputDate(ngayChuyenTamGiam) : null,
         vksKhongPheChuan: bienPhapNganChan !== "tai_ngoai" ? !!vksKhongPheChuan : false,
         ngayKhoiTo: ngayKT, soQdKtBiCan: soQdKtBiCan.trim(),
         loaiKhoiTo: "bo_sung", ngayTao: now, nguoiTao: nguoiThucHien,
@@ -6718,6 +6743,11 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
               {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </Truong>
+          {nguonGocTamGiam === "tu_tam_giu" && (
+            <Truong nhan="Ngày chuyển tạm giam">
+              <NhapNgay value={ngayChuyenTamGiam} onChange={e => setNgayChuyenTamGiam(e.target.value)} className={oInput} />
+            </Truong>
+          )}
         </>)}
         {bienPhapNganChan !== "tai_ngoai" && (<>
           <Truong nhan="Loại bắt">

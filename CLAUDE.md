@@ -114,6 +114,43 @@ giam trực tiếp", lưu; (3) mở "Sửa bị can" 1 người đang Tạm giam
 rồi mở lại sửa — xác nhận Loại bắt/Ngày bắt/Nguồn gốc tạm giam VẪN CÒN (không bị xoá mất, đúng bug
 đã tự phát hiện+sửa ở trên); (4) Badge ở panel chi tiết hiện đúng màu/tên cho cả 3 trạng thái.
 
+**Bổ sung thêm field `ngayChuyenTamGiam` (2026-08-09, ngay sau khi deploy sup, theo lưu ý trực tiếp
+của Dũng)**: *"tạm giữ xong chuyển tạm giam thì vẫn phải tính báo cáo cả tạm giữ và tạm giam nên
+phải xem cách tính báo cáo"* — phát hiện 1 lỗ hổng thật trong thiết kế field đã có: `ngayBat` chỉ
+lưu ĐÚNG 1 ngày (ngày bắt/tạm giữ LẦN ĐẦU). Khi 1 bị can tạm giữ ở kỳ N rồi mới chuyển tạm giam ở
+kỳ N+1 (`nguonGocTamGiam === "tu_tam_giu"`), nếu tính báo cáo sau này chỉ dựa vào `ngayBat` để xác
+định kỳ thì "Số người bị tạm giam" sẽ bị gán NHẦM vào kỳ N (kỳ tạm giữ) thay vì đúng kỳ N+1 (kỳ
+thật sự chuyển tạm giam) — 2 mốc thời gian khác nhau bị nhầm thành 1.
+
+**Đã thêm field mới `ngayChuyenTamGiam`** (timestamptz, nullable) — CHỈ có ý nghĩa/hiển thị khi
+`nguonGocTamGiam === "tu_tam_giu"` (progressive-disclosure ngay dưới dropdown "Nguồn gốc tạm giam",
+cả 3 nơi nhập bị can). Trường hợp `nguonGocTamGiam === "bat_truc_tiep"` KHÔNG cần field riêng — ngày
+tạm giam CHÍNH LÀ ngày bắt (`ngayBat`), không bắt cán bộ nhập trùng 1 ngày 2 lần.
+
+**Hàm dùng chung mới `layNgayTamGiam(bc)`** (đặt cạnh `suyLoaiLenhKhongPheChuan`) — trả về ngày bắt
+đầu tạm giam THẬT SỰ, dùng cho tính báo cáo Biểu 2 sau này (chưa build ở đợt này, giữ logic suy
+luận nằm đúng 1 chỗ): `bienPhapNganChan !== "giam"` → `null`; `nguonGocTamGiam === "bat_truc_tiep"`
+→ `ngayBat`; còn lại (`tu_tam_giu`) → `ngayChuyenTamGiam` (CỐ Ý không fallback về `ngayBat` nếu
+`ngayChuyenTamGiam` chưa nhập — trả `null` để báo hiệu THIẾU dữ liệu, tránh gán nhầm ngày tạm giữ
+thành ngày tạm giam nếu cán bộ quên nhập).
+
+`SuaBiCanForm` áp dụng đúng nguyên tắc "dữ kiện lịch sử, không gate theo biện pháp hiện tại" như 3
+field kia (`loaiBat`/`ngayBat`/`vksKhongPheChuan`); `ThemVuAnForm`/`ThemBiCanForm` (form tạo mới)
+gate theo `bienPhapNganChan === "giam" && nguonGocTamGiam === "tu_tam_giu"` — đúng pattern các field
+tạo mới khác.
+
+**Migration riêng** (`supabase/add_bat_tam_giu_tam_giam_2026-08-09.sql`, thêm vào CUỐI file — vẫn
+đang là migration của tính năng CHƯA lên production, sửa trực tiếp thay vì tạo file mới, đúng tiền
+lệ đã ghi ở mục "Nộp lưu kho") — ĐÃ CHẠY THẬT lên Supabase (backup trước, run `31314091585`, xác
+nhận "success"; xác nhận cột mới qua `information_schema` VÀ qua REST API thật). Đã deploy lại
+`qlahs-sup.web.app`. Test cô lập 7/7 PASS cho `layNgayTamGiam` (đủ cả 2 nhánh nguồn gốc, thiếu dữ
+liệu không suy đoán bừa). Compile-check qua `@babel/core`+`@babel/preset-react` — sạch.
+
+**CHƯA kiểm chứng qua UI thật** — nên tự thử thêm ở `qlahs-sup.web.app`: chọn "Tạm giam" + "Chuyển
+từ tạm giữ", xác nhận hiện thêm ô "Ngày chuyển tạm giam"; đổi sang "Bắt tạm giam trực tiếp", xác
+nhận ô đó biến mất (không cần nhập); sửa 1 bị can đã có `ngayChuyenTamGiam`, đổi biện pháp đi rồi
+quay lại "Tạm giam"+"Chuyển từ tạm giữ" — xác nhận giá trị cũ vẫn còn (không bị xoá mất).
+
 ## Danh sách vụ án — tab "Đang giải quyết" mặc định hiện vụ MỚI NHẬP lên trên cùng (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
 
 Theo yêu cầu Dũng: tab "Đang giải quyết" (mặc định khi mở Danh sách vụ án) trước đây KHÔNG có

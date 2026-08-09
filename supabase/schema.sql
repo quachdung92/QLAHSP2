@@ -210,6 +210,7 @@ create table "bican" (
   "loaiBat"            text not null default '' check ("loaiBat" in ('','khan_cap','qua_tang','truy_na','dau_thu','tu_thu')),
   "ngayBat"            timestamptz,
   "nguonGocTamGiam"    text not null default '' check ("nguonGocTamGiam" in ('','tu_tam_giu','bat_truc_tiep')), -- chỉ có ý nghĩa khi bienPhapNganChan='giam'
+  "ngayChuyenTamGiam"  timestamptz, -- ngày tạm giam THẬT (khi nguonGocTamGiam='tu_tam_giu', khác ngayBat=ngày tạm giữ), xem layNgayTamGiam
   "vksKhongPheChuan"   boolean not null default false, -- loại lệnh (dòng 10-12) tự suy ra từ bienPhapNganChan+nguonGocTamGiam, xem suyLoaiLenhKhongPheChuan
   "danToc"             text not null default 'Kinh',
   "quocTich"           text not null default 'Việt Nam',

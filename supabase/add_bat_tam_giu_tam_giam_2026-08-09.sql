@@ -45,4 +45,11 @@ alter table "bican" add column if not exists "nguonGocTamGiam" text not null def
 -- tính báo cáo (xem hàm `suyLoaiLenhKhongPheChuan` trong qlahs-sup.html), không lưu trực tiếp.
 alter table "bican" add column if not exists "vksKhongPheChuan" boolean not null default false;
 
+-- Ngày chuyển sang TẠM GIAM thật sự (2026-08-09, bổ sung theo lưu ý Dũng: "tạm giữ xong chuyển
+-- tạm giam thì vẫn phải tính báo cáo cả tạm giữ và tạm giam") — KHÁC "ngayBat" (ngày tạm giữ, LUÔN
+-- sớm hơn) khi nguonGocTamGiam='tu_tam_giu', vì 2 sự kiện có thể rơi vào 2 kỳ thống kê khác nhau.
+-- Không cần field này khi nguonGocTamGiam='bat_truc_tiep' (tạm giam = ngày bắt luôn, xem hàm
+-- `layNgayTamGiam` trong qlahs-sup.html).
+alter table "bican" add column if not exists "ngayChuyenTamGiam" timestamptz;
+
 notify pgrst, 'reload schema';
