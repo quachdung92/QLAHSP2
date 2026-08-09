@@ -151,6 +151,105 @@ từ tạm giữ", xác nhận hiện thêm ô "Ngày chuyển tạm giam"; đ�
 nhận ô đó biến mất (không cần nhập); sửa 1 bị can đã có `ngayChuyenTamGiam`, đổi biện pháp đi rồi
 quay lại "Tạm giam"+"Chuyển từ tạm giữ" — xác nhận giá trị cũ vẫn còn (không bị xoá mất).
 
+## UI nhập/sửa bị can — tách 3 nhóm rõ ràng: Thông tin cá nhân / QĐ khởi tố bị can / Biện pháp ngăn chặn (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
+
+Theo yêu cầu Dũng: "làm lại UI thông tin bị can tách ra làm 3 phần để dễ điền dễ quan sát" — form
+nhập bị can trước đây (`ThemVuAnForm`'s dòng bị can lồng trong form, `ThemBiCanForm`, `SuaBiCanForm`)
+là 1 lưới `grid-cols-4` PHẲNG duy nhất, gộp lẫn lộn thông tin cá nhân/tội danh/khởi tố/biện pháp
+ngăn chặn — càng khó quan sát hơn sau khi Biểu 2 (mục ngay trên) thêm liên tiếp 4-5 field mới vào
+đúng cuối lưới đó.
+
+**Component mới `NhomTruong({so, ten})`** (đặt ngay sau `Truong`) — tiêu đề chia nhóm dùng chung cả
+3 nơi: số thứ tự trong khung tròn indigo + nhãn nhóm + đường kẻ ngang nối dài, KHÔNG phải khung viền
+box (nhẹ hơn, không làm form "nặng" thêm) — `flex-1 border-t` tự giãn hết chiều rộng còn lại.
+
+**Tách lại đúng 3 nhóm, THEO ĐÚNG THỨ TỰ Dũng nêu** (giữ nguyên MỌI field/logic ẩn-hiện đã có, chỉ
+đổi vị trí + thêm header, không đổi hành vi lưu):
+1. **Thông tin cá nhân** — Họ tên/Năm sinh/Giới tính/Dân tộc/Quốc tịch/Trình độ/Tái phạm/Loại bị
+   can/(Tên pháp nhân+Mã số thuế nếu pháp nhân)/Đảng viên/(Giữ chức danh QL nếu có)/Địa chỉ.
+2. **Quyết định khởi tố bị can** — Ngày khởi tố bị can/Số QĐ khởi tố bị can, RỒI TỚI khối Tội danh
+   (BlhsSelector + danh sách tội chính/bổ sung) — gộp cùng nhóm 2 vì tội danh gắn liền với khởi tố
+   ("khởi tố về tội gì"), không tách riêng thành nhóm thứ 4 (Dũng chỉ nêu đúng 3 nhóm).
+3. **Biện pháp ngăn chặn** — Biện pháp ngăn chặn + toàn bộ field phụ thuộc nó (Hạn tạm giam/Nguồn
+   gốc tạm giam/Ngày chuyển tạm giam/Loại bắt/Ngày bắt/VKS không phê chuẩn) — dời từ giữa nhóm 1
+   (vị trí cũ, ngay sau Đảng viên) xuống thành nhóm cuối riêng biệt.
+
+Áp dụng ở cả 3 nơi (đúng vị trí y hệt CLAUDE.md đã ghi ở mục Biểu 2 phía trên): `ThemVuAnForm` (dòng
+bị can lồng trong form, dùng `bc.field`/`suaBiCan(bc.id,{...})`), `SuaBiCanForm`/`ThemBiCanForm`
+(2 form độc lập dùng local state, markup giống hệt nhau ngoại trừ `SuaBiCanForm` có thêm cảnh báo
+"Dự đoán tự động, chưa xác nhận" ở ô Trình độ — không dùng `replace_all` chung cho cả 2 được, phải
+sửa riêng từng form).
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Đếm lại toàn bộ 19
+nhãn field bằng `grep -c` xác nhận đúng **3 lần/field** (đúng 3 form, không sót/không nhân đôi field
+nào trong lúc di chuyển) — bao gồm cả 6 field mới của Biểu 2 lẫn 13 field cũ. **CHƯA kiểm chứng qua
+UI thật** — nên tự mở 1 trong 3 nơi (VD "+ Thêm bị can" ở 1 vụ đang có) trên `qlahs-sup.web.app`,
+xác nhận thấy đúng 3 khối có tiêu đề số 1/2/3 rõ ràng, thứ tự đúng như trên, mọi progressive-
+disclosure (pháp nhân/đảng viên/tạm giam...) vẫn ẩn-hiện đúng như trước khi tách nhóm.
+
+## "Loại bắt" chỉ áp dụng cho Tạm giữ + master-detail cho bị can trong ThemVuAnForm + nút "Áp dụng giống" (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`, CHƯA deploy production)
+
+Theo phản hồi trực tiếp của Dũng ngay sau mục "tách 3 nhóm" ở trên, gồm 3 việc:
+
+**1. Sửa logic — "Loại bắt" (5 loại: khẩn cấp/quả tang/truy nã/đầu thú/tự thú) chỉ áp dụng cho Tạm
+giữ, KHÔNG áp dụng cho Tạm giam.** Nguyên văn Dũng: *"Tạm giam ko có loại bắt, nguồn gốc tạm giam
+nếu ko có tạm giữ làm tiền đề thì chỉ có bắt tạm giam ko có chuyển từ tạm giữ."* — 5 loại bắt mô tả
+CĂN CỨ PHÁP LÝ của việc đưa vào TẠM GIỮ (VD "khẩn cấp" = Lệnh bắt người bị giữ khẩn cấp), không áp
+dụng cho việc chấp hành Lệnh tạm giam (dù tạm giam đến từ tạm giữ hay bắt trực tiếp) — khái niệm này
+đã được "Nguồn gốc tạm giam" (`tu_tam_giu`/`bat_truc_tiep`) phản ánh đủ, không cần lặp lại qua
+"Loại bắt". Đã sửa cả 3 nơi: điều kiện hiện field đổi từ `bienPhapNganChan !== "tai_ngoai"` (bao
+gồm cả tạm giam) thành `bienPhapNganChan === "tam_giu"` (CHỈ tạm giữ) — tách riêng khỏi "Ngày bắt"/
+"VKS không phê chuẩn" (2 field này VẪN áp dụng cho cả tạm giữ lẫn tạm giam như cũ, không đổi). Đồng
+bộ luôn điều kiện LƯU ở 2 form TẠO MỚI (`ThemVuAnForm`/`ThemBiCanForm`, đổi từ `!== "tai_ngoai" ?
+loaiBat : ""` thành `=== "tam_giu" ? loaiBat : ""`) — tránh lưu sót giá trị `loaiBat` cũ nếu cán bộ
+lỡ chọn "Tạm giữ" rồi đổi ngay sang "Tạm giam" trước khi lưu. `SuaBiCanForm` (form SỬA) giữ nguyên
+KHÔNG gate theo biện pháp hiện tại (đúng nguyên tắc "dữ kiện lịch sử" đã lập ở mục Biểu 2 phía trên)
+— chỉ ẩn Ô NHẬP khi đang Tạm giam, giá trị cũ (nếu có từ trước, lúc còn Tạm giữ) vẫn được giữ
+nguyên khi lưu.
+
+**2. Master-detail cho bị can trong `ThemVuAnForm`** (form Thêm vụ án mới) — vì tách 3 nhóm (mục
+trên) làm mỗi bị can chiếm nhiều chỗ hơn hẳn, xếp chồng dọc nhiều bị can làm form quá dài. Đổi từ
+liệt kê TOÀN BỘ bị can dạng thẻ xếp chồng (`biCanRows.map(...)`, mỗi thẻ đủ cả 3 nhóm) sang bố cục
+**panel chi tiết (trái, `flex-1`) + danh sách tên (phải, `w-40`)** — chỉ hiện đủ 3 nhóm field của
+ĐÚNG 1 bị can đang chọn (`bcHienTai`, suy từ state mới `selectedBiCanId`, tự rơi về bị can đầu tiên
+nếu id đang chọn không còn tồn tại — VD vừa xoá đúng dòng đó). Nút "+ Thêm bị can" dời từ header
+chung xuống đầu cột danh sách bên phải (đúng vị trí Dũng nêu: "kèm với nút thêm bị can ở trên
+cùng" — trên cùng CỦA CỘT DANH SÁCH, không phải trên cùng cả khối bị can) — bấm thêm tự động
+CHUYỂN SANG chọn ngay bị can mới (tiện nhập liệu liền mạch, không cần tự bấm chọn lại).
+
+**3. Nút "Áp dụng giống bị can..."** — dropdown nhỏ đặt giữa nhóm 1 và nhóm 2 (chỉ hiện khi vụ có
+≥2 bị can), copy 1 LẦN 9 field hay giống nhau giữa nhiều bị can cùng vụ (Ngày/Số QĐ khởi tố bị can +
+TOÀN BỘ nhóm Biện pháp ngăn chặn: `bienPhapNganChan`/`hanTamGiam`/`nguonGocTamGiam`/
+`ngayChuyenTamGiam`/`loaiBat`/`ngayBat`/`vksKhongPheChuan`) từ 1 bị can NGUỒN do cán bộ TỰ CHỌN
+trong dropdown (liệt kê MỌI bị can khác trong vụ, không cố định 1 người — đúng ý Dũng: *"vụ án có
+nhiều bị can thì thường cũng chỉ có 1-2 nhóm... có thể chọn áp thông tin giống bị can Nguyễn Văn B
+thay vì Nguyễn Văn A"*) sang bị can đang sửa. Hàm `apDungGiongBiCan(targetId, sourceId)` — CỐ Ý copy
+GIÁ TRỊ THUẦN qua `suaBiCan()` (merge state phẳng, không phải tham chiếu/binding) — đúng yêu cầu
+*"vẫn sửa độc lập được ko ảnh hưởng gì cả (ko fillback lại bị can Nguyễn Văn A)"*: sau khi áp dụng,
+sửa tiếp 1 trong 2 bị can (VD hạn tạm giam khác nhau dù cùng ngày KTBC) KHÔNG ảnh hưởng bị can kia,
+vì không có cơ chế đồng bộ/theo dõi nào được thiết lập — chỉ là 1 lần gán giá trị. Dropdown luôn
+`value=""` (không giữ lựa chọn) — mỗi lần chọn là 1 hành động áp dụng tức thời, không phải trạng
+thái "đang liên kết với X".
+
+**Phạm vi CỐ Ý giới hạn**: chỉ áp dụng master-detail + "Áp dụng giống" cho `ThemVuAnForm` (nơi DUY
+NHẤT nhiều bị can được nhập ĐỒNG THỜI trong 1 form) — KHÔNG đụng `SuaBiCanForm`/`ThemBiCanForm` (2
+modal luôn chỉ xử lý ĐÚNG 1 bị can mỗi lần mở, 3 nhóm không compound theo số bị can nên chưa cần
+redesign). Nếu sau này cần "Áp dụng giống" khi Thêm 1 bị can mới vào vụ ĐÃ CÓ (qua `ThemBiCanForm`),
+sẽ cần thêm 1 query lấy danh sách bị can hiện có của vụ đó (form này hiện chỉ nhận `vuAn`, chưa có
+danh sách bị can) — chưa làm vì ngoài phạm vi yêu cầu lần này.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Đếm lại nhãn field
+xác nhận vẫn đúng 3 lần/field (không mất/nhân đôi field nào trong lúc refactor sang `bcHienTai`).
+Grep xác nhận 0 tham chiếu `bc.` còn sót trong vùng code đã refactor (toàn bộ đã chuyển đúng sang
+`bcHienTai.`). Mở `qlahs-sup.web.app` qua trình duyệt xác nhận trang tải sạch, 0 lỗi console (ngoại
+trừ cảnh báo Babel kích thước file vô hại đã biết) — **CHƯA đăng nhập được để kiểm chứng qua UI
+thật** (không có tài khoản trong phiên này), nên tự thử trên `qlahs-sup.web.app` trước khi deploy
+`prod`: (1) mở "+ Thêm vụ án", thêm 2-3 bị can, xác nhận cột danh sách tên bên phải hiện đúng, bấm
+chọn từng tên chuyển đúng panel chi tiết; (2) chọn "Tạm giam" cho 1 bị can, xác nhận KHÔNG còn ô
+"Loại bắt" (chỉ còn khi chọn "Tạm giữ"); (3) nhập đủ ngày KTBC + biện pháp ngăn chặn cho bị can #1,
+sang bị can #2 bấm "Áp dụng giống bị can #1", xác nhận điền đúng các field, rồi sửa riêng "Hạn tạm
+giam" của bị can #2 — xác nhận bị can #1 KHÔNG bị đổi theo.
+
 ## Danh sách vụ án — tab "Đang giải quyết" mặc định hiện vụ MỚI NHẬP lên trên cùng (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
 
 Theo yêu cầu Dũng: tab "Đang giải quyết" (mặc định khi mở Danh sách vụ án) trước đây KHÔNG có

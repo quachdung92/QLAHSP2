@@ -5418,6 +5418,18 @@ function Truong({ nhan, children, rong2, rong4 }) {
   );
 }
 
+// Tiêu đề chia nhóm cho form nhập/sửa bị can (2026-08-09, theo yêu cầu Dũng "tách làm 3 phần để dễ
+// điền dễ quan sát") — dùng ở ThemVuAnForm (dòng bị can lồng trong form)/ThemBiCanForm/SuaBiCanForm.
+function NhomTruong({ so, ten }) {
+  return (
+    <div className="flex items-center gap-2 mt-3 mb-2 first:mt-0">
+      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold shrink-0">{so}</span>
+      <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">{ten}</span>
+      <span className="flex-1 border-t border-slate-200"></span>
+    </div>
+  );
+}
+
 function moiBiCan(id) {
   return {
     id, hoTen: "", namSinh: "", gioiTinh: "nam", danToc: "Kinh", quocTich: "Việt Nam",
@@ -5467,6 +5479,9 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const [phienToaRutKN, setPhienToaRutKN] = useState(false);
   const [ghiChu, setGhiChu] = useState("");
   const [biCanRows, setBiCanRows] = useState([moiBiCan(0)]);
+  // Master-detail (2026-08-09, theo yêu cầu Dũng — 3 nhóm field/bị can làm form quá dài khi nhiều
+  // bị can): chỉ hiện đầy đủ 1 bị can tại 1 thời điểm, danh sách tên bên phải để chọn.
+  const [selectedBiCanId, setSelectedBiCanId] = useState(0);
 
   // Nhập bổ sung án cũ: cho khai luôn hình thức giải quyết lúc tạo vụ, thay vì phải tạo "đang
   // giải quyết" rồi vào Hoàn thành vụ án sau — ẩn sau 1 toggle vì hiếm dùng (chỉ cần khi nhập lại
@@ -5496,9 +5511,25 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const themBiCan = () => {
     idRef.current += 1;
     setBiCanRows(rows => [...rows, moiBiCan(idRef.current)]);
+    setSelectedBiCanId(idRef.current);
   };
   const xoaBiCan = (id) => setBiCanRows(rows => rows.filter(r => r.id !== id));
   const suaBiCan = (id, patch) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r));
+  // "Áp dụng giống bị can X" (2026-08-09, theo yêu cầu Dũng) — copy 1 LẦN các field hay giống nhau
+  // giữa nhiều bị can cùng vụ (ngày KTBC + toàn bộ Biện pháp ngăn chặn) từ 1 bị can NGUỒN đã nhập
+  // sang bị can ĐANG sửa. CỐ Ý là copy giá trị thuần (không phải tham chiếu) — sau khi áp dụng, sửa
+  // độc lập 1 trong 2 bị can KHÔNG ảnh hưởng bị can kia (không fillback ngược), vì hạn tạm giam/
+  // BPNC có thể khác nhau dù cùng ngày KTBC.
+  const apDungGiongBiCan = (targetId, sourceId) => {
+    const nguon = biCanRows.find(b => String(b.id) === String(sourceId));
+    if (!nguon) return;
+    suaBiCan(targetId, {
+      ngayKhoiTo: nguon.ngayKhoiTo, soQdKtBiCan: nguon.soQdKtBiCan,
+      bienPhapNganChan: nguon.bienPhapNganChan, hanTamGiam: nguon.hanTamGiam,
+      nguonGocTamGiam: nguon.nguonGocTamGiam, ngayChuyenTamGiam: nguon.ngayChuyenTamGiam,
+      loaiBat: nguon.loaiBat, ngayBat: nguon.ngayBat, vksKhongPheChuan: nguon.vksKhongPheChuan,
+    });
+  };
   const themToiDanh = (id) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, toiDanh: [...r.toiDanh, ""], dieuLuatBC: [...(r.dieuLuatBC||[]), ""] } : r));
   const xoaToiDanh = (id, idx) => setBiCanRows(rows => rows.map(r => r.id === id ? { ...r, toiDanh: r.toiDanh.filter((_, i) => i !== idx), dieuLuatBC: (r.dieuLuatBC||[]).filter((_, i) => i !== idx) } : r));
   const suaToiDanhVaDieuLuat = (id, idx, ten, dl) => setBiCanRows(rows => rows.map(r => r.id !== id ? r : {
@@ -5618,7 +5649,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           maSoThue: bc.loaiBiCan === "phap_nhan" ? bc.maSoThue.trim() : "",
           diaChi: bc.diaChi.trim(), bienPhapNganChan: bc.bienPhapNganChan,
           hanTamGiam: bc.bienPhapNganChan === "giam" && bc.hanTamGiam ? fromInputDate(bc.hanTamGiam) : null,
-          loaiBat: bc.bienPhapNganChan !== "tai_ngoai" ? (bc.loaiBat || "") : "",
+          loaiBat: bc.bienPhapNganChan === "tam_giu" ? (bc.loaiBat || "") : "",
           ngayBat: bc.bienPhapNganChan !== "tai_ngoai" && bc.ngayBat ? fromInputDate(bc.ngayBat) : null,
           nguonGocTamGiam: bc.bienPhapNganChan === "giam" ? (bc.nguonGocTamGiam || "tu_tam_giu") : "",
           ngayChuyenTamGiam: bc.bienPhapNganChan === "giam" && bc.nguonGocTamGiam === "tu_tam_giu" && bc.ngayChuyenTamGiam ? fromInputDate(bc.ngayChuyenTamGiam) : null,
@@ -5658,6 +5689,11 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
       setDangLuu(false);
     }
   };
+
+  // Bị can đang hiện trong panel chi tiết (master-detail) — rơi về bị can đầu tiên nếu
+  // `selectedBiCanId` không còn khớp dòng nào (VD vừa xoá đúng dòng đang chọn).
+  const bcHienTai = biCanRows.find(b => b.id === selectedBiCanId) || biCanRows[0];
+  const selectedBiCanIdx = biCanRows.indexOf(bcHienTai);
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-40 overflow-auto py-8">
@@ -5818,154 +5854,190 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
         <div className="flex items-center justify-between mb-2 sticky top-0 bg-white z-10 pb-2">
           <div className="text-sm font-medium text-slate-600">Bị can ({biCanRows.length})</div>
-          <button onClick={themBiCan} className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">+ Thêm bị can</button>
         </div>
 
-        <div className="space-y-3">
-          {biCanRows.map((bc, idx) => (
-            <div key={bc.id} className="border border-slate-200 rounded-lg p-3">
+        <div className="flex gap-3 items-start">
+          <div className="flex-1 min-w-0 border border-slate-200 rounded-lg p-3">
+            {bcHienTai && (<>
               <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-medium text-slate-500">Bị can #{idx + 1}</div>
+                <div className="text-xs font-medium text-slate-500">Bị can #{selectedBiCanIdx + 1}</div>
                 {biCanRows.length > 1 && (
-                  <button onClick={() => xoaBiCan(bc.id)} className="text-xs text-red-500 hover:text-red-700">Xoá</button>
+                  <button onClick={() => xoaBiCan(bcHienTai.id)} className="text-xs text-red-500 hover:text-red-700">Xoá bị can này</button>
                 )}
               </div>
+              <NhomTruong so={1} ten="Thông tin cá nhân" />
               <div className="grid grid-cols-4 gap-3">
                 <Truong nhan="Họ tên">
-                  <input value={bc.hoTen} onChange={e => suaBiCan(bc.id, { hoTen: e.target.value })} className={oInput} />
+                  <input value={bcHienTai.hoTen} onChange={e => suaBiCan(bcHienTai.id, { hoTen: e.target.value })} className={oInput} />
                 </Truong>
                 <Truong nhan="Năm sinh">
-                  <input type="number" value={bc.namSinh} onChange={e => suaBiCan(bc.id, { namSinh: e.target.value })} className={oInput} />
+                  <input type="number" value={bcHienTai.namSinh} onChange={e => suaBiCan(bcHienTai.id, { namSinh: e.target.value })} className={oInput} />
                 </Truong>
                 <Truong nhan="Giới tính">
-                  <select value={bc.gioiTinh} onChange={e => suaBiCan(bc.id, { gioiTinh: e.target.value })} className={oInput}>
+                  <select value={bcHienTai.gioiTinh} onChange={e => suaBiCan(bcHienTai.id, { gioiTinh: e.target.value })} className={oInput}>
                     <option value="nam">Nam</option><option value="nu">Nữ</option>
                   </select>
                 </Truong>
                 <Truong nhan="Dân tộc">
-                  <input value={bc.danToc} onChange={e => suaBiCan(bc.id, { danToc: e.target.value })} className={oInput} />
+                  <input value={bcHienTai.danToc} onChange={e => suaBiCan(bcHienTai.id, { danToc: e.target.value })} className={oInput} />
                 </Truong>
 
                 <Truong nhan="Quốc tịch">
-                  <input value={bc.quocTich||"Việt Nam"} onChange={e => suaBiCan(bc.id, { quocTich: e.target.value })} className={oInput} />
+                  <input value={bcHienTai.quocTich||"Việt Nam"} onChange={e => suaBiCan(bcHienTai.id, { quocTich: e.target.value })} className={oInput} />
                 </Truong>
                 <Truong nhan="Trình độ">
-                  <select value={bc.trinhDo||""} onChange={e => suaBiCan(bc.id, { trinhDo: e.target.value })} className={oInput}>
+                  <select value={bcHienTai.trinhDo||""} onChange={e => suaBiCan(bcHienTai.id, { trinhDo: e.target.value })} className={oInput}>
                     <option value="">— chưa rõ —</option>
                     {Object.entries(NHAN_TRINH_DO).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </Truong>
                 <Truong nhan="Tái phạm">
-                  <select value={bc.taiPham||"khong"} onChange={e => suaBiCan(bc.id, { taiPham: e.target.value })} className={oInput}>
+                  <select value={bcHienTai.taiPham||"khong"} onChange={e => suaBiCan(bcHienTai.id, { taiPham: e.target.value })} className={oInput}>
                     {Object.entries(NHAN_TAI_PHAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </Truong>
                 <Truong nhan="Loại bị can">
-                  <select value={bc.loaiBiCan||"ca_nhan"} onChange={e => suaBiCan(bc.id, { loaiBiCan: e.target.value })} className={oInput}>
+                  <select value={bcHienTai.loaiBiCan||"ca_nhan"} onChange={e => suaBiCan(bcHienTai.id, { loaiBiCan: e.target.value })} className={oInput}>
                     <option value="ca_nhan">Cá nhân</option><option value="phap_nhan">Pháp nhân</option>
                   </select>
                 </Truong>
 
-                {bc.loaiBiCan === "phap_nhan" && (<>
+                {bcHienTai.loaiBiCan === "phap_nhan" && (<>
                   <Truong nhan="Tên pháp nhân" rong2>
-                    <input value={bc.tenPhapNhan||""} onChange={e => suaBiCan(bc.id, { tenPhapNhan: e.target.value })} className={oInput} />
+                    <input value={bcHienTai.tenPhapNhan||""} onChange={e => suaBiCan(bcHienTai.id, { tenPhapNhan: e.target.value })} className={oInput} />
                   </Truong>
                   <Truong nhan="Mã số thuế">
-                    <input value={bc.maSoThue||""} onChange={e => suaBiCan(bc.id, { maSoThue: e.target.value })} className={oInput} />
+                    <input value={bcHienTai.maSoThue||""} onChange={e => suaBiCan(bcHienTai.id, { maSoThue: e.target.value })} className={oInput} />
                   </Truong>
                 </>)}
 
                 <Truong nhan="Đảng viên">
-                  <select value={bc.dangVien} onChange={e => suaBiCan(bc.id, { dangVien: e.target.value })} className={oInput}>
+                  <select value={bcHienTai.dangVien} onChange={e => suaBiCan(bcHienTai.id, { dangVien: e.target.value })} className={oInput}>
                     <option value="khong">Không</option><option value="co">Có</option>
                   </select>
                 </Truong>
-                {bc.dangVien === "co" && (
+                {bcHienTai.dangVien === "co" && (
                   <Truong nhan="Giữ chức danh QL">
                     <label className="flex items-center gap-2 text-sm mt-1">
-                      <input type="checkbox" checked={!!bc.dangVienGiuChucVu} onChange={e => suaBiCan(bc.id, { dangVienGiuChucVu: e.target.checked })} />
+                      <input type="checkbox" checked={!!bcHienTai.dangVienGiuChucVu} onChange={e => suaBiCan(bcHienTai.id, { dangVienGiuChucVu: e.target.checked })} />
                       Có
                     </label>
                   </Truong>
                 )}
-                <Truong nhan="Biện pháp ngăn chặn">
-                  <select value={bc.bienPhapNganChan} onChange={e => suaBiCan(bc.id, { bienPhapNganChan: e.target.value })} className={oInput}>
-                    <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
-                  </select>
-                </Truong>
-                {bc.bienPhapNganChan === "giam" && (<>
-                  <Truong nhan="Hạn tạm giam">
-                    <NhapNgay value={bc.hanTamGiam} onChange={e => suaBiCan(bc.id, { hanTamGiam: e.target.value })} className={oInput} />
-                  </Truong>
-                  <Truong nhan="Nguồn gốc tạm giam">
-                    <select value={bc.nguonGocTamGiam || "tu_tam_giu"} onChange={e => suaBiCan(bc.id, { nguonGocTamGiam: e.target.value })} className={oInput}>
-                      {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
-                    </select>
-                  </Truong>
-                  {(bc.nguonGocTamGiam || "tu_tam_giu") === "tu_tam_giu" && (
-                    <Truong nhan="Ngày chuyển tạm giam">
-                      <NhapNgay value={bc.ngayChuyenTamGiam} onChange={e => suaBiCan(bc.id, { ngayChuyenTamGiam: e.target.value })} className={oInput} />
-                    </Truong>
-                  )}
-                </>)}
-                {bc.bienPhapNganChan !== "tai_ngoai" && (<>
-                  <Truong nhan="Loại bắt">
-                    <select value={bc.loaiBat || ""} onChange={e => suaBiCan(bc.id, { loaiBat: e.target.value })} className={oInput}>
-                      <option value="">— chưa rõ —</option>
-                      {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
-                    </select>
-                  </Truong>
-                  <Truong nhan="Ngày bắt">
-                    <NhapNgay value={bc.ngayBat} onChange={e => suaBiCan(bc.id, { ngayBat: e.target.value })} className={oInput} />
-                  </Truong>
-                  <Truong nhan="VKS không phê chuẩn">
-                    <label className="flex items-center gap-2 text-sm mt-1.5">
-                      <input type="checkbox" checked={!!bc.vksKhongPheChuan} onChange={e => suaBiCan(bc.id, { vksKhongPheChuan: e.target.checked })} />
-                      Có
-                    </label>
-                  </Truong>
-                </>)}
-                <Truong nhan="Ngày khởi tố bị can">
-                  <NhapNgay value={bc.ngayKhoiTo} onChange={e => suaBiCan(bc.id, { ngayKhoiTo: e.target.value })}
-                            onTachSo={so => suaBiCan(bc.id, { soQdKtBiCan: so })} className={oInput} />
-                </Truong>
-                <Truong nhan="Số QĐ khởi tố bị can">
-                  <input value={bc.soQdKtBiCan||""} onChange={e => suaBiCan(bc.id, { soQdKtBiCan: e.target.value })} placeholder="VD: 15/QĐ-VKS" className={oInput} />
-                </Truong>
-
                 <Truong nhan="Địa chỉ" rong4>
-                  <textarea value={bc.diaChi} onChange={e => suaBiCan(bc.id, { diaChi: e.target.value })}
+                  <textarea value={bcHienTai.diaChi} onChange={e => suaBiCan(bcHienTai.id, { diaChi: e.target.value })}
                             rows={1} className={oInput + " resize-y"} style={{ minHeight: "36px" }} />
                 </Truong>
               </div>
 
+              {biCanRows.length > 1 && (
+                <div className="flex items-center gap-2 mb-1 mt-3">
+                  <span className="text-[11px] text-slate-400 shrink-0">📋 Áp dụng Ngày KTBC + Biện pháp ngăn chặn giống:</span>
+                  <select value="" onChange={e => { if (e.target.value) apDungGiongBiCan(bcHienTai.id, e.target.value); }}
+                          className="text-xs border border-slate-200 rounded px-1.5 py-1 flex-1 min-w-0">
+                    <option value="">— chọn bị can —</option>
+                    {biCanRows.filter(b => b.id !== bcHienTai.id).map((b) => (
+                      <option key={b.id} value={b.id}>{b.hoTen || `Bị can #${biCanRows.indexOf(b) + 1}`}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <NhomTruong so={2} ten="Quyết định khởi tố bị can" />
+              <div className="grid grid-cols-4 gap-3">
+                <Truong nhan="Ngày khởi tố bị can">
+                  <NhapNgay value={bcHienTai.ngayKhoiTo} onChange={e => suaBiCan(bcHienTai.id, { ngayKhoiTo: e.target.value })}
+                            onTachSo={so => suaBiCan(bcHienTai.id, { soQdKtBiCan: so })} className={oInput} />
+                </Truong>
+                <Truong nhan="Số QĐ khởi tố bị can">
+                  <input value={bcHienTai.soQdKtBiCan||""} onChange={e => suaBiCan(bcHienTai.id, { soQdKtBiCan: e.target.value })} placeholder="VD: 15/QĐ-VKS" className={oInput} />
+                </Truong>
+              </div>
               <div className="mt-2">
                 <BlhsSelector />
                 <div className="text-xs text-slate-500 mb-1">Tội danh</div>
                 <div className="space-y-1">
-                  {bc.toiDanh.map((t, i) => (
+                  {bcHienTai.toiDanh.map((t, i) => (
                     <div key={i} className="flex items-center gap-1">
                       <span className="text-[10px] w-14 shrink-0 text-slate-400">{i === 0 ? "Tội chính" : "Bổ sung"}</span>
                       <ToiDanhInput
                         ten={t}
-                        dieuLuat={(bc.dieuLuatBC||[])[i] || ""}
-                        onChange={({ten, dieuLuat}) => suaToiDanhVaDieuLuat(bc.id, i, ten, dieuLuat)}
+                        dieuLuat={(bcHienTai.dieuLuatBC||[])[i] || ""}
+                        onChange={({ten, dieuLuat}) => suaToiDanhVaDieuLuat(bcHienTai.id, i, ten, dieuLuat)}
                         danhMuc={danhMucTD}
                       />
                       {i > 0 && (
-                        <button onClick={() => datToiChinh(bc.id, i)} title="Đặt làm tội chính"
+                        <button onClick={() => datToiChinh(bcHienTai.id, i)} title="Đặt làm tội chính"
                                 className="text-xs text-amber-500 hover:text-amber-600">★</button>
                       )}
-                      {bc.toiDanh.length > 1 && (
-                        <button onClick={() => xoaToiDanh(bc.id, i)} className="text-xs text-red-500">✕</button>
+                      {bcHienTai.toiDanh.length > 1 && (
+                        <button onClick={() => xoaToiDanh(bcHienTai.id, i)} className="text-xs text-red-500">✕</button>
                       )}
                     </div>
                   ))}
                 </div>
-                <button onClick={() => themToiDanh(bc.id)} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm tội danh</button>
+                <button onClick={() => themToiDanh(bcHienTai.id)} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm tội danh</button>
               </div>
-            </div>
-          ))}
+
+              <NhomTruong so={3} ten="Biện pháp ngăn chặn" />
+              <div className="grid grid-cols-4 gap-3">
+                <Truong nhan="Biện pháp ngăn chặn">
+                  <select value={bcHienTai.bienPhapNganChan} onChange={e => suaBiCan(bcHienTai.id, { bienPhapNganChan: e.target.value })} className={oInput}>
+                    <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
+                  </select>
+                </Truong>
+                {bcHienTai.bienPhapNganChan === "giam" && (<>
+                  <Truong nhan="Hạn tạm giam">
+                    <NhapNgay value={bcHienTai.hanTamGiam} onChange={e => suaBiCan(bcHienTai.id, { hanTamGiam: e.target.value })} className={oInput} />
+                  </Truong>
+                  <Truong nhan="Nguồn gốc tạm giam">
+                    <select value={bcHienTai.nguonGocTamGiam || "tu_tam_giu"} onChange={e => suaBiCan(bcHienTai.id, { nguonGocTamGiam: e.target.value })} className={oInput}>
+                      {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </Truong>
+                  {(bcHienTai.nguonGocTamGiam || "tu_tam_giu") === "tu_tam_giu" && (
+                    <Truong nhan="Ngày chuyển tạm giam">
+                      <NhapNgay value={bcHienTai.ngayChuyenTamGiam} onChange={e => suaBiCan(bcHienTai.id, { ngayChuyenTamGiam: e.target.value })} className={oInput} />
+                    </Truong>
+                  )}
+                </>)}
+                {bcHienTai.bienPhapNganChan === "tam_giu" && (
+                  <Truong nhan="Loại bắt">
+                    <select value={bcHienTai.loaiBat || ""} onChange={e => suaBiCan(bcHienTai.id, { loaiBat: e.target.value })} className={oInput}>
+                      <option value="">— chưa rõ —</option>
+                      {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </Truong>
+                )}
+                {bcHienTai.bienPhapNganChan !== "tai_ngoai" && (<>
+                  <Truong nhan="Ngày bắt">
+                    <NhapNgay value={bcHienTai.ngayBat} onChange={e => suaBiCan(bcHienTai.id, { ngayBat: e.target.value })} className={oInput} />
+                  </Truong>
+                  <Truong nhan="VKS không phê chuẩn">
+                    <label className="flex items-center gap-2 text-sm mt-1.5">
+                      <input type="checkbox" checked={!!bcHienTai.vksKhongPheChuan} onChange={e => suaBiCan(bcHienTai.id, { vksKhongPheChuan: e.target.checked })} />
+                      Có
+                    </label>
+                  </Truong>
+                </>)}
+              </div>
+            </>)}
+          </div>
+
+          <div className="w-40 shrink-0 space-y-1">
+            <button onClick={themBiCan} className="w-full text-xs text-indigo-600 hover:text-indigo-700 font-medium border border-indigo-200 rounded-lg py-1.5 mb-1">
+              + Thêm bị can
+            </button>
+            {biCanRows.map((b, i) => (
+              <button key={b.id} onClick={() => setSelectedBiCanId(b.id)}
+                      title={b.hoTen || `Bị can #${i + 1}`}
+                      className={"w-full text-left text-xs px-2 py-1.5 rounded-lg border truncate block " +
+                        (b.id === bcHienTai?.id
+                          ? "border-indigo-300 bg-indigo-50 text-indigo-700 font-medium"
+                          : "border-slate-200 text-slate-600 hover:bg-slate-50")}>
+                {i + 1}. {b.hoTen || "(chưa đặt tên)"}
+              </button>
+            ))}
+          </div>
         </div>
         </div>
         </div>
@@ -6437,6 +6509,7 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
   return (
     <KhungModalHanhDong tieuDe={`Sửa bị can: ${biCan.hoTen}`} rongnhat>
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <NhomTruong so={1} ten="Thông tin cá nhân" />
       <div className="grid grid-cols-4 gap-3 mb-3">
         <Truong nhan="Họ tên"><input value={hoTen} onChange={e => setHoTen(e.target.value)} className={oInput} /></Truong>
         <Truong nhan="Năm sinh"><input type="number" value={namSinh} onChange={e => setNamSinh(e.target.value)} className={oInput} /></Truong>
@@ -6487,44 +6560,15 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
             </label>
           </Truong>
         )}
-        <Truong nhan="Biện pháp ngăn chặn">
-          <select value={bienPhapNganChan} onChange={e => setBienPhapNganChan(e.target.value)} className={oInput}>
-            <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
-          </select>
-        </Truong>
-        {bienPhapNganChan === "giam" && (<>
-          <Truong nhan="Hạn tạm giam"><NhapNgay value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
-          <Truong nhan="Nguồn gốc tạm giam">
-            <select value={nguonGocTamGiam} onChange={e => setNguonGocTamGiam(e.target.value)} className={oInput}>
-              {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </Truong>
-          {nguonGocTamGiam === "tu_tam_giu" && (
-            <Truong nhan="Ngày chuyển tạm giam">
-              <NhapNgay value={ngayChuyenTamGiam} onChange={e => setNgayChuyenTamGiam(e.target.value)} className={oInput} />
-            </Truong>
-          )}
-        </>)}
-        {bienPhapNganChan !== "tai_ngoai" && (<>
-          <Truong nhan="Loại bắt">
-            <select value={loaiBat} onChange={e => setLoaiBat(e.target.value)} className={oInput}>
-              <option value="">— chưa rõ —</option>
-              {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </Truong>
-          <Truong nhan="Ngày bắt"><NhapNgay value={ngayBat} onChange={e => setNgayBat(e.target.value)} className={oInput} /></Truong>
-          <Truong nhan="VKS không phê chuẩn">
-            <label className="flex items-center gap-2 text-sm mt-1.5">
-              <input type="checkbox" checked={vksKhongPheChuan} onChange={e => setVksKhongPheChuan(e.target.checked)} />
-              Có
-            </label>
-          </Truong>
-        </>)}
-        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
-        <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
         <Truong nhan="Địa chỉ" rong4>
           <textarea value={diaChi} onChange={e => setDiaChi(e.target.value)} rows={1} className={oInput + " resize-y"} style={{ minHeight: "36px" }} />
         </Truong>
+      </div>
+
+      <NhomTruong so={2} ten="Quyết định khởi tố bị can" />
+      <div className="grid grid-cols-4 gap-3 mb-3">
+        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
+        <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
       </div>
       <div className="mb-4">
         <BlhsSelector />
@@ -6548,6 +6592,45 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
           ))}
         </div>
         <button onClick={themToiDanh} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm tội danh</button>
+      </div>
+
+      <NhomTruong so={3} ten="Biện pháp ngăn chặn" />
+      <div className="grid grid-cols-4 gap-3 mb-3">
+        <Truong nhan="Biện pháp ngăn chặn">
+          <select value={bienPhapNganChan} onChange={e => setBienPhapNganChan(e.target.value)} className={oInput}>
+            <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
+          </select>
+        </Truong>
+        {bienPhapNganChan === "giam" && (<>
+          <Truong nhan="Hạn tạm giam"><NhapNgay value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
+          <Truong nhan="Nguồn gốc tạm giam">
+            <select value={nguonGocTamGiam} onChange={e => setNguonGocTamGiam(e.target.value)} className={oInput}>
+              {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Truong>
+          {nguonGocTamGiam === "tu_tam_giu" && (
+            <Truong nhan="Ngày chuyển tạm giam">
+              <NhapNgay value={ngayChuyenTamGiam} onChange={e => setNgayChuyenTamGiam(e.target.value)} className={oInput} />
+            </Truong>
+          )}
+        </>)}
+        {bienPhapNganChan === "tam_giu" && (
+          <Truong nhan="Loại bắt">
+            <select value={loaiBat} onChange={e => setLoaiBat(e.target.value)} className={oInput}>
+              <option value="">— chưa rõ —</option>
+              {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Truong>
+        )}
+        {bienPhapNganChan !== "tai_ngoai" && (<>
+          <Truong nhan="Ngày bắt"><NhapNgay value={ngayBat} onChange={e => setNgayBat(e.target.value)} className={oInput} /></Truong>
+          <Truong nhan="VKS không phê chuẩn">
+            <label className="flex items-center gap-2 text-sm mt-1.5">
+              <input type="checkbox" checked={vksKhongPheChuan} onChange={e => setVksKhongPheChuan(e.target.checked)} />
+              Có
+            </label>
+          </Truong>
+        </>)}
       </div>
       <div className="flex justify-end gap-2">
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
@@ -6635,7 +6718,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         maSoThue: loaiBiCan === "phap_nhan" ? maSoThue.trim() : "",
         diaChi: diaChi.trim(), bienPhapNganChan,
         hanTamGiam: bienPhapNganChan === "giam" && hanTamGiam ? fromInputDate(hanTamGiam) : null,
-        loaiBat: bienPhapNganChan !== "tai_ngoai" ? (loaiBat || "") : "",
+        loaiBat: bienPhapNganChan === "tam_giu" ? (loaiBat || "") : "",
         ngayBat: bienPhapNganChan !== "tai_ngoai" && ngayBat ? fromInputDate(ngayBat) : null,
         nguonGocTamGiam: bienPhapNganChan === "giam" ? (nguonGocTamGiam || "tu_tam_giu") : "",
         ngayChuyenTamGiam: bienPhapNganChan === "giam" && nguonGocTamGiam === "tu_tam_giu" && ngayChuyenTamGiam ? fromInputDate(ngayChuyenTamGiam) : null,
@@ -6684,6 +6767,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
     <KhungModalHanhDong tieuDe="Thêm bị can" rongnhat>
       <ModalXacNhanKy open={hienModalKy} onHuy={() => setHienModalKy(false)} onXacNhan={luuVoiKy} />
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
+      <NhomTruong so={1} ten="Thông tin cá nhân" />
       <div className="grid grid-cols-4 gap-3 mb-3">
         <Truong nhan="Họ tên"><input value={hoTen} onChange={e => setHoTen(e.target.value)} className={oInput} /></Truong>
         <Truong nhan="Năm sinh"><input type="number" value={namSinh} onChange={e => setNamSinh(e.target.value)} className={oInput} /></Truong>
@@ -6731,44 +6815,15 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
             </label>
           </Truong>
         )}
-        <Truong nhan="Biện pháp ngăn chặn">
-          <select value={bienPhapNganChan} onChange={e => setBienPhapNganChan(e.target.value)} className={oInput}>
-            <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
-          </select>
-        </Truong>
-        {bienPhapNganChan === "giam" && (<>
-          <Truong nhan="Hạn tạm giam"><NhapNgay value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
-          <Truong nhan="Nguồn gốc tạm giam">
-            <select value={nguonGocTamGiam} onChange={e => setNguonGocTamGiam(e.target.value)} className={oInput}>
-              {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </Truong>
-          {nguonGocTamGiam === "tu_tam_giu" && (
-            <Truong nhan="Ngày chuyển tạm giam">
-              <NhapNgay value={ngayChuyenTamGiam} onChange={e => setNgayChuyenTamGiam(e.target.value)} className={oInput} />
-            </Truong>
-          )}
-        </>)}
-        {bienPhapNganChan !== "tai_ngoai" && (<>
-          <Truong nhan="Loại bắt">
-            <select value={loaiBat} onChange={e => setLoaiBat(e.target.value)} className={oInput}>
-              <option value="">— chưa rõ —</option>
-              {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </Truong>
-          <Truong nhan="Ngày bắt"><NhapNgay value={ngayBat} onChange={e => setNgayBat(e.target.value)} className={oInput} /></Truong>
-          <Truong nhan="VKS không phê chuẩn">
-            <label className="flex items-center gap-2 text-sm mt-1.5">
-              <input type="checkbox" checked={vksKhongPheChuan} onChange={e => setVksKhongPheChuan(e.target.checked)} />
-              Có
-            </label>
-          </Truong>
-        </>)}
-        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
-        <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
         <Truong nhan="Địa chỉ" rong4>
           <textarea value={diaChi} onChange={e => setDiaChi(e.target.value)} rows={1} className={oInput + " resize-y"} style={{ minHeight: "36px" }} />
         </Truong>
+      </div>
+
+      <NhomTruong so={2} ten="Quyết định khởi tố bị can" />
+      <div className="grid grid-cols-4 gap-3 mb-3">
+        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
+        <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
       </div>
       <div className="mb-4">
         <BlhsSelector />
@@ -6792,6 +6847,45 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
           ))}
         </div>
         <button onClick={themToiDanh} className="text-xs text-indigo-600 hover:text-indigo-700 mt-1">+ Thêm tội danh</button>
+      </div>
+
+      <NhomTruong so={3} ten="Biện pháp ngăn chặn" />
+      <div className="grid grid-cols-4 gap-3 mb-3">
+        <Truong nhan="Biện pháp ngăn chặn">
+          <select value={bienPhapNganChan} onChange={e => setBienPhapNganChan(e.target.value)} className={oInput}>
+            <option value="tai_ngoai">Tại ngoại</option><option value="tam_giu">Tạm giữ</option><option value="giam">Tạm giam</option>
+          </select>
+        </Truong>
+        {bienPhapNganChan === "giam" && (<>
+          <Truong nhan="Hạn tạm giam"><NhapNgay value={hanTamGiam} onChange={e => setHanTamGiam(e.target.value)} className={oInput} /></Truong>
+          <Truong nhan="Nguồn gốc tạm giam">
+            <select value={nguonGocTamGiam} onChange={e => setNguonGocTamGiam(e.target.value)} className={oInput}>
+              {Object.entries(NHAN_NGUON_GOC_TAM_GIAM).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Truong>
+          {nguonGocTamGiam === "tu_tam_giu" && (
+            <Truong nhan="Ngày chuyển tạm giam">
+              <NhapNgay value={ngayChuyenTamGiam} onChange={e => setNgayChuyenTamGiam(e.target.value)} className={oInput} />
+            </Truong>
+          )}
+        </>)}
+        {bienPhapNganChan === "tam_giu" && (
+          <Truong nhan="Loại bắt">
+            <select value={loaiBat} onChange={e => setLoaiBat(e.target.value)} className={oInput}>
+              <option value="">— chưa rõ —</option>
+              {Object.entries(NHAN_LOAI_BAT).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Truong>
+        )}
+        {bienPhapNganChan !== "tai_ngoai" && (<>
+          <Truong nhan="Ngày bắt"><NhapNgay value={ngayBat} onChange={e => setNgayBat(e.target.value)} className={oInput} /></Truong>
+          <Truong nhan="VKS không phê chuẩn">
+            <label className="flex items-center gap-2 text-sm mt-1.5">
+              <input type="checkbox" checked={vksKhongPheChuan} onChange={e => setVksKhongPheChuan(e.target.checked)} />
+              Có
+            </label>
+          </Truong>
+        </>)}
       </div>
       <div className="flex justify-end gap-2">
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
