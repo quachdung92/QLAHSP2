@@ -241,14 +241,24 @@ danh sách bị can) — chưa làm vì ngoài phạm vi yêu cầu lần này.
 **Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Đếm lại nhãn field
 xác nhận vẫn đúng 3 lần/field (không mất/nhân đôi field nào trong lúc refactor sang `bcHienTai`).
 Grep xác nhận 0 tham chiếu `bc.` còn sót trong vùng code đã refactor (toàn bộ đã chuyển đúng sang
-`bcHienTai.`). Mở `qlahs-sup.web.app` qua trình duyệt xác nhận trang tải sạch, 0 lỗi console (ngoại
-trừ cảnh báo Babel kích thước file vô hại đã biết) — **CHƯA đăng nhập được để kiểm chứng qua UI
-thật** (không có tài khoản trong phiên này), nên tự thử trên `qlahs-sup.web.app` trước khi deploy
-`prod`: (1) mở "+ Thêm vụ án", thêm 2-3 bị can, xác nhận cột danh sách tên bên phải hiện đúng, bấm
-chọn từng tên chuyển đúng panel chi tiết; (2) chọn "Tạm giam" cho 1 bị can, xác nhận KHÔNG còn ô
-"Loại bắt" (chỉ còn khi chọn "Tạm giữ"); (3) nhập đủ ngày KTBC + biện pháp ngăn chặn cho bị can #1,
-sang bị can #2 bấm "Áp dụng giống bị can #1", xác nhận điền đúng các field, rồi sửa riêng "Hạn tạm
-giam" của bị can #2 — xác nhận bị can #1 KHÔNG bị đổi theo.
+`bcHienTai.`).
+
+**Đã kiểm chứng đầy đủ qua UI thật trên `qlahs-sup.web.app`** (Dũng cung cấp tài khoản đăng nhập
+`admin@qlva.local` ngay trong phiên này) — mở "+ Thêm vụ án", nhập bị can "Nguyễn Văn A": (1) xác
+nhận cột danh sách bên phải hiện đúng tên ngay khi gõ Họ tên (đồng bộ real-time với panel chi
+tiết); (2) chọn "Tạm giữ" — xác nhận hiện đúng "Loại bắt"/"Ngày bắt"/"VKS không phê chuẩn"; đổi
+sang "Tạm giam" — xác nhận "Loại bắt" BIẾN MẤT hoàn toàn, chỉ còn "Hạn tạm giam"/"Nguồn gốc tạm
+giam"/"Ngày chuyển tạm giam"/"Ngày bắt"/"VKS không phê chuẩn"; (3) nhập Ngày khởi tố bị can
+05/08/2026 + Hạn tạm giam 05/09/2026 cho bị can #1, bấm "+ Thêm bị can" — xác nhận TỰ ĐỘNG chuyển
+sang panel bị can #2 (trống, danh sách bên phải hiện cả 2 tên, dòng đang chọn tô xanh đúng); (4)
+dropdown "Áp dụng Ngày KTBC + Biện pháp ngăn chặn giống" xuất hiện đúng khi có ≥2 bị can, chọn
+"Nguyễn Văn A" — xác nhận bị can #2 nhận đúng NGAY LẬP TỨC cả 4 giá trị (Ngày KTBC/Biện pháp ngăn
+chặn/Hạn tạm giam/Nguồn gốc tạm giam); (5) sửa riêng Hạn tạm giam của bị can #2 thành 20/12/2026,
+bấm quay lại bị can #1 trong danh sách — xác nhận Hạn tạm giam của bị can #1 VẪN LÀ 05/09/2026
+(không bị đổi theo, đúng yêu cầu "không fillback ngược"). Đóng form qua "Huỷ" (không lưu dữ liệu
+test). 0 lỗi console thật (ngoại trừ cảnh báo Babel kích thước file vô hại đã biết) xuyên suốt quá
+trình test. Toàn bộ 5 điểm trong checklist đề ra trước đó đều PASS — sẵn sàng để Dũng cân nhắc
+deploy production khi thấy phù hợp.
 
 ## Danh sách vụ án — tab "Đang giải quyết" mặc định hiện vụ MỚI NHẬP lên trên cùng (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
 
