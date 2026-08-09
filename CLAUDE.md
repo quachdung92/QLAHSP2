@@ -5009,6 +5009,31 @@ khớp đúng layout sheet `"Danh sách án"` (header ở dòng 1, dữ liệu t
 `sheet_to_json`). Nếu sau này đổi cấu trúc cột của mẫu import, phải sửa lại các chỉ số này ở
 `parseWorkbookDanhSachAn` VÀ cập nhật file mẫu `Mau_Import_DanhSachAn.xlsx` cho khớp.
 
+### Excel xuất báo cáo tháng — thêm/đổi cột PHẢI rà lại mọi công thức tham chiếu (đã xử lý, đừng lặp lại)
+
+`xuatBaoCaoThangExcel` ghi nhiều ô Biểu B10 bằng **CÔNG THỨC Excel** (SUMIF/SUMIFS/COUNTIF/
+COUNTIFS, xem `B10_FORMULA`) tham chiếu tới các sheet "DS ..." theo ĐÚNG CỘT CHỮ CÁI cố định (VD
+`$K:$K`, `$M:$M`, `$AJ:$AJ`) — không phải theo tên cột. Bug thật đã xảy ra NHIỀU LẦN vì quên rà
+bước này (xem "cột '-BC' ra số khổng lồ", và gần nhất "Biểu B10 C39-C42 — sửa tận gốc" ở đầu file):
+sửa/thêm cột trong hàm dựng sheet (`addSheetVu`/`vuBaseRow`/`BC_H`/`extraHeaders`...) mà KHÔNG đối
+chiếu lại `B10_FORMULA` (hoặc bất kỳ chuỗi công thức nào khác tham chiếu cùng sheet đó) → Excel
+THẬT (không phải "result" cache JS) sẽ tính SAI ngay khi mở, dù code JS tính đúng.
+
+**Quy trình bắt buộc mỗi khi**:
+1. **Thêm cột mới vào 1 sheet "DS ..."** — chỉ được CHÈN Ở CUỐI (`extraHeaders`), KHÔNG chèn giữa
+   `VU_H`/`BC_H` — chèn giữa sẽ làm lệch vị trí MỌI công thức đang tham chiếu các cột cố định phía
+   sau (kể cả những công thức không liên quan gì tới thay đổi đang làm).
+2. **Đổi 1 ô Biểu B10 cần đọc dữ liệu KHÁC** (VD đổi từ đọc field cấp vụ sang field cấp bị can) —
+   rà `B10_FORMULA` xem có công thức nào ĐANG tham chiếu sheet/cột liên quan; nếu công thức đang
+   đọc SAI cột/sheet, phải sửa CHUỖI CÔNG THỨC đó — KHÔNG chỉ sửa giá trị JS (`vals[]`/hàm tính
+   trong `tinhBieu10`). 2 thứ này ĐỘC LẬP HOÀN TOÀN: `vals[]` chỉ là "result" cache hiển thị tạm
+   khi đọc qua ExcelJS, Excel thật LUÔN tính lại theo công thức, bỏ qua cache đó.
+3. **Kiểm chứng bắt buộc bằng Excel THẬT** — không chỉ đọc `cell.result` qua ExcelJS mà PHẢI đọc
+   `cell.formula` (chuỗi công thức) để xác nhận nó tham chiếu ĐÚNG sheet/cột mới, VÀ đọc thẳng dữ
+   liệu thô của sheet nguồn (header + vài dòng mẫu) để xác nhận cột đó có đúng dữ liệu mong muốn.
+   Chỉ kiểm tra `result`/`vals[]` mà không tra `formula` RẤT DỄ báo cáo "đã sửa xong" trong khi
+   Excel thật của Dũng vẫn sai — đây chính xác là lỗi đã mắc phải ở lần sửa đầu tiên của C39-C42.
+
 ## Mockup đã duyệt (mô tả bằng lời — không có file ảnh, tham khảo khi code UI)
 
 - Danh sách vụ án: 2 cột — trái là thẻ danh sách lọc theo giai đoạn/KSV, phải là chi tiết vụ
