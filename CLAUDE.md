@@ -2,6 +2,145 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Hiệu đính hàng loạt 162 bị can bị sai Tội danh, đối chiếu sổ chính thức bên ngoài (2026-08-09, DỮ LIỆU SUPABASE THẬT — ĐÃ ÁP DỤNG, không phải thay đổi code)
+
+Dũng cung cấp `Book1.xlsx` (Documents, không nằm trong repo) — Sheet1 là danh sách bị can trích từ
+**sổ chính thức giấy** (Họ tên/Năm sinh/Địa chỉ/**ĐIỀU**, 3194 dòng), Sheet2 là bản export từ CHÍNH
+hệ thống (đúng cấu trúc cột `VU_H+BC_H` của "Xuất Excel báo cáo tháng" — Mã vụ/Tên vụ/.../Tội danh,
+1250 dòng bị can) — nhiều bị can trong Sheet2 bị ghi SAI Tội danh, cần hiệu đính lại theo Sheet1.
+
+**Xác định đúng bộ luật của cột ĐIỀU (Sheet1) TRƯỚC khi map**: đếm phân bố ĐIỀU trong Sheet1 (174
+chiếm nhiều nhất, rồi 321/123/318/322/170/201/168...) rồi đối chiếu với `DANH_MUC_TOI_DANH_MAM`
+trong `qlahs-sup.html` — khớp HOÀN TOÀN với tội danh phổ biến của BLHS **2025** (174=Lừa đảo,
+173=Trộm cắp, 123=Giết người, 168=Cướp tài sản...), KHÔNG PHẢI BLHS 1999 (cùng số điều đó ra tội
+hoàn toàn khác/hiếm gặp, VD 318 BLHS 1999="Cản trở đồng đội" — vô lý với khối lượng vụ án dân sự
+của 1 VKS quận/huyện). Nếu đoán nhầm bộ luật, mọi tội danh hiệu đính sẽ sai hết dù logic ghép đúng.
+
+**Cách ghép 1 bị can Sheet2 với đúng người đó trong Sheet1**: theo Họ tên → xác nhận lại bằng Năm
+sinh (Sheet1 và Sheet2 đều có) → nếu vẫn trùng tên+năm sinh với ≥2 ĐIỀU khác nhau, dùng thêm Địa chỉ
+(so khớp chuỗi con, 2 nguồn ghi format khác nhau — Sheet1 không kèm tỉnh/thành, Sheet2 có, nên so
+theo kiểu "1 bên là substring của bên kia" thay vì so bằng tuyệt đối). Tuyệt đối KHÔNG đoán khi vẫn
+còn mơ hồ sau cả 3 bước — để nguyên, gắn cờ cần tra cứu thủ công.
+
+**Kết quả đối chiếu (1250 bị can)**: 162 sai cần sửa, 1068 đã đúng sẵn (không đụng), 20 cần tra cứu
+thủ công (9 tên không có trong Sheet1 — có thể vụ mới chưa vào sổ hoặc ghi tên khác nhau; 7 trùng
+tên với ≥2 người khác nhau trong Sheet1 không đủ Năm sinh/Địa chỉ phân biệt; 3 tên khớp duy nhất
+nhưng Năm sinh lệch ≥4 năm — nghi ngờ không cùng 1 người, không tự sửa; 1 trường hợp Sheet1 ghi mã
+Điều lạ "101\*\*" không khớp danh mục nào). Đã gửi Dũng 1 file Excel riêng (`Book1_da_hieu_dinh_
+toi_danh.xlsx`, không nằm trong repo) tô vàng 162 dòng đã sửa (kèm cột ghi giá trị cũ + căn cứ Điều)
+và tô cam 20 dòng cần tra cứu thủ công, cộng 1 sheet "Tóm tắt" giải thích cách làm.
+
+**Dũng xác nhận muốn sửa THẲNG vào Supabase thật** (không chỉ dừng ở file Excel) — đã làm theo đúng
+quy trình an toàn của dự án:
+1. **Backup trước** — `gh workflow run backup-supabase.yml -f reason="..."` rồi `gh run watch`,
+   xác nhận "success" (run `31298249684`) trước khi đụng vào bất kỳ bản ghi thật nào.
+2. **Tìm hiểu cơ chế đồng bộ trước khi viết UPDATE** — đọc `supabase/functions.sql` xác nhận RPC
+   `capNhatDieuLuatVaLoaiKhoiTo(maVuAn)` (được trigger `bican_sync_vuan_trg`, xem
+   `supabase/trigger_sync_vuan_2026-07-19.sql`, TỰ GỌI LẠI sau MỌI UPDATE/INSERT/DELETE trên
+   `bican`, kể cả UPDATE thô qua SQL trực tiếp — không riêng qua code JS) tính `vuan.dieuLuat` bằng
+   cách gộp **`bican.toiDanh`** (không phải `dieuLuatBC`) của TOÀN BỘ bị can trong vụ, distinct, nối
+   "; " — nghĩa là chỉ cần sửa đúng `bican.toiDanh[1]`/`dieuLuatBC[1]` (Postgres array 1-based, chỉ
+   phần tử ĐẦU = tội chính, giữ nguyên các tội bổ sung phía sau nếu có) là `vuan.dieuLuat` TỰ ĐỘNG
+   cập nhật đúng qua trigger, không cần tự tính tay.
+3. **Dry-run đối chiếu lại với DB THẬT trước khi ghi** (script Node tạm, package `pg` cài tạm trong
+   scratchpad, mật khẩu DB chỉ truyền qua biến môi trường lúc chạy — đúng quy tắc
+   `supabase/README.md`) — match theo (Mã vụ, Họ tên), rồi thêm Năm sinh nếu ≥2 dòng trùng
+   (phát hiện đúng 2 vụ có 2 bị can TRÙNG TÊN — "Lê Đức Anh" x2 trong `..._2607_0006`, "Nguyễn Mạnh
+   Cường" x2 trong `..._2510_0014` — Năm sinh phân biệt đúng, không đoán mò); VÀ đối chiếu
+   `toiDanh[1]` hiện tại trong DB có khớp đúng giá trị "sai" đã ghi nhận lúc phân tích Excel hay
+   không (phòng dữ liệu đã đổi giữa lúc phân tích và lúc sửa). Kết quả: cả 162/162 khớp sạch ngay
+   ở lần dry-run đầu (sau khi thêm bước lọc Năm sinh) — không có bản ghi nào phải bỏ qua.
+4. **Áp dụng trong 1 transaction duy nhất** (tất cả 162 UPDATE, mỗi câu còn có `WHERE id=... AND
+   "toiDanh"[1] = <giá trị cũ mong đợi>` để chặn tuyệt đối ghi đè nếu có ai vừa sửa song song đúng
+   lúc — không khớp thì `throw` + `rollback` toàn bộ, không commit dở dang) — chạy thành công
+   162/162, đặt `nguoiCapNhatCuoi = "he-thong:hieu-dinh-toidanh-theo-so-chinh-thuc-2026-08-09"` (dễ
+   truy vết sau này, không lẫn với sửa tay của cán bộ) trên cả 162 bản ghi.
+5. **Đã kiểm chứng lại SAU KHI commit**: đọc thẳng cả 162 `bican` xác nhận đúng giá trị mới 100%;
+   kiểm tra riêng `vuan.dieuLuat` của 3 vụ mẫu (gồm cả 2 vụ có bị can trùng tên ở bước 3) — trigger
+   đã tự gộp đúng, VD vụ `..._1512_0002` (6/7 bị can sửa từ "Tội giết người" sang "Tội gây rối trật
+   tự công cộng") ra đúng `dieuLuat = "Tội gây rối trật tự công cộng; Tội giết người"` (đúng — vẫn
+   còn 1 bị can "Trần Văn Mai" KHÔNG bị sửa, giữ "Tội giết người", nên vụ có cả 2 tội là đúng thực
+   tế, không phải lỗi).
+
+Đã dọn sạch script/package `pg` tạm khỏi scratchpad ngay sau khi chạy xong. **CHƯA làm** (ngoài
+phạm vi yêu cầu lần này, để dành nếu Dũng cần sau): 20 trường hợp cần tra cứu thủ công vẫn giữ
+nguyên trong Supabase — nếu Dũng tự xác minh được danh tính/Điều luật đúng cho các trường hợp đó,
+có thể nhờ sửa tiếp tương tự.
+
+## In bìa hồ sơ — mẫu dán bìa hồ sơ giấy, đặt cạnh nút "Lưu" ở Thêm/Sửa vụ án (2026-08-09, `qlahs-sup.html`, nhánh `main`, CHƯA deploy)
+
+Theo yêu cầu Dũng, tham khảo file `mẫu dán bìa hồ sơ.docx` (Downloads, không nằm trong repo) —
+mẫu Word gốc: 1 khung viền đôi khổ gần hết bề rộng A4, bên trái là Tên vụ án (cỡ lớn)/Điều luật/
+"KTVA: số/ngày"/"Bị can: ... (tối đa 5 người rồi ghi cùng đồng phạm)"/KSV/ĐTV, bên phải là 1 ô "Mã
+QR" — dùng để in ra, cắt rồi dán lên bìa hồ sơ giấy thật.
+
+**Component mới `BiaHoSoModal`** (đặt cạnh `InQRModal`, dùng chung cơ chế portal `#qr-print-root`
+đã có — xem ghi chú hạ tầng "In A4" ở dưới) — nhận 1 object dữ liệu THUẦN (không phải doc Firestore/
+Supabase) gồm `maNoiSinh/maNganhCap/tenVu/dieuLuat/soQdKtva/ngayQdKtva/ksvChinh/dtvCbdt/
+danhSachBiCan`, tự cắt danh sách bị can về tối đa 5 người + "và đồng phạm" đúng quy ước mẫu gốc. QR
+dùng `KhoiQR` với `maNoiSinh` (đúng mã dùng để quét tra cứu ở Giao nhận hồ sơ, không phải
+`maNganhCap`). Cho chọn số bản 1-3 (hồ sơ nhiều tập), mỗi bản 1 khung `break-inside: avoid` khi in.
+
+**Đặt nút in NGAY CẠNH nút "Lưu"** (theo đúng yêu cầu "đỡ bừa UI" — không thêm chỗ bấm riêng ở
+panel chi tiết/Cài đặt):
+- `SuaVuAnForm` (sửa vụ án đã có mã thật) — nút "🖨 In bìa hồ sơ" in được NGAY, không cần bấm Lưu
+  trước, dùng đúng giá trị đang gõ trên form; bị can lấy từ `biCanList` đã tải sẵn (vụ Đã xét xử)
+  hoặc tự query `bican` theo `maVuAn` nếu chưa có.
+- `ThemVuAnForm` (tạo vụ mới, CHƯA có mã lúc đang gõ) — thêm nút thứ 2 "🖨 Lưu & in bìa hồ sơ" cạnh
+  "Lưu vụ án": lưu Y HỆT luồng cũ (qua `ModalXacNhanKy` hỏi kỳ), chỉ khác là sau khi `batch.commit()`
+  thành công thì mở `BiaHoSoModal` (đè lên, z-50 > z-40 của form) THAY VÌ đóng form ngay — đợi người
+  dùng xem/in xong mới gọi `onDaLuu` để đóng hẳn (tránh mất ngữ cảnh giữa chừng, và lúc này mới có
+  `maNoiSinh` thật để làm QR).
+
+**Chỉnh lại theo phản hồi Dũng ngay sau đó (cùng ngày)**: (1) bề rộng khung giảm ~20% (190mm →
+152mm) để vừa gọn cắt dán hơn; (2) "KTVA" đổi dấu phân cách Số QĐ/ngày từ "/" sang "-" (đúng mẫu
+Dũng nêu: "2201-09/08/2010", không phải "2201/09/08/2010"); (3) tên KSV in đậm
+(`font-bold text-slate-900`) để dễ quan sát nhanh khi lật hồ sơ.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Dựng 1 trang test
+độc lập (scratchpad, không commit) render đúng markup `Nhan` với dữ liệu MẪU XẤU NHẤT có thể gặp
+(tên vụ dài tràn 3 dòng, KSV tên dài, 6 bị can) — đo `getBoundingClientRect()` qua
+`javascript_tool`: 3 nhãn xếp dọc cao tổng **258.3mm**, vẫn nằm gọn trong vùng in A4 khả dụng
+**277mm** (297mm trừ lề 10mm trên/dưới theo `@page`) — xác nhận đúng yêu cầu "1 trang A4 in 3
+nhãn" ngay cả ở trường hợp dữ liệu dài nhất, không chỉ dữ liệu mẫu ngắn. Ảnh chụp xác nhận đúng cả
+3 điểm sửa (KTVA dùng "-", tên KSV in đậm, bề rộng 152mm). Mở thử `qlahs-sup.html` qua trình duyệt
+xác nhận trang tải sạch, 0 lỗi console ngoài cảnh báo Babel kích thước file vô hại đã biết.
+**CHƯA đăng nhập thật để bấm thử 2 nút mới với dữ liệu Supabase thật** (không có tài khoản trong
+phiên làm việc này) — nên tự thử trên `qlahs-sup.web.app` trước: bấm "🖨 In bìa hồ sơ" ở 1 vụ đang
+sửa (đủ Điều luật/KTVA/KSV/ĐTV/bị can hiện đúng, QR quét ra đúng mã vụ), và bấm "🖨 Lưu & in bìa hồ
+sơ" lúc tạo vụ mới (modal hỏi kỳ vẫn hiện trước, sau khi xác nhận thì màn in xuất hiện, đóng màn in
+thì form đóng hẳn và vụ mới xuất hiện đúng trong danh sách) — trước khi deploy `qlahs-sup`/`prod`.
+
+**Chỉnh lại lần 2 theo phản hồi Dũng (cùng ngày)**: (1) bỏ hẳn ô chọn "Số bản" kiểu In mã QR — cố
+định LUÔN in **3 bản/trang A4** (hằng số `SO_BAN_BIA_HO_SO`), không cho chọn; (2) mỗi ô cao cố
+định **6cm** (`style={{height:"6cm"}}`), Tên vụ án tự giảm cỡ chữ theo thang `text-2xl → text-sm`
+(`CAP_CO_CHU_TEN_VU_BIA`) nếu vụ tên dài tràn quá 6cm, thay vì tràn/bị cắt ngang xương.
+
+**Bug thật gặp phải + đã sửa khi tự kiểm chứng cơ chế tự co giãn (không chỉ đọc code — dựng hẳn 1
+trang test độc lập, dùng `javascript_tool` đo `scrollHeight`/`clientHeight` thật qua nhiều vòng)**:
+bản đầu tiên dùng `useLayoutEffect` (không khai báo deps) so `scrollHeight` với `clientHeight` của
+cột chữ để phát hiện tràn — nhưng ô 6cm/cột chữ bị ép theo chiều cao đó chỉ nhờ CLASS Tailwind
+(`flex`/`items-stretch`), mà **Tailwind CDN tiêm CSS bất đồng bộ qua MutationObserver, không đồng
+bộ với chu kỳ render của React** — `useLayoutEffect` (chạy TRƯỚC paint) luôn đo được TRƯỚC khi
+class kịp có hiệu lực, cột chữ vẫn ở chiều cao "auto" (`scrollHeight` LUÔN bằng `clientHeight` bất
+kể nội dung dài bao nhiêu) → không bao giờ phát hiện tràn, dù đổi sang `useEffect` (sau paint)
+cũng KHÔNG đủ để né chắc chắn race này (đã thử, vẫn sai y hệt — đo bằng debug log qua nhiều vòng
+`navigate` lại trang xác nhận đúng nguyên nhân trước khi kết luận). Sửa TẬN GỐC: đưa
+`display:flex`/`alignItems:stretch` (khung ngoài) và `flex`/`height:100%`/`overflow:hidden` (cột
+chữ) sang **inline style** (áp dụng ngay lập tức, không phụ thuộc Tailwind) — chỉ giữ lại
+class Tailwind cho phần thuần cosmetic (màu/viền/bo góc/cỡ chữ/khoảng cách dòng), quay lại dùng
+`useLayoutEffect` (tránh 1 nhịp "nháy" chữ to rồi mới co lại).
+
+**Đã kiểm chứng lại sau khi sửa**: dựng lại trang test độc lập (scratchpad, không commit) với 3
+mức dữ liệu (tên ngắn/tên rất dài) — xác nhận: tên ngắn giữ nguyên `text-2xl` (khớp khít 191/191px,
+không co); tên rất dài (cố tình dài quá mức thực tế để test biên) co đúng tuần tự qua cả 5 nấc
+`text-2xl→text-xl→text-lg→text-base→text-sm` rồi dừng lại ở nấc nhỏ nhất (không lặp vô hạn); ảnh
+chụp xác nhận đúng — nhãn tên ngắn hiện đủ 6 dòng bình thường, nhãn tên rất dài hiện chữ nhỏ nhất
+rồi mới chấp nhận cắt bớt dòng cuối (ĐTV) ở đúng trường hợp CỰC ĐOAN không thực tế (test cố tình
+làm quá dài để ép vào nhánh cắt, không phải hành vi bình thường). Compile-check qua `@babel/core`+
+`@babel/preset-react` — sạch. **CHƯA đăng nhập thật** để xác nhận với dữ liệu Supabase thật — vẫn
+cần tự thử qua UI thật như checklist ở trên trước khi deploy.
+
 ## Hệ thống thống kê "tồn" ĐÃ chuyển hoàn toàn sang RPC query động — trạng thái cuối + dọn tàn dư hệ thống cũ (2026-08-06, nhánh `feature/tong-ke-dong`, **ĐÃ DEPLOY `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production)**, theo yêu cầu trực tiếp của Dũng — CHƯA kiểm chứng qua Excel thật SAU deploy, xem checklist cuối mục)
 
 **⚠ Deploy production lần này đi TRƯỚC bước kiểm chứng bằng Excel thật** — quy trình thường lệ của

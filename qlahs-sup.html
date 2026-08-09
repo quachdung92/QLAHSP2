@@ -5264,6 +5264,10 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const [loi, setLoi] = useState("");
   const [hienModalKy, setHienModalKy] = useState(false);
   const [dangLuu, setDangLuu] = useState(false);
+  // "Lưu & in bìa hồ sơ" (xem BiaHoSoModal) — ghi nhận Ý ĐỊNH lúc bấm nút, dùng lại SAU KHI
+  // ModalXacNhanKy xác nhận kỳ và lưu thành công (lúc đó mới có mã vụ thật để làm QR).
+  const [inBiaSauKhiLuu, setInBiaSauKhiLuu] = useState(false);
+  const [duLieuBiaMoi, setDuLieuBiaMoi] = useState(null);
 
   useEffect(() => {
     if (tenVuDaSua) return;
@@ -5301,7 +5305,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   };
   const datTDVuChinh = (idx) => { setVuanToiDanh(a => datLamToiChinh(a, idx)); setVuanDieuLuat(a => datLamToiChinh(a, idx)); };
 
-  const onBamLuu = () => {
+  const onBamLuu = (inBia = false) => {
     if (!ngayQdKtva) { setLoi("Cần nhập ngày quyết định khởi tố vụ án (dùng để sinh mã vụ án)."); return; }
     if (!tenVu.trim()) { setLoi("Cần nhập tên vụ, hoặc thêm ít nhất 1 bị can để hệ thống tự đặt tên."); return; }
     if (capNhatKetQua && !ngayQuyetDinhKQ) { setLoi("Đã chọn vụ án có kết quả giải quyết thì cần nhập ngày giải quyết."); return; }
@@ -5310,6 +5314,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
       return;
     }
     setLoi("");
+    setInBiaSauKhiLuu(inBia);
     setHienModalKy(true);
   };
 
@@ -5412,7 +5417,19 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
       await batch.commit();
       addToast("Đã thêm vụ án");
       xoaBiCanCache(maNoiSinh);
-      onDaLuu(maNoiSinh);
+      if (inBiaSauKhiLuu) {
+        // Chưa đóng form ngay — mở "In bìa hồ sơ" đè lên trên (z-50 > z-40 của form), chỉ gọi
+        // onDaLuu (đóng hẳn cả form, refresh danh sách) SAU KHI người dùng xem/in xong, để không
+        // mất ngữ cảnh giữa chừng — xem nút "Lưu & in bìa hồ sơ" và <BiaHoSoModal> bên dưới.
+        setDuLieuBiaMoi({
+          maNoiSinh, maNganhCap: maNganhCap.trim() || null, tenVu: tenVu.trim(), dieuLuat: dieuLuatCuoi,
+          soQdKtva: soQdKtva.trim(), ngayQdKtva: fmtDate(ngayQd),
+          ksvChinh: ksvChinh.trim(), dtvCbdt: dtvCbdt.trim(),
+          danhSachBiCan: coBiCanHopLe.map(bc => bc.hoTen.trim()),
+        });
+      } else {
+        onDaLuu(maNoiSinh);
+      }
     } catch (err) {
       console.error(err);
       setLoi("Lỗi khi lưu: " + err.message);
@@ -5703,7 +5720,11 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
 
         <div className="flex justify-end gap-2 mt-6 shrink-0">
           <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
-          <button onClick={onBamLuu} disabled={dangLuu}
+          <button onClick={() => onBamLuu(true)} disabled={dangLuu}
+                  className="px-4 py-2 text-sm rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 font-medium disabled:opacity-50">
+            🖨 Lưu & in bìa hồ sơ
+          </button>
+          <button onClick={() => onBamLuu(false)} disabled={dangLuu}
                   className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
             {dangLuu ? "Đang lưu..." : "Lưu vụ án"}
           </button>
@@ -5711,6 +5732,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
       </div>
 
       <ModalXacNhanKy open={hienModalKy} onHuy={() => setHienModalKy(false)} onXacNhan={onXacNhanKy} />
+      {duLieuBiaMoi && <BiaHoSoModal duLieu={duLieuBiaMoi} onDong={() => onDaLuu(duLieuBiaMoi.maNoiSinh)} />}
     </div>
   );
 }
@@ -5794,6 +5816,11 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
   );
   const [loi, setLoi] = useState("");
   const [dangLuu, setDangLuu] = useState(false);
+  // "In bìa hồ sơ" (xem BiaHoSoModal) — vụ đã có mã thật từ trước nên in được ngay, KHÔNG cần bấm
+  // "Lưu" trước; danh sách bị can chỉ tải sẵn khi Đã xét xử (biCanList ở trên) nên vụ ở giai đoạn
+  // khác phải tải riêng lúc bấm nút này.
+  const [duLieuInBia, setDuLieuInBia] = useState(null);
+  const [dangTaiInBia, setDangTaiInBia] = useState(false);
 
   const themTDVu = () => { setVuanToiDanh(a => [...a, ""]); setVuanDieuLuat(a => [...a, ""]); };
   const xoaTDVu = (i) => { setVuanToiDanh(a => a.filter((_, j) => j !== i)); setVuanDieuLuat(a => a.filter((_, j) => j !== i)); };
@@ -5802,6 +5829,31 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
     setVuanDieuLuat(a => a.map((v, j) => j === i ? dl : v));
   };
   const datTDVuChinh = (idx) => { setVuanToiDanh(a => datLamToiChinh(a, idx)); setVuanDieuLuat(a => datLamToiChinh(a, idx)); };
+
+  const moInBia = async () => {
+    setDangTaiInBia(true);
+    try {
+      let ds;
+      if (biCanList) {
+        ds = biCanList.map(bc => bc.hoTen).filter(Boolean);
+      } else {
+        const snap = await db.collection("bican").where("maVuAn", "==", vuAn.id).get();
+        ds = snap.docs.map(d => d.data().hoTen).filter(Boolean);
+      }
+      setDuLieuInBia({
+        maNoiSinh: vuAn.maNoiSinh, maNganhCap: maNganhCap.trim() || null,
+        tenVu: tenVu.trim() || vuAn.tenVu,
+        dieuLuat: vuanToiDanh.filter(t => t.trim()).join("; ") || vuAn.dieuLuat,
+        soQdKtva: soQdKtva.trim(), ngayQdKtva: ngayQdKtva ? fmtDate(fromInputDate(ngayQdKtva)) : "",
+        ksvChinh: ksvChinh.trim(), dtvCbdt: dtvCbdt.trim(), danhSachBiCan: ds,
+      });
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi tải danh sách bị can để in: " + err.message, "error");
+    } finally {
+      setDangTaiInBia(false);
+    }
+  };
 
   const luu = async () => {
     if (!tenVu.trim()) { setLoi("Cần nhập tên vụ."); return; }
@@ -6000,12 +6052,17 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
 
         <div className="flex justify-end gap-2 mt-6">
           <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
+          <button type="button" onClick={moInBia} disabled={dangTaiInBia}
+                  className="px-4 py-2 text-sm rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 font-medium disabled:opacity-50">
+            {dangTaiInBia ? "Đang tải..." : "🖨 In bìa hồ sơ"}
+          </button>
           <button onClick={luu} disabled={dangLuu}
                   className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
             {dangLuu ? "Đang lưu..." : "Lưu"}
           </button>
         </div>
       </div>
+      {duLieuInBia && <BiaHoSoModal duLieu={duLieuInBia} onDong={() => setDuLieuInBia(null)} />}
     </div>
   );
 }
@@ -7144,6 +7201,113 @@ function InQRModal({ vuAn, onDong }) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+  return ReactDOM.createPortal(noiDung, document.getElementById("qr-print-root"));
+}
+
+// ── In bìa hồ sơ — mẫu dán lên bìa hồ sơ giấy, cắt theo viền (2026-08-09) ───────────────────────
+// Tham khảo mẫu Word của Dũng ("mẫu dán bìa hồ sơ.docx"): 1 khung viền, bên trái là Tên vụ/Điều
+// luật/KTVA/Bị can (tối đa 5 người rồi "và đồng phạm")/KSV/ĐTV, bên phải là mã QR để quét tra cứu
+// nhanh. Nút in đặt NGAY CẠNH nút "Lưu" ở form Thêm vụ án mới/Sửa thông tin vụ án (theo đúng yêu
+// cầu Dũng — không thêm 1 chỗ bấm riêng ở nơi khác trong UI như panel chi tiết/Cài đặt, tránh bừa).
+// Nhận 1 object dữ liệu THUẦN (không phải doc Firestore/Supabase) để in được NGAY nội dung đang gõ
+// trên form — Sửa vụ án in được cả khi CHƯA bấm Lưu (vụ đã có mã thật từ trước); Thêm vụ án mới chỉ
+// mở được modal này SAU KHI lưu thành công (lúc đó mới có mã vụ để làm QR), xem `ThemVuAnForm`.
+// Nhãn nào không đủ 1 vụ để cần chọn số bản (khác InQRModal — 1 vụ có thể cần nhiều bản QR rời
+// tuỳ số tập hồ sơ thật) — bìa hồ sơ LUÔN cố định 3 bản/trang A4 (không cho chọn, theo yêu cầu
+// Dũng: "ko cần cho chọn số bản nhiều tập như phần in QR").
+const SO_BAN_BIA_HO_SO = 3;
+// Thang cỡ chữ Tên vụ án — thử từ to nhất, tự giảm dần nếu vụ tên dài tràn quá chiều cao ô cố định
+// 6cm (xem `Nhan`), KHÔNG đụng tới cỡ chữ các dòng còn lại (Điều luật/KTVA/Bị can/KSV/ĐTV vốn đã
+// nhỏ hơn hẳn, hiếm khi là nguyên nhân tràn).
+const CAP_CO_CHU_TEN_VU_BIA = ["text-2xl", "text-xl", "text-lg", "text-base", "text-sm"];
+
+function BiaHoSoModal({ duLieu, onDong }) {
+  useEffect(() => {
+    const xuLy = (e) => { if (e.key === "Escape") onDong(); };
+    window.addEventListener("keydown", xuLy);
+    return () => window.removeEventListener("keydown", xuLy);
+  }, [onDong]);
+
+  // Đúng quy ước ghi trên mẫu gốc: "nếu vụ án nhiều bị can thì chỉ ghi tối đa 5 bị can rồi ghi
+  // cùng đồng phạm" — tránh bìa hồ sơ dài lê thê nếu vụ có hàng chục bị can.
+  const dsBiCanHienThi = (() => {
+    const ds = (duLieu.danhSachBiCan || []).filter(Boolean);
+    if (ds.length === 0) return "(chưa có bị can)";
+    if (ds.length <= 5) return ds.join(", ");
+    return ds.slice(0, 5).join(", ") + " và đồng phạm";
+  })();
+
+  // Ô cố định cao 6cm (theo yêu cầu Dũng) — Tên vụ án tự giảm cỡ chữ (xem CAP_CO_CHU_TEN_VU_BIA)
+  // cho tới khi vừa đủ chiều cao, thay vì để tràn/bị cắt khi vụ có tên dài. `contentRef` đo đúng
+  // cột chữ bên trái (không phải cả ô, vì cột QR bên phải cố định nhỏ hơn 6cm, không bao giờ tràn).
+  const contentRef = React.useRef(null);
+  const [capChu, setCapChu] = React.useState(0);
+  // Đổi vụ/đổi tên vụ (hiếm khi xảy ra vì modal chỉ mở 1 lần cho 1 vụ, nhưng để chắc chắn luôn thử
+  // lại từ cỡ to nhất, không giữ cỡ đã thu nhỏ của vụ TRƯỚC đó).
+  React.useLayoutEffect(() => { setCapChu(0); }, [duLieu.tenVu]);
+  // Không khai báo mảng deps (chạy lại sau MỖI lần render) để tự đo lại ngay sau khi cỡ chữ vừa
+  // giảm 1 nấc (gây re-render), lặp tới khi vừa khít hoặc đã chạm cỡ nhỏ nhất thì tự dừng (điều
+  // kiện `capChu < length-1` không còn true nên không setState nữa, không lặp vô hạn). Dùng
+  // `useLayoutEffect` (chạy TRƯỚC paint, tránh 1 nhịp "nháy" chữ to rồi mới co lại).
+  // ⚠ Bài học phát hiện qua kiểm chứng thật (đo bằng script độc lập, không chỉ đọc code): Tailwind
+  // CDN tiêm CSS qua MutationObserver KHÔNG đồng bộ với chu kỳ render/paint của React — nếu chiều
+  // cao 6cm của ô hay việc ép cột chữ theo chiều cao đó (để đo tràn) chỉ đến từ CLASS Tailwind
+  // (`flex`/`items-stretch`), có lúc effect chạy TRƯỚC khi class kịp có hiệu lực, đo ra "auto"
+  // (chưa bị ép, scrollHeight luôn bằng clientHeight bất kể nội dung dài bao nhiêu) → không bao
+  // giờ phát hiện tràn, dù `useEffect` (sau paint) cũng KHÔNG chắc chắn đủ trễ để né hẳn race này.
+  // Sửa TẬN GỐC: đưa `display:flex`/`alignItems:stretch` (khung) và `flex`/`height:100%`/
+  // `overflow:hidden` (cột chữ) sang INLINE STYLE — áp dụng ngay lập tức, không phụ thuộc Tailwind
+  // — chỉ còn màu/viền/bo góc/cỡ chữ vẫn dùng class Tailwind (thuần cosmetic, trễ 1 nhịp vô hại).
+  React.useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    if (el.scrollHeight > el.clientHeight + 1 && capChu < CAP_CO_CHU_TEN_VU_BIA.length - 1) {
+      setCapChu(c => c + 1);
+    }
+  });
+
+  const Nhan = () => (
+    <div className="bia-hs-tach border-2 border-slate-700 rounded-lg bg-white"
+         style={{ height: "6cm", display: "flex", alignItems: "stretch", gap: "1rem", padding: "1rem" }}>
+      <div ref={contentRef} className="min-w-0 space-y-0.5"
+           style={{ flex: "1 1 0%", height: "100%", overflow: "hidden" }}>
+        <div className={`${CAP_CO_CHU_TEN_VU_BIA[capChu]} font-bold text-slate-900 break-words leading-snug`}>{duLieu.tenVu || "(chưa đặt tên)"}</div>
+        {duLieu.dieuLuat && <div className="text-base text-slate-800">{duLieu.dieuLuat}</div>}
+        {/* Đúng định dạng Dũng yêu cầu: "<Số QĐ>-<ngày>" (VD "2201-09/08/2010"), không phải "/". */}
+        <div className="text-base text-slate-800">KTVA: {duLieu.soQdKtva || "—"}-{duLieu.ngayQdKtva || "—"}</div>
+        <div className="text-sm text-slate-700 pt-1">Bị can: {dsBiCanHienThi}</div>
+        {/* Tên KSV in đậm để dễ quan sát nhanh khi lật hồ sơ (theo yêu cầu Dũng). */}
+        <div className="text-sm text-slate-700">KSV: <span className="font-bold text-slate-900">{duLieu.ksvChinh || "—"}</span></div>
+        <div className="text-sm text-slate-700">ĐTV: {duLieu.dtvCbdt || "—"}</div>
+      </div>
+      <div className="flex flex-col items-center justify-center border-l border-slate-200"
+           style={{ flexShrink: 0, paddingLeft: "1rem" }}>
+        <KhoiQR noiDung={duLieu.maNoiSinh} nhan="Mã vụ án" kichThuoc="3cm" />
+      </div>
+    </div>
+  );
+
+  const noiDung = (
+    <div className="fixed inset-0 bg-black/40 z-50 overflow-auto print:bg-white print:overflow-visible">
+      <style>{"@page { margin: 10mm; } @media print { .bia-hs-tach { break-inside: avoid; page-break-inside: avoid; } }"}</style>
+      <div className="print:hidden flex flex-col items-center gap-3 pt-8 pb-4 px-4">
+        <div className="text-sm text-slate-400 text-center max-w-md">
+          Xem trước mẫu dán bìa hồ sơ — luôn in {SO_BAN_BIA_HO_SO} bản/trang A4. In ra, cắt theo
+          viền rồi dán lên bìa hồ sơ giấy. Bấm "In" để in thật, hoặc Esc để đóng.
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Đóng</button>
+          <button onClick={() => window.print()} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">In</button>
+        </div>
+      </div>
+      {/* Bề rộng 152mm (giảm ~20% so với bản đầu 190mm, theo yêu cầu Dũng) + mỗi nhãn cao cố định
+          6cm — 3 nhãn + 2 khoảng cách luôn vừa đúng 1 trang A4 (khổ dọc 277mm vùng in, trừ lề
+          10mm trên/dưới theo @page ở trên), không cần đo theo nội dung như bản trước. */}
+      <div className="mx-auto my-8 print:my-0 flex flex-col gap-6" style={{ width: "152mm" }}>
+        {Array.from({ length: SO_BAN_BIA_HO_SO }, (_, i) => <Nhan key={i} />)}
       </div>
     </div>
   );
