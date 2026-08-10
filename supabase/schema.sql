@@ -132,6 +132,8 @@ create table "vuan" (
   "hanDieuTra"              timestamptz,
   "soQdKtva"                text,
   "ngayQdKtva"              timestamptz,
+  "soQdPhucHoiDieuTra"      text,                          -- chỉ có ý nghĩa khi nguon='phuc_hoi_dieu_tra'
+  "ngayPhucHoiDieuTra"      timestamptz,                   -- dùng tính Hạn điều tra theo Điều 174.1 (add_phuc_hoi_dieu_tra_nguon_2026-08-10.sql)
   "ksvChinh"                text,                          -- tên tự do, KHÔNG phải FK cứng (xem CLAUDE.md nguyên tắc #liên quan canbo)
   "ksvHoTro"                text[] not null default '{}',
   "dtvCbdt"                 text,

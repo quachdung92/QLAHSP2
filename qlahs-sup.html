@@ -5494,6 +5494,13 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const [nguonChiTiet, setNguonChiTiet] = useState("");
   const [soQdKtva, setSoQdKtva] = useState("");
   const [ngayQdKtva, setNgayQdKtva] = useState("");
+  // Nguồn = "Phục hồi điều tra" (2026-08-10) — vụ đã được phục hồi điều tra TRƯỚC KHI nhập vào hệ
+  // thống (VD nhập lại án cũ/tiếp nhận từ đơn vị khác), khác hẳn PhucHoiModal (hành động phục hồi 1
+  // vụ ĐANG tạm đình chỉ NGAY TRONG hệ thống). Cần Số QĐ/Ngày phục hồi RIÊNG (không phải Ngày QĐ
+  // KTVA) để tính đúng "Hạn điều tra" theo Điều 174 khoản 1 (thời hạn TIẾP theo phục hồi — khác hẳn
+  // Điều 172 khoản 1 tính từ ngày khởi tố ban đầu).
+  const [soQdPhucHoiDieuTra, setSoQdPhucHoiDieuTra] = useState("");
+  const [ngayPhucHoiDieuTra, setNgayPhucHoiDieuTra] = useState("");
   const [hanDieuTra, setHanDieuTra] = useState("");
   const [ksvChinh, setKsvChinh] = useState("");
   const [ksvHoTro, setKsvHoTro] = useState("");
@@ -5503,18 +5510,27 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const [vuanToiDanh, setVuanToiDanh] = useState([""]);
   const [vuanDieuLuat, setVuanDieuLuat] = useState([""]);
   const [mucDoNghiemTrong, setMucDoNghiemTrong] = useState("dac_biet_nghiem_trong");
-  // Tự tính hạn điều tra theo Điều 172 khoản 1 BLHS 2025 (Ngày QĐ KTVA + số tháng theo Mức độ
-  // nghiêm trọng) — CHỈ khi "Cơ quan đang thụ lý" = Điều tra (vụ khởi tố thẳng ở Truy tố/Xét xử
-  // không có khái niệm "hạn điều tra") VÀ cán bộ CHƯA tự tay sửa ô này (đúng pattern `tenVuDaSua`
-  // ở trên — không ghi đè nếu đã can thiệp tay).
+  // Tự tính hạn điều tra — CHỈ khi "Cơ quan đang thụ lý" = Điều tra (vụ khởi tố thẳng ở Truy tố/Xét
+  // xử không có khái niệm "hạn điều tra") VÀ cán bộ CHƯA tự tay sửa ô này (đúng pattern `tenVuDaSua`
+  // ở trên — không ghi đè nếu đã can thiệp tay). Nguồn = "Phục hồi điều tra" tính theo Điều 174
+  // khoản 1 (Ngày phục hồi + số tháng theo Mức độ nghiêm trọng); các nguồn còn lại tính theo Điều
+  // 172 khoản 1 (Ngày QĐ khởi tố VA + số tháng) như cũ.
   const [hanDieuTraDaSua, setHanDieuTraDaSua] = useState(false);
   useEffect(() => {
-    if (hanDieuTraDaSua || coQuanThuLy !== "dieu_tra" || !ngayQdKtva) return;
+    if (hanDieuTraDaSua || coQuanThuLy !== "dieu_tra") return;
+    if (nguon === "phuc_hoi_dieu_tra") {
+      if (!ngayPhucHoiDieuTra) return;
+      const soThang = THANG_DIEU_TRA_PHUC_HOI[mucDoNghiemTrong];
+      if (!soThang) return;
+      setHanDieuTra(toInputDate(congThangTheoLuat(fromInputDate(ngayPhucHoiDieuTra), soThang)));
+      return;
+    }
+    if (!ngayQdKtva) return;
     const soThang = THANG_DIEU_TRA_CO_BAN[mucDoNghiemTrong];
     if (!soThang) return;
     setHanDieuTra(toInputDate(congThangTheoLuat(fromInputDate(ngayQdKtva), soThang)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ngayQdKtva, mucDoNghiemTrong, coQuanThuLy, hanDieuTraDaSua]);
+  }, [ngayQdKtva, ngayPhucHoiDieuTra, nguon, mucDoNghiemTrong, coQuanThuLy, hanDieuTraDaSua]);
   const [anDiem, setAnDiem] = useState(false);
   const [uyQuyenXetXu, setUyQuyenXetXu] = useState("");
   const [phienToaRutKN, setPhienToaRutKN] = useState(false);
@@ -5639,9 +5655,12 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
       const now = new Date();
 
       const batch = db.batch();
+      const laPhucHoiDieuTra = nguon === "phuc_hoi_dieu_tra";
       batch.set(db.collection("vuan").doc(maNoiSinh), {
         maNoiSinh, maNganhCap: maNganhCap.trim() || null, tenVu: tenVu.trim(),
         nguon, nguonChiTiet: nguon === "an_noi_khac_chuyen_den" ? nguonChiTiet.trim() : "",
+        soQdPhucHoiDieuTra: laPhucHoiDieuTra ? soQdPhucHoiDieuTra.trim() : null,
+        ngayPhucHoiDieuTra: laPhucHoiDieuTra && ngayPhucHoiDieuTra ? fromInputDate(ngayPhucHoiDieuTra) : null,
         hanDieuTra: hanDieuTra ? fromInputDate(hanDieuTra) : null,
         soQdKtva: soQdKtva.trim(), ngayQdKtva: ngayQd,
         ksvChinh: ksvChinh.trim(), ksvHoTro: ksvHoTro.split(",").map(s => s.trim()).filter(Boolean),
@@ -5670,6 +5689,20 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         ngaySuKien: ngayQd, kyThongKe: kyId, lichSuSuaKy: [], ghiChu: "",
         nguoiThucHien, thoiDiemGhi: now,
       });
+
+      // Ghi thêm 1 sự kiện "phuc_hoi" (2026-08-10) khi Nguồn = "Phục hồi điều tra" — để
+      // `layMocDieuTraHienTai` (dùng bởi GiaHanDieuTraModal) nhận đúng mốc/bảng Điều 174 khoản 1
+      // ngay từ đầu, không chỉ riêng "Hạn điều tra" lúc tạo vụ. `thoiDiemGhi` cố ý muộn hơn sự kiện
+      // "khoi_to_vu" ở trên đúng 1ms để chắc chắn được chọn làm mốc GẦN NHẤT (2 sự kiện cùng ghi
+      // trong 1 batch, cùng "now" — không có gì đảm bảo thứ tự đọc lại nếu để trùng millisecond).
+      if (laPhucHoiDieuTra && coQuanThuLy === "dieu_tra" && ngayPhucHoiDieuTra) {
+        batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+          maVuAn: maNoiSinh, loaiSuKien: "phuc_hoi", denGiaiDoan: "dieu_tra",
+          soQuyetDinh: soQdPhucHoiDieuTra.trim(), ngaySuKien: fromInputDate(ngayPhucHoiDieuTra),
+          kyThongKe: kyId, ghiChu: "Ghi nhận cùng lúc tạo vụ án (Nguồn: Phục hồi điều tra).",
+          nguoiThucHien, thoiDiemGhi: new Date(now.getTime() + 1),
+        }));
+      }
 
       if (capNhatKetQua) {
         batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
@@ -5803,6 +5836,15 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
               <input value={nguonChiTiet} onChange={e => setNguonChiTiet(e.target.value)} className={oInput} />
             </Truong>
           )}
+          {nguon === "phuc_hoi_dieu_tra" && (<>
+            <Truong nhan="Số QĐ phục hồi điều tra">
+              <input value={soQdPhucHoiDieuTra} onChange={e => setSoQdPhucHoiDieuTra(e.target.value)} className={oInput} />
+            </Truong>
+            <Truong nhan="Ngày phục hồi điều tra">
+              <NhapNgay value={ngayPhucHoiDieuTra} onChange={e => setNgayPhucHoiDieuTra(e.target.value)}
+                        onTachSo={setSoQdPhucHoiDieuTra} className={oInput} />
+            </Truong>
+          </>)}
           <Truong nhan="Số QĐ khởi tố VA">
             <input value={soQdKtva} onChange={e => setSoQdKtva(e.target.value)} className={oInput} />
           </Truong>
@@ -5813,7 +5855,9 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           <Truong nhan="Hạn điều tra">
             <NhapNgay value={hanDieuTra} onChange={e => { setHanDieuTra(e.target.value); setHanDieuTraDaSua(true); }} className={oInput} />
             {coQuanThuLy === "dieu_tra" && !hanDieuTraDaSua && hanDieuTra && (
-              <p className="text-[10px] text-slate-400 mt-0.5">Tự tính theo Điều 172 khoản 1 BLHS 2025, có thể sửa lại.</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Tự tính theo {nguon === "phuc_hoi_dieu_tra" ? "Điều 174 khoản 1 (từ Ngày phục hồi điều tra)" : "Điều 172 khoản 1 (từ Ngày QĐ KTVA)"} BLHS 2025, có thể sửa lại.
+              </p>
             )}
           </Truong>
           <Truong nhan="KSV chính">
@@ -6188,6 +6232,9 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
   const [tenVu, setTenVu] = useState(vuAn.tenVu || "");
   const [nguon, setNguon] = useState(vuAn.nguon || "an_khoi_to_moi");
   const [nguonChiTiet, setNguonChiTiet] = useState(vuAn.nguonChiTiet || "");
+  // Nguồn = "Phục hồi điều tra" (2026-08-10) — xem ghi chú đầy đủ ở ThemVuAnForm.
+  const [soQdPhucHoiDieuTra, setSoQdPhucHoiDieuTra] = useState(vuAn.soQdPhucHoiDieuTra || "");
+  const [ngayPhucHoiDieuTra, setNgayPhucHoiDieuTra] = useState(toInputDate(vuAn.ngayPhucHoiDieuTra));
   const [soQdKtva, setSoQdKtva] = useState(vuAn.soQdKtva || "");
   const [ngayQdKtva, setNgayQdKtva] = useState(toInputDate(vuAn.ngayQdKtva));
   const [hanDieuTra, setHanDieuTra] = useState(toInputDate(vuAn.hanDieuTra));
@@ -6280,6 +6327,8 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
       batch.update(db.collection("vuan").doc(vuAn.id), {
         maNganhCap: maNganhCap.trim() || null, tenVu: tenVu.trim(),
         nguon, nguonChiTiet: nguon === "an_noi_khac_chuyen_den" ? nguonChiTiet.trim() : "",
+        soQdPhucHoiDieuTra: nguon === "phuc_hoi_dieu_tra" ? soQdPhucHoiDieuTra.trim() : null,
+        ngayPhucHoiDieuTra: nguon === "phuc_hoi_dieu_tra" && ngayPhucHoiDieuTra ? fromInputDate(ngayPhucHoiDieuTra) : null,
         soQdKtva: soQdKtva.trim(), ngayQdKtva: fromInputDate(ngayQdKtva),
         hanDieuTra: hanDieuTra ? fromInputDate(hanDieuTra) : null,
         ksvChinh: ksvChinh.trim(), ksvHoTro: ksvHoTro.split(",").map(s => s.trim()).filter(Boolean),
@@ -6385,6 +6434,15 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
               <input value={nguonChiTiet} onChange={e => setNguonChiTiet(e.target.value)} className={oInput} />
             </Truong>
           )}
+          {nguon === "phuc_hoi_dieu_tra" && (<>
+            <Truong nhan="Số QĐ phục hồi điều tra">
+              <input value={soQdPhucHoiDieuTra} onChange={e => setSoQdPhucHoiDieuTra(e.target.value)} className={oInput} />
+            </Truong>
+            <Truong nhan="Ngày phục hồi điều tra">
+              <NhapNgay value={ngayPhucHoiDieuTra} onChange={e => setNgayPhucHoiDieuTra(e.target.value)}
+                        onTachSo={setSoQdPhucHoiDieuTra} className={oInput} />
+            </Truong>
+          </>)}
           <Truong nhan="Số QĐ khởi tố VA">
             <input value={soQdKtva} onChange={e => setSoQdKtva(e.target.value)} className={oInput} />
           </Truong>
@@ -6394,11 +6452,19 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
           <Truong nhan="Hạn điều tra">
             <div className="flex items-center gap-1">
               <NhapNgay value={hanDieuTra} onChange={e => setHanDieuTra(e.target.value)} className={oInput} />
-              {vuAn.coQuanThuLy === "dieu_tra" && ngayQdKtva && (
-                <button type="button" title="Tính lại theo Điều 172 khoản 1 BLHS 2025 (từ Ngày QĐ KTVA + Mức độ nghiêm trọng, không tính các lần đã gia hạn)"
+              {vuAn.coQuanThuLy === "dieu_tra" && (nguon === "phuc_hoi_dieu_tra" ? ngayPhucHoiDieuTra : ngayQdKtva) && (
+                <button type="button"
+                        title={nguon === "phuc_hoi_dieu_tra"
+                          ? "Tính lại theo Điều 174 khoản 1 BLHS 2025 (từ Ngày phục hồi điều tra + Mức độ nghiêm trọng, không tính các lần đã gia hạn)"
+                          : "Tính lại theo Điều 172 khoản 1 BLHS 2025 (từ Ngày QĐ KTVA + Mức độ nghiêm trọng, không tính các lần đã gia hạn)"}
                         onClick={() => {
-                          const soThang = THANG_DIEU_TRA_CO_BAN[mucDoNghiemTrong];
-                          if (soThang) setHanDieuTra(toInputDate(congThangTheoLuat(fromInputDate(ngayQdKtva), soThang)));
+                          if (nguon === "phuc_hoi_dieu_tra") {
+                            const soThang = THANG_DIEU_TRA_PHUC_HOI[mucDoNghiemTrong];
+                            if (soThang) setHanDieuTra(toInputDate(congThangTheoLuat(fromInputDate(ngayPhucHoiDieuTra), soThang)));
+                          } else {
+                            const soThang = THANG_DIEU_TRA_CO_BAN[mucDoNghiemTrong];
+                            if (soThang) setHanDieuTra(toInputDate(congThangTheoLuat(fromInputDate(ngayQdKtva), soThang)));
+                          }
                         }}
                         className="shrink-0 text-xs px-2 py-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50">
                   🔄
@@ -8036,6 +8102,9 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
             <HangThongTin items={[["Giai đoạn", <Badge mau={MAU_GIAI_DOAN[vuAn.coQuanThuLy]}>{NHAN_GIAI_DOAN[vuAn.coQuanThuLy] || vuAn.coQuanThuLy}</Badge>]]} />
             <HangThongTin items={[["Trạng thái", <Badge mau={MAU_TRANG_THAI[vuAn.trangThai]}>{NHAN_TRANG_THAI[vuAn.trangThai] || vuAn.trangThai}</Badge>]]} />
             <HangThongTin items={[["Nguồn", NHAN_NGUON[vuAn.nguon] || vuAn.nguon]]} />
+            {vuAn.nguon === "phuc_hoi_dieu_tra" && vuAn.ngayPhucHoiDieuTra && (
+              <HangThongTin items={[["Số/ngày phục hồi ĐT", `${vuAn.soQdPhucHoiDieuTra || "—"} — ${fmtDate(vuAn.ngayPhucHoiDieuTra)}`]]} />
+            )}
             <HangThongTin items={[["KSV chính", vuAn.ksvChinh]]} />
             <HangThongTin items={[["KSV hỗ trợ", (vuAn.ksvHoTro || []).join(", ")]]} />
             <HangThongTin items={[["ĐTV/CBĐT", vuAn.dtvCbdt]]} />
@@ -9487,6 +9556,8 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
       tenVu: vuAn.tenVu || "",
       nguon: vuAn.nguon || "an_khoi_to_moi",
       nguonChiTiet: vuAn.nguonChiTiet || "",
+      soQdPhucHoiDieuTra: vuAn.soQdPhucHoiDieuTra || "",
+      ngayPhucHoiDieuTra: toInputDate(vuAn.ngayPhucHoiDieuTra),
       soQdKtva: vuAn.soQdKtva || "",
       ngayQdKtva: toInputDate(vuAn.ngayQdKtva),
       hanDieuTra: toInputDate(vuAn.hanDieuTra),
@@ -9532,6 +9603,8 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
         tenVu: ed.tenVu.trim(),
         nguon: ed.nguon,
         nguonChiTiet: ed.nguon === "an_noi_khac_chuyen_den" ? ed.nguonChiTiet.trim() : "",
+        soQdPhucHoiDieuTra: ed.nguon === "phuc_hoi_dieu_tra" ? ed.soQdPhucHoiDieuTra.trim() : null,
+        ngayPhucHoiDieuTra: ed.nguon === "phuc_hoi_dieu_tra" && ed.ngayPhucHoiDieuTra ? fromInputDate(ed.ngayPhucHoiDieuTra) : null,
         soQdKtva: ed.soQdKtva.trim(),
         ngayQdKtva: fromInputDate(ed.ngayQdKtva),
         hanDieuTra: ed.hanDieuTra ? fromInputDate(ed.hanDieuTra) : null,
@@ -9611,6 +9684,15 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
             <input value={ed.nguonChiTiet} onChange={e => set("nguonChiTiet", e.target.value)} className={oInput} />
           </Truong>
         )}
+        {ed.nguon === "phuc_hoi_dieu_tra" && (<>
+          <Truong nhan="Số QĐ phục hồi điều tra">
+            <input value={ed.soQdPhucHoiDieuTra} onChange={e => set("soQdPhucHoiDieuTra", e.target.value)} className={oInput} />
+          </Truong>
+          <Truong nhan="Ngày phục hồi điều tra">
+            <NhapNgay value={ed.ngayPhucHoiDieuTra} onChange={e => set("ngayPhucHoiDieuTra", e.target.value)}
+                      onTachSo={so => set("soQdPhucHoiDieuTra", so)} className={oInput} />
+          </Truong>
+        </>)}
         <Truong nhan="Số QĐ khởi tố VA">
           <input value={ed.soQdKtva} onChange={e => set("soQdKtva", e.target.value)} className={oInput} />
         </Truong>
@@ -9620,13 +9702,21 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
         <Truong nhan="Hạn điều tra">
           <div className="flex items-center gap-1">
             <NhapNgay value={ed.hanDieuTra} onChange={e => set("hanDieuTra", e.target.value)} className={oInput} />
-            {vuAn.coQuanThuLy === "dieu_tra" && ed.ngayQdKtva && (
+            {vuAn.coQuanThuLy === "dieu_tra" && (ed.nguon === "phuc_hoi_dieu_tra" ? ed.ngayPhucHoiDieuTra : ed.ngayQdKtva) && (
               // Đọc mucDoNghiemTrong từ `vuAn` gốc (KHÔNG phải `ed`) — modal này không cho sửa
               // Mức độ nghiêm trọng nên field đó không có trong `ed`, dùng thẳng giá trị hiện có.
-              <button type="button" title="Tính lại theo Điều 172 khoản 1 BLHS 2025 (từ Ngày QĐ KTVA + Mức độ nghiêm trọng, không tính các lần đã gia hạn)"
+              <button type="button"
+                      title={ed.nguon === "phuc_hoi_dieu_tra"
+                        ? "Tính lại theo Điều 174 khoản 1 BLHS 2025 (từ Ngày phục hồi điều tra + Mức độ nghiêm trọng, không tính các lần đã gia hạn)"
+                        : "Tính lại theo Điều 172 khoản 1 BLHS 2025 (từ Ngày QĐ KTVA + Mức độ nghiêm trọng, không tính các lần đã gia hạn)"}
                       onClick={() => {
-                        const soThang = THANG_DIEU_TRA_CO_BAN[vuAn.mucDoNghiemTrong];
-                        if (soThang) set("hanDieuTra", toInputDate(congThangTheoLuat(fromInputDate(ed.ngayQdKtva), soThang)));
+                        if (ed.nguon === "phuc_hoi_dieu_tra") {
+                          const soThang = THANG_DIEU_TRA_PHUC_HOI[vuAn.mucDoNghiemTrong];
+                          if (soThang) set("hanDieuTra", toInputDate(congThangTheoLuat(fromInputDate(ed.ngayPhucHoiDieuTra), soThang)));
+                        } else {
+                          const soThang = THANG_DIEU_TRA_CO_BAN[vuAn.mucDoNghiemTrong];
+                          if (soThang) set("hanDieuTra", toInputDate(congThangTheoLuat(fromInputDate(ed.ngayQdKtva), soThang)));
+                        }
                       }}
                       className="shrink-0 text-xs px-2 py-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50">
                 🔄
@@ -9735,6 +9825,9 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                     <HangThongTin items={[["Trạng thái", <Badge mau={MAU_TRANG_THAI[vuAn.trangThai]}>{NHAN_TRANG_THAI[vuAn.trangThai]}</Badge>]]} />
                     <HangThongTin items={[["Nguồn", NHAN_NGUON[vuAn.nguon] || vuAn.nguon]]} />
                     {vuAn.nguonChiTiet && <HangThongTin items={[["Chi tiết nguồn", vuAn.nguonChiTiet]]} />}
+                    {vuAn.nguon === "phuc_hoi_dieu_tra" && vuAn.ngayPhucHoiDieuTra && (
+                      <HangThongTin items={[["Số/ngày phục hồi ĐT", `${vuAn.soQdPhucHoiDieuTra || "—"} — ${fmtDate(vuAn.ngayPhucHoiDieuTra)}`]]} />
+                    )}
                     <HangThongTin items={[["KSV chính", vuAn.ksvChinh || "—"]]} />
                     <HangThongTin items={[["KSV hỗ trợ", (vuAn.ksvHoTro || []).join(", ") || "—"]]} />
                     <HangThongTin items={[["ĐTV/CBĐT", vuAn.dtvCbdt || "—"]]} />
