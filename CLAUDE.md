@@ -67,14 +67,40 @@ hàng header thứ 2, dữ liệu "Tổng" không bị nhầm với riêng cột
 tự mới→cũ và có số bị can, KSV không có vụ Điều tra hiện ô trống không lỗi, viền đậm đúng ở đầu
 nhóm/viền thường ở giữa nhóm. Compile-check qua `@babel/core`+`@babel/preset-react` — sạch.
 
-**CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật** — phiên này không có tài khoản đăng nhập
-`admin@qlva.local` (không tìm thấy mật khẩu lưu ở đâu trong repo/scratchpad, đúng vì đây là bí mật
-không nên lưu trong code). Trước khi merge/deploy, nên tự mở `qlahs-sup.web.app`, vào tab "Phân
-công hồ sơ", xác nhận: (1) số vụ/bị can từng giai đoạn của vài KSV quen thuộc khớp với đếm tay qua
-"Danh sách vụ án" lọc theo KSV; (2) "2 vụ Điều tra gần nhất" đúng là 2 vụ Điều tra KSV đó vừa được
-nhập gần đây nhất (không lẫn vụ Truy tố/Xét xử); (3) bấm "Tải Excel", mở bằng Excel thật, xác nhận
-format 2 hàng header/màu/viền hiện đúng như mô tả, dễ đọc. **Chưa merge vào `main`, chưa deploy** —
-chỉ đang ở nhánh `phan-cong-ho-so-ksv`.
+**Sửa lại lần 2 theo phản hồi Dũng (cùng ngày) — "bảng excel có border để in ra dễ quan sát"**:
+- 2 hàng tiêu đề/ghi chú (trước đây KHÔNG có viền, chỉ có bảng dữ liệu bên dưới có) nay cũng có
+  viền lưới mảnh đầy đủ — cả khối (từ tiêu đề tới dòng cuối) liền thành 1 hình chữ nhật viền kín
+  khi in, không phải bảng "lửng lơ" thiếu viền phía trên.
+- Thêm **khung viền ĐẬM NHẤT** (`VIEN_KHUNG`, "medium" màu slate-700, đậm hơn cả viền phân nhóm
+  bên trong) bao quanh TOÀN BỘ khối — áp cho 4 cạnh ngoài cùng (trên/dưới/trái/phải), nổi bật rõ
+  ranh giới bảng ngay cả khi in đen trắng, không lẫn với viền lưới mảnh bên trong.
+- Thêm `ws.pageSetup` — khổ **ngang** (15 cột, khổ dọc sẽ tràn trang), `fitToWidth:1`/
+  `fitToHeight:0` (ép vừa 1 trang THEO CHIỀU RỘNG, không giới hạn số trang dọc nếu nhiều KSV),
+  `horizontalCentered:true`, lề hẹp. Và `pageSetup.printTitlesRow` lặp lại 2 hàng header (nhóm +
+  cột con) ở ĐẦU MỖI TRANG in — bảng dài nhiều trang vẫn biết cột nào là cột nào mà không cần lật
+  lại trang đầu.
+
+**Đã kiểm chứng lại bằng `exceljs` thật (ghi `.xlsx` rồi đọc lại, không chỉ tin code)** — 13/13
+PASS: `pageSetup` (orientation/fitToWidth/fitToHeight/horizontalCentered/printTitlesRow) đúng giá
+trị sau khi ghi-đọc lại; góc trên-trái/dưới-phải của khối có đúng viền khung đậm (medium/slate-700)
+ở cả 2 cạnh tương ứng; viền phân nhóm bên trong (VD đầu cột "Vụ ĐT gần nhất 1") vẫn giữ đúng màu
+riêng (medium/slate-400), không bị khung ngoài ghi đè nhầm; ranh giới GIỮA 2 hàng tiêu đề/ghi chú
+(không phải mép bảng) vẫn là viền mảnh thường, không bị lẫn với khung ngoài. **Bài học phát hiện
+lúc viết test**: với 1 hàng ĐÃ MERGE nguyên hàng (tiêu đề/ghi chú), chỉ border của ô master (cột
+đầu) và ô cuối phạm vi merge mới thật sự governs cạnh ngoài khi Excel render — set border cho các
+ô "bên trong" phạm vi merge (dù không sai, không lỗi) không có tác dụng hiển thị gì thêm, vì Excel
+không vẽ đường kẻ nội bộ bên trong 1 ô đã merge.
+
+**CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật, và CHƯA in thử ra giấy thật** — phiên này
+không có tài khoản đăng nhập `admin@qlva.local` (không tìm thấy mật khẩu lưu ở đâu trong repo/
+scratchpad, đúng vì đây là bí mật không nên lưu trong code). Trước khi merge/deploy, nên tự mở
+`qlahs-sup.web.app`, vào tab "Phân công hồ sơ", xác nhận: (1) số vụ/bị can từng giai đoạn của vài
+KSV quen thuộc khớp với đếm tay qua "Danh sách vụ án" lọc theo KSV; (2) "2 vụ Điều tra gần nhất"
+đúng là 2 vụ Điều tra KSV đó vừa được nhập gần đây nhất (không lẫn vụ Truy tố/Xét xử); (3) bấm "Tải
+Excel", mở bằng Excel thật, xác nhận format 2 hàng header/màu/viền hiện đúng như mô tả; (4) mở
+Print Preview (hoặc in thử 1 bản giấy) xác nhận khổ ngang, vừa 1 trang theo chiều rộng, header lặp
+lại đúng ở trang 2 nếu có nhiều KSV tràn quá 1 trang. **Chưa merge vào `main`, chưa deploy** — chỉ
+đang ở nhánh `phan-cong-ho-so-ksv`.
 
 ## Biểu B10 C39-C42 ("Phân loại tội phạm" ở Truy tố) — sửa đọc đúng mức độ nghiêm trọng CỦA BỊ CAN thay vì field cấp vụ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 

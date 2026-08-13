@@ -16474,12 +16474,16 @@ function PhanCongHoSoModule() {
     const tieuDe = ws.addRow([`PHÂN CÔNG HỒ SƠ — xuất ngày ${fmtDate(new Date())}`]);
     tieuDe.font = { bold: true, size: 13 };
     ws.mergeCells(tieuDe.number, 1, tieuDe.number, tongSoCot);
+    // Có viền cả 2 hàng tiêu đề/ghi chú (không chỉ bảng dữ liệu bên dưới) — để cả khối liền thành 1
+    // hình chữ nhật viền kín khi in ra giấy, dễ quan sát/cắt rời hơn là chỉ có bảng có viền lửng lơ.
+    for (let c = 1; c <= tongSoCot; c++) tieuDe.getCell(c).border = oVien;
 
     const ghiChu = ws.addRow([
       `Chỉ tính vụ "Đang giải quyết". "2 vụ Điều tra gần nhất" tính theo ngày tạo vụ (coi là ngày nhận), chỉ trong giai đoạn Điều tra.`,
     ]);
     ghiChu.font = { italic: true, size: 10, color: { argb: "FF64748B" } };
     ws.mergeCells(ghiChu.number, 1, ghiChu.number, tongSoCot);
+    for (let c = 1; c <= tongSoCot; c++) ghiChu.getCell(c).border = oVien;
 
     const hangNhom = ws.addRow([]);
     const hangCon = ws.addRow([]);
@@ -16533,6 +16537,33 @@ function PhanCongHoSoModule() {
       row.getCell(8).font = { bold: true, color: { argb: "FFB45309" } }; // Tổng - Vụ, khớp tông amber header
       row.getCell(9).font = { bold: true, color: { argb: "FFB45309" } }; // Tổng - BC
     });
+
+    // Khung viền ĐẬM NHẤT bao quanh TOÀN BỘ khối (từ dòng tiêu đề tới dòng cuối) — nổi bật hơn hẳn
+    // viền lưới mảnh + viền phân nhóm bên trong, để nhìn ngay ranh giới bảng khi in ra giấy.
+    const hangDauBang = tieuDe.number, hangCuoiBang = ws.lastRow.number;
+    const VIEN_KHUNG = { style: "medium", color: { argb: "FF334155" } }; // slate-700
+    for (let r = hangDauBang; r <= hangCuoiBang; r++) {
+      const hang = ws.getRow(r);
+      hang.getCell(1).border = { ...hang.getCell(1).border, left: VIEN_KHUNG };
+      hang.getCell(tongSoCot).border = { ...hang.getCell(tongSoCot).border, right: VIEN_KHUNG };
+    }
+    for (let c = 1; c <= tongSoCot; c++) {
+      const oTren = ws.getRow(hangDauBang).getCell(c), oDuoi = ws.getRow(hangCuoiBang).getCell(c);
+      oTren.border = { ...oTren.border, top: VIEN_KHUNG };
+      oDuoi.border = { ...oDuoi.border, bottom: VIEN_KHUNG };
+    }
+
+    // Cài đặt in (2026-08-13, theo yêu cầu Dũng "có viền để in ra dễ quan sát") — khổ ngang (15 cột
+    // rộng hơn hẳn khổ dọc), ép vừa 1 trang theo CHIỀU RỘNG (fitToHeight:0 = không giới hạn số
+    // trang theo chiều dọc, chỉ cần không bị cắt cột ngang), canh giữa trang, lề hẹp cho vừa nhiều
+    // cột hơn. Lặp lại 2 hàng header (nhóm + cột con) ở ĐẦU MỖI TRANG in — không cần cuộn lên đầu để
+    // biết cột nào là cột nào khi bảng dài nhiều trang.
+    ws.pageSetup = {
+      orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      horizontalCentered: true,
+      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+    };
+    ws.pageSetup.printTitlesRow = `${hangNhom.number}:${hangCon.number}`;
 
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
