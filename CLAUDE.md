@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Module mới "Phân công hồ sơ" — khối lượng công việc từng KSV theo giai đoạn + 2 vụ gần nhất (2026-08-13, `qlahs-sup.html`, nhánh `phan-cong-ho-so-ksv`, CHƯA merge vào `main`)
+## Module mới "Phân công hồ sơ" — khối lượng công việc từng KSV theo giai đoạn + 2 vụ gần nhất (2026-08-13, `qlahs-sup.html`, nhánh `phan-cong-ho-so-ksv` (đã merge fast-forward vào `main`), ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng: "thêm 1 branch mới. để hiển thị và download excel danh sách số vụ/số bị can
 từng giai đoạn, của từng KSV, 02 vụ gần nhất (ngày nhận) để tiện phân công hs" — công cụ cho lãnh
@@ -116,16 +116,25 @@ cần 4 dòng wrap trong ô rộng 30 ký tự) tự nở ra đúng 60pt (4×15)
 đúng ý "vụ nào nhiều thông tin thì rộng hơn". Compile-check qua `@babel/core`+`@babel/preset-react`
 — sạch.
 
-**CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật, và CHƯA in thử ra giấy thật** — phiên này
-không có tài khoản đăng nhập `admin@qlva.local` (không tìm thấy mật khẩu lưu ở đâu trong repo/
-scratchpad, đúng vì đây là bí mật không nên lưu trong code). Trước khi merge/deploy, nên tự mở
-`qlahs-sup.web.app`, vào tab "Phân công hồ sơ", xác nhận: (1) số vụ/bị can từng giai đoạn của vài
-KSV quen thuộc khớp với đếm tay qua "Danh sách vụ án" lọc theo KSV; (2) "2 vụ Điều tra gần nhất"
-đúng là 2 vụ Điều tra KSV đó vừa được nhập gần đây nhất (không lẫn vụ Truy tố/Xét xử); (3) bấm "Tải
-Excel", mở bằng Excel thật, xác nhận format 2 hàng header/màu/viền hiện đúng như mô tả; (4) mở
-Print Preview (hoặc in thử 1 bản giấy) xác nhận khổ ngang, vừa 1 trang theo chiều rộng, header lặp
-lại đúng ở trang 2 nếu có nhiều KSV tràn quá 1 trang. **Chưa merge vào `main`, chưa deploy** — chỉ
-đang ở nhánh `phan-cong-ho-so-ksv`.
+**Đã merge + push + deploy theo yêu cầu trực tiếp của Dũng ("ok push và deploy đi")** — merge
+fast-forward `phan-cong-ho-so-ksv` vào `main` (không xung đột, `main` không có commit nào khác kể
+từ lúc tách nhánh), push cả nhánh riêng lẫn `main` lên GitHub, rồi `./deploy.sh sup` (thành công,
+`https://qlahs-sup.web.app`) và `./deploy.sh prod` (thành công, `https://qlahsp2.web.app`). Smoke
+test sau deploy trên CẢ 2 URL (không đăng nhập, chỉ xác nhận trang tải được) — `curl` ra `200`, mở
+qua trình duyệt thật xác nhận màn đăng nhập hiện đúng nội dung, 0 lỗi console thật (chỉ có cảnh báo
+Babel kích thước file vô hại đã biết).
+
+**CHƯA kiểm chứng qua UI thật ĐÃ ĐĂNG NHẬP với dữ liệu Supabase thật, và CHƯA in thử ra giấy thật**
+— phiên này không có tài khoản đăng nhập `admin@qlva.local` (không tìm thấy mật khẩu lưu ở đâu
+trong repo/scratchpad, đúng vì đây là bí mật không nên lưu trong code) nên chỉ kiểm chứng được
+tới mức smoke test (trang tải được, không lỗi console) — MỌI khẳng định "đã kiểm chứng" ở các mục
+trên chỉ dừng ở mức test cô lập (mock data + `exceljs` thật, không phải qua UI/Supabase thật). Nên
+tự làm khi có tài khoản: vào tab "Phân công hồ sơ", xác nhận (1) số vụ/bị can từng giai đoạn của
+vài KSV quen thuộc khớp với đếm tay qua "Danh sách vụ án" lọc theo KSV; (2) "2 vụ Điều tra gần
+nhất" đúng là 2 vụ Điều tra KSV đó vừa được nhập gần đây nhất (không lẫn vụ Truy tố/Xét xử); (3)
+bấm "Tải Excel", mở bằng Excel thật, xác nhận format 2 hàng header/màu/viền hiện đúng như mô tả;
+(4) mở Print Preview (hoặc in thử 1 bản giấy) xác nhận khổ ngang, vừa 1 trang theo chiều rộng,
+header lặp lại đúng ở trang 2 nếu có nhiều KSV tràn quá 1 trang.
 
 ## Biểu B10 C39-C42 ("Phân loại tội phạm" ở Truy tố) — sửa đọc đúng mức độ nghiêm trọng CỦA BỊ CAN thay vì field cấp vụ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
