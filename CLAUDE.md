@@ -2,6 +2,54 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Module mới "Phân công hồ sơ" — khối lượng công việc từng KSV theo giai đoạn + 2 vụ gần nhất (2026-08-13, `qlahs-sup.html`, nhánh `phan-cong-ho-so-ksv`, CHƯA merge vào `main`)
+
+Theo yêu cầu Dũng: "thêm 1 branch mới. để hiển thị và download excel danh sách số vụ/số bị can
+từng giai đoạn, của từng KSV, 02 vụ gần nhất (ngày nhận) để tiện phân công hs" — công cụ cho lãnh
+đạo/thư ký xem nhanh KSV nào đang ít/nhiều việc và vừa nhận gì gần đây trước khi giao thêm hồ sơ
+mới, không phải luồng nghiệp vụ ghi dữ liệu (module thuần đọc, không ghi Firestore/Supabase).
+
+**2 quyết định thiết kế đã hỏi rõ Dũng qua `AskUserQuestion` trước khi code**: (1) "ngày nhận" của
+"2 vụ gần nhất" lấy từ `vuAn.ngayTao` (ngày vụ được nhập vào hệ thống) — ĐƠN GIẢN NHẤT, không phân
+biệt KSV nhận vụ từ đầu hay giữa chừng (khác phương án đối chiếu log `lichsuChuyenGiaiDoan` hay
+module Giao nhận hồ sơ, cả 2 đều phức tạp/thiếu dữ liệu hơn); (2) đặt thành **module riêng** (tab
+mới trong sidebar, id `"phancong"`, nhãn "Phân công hồ sơ") — không gộp vào Dashboard/Cài đặt, vì
+đây là báo cáo dùng thường xuyên để ra quyết định phân công, cần dễ tìm.
+
+**`PhanCongHoSoModule`** (đặt trước `DashboardModule`, code cùng khối comment) — dùng lại 2 hook có
+sẵn: `useDanhSachDangGiaiQuyet()` (danh sách vụ **đang giải quyết**, ĐÃ sort sẵn desc theo
+`ngayTao` — tận dụng luôn thứ tự đó để lấy "2 vụ gần nhất" mà KHÔNG cần sort lại) và
+`useDanhSachCanBo()` (roster KSV). **CHỈ tính vụ đang giải quyết** — vụ đã xong không còn là khối
+lượng công việc thật, và "2 vụ gần nhất" cũng chỉ nên tính trong tập này vì mục đích duy nhất là hỗ
+trợ phân công việc MỚI (đúng bàn luận với Dũng, không mở rộng ra vụ đã xong).
+
+**Danh sách KSV = gộp roster `canbo` (vai trò `ksv`, luôn đầy đủ kể cả đang 0 vụ) ∪ mọi tên
+`ksvChinh` thấy được trong dữ liệu** (phòng tên KSV cũ/nhập tay không có trong danh mục Cán bộ) —
+cùng pattern lọc KSV đã dùng ở `DanhSachPanel`. Với mỗi KSV: đếm vụ + tổng `soBiCan` (field cache
+sẵn trên `vuan`, không query riêng `bican`) theo TỪNG giai đoạn (`THU_TU_GIAI_DOAN`), cộng tổng
+chung, cộng 2 phần tử đầu của mảng đã lọc (chính là "2 vụ gần nhất" nhờ thứ tự có sẵn). Bảng có ô
+tìm theo tên KSV + sort theo cột (tái dùng `ThSort` có sẵn, mặc định sort theo Tổng-Vụ giảm dần).
+
+**Xuất Excel** (`xuatExcelPhanCong`, dùng ExcelJS + `wb.xlsx.writeBuffer()` → Blob → tải xuống,
+đúng pattern đã dùng ở "Tải toàn bộ lịch sử giao nhận"/"Rà soát nộp lưu kho") — 1 sheet, mỗi KSV 1
+dòng, đủ cột theo giai đoạn (Vụ/BC × ĐT/TT/XX) + Tổng + 2 vụ gần nhất (mã/tên/giai đoạn/ngày nhận
+mỗi vụ tách riêng cột, không gộp chung 1 ô — dễ lọc/sort trong Excel hơn).
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong scratchpad,
+gỡ ngay sau) — sạch, không lỗi cú pháp. Test cô lập logic gộp/tính toán (trích nguyên hàm tính
+`bang` từ component, mô phỏng 3 KSV: 1 có cả trong roster lẫn dữ liệu/1 chỉ có trong roster (0
+vụ)/1 chỉ có trong dữ liệu không có trong roster — đúng tình huống dữ liệu thật hay gặp) — 9/9
+PASS: đếm đúng vụ/bị can theo từng giai đoạn, tổng đúng, "2 vụ gần nhất" giữ đúng thứ tự mới→cũ,
+KSV 0 vụ vẫn hiện đúng (không bị lọc mất), vai trò khác `ksv` (VD `dtv`) không lọt vào danh sách.
+
+**CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật** — phiên này không có tài khoản đăng nhập
+`admin@qlva.local` (không tìm thấy mật khẩu lưu ở đâu trong repo/scratchpad, đúng vì đây là bí mật
+không nên lưu trong code). Trước khi merge/deploy, nên tự mở `qlahs-sup.web.app`, vào tab "Phân
+công hồ sơ", xác nhận: (1) số vụ/bị can từng giai đoạn của vài KSV quen thuộc khớp với đếm tay qua
+"Danh sách vụ án" lọc theo KSV; (2) "2 vụ gần nhất" đúng là 2 vụ KSV đó vừa được nhập gần đây nhất;
+(3) bấm "Tải Excel" ra file mở được, đủ cột, số liệu khớp màn hình. **Chưa merge vào `main`, chưa
+deploy** — chỉ đang ở nhánh `phan-cong-ho-so-ksv`.
+
 ## Biểu B10 C39-C42 ("Phân loại tội phạm" ở Truy tố) — sửa đọc đúng mức độ nghiêm trọng CỦA BỊ CAN thay vì field cấp vụ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng, ngay sau khi thêm field `bican.mucDoNghiemTrong` (mục ngay dưới đây) — Dũng nói rõ

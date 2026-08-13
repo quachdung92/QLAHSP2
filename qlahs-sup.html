@@ -16378,6 +16378,187 @@ function ChartCotChong({ labels, datasets }) {
   return <canvas ref={canvasRef} height="90"></canvas>;
 }
 
+// ====================================================================
+// MODULE: PHÂN CÔNG HỒ SƠ (2026-08-13)
+// Bảng tổng hợp khối lượng công việc HIỆN TẠI của từng KSV chính (`vuAn.ksvChinh`) — số vụ + số
+// bị can đang thụ lý ở TỪNG giai đoạn (Điều tra/Truy tố/Xét xử), cộng 2 vụ GẦN NHẤT (theo
+// `ngayTao`, coi là "ngày nhận" — chọn theo yêu cầu Dũng, đơn giản hơn hẳn so với dò log chuyển
+// giai đoạn hay module Giao nhận hồ sơ) họ vừa được giao — để lãnh đạo/thư ký cân nhắc phân công
+// hồ sơ mới cho ai còn ít việc/chưa vừa nhận gì gần đây.
+//
+// CHỈ tính vụ ĐANG GIẢI QUYẾT (`useDanhSachDangGiaiQuyet`, đã sort sẵn desc theo `ngayTao` —
+// dùng luôn thứ tự đó để lấy "2 vụ gần nhất" mà không cần sort lại) — vụ đã xong không còn là
+// khối lượng công việc thật của KSV, không tính vào "tổng"/"theo giai đoạn"; và dùng luôn tập này
+// (không mở rộng ra cả vụ đã xong) để tính "2 vụ gần nhất", vì mục đích duy nhất là hỗ trợ phân
+// công việc MỚI — vụ đã xong không còn liên quan tới quyết định đó.
+// ====================================================================
+function PhanCongHoSoModule() {
+  const [dsVu, dangTai] = useDanhSachDangGiaiQuyet();
+  const dsCanBo = useDanhSachCanBo();
+  const [tuKhoa, setTuKhoa] = useState("");
+  const [sortCot, setSortCot] = useState("tongVu");
+  const [sortChieu, setSortChieu] = useState("desc");
+
+  const bang = useMemo(() => {
+    // Danh sách KSV: gộp roster canbo (vai trò ksv, luôn đầy đủ kể cả đang 0 vụ) với mọi tên
+    // ksvChinh thấy được trong dữ liệu đang tồn (phòng tên KSV cũ/nhập tay không có trong danh
+    // mục Cán bộ) — cùng pattern lọc KSV đã dùng ở DanhSachPanel.
+    const tuCanBo = dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen);
+    const tuDuLieu = dsVu.map(v => v.ksvChinh).filter(Boolean);
+    const dsTen = [...new Set([...tuCanBo, ...tuDuLieu])];
+
+    return dsTen.map(ksv => {
+      // dsVu đã sort desc theo ngayTao (từ hook) — filter giữ nguyên thứ tự đó, không sort lại.
+      const vuCuaKsv = dsVu.filter(v => (v.ksvChinh || "") === ksv);
+      const theoGD = {};
+      for (const gd of THU_TU_GIAI_DOAN) {
+        const arr = vuCuaKsv.filter(v => v.coQuanThuLy === gd);
+        theoGD[gd] = { soVu: arr.length, soBiCan: arr.reduce((s, v) => s + (v.soBiCan || 0), 0) };
+      }
+      return {
+        ksv, theoGD,
+        tongVu: vuCuaKsv.length,
+        tongBiCan: vuCuaKsv.reduce((s, v) => s + (v.soBiCan || 0), 0),
+        ganNhat: vuCuaKsv.slice(0, 2),
+      };
+    });
+  }, [dsCanBo, dsVu]);
+
+  const hienThi = useMemo(() => {
+    const k = tuKhoa.trim().toLowerCase();
+    const loc = k ? bang.filter(r => r.ksv.toLowerCase().includes(k)) : bang;
+    return [...loc].sort((a, b) => {
+      let va, vb;
+      if (sortCot === "ksv") { va = a.ksv; vb = b.ksv; }
+      else if (sortCot === "tongBiCan") { va = a.tongBiCan; vb = b.tongBiCan; }
+      else if (THU_TU_GIAI_DOAN.includes(sortCot)) { va = a.theoGD[sortCot].soVu; vb = b.theoGD[sortCot].soVu; }
+      else { va = a.tongVu; vb = b.tongVu; } // mặc định / "tongVu"
+      if (typeof va === "string") return sortChieu === "asc" ? va.localeCompare(vb, "vi") : vb.localeCompare(va, "vi");
+      return sortChieu === "asc" ? va - vb : vb - va;
+    });
+  }, [bang, tuKhoa, sortCot, sortChieu]);
+
+  const doiSort = (cot) => {
+    if (sortCot === cot) setSortChieu(c => c === "asc" ? "desc" : "asc");
+    else { setSortCot(cot); setSortChieu(cot === "ksv" ? "asc" : "desc"); }
+  };
+
+  const xuatExcelPhanCong = async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Phân công hồ sơ");
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    const hRow = ws.addRow([
+      "KSV",
+      "ĐT - Vụ", "ĐT - BC", "TT - Vụ", "TT - BC", "XX - Vụ", "XX - BC",
+      "Tổng - Vụ", "Tổng - BC",
+      "Vụ gần nhất 1 (mã)", "Vụ gần nhất 1 (tên)", "Vụ gần nhất 1 (giai đoạn)", "Vụ gần nhất 1 (ngày nhận)",
+      "Vụ gần nhất 2 (mã)", "Vụ gần nhất 2 (tên)", "Vụ gần nhất 2 (giai đoạn)", "Vụ gần nhất 2 (ngày nhận)",
+    ]);
+    hRow.font = { bold: true };
+    hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    ws.columns = [
+      { width: 24 },
+      { width: 9 }, { width: 9 }, { width: 9 }, { width: 9 }, { width: 9 }, { width: 9 },
+      { width: 10 }, { width: 10 },
+      { width: 16 }, { width: 30 }, { width: 12 }, { width: 14 },
+      { width: 16 }, { width: 30 }, { width: 12 }, { width: 14 },
+    ];
+    hienThi.forEach(r => {
+      const [v1, v2] = r.ganNhat;
+      ws.addRow([
+        r.ksv,
+        r.theoGD.dieu_tra.soVu, r.theoGD.dieu_tra.soBiCan,
+        r.theoGD.truy_to.soVu, r.theoGD.truy_to.soBiCan,
+        r.theoGD.xet_xu.soVu, r.theoGD.xet_xu.soBiCan,
+        r.tongVu, r.tongBiCan,
+        v1 ? hienThiMa(v1) : "", v1 ? (v1.tenVu || "") : "", v1 ? (NHAN_GIAI_DOAN[v1.coQuanThuLy] || "") : "", v1 ? fmtDate(v1.ngayTao) : "",
+        v2 ? hienThiMa(v2) : "", v2 ? (v2.tenVu || "") : "", v2 ? (NHAN_GIAI_DOAN[v2.coQuanThuLy] || "") : "", v2 ? fmtDate(v2.ngayTao) : "",
+      ]);
+    });
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `QLVA_PhanCongHoSo_${toInputDateNhanh(new Date())}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-1">Phân công hồ sơ</h2>
+      <div className="text-sm text-slate-500 mb-4">
+        Số vụ/số bị can đang thụ lý của từng KSV chính, theo từng giai đoạn — chỉ tính vụ "Đang
+        giải quyết", cộng 2 vụ gần nhất (theo ngày tạo, coi là ngày nhận) để tham khảo lúc phân
+        công hồ sơ mới.
+      </div>
+
+      <div className="flex items-center justify-between mb-3 gap-3">
+        <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)} placeholder="Tìm theo tên KSV..."
+               className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-64" />
+        <button onClick={xuatExcelPhanCong}
+                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">
+          ⬇ Tải Excel
+        </button>
+      </div>
+
+      {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
+
+      {!dangTai && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 sticky top-0">
+              <tr>
+                <ThSort nhan="KSV" cot="ksv" sortCot={sortCot} sortChieu={sortChieu} onBam={doiSort} />
+                <ThSort nhan="Điều tra (Vụ)" cot="dieu_tra" sortCot={sortCot} sortChieu={sortChieu} onBam={doiSort} />
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Điều tra (BC)</th>
+                <ThSort nhan="Truy tố (Vụ)" cot="truy_to" sortCot={sortCot} sortChieu={sortChieu} onBam={doiSort} />
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Truy tố (BC)</th>
+                <ThSort nhan="Xét xử (Vụ)" cot="xet_xu" sortCot={sortCot} sortChieu={sortChieu} onBam={doiSort} />
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Xét xử (BC)</th>
+                <ThSort nhan="Tổng (Vụ)" cot="tongVu" sortCot={sortCot} sortChieu={sortChieu} onBam={doiSort} />
+                <ThSort nhan="Tổng (BC)" cot="tongBiCan" sortCot={sortCot} sortChieu={sortChieu} onBam={doiSort} />
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">2 vụ gần nhất (ngày nhận)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {hienThi.map(r => (
+                <tr key={r.ksv} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 align-top">
+                  <td className="px-3 py-2 font-medium">{r.ksv}</td>
+                  <td className="px-3 py-2">{r.theoGD.dieu_tra.soVu}</td>
+                  <td className="px-3 py-2 text-slate-500">{r.theoGD.dieu_tra.soBiCan}</td>
+                  <td className="px-3 py-2">{r.theoGD.truy_to.soVu}</td>
+                  <td className="px-3 py-2 text-slate-500">{r.theoGD.truy_to.soBiCan}</td>
+                  <td className="px-3 py-2">{r.theoGD.xet_xu.soVu}</td>
+                  <td className="px-3 py-2 text-slate-500">{r.theoGD.xet_xu.soBiCan}</td>
+                  <td className="px-3 py-2 font-semibold">{r.tongVu}</td>
+                  <td className="px-3 py-2 font-semibold text-slate-600">{r.tongBiCan}</td>
+                  <td className="px-3 py-2">
+                    {r.ganNhat.length === 0 && <span className="text-slate-300">—</span>}
+                    {r.ganNhat.map(v => (
+                      <div key={v.id} className="mb-0.5 last:mb-0">
+                        <Badge mau={MAU_GIAI_DOAN[v.coQuanThuLy]}>{fmtDate(v.ngayTao)}</Badge>{" "}
+                        <span className="text-slate-700">{v.tenVu || "(chưa đặt tên)"}</span>
+                        <span className="text-slate-400"> — {hienThiMa(v)}</span>
+                      </div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+              {hienThi.length === 0 && (
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-slate-400">Không có KSV nào khớp.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DashboardModule() {
   const [dem, setDem] = useState(null);
   const [demBiCan, setDemBiCan] = useState(null);
@@ -18022,6 +18203,7 @@ function BangExcelModule() {
 // ====================================================================
 const MODULES = [
   { id: "list",        label: "Danh sách vụ án"   },
+  { id: "phancong",    label: "Phân công hồ sơ"   },
   { id: "dagiaiquyet", label: "Án đã giải quyết"  },
   { id: "giaonhan",    label: "Giao nhận hồ sơ"   },
   { id: "nopluukho",   label: "Nộp lưu kho"        },
@@ -18475,6 +18657,7 @@ function AppShell({ user }) {
       </aside>
       <main className="flex-1 p-8 overflow-auto">
         {tab === "list"        && <DanhSachVuAnModule currentUser={user} />}
+        {tab === "phancong"    && <PhanCongHoSoModule />}
         {tab === "dagiaiquyet" && <AnDaGiaiQuyetModule />}
         {tab === "giaonhan"    && <GiaoNhanHoSoModule currentUser={user} />}
         {tab === "nopluukho"   && <NopLuuKhoModule />}
