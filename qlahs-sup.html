@@ -16381,16 +16381,19 @@ function ChartCotChong({ labels, datasets }) {
 // ====================================================================
 // MODULE: PHÂN CÔNG HỒ SƠ (2026-08-13)
 // Bảng tổng hợp khối lượng công việc HIỆN TẠI của từng KSV chính (`vuAn.ksvChinh`) — số vụ + số
-// bị can đang thụ lý ở TỪNG giai đoạn (Điều tra/Truy tố/Xét xử), cộng 2 vụ GẦN NHẤT (theo
+// bị can đang thụ lý ở TỪNG giai đoạn (Điều tra/Truy tố/Xét xử), cộng 2 vụ ĐIỀU TRA GẦN NHẤT (theo
 // `ngayTao`, coi là "ngày nhận" — chọn theo yêu cầu Dũng, đơn giản hơn hẳn so với dò log chuyển
-// giai đoạn hay module Giao nhận hồ sơ) họ vừa được giao — để lãnh đạo/thư ký cân nhắc phân công
-// hồ sơ mới cho ai còn ít việc/chưa vừa nhận gì gần đây.
+// giai đoạn hay module Giao nhận hồ sơ) họ vừa được phân công — để lãnh đạo/thư ký cân nhắc phân
+// công hồ sơ Điều tra mới cho ai còn ít việc/chưa vừa nhận gì gần đây.
 //
 // CHỈ tính vụ ĐANG GIẢI QUYẾT (`useDanhSachDangGiaiQuyet`, đã sort sẵn desc theo `ngayTao` —
 // dùng luôn thứ tự đó để lấy "2 vụ gần nhất" mà không cần sort lại) — vụ đã xong không còn là
-// khối lượng công việc thật của KSV, không tính vào "tổng"/"theo giai đoạn"; và dùng luôn tập này
-// (không mở rộng ra cả vụ đã xong) để tính "2 vụ gần nhất", vì mục đích duy nhất là hỗ trợ phân
-// công việc MỚI — vụ đã xong không còn liên quan tới quyết định đó.
+// khối lượng công việc thật của KSV, không tính vào "tổng"/"theo giai đoạn".
+//
+// "2 vụ gần nhất" CHỈ tính trong giai đoạn ĐIỀU TRA (2026-08-13, theo yêu cầu Dũng: "2 vụ gần
+// nhất chỉ là 2 vụ phân công điều tra gần nhất") — đây là nơi KSV thực sự "vừa nhận việc mới",
+// khác vụ họ đang giữ ở Truy tố/Xét xử (thường đã theo từ trước, không phản ánh đúng nhịp phân
+// công gần đây) — KHÔNG hiện mã vụ (không cần để phân công, chỉ cần tên + ngày + số bị can).
 // ====================================================================
 function PhanCongHoSoModule() {
   const [dsVu, dangTai] = useDanhSachDangGiaiQuyet();
@@ -16413,13 +16416,13 @@ function PhanCongHoSoModule() {
       const theoGD = {};
       for (const gd of THU_TU_GIAI_DOAN) {
         const arr = vuCuaKsv.filter(v => v.coQuanThuLy === gd);
-        theoGD[gd] = { soVu: arr.length, soBiCan: arr.reduce((s, v) => s + (v.soBiCan || 0), 0) };
+        theoGD[gd] = { soVu: arr.length, soBiCan: arr.reduce((s, v) => s + (v.soBiCan || 0), 0), arr };
       }
       return {
         ksv, theoGD,
         tongVu: vuCuaKsv.length,
         tongBiCan: vuCuaKsv.reduce((s, v) => s + (v.soBiCan || 0), 0),
-        ganNhat: vuCuaKsv.slice(0, 2),
+        ganNhatDieuTra: theoGD.dieu_tra.arr.slice(0, 2),
       };
     });
   }, [dsCanBo, dsVu]);
@@ -16443,38 +16446,94 @@ function PhanCongHoSoModule() {
     else { setSortCot(cot); setSortChieu(cot === "ksv" ? "asc" : "desc"); }
   };
 
+  // Excel format 2 hàng header nhóm+cột-con, viền lưới đầy đủ, tô màu theo NHÓM (khác hẳn tô theo
+  // từng ô đơn lẻ) để mắt tách nhanh 3 giai đoạn/Tổng/2 vụ gần nhất — đúng yêu cầu "dễ quan sát
+  // nhất" (2026-08-13, bản sửa lại theo phản hồi Dũng, thay hẳn bản đầu chỉ có 1 hàng header phẳng).
   const xuatExcelPhanCong = async () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Phân công hồ sơ");
-    ws.views = [{ state: "frozen", ySplit: 1 }];
-    const hRow = ws.addRow([
-      "KSV",
-      "ĐT - Vụ", "ĐT - BC", "TT - Vụ", "TT - BC", "XX - Vụ", "XX - BC",
-      "Tổng - Vụ", "Tổng - BC",
-      "Vụ gần nhất 1 (mã)", "Vụ gần nhất 1 (tên)", "Vụ gần nhất 1 (giai đoạn)", "Vụ gần nhất 1 (ngày nhận)",
-      "Vụ gần nhất 2 (mã)", "Vụ gần nhất 2 (tên)", "Vụ gần nhất 2 (giai đoạn)", "Vụ gần nhất 2 (ngày nhận)",
-    ]);
-    hRow.font = { bold: true };
-    hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-    ws.columns = [
-      { width: 24 },
-      { width: 9 }, { width: 9 }, { width: 9 }, { width: 9 }, { width: 9 }, { width: 9 },
-      { width: 10 }, { width: 10 },
-      { width: 16 }, { width: 30 }, { width: 12 }, { width: 14 },
-      { width: 16 }, { width: 30 }, { width: 12 }, { width: 14 },
+
+    const NHOM = [
+      { nhan: "", cols: ["KSV"], mau: "FFE2E8F0" },                 // slate-200
+      { nhan: "Điều tra", cols: ["Vụ", "BC"], mau: "FFEFF6FF" },     // blue-50, khớp MAU_GIAI_DOAN.dieu_tra
+      { nhan: "Truy tố", cols: ["Vụ", "BC"], mau: "FFFAF5FF" },      // purple-50
+      { nhan: "Xét xử", cols: ["Vụ", "BC"], mau: "FFECFDF5" },       // emerald-50
+      { nhan: "Tổng", cols: ["Vụ", "BC"], mau: "FFFEF3C7" },         // amber-100, nổi bật nhất
+      { nhan: "Vụ Điều tra gần nhất 1", cols: ["Tên vụ", "Ngày nhận", "Số BC"], mau: "FFEEF2FF" }, // indigo-50
+      { nhan: "Vụ Điều tra gần nhất 2", cols: ["Tên vụ", "Ngày nhận", "Số BC"], mau: "FFEEF2FF" },
     ];
-    hienThi.forEach(r => {
-      const [v1, v2] = r.ganNhat;
-      ws.addRow([
+    const tongSoCot = NHOM.reduce((s, n) => s + n.cols.length, 0);
+    const VIEN = { style: "thin", color: { argb: "FFCBD5E1" } }; // slate-300
+    const oVien = { top: VIEN, left: VIEN, bottom: VIEN, right: VIEN };
+    // Cột đầu tiên của MỖI nhóm (trừ KSV) — kẻ viền trái đậm hơn để phân ranh giới nhóm rõ hơn hẳn
+    // lưới mảnh thông thường, không cần tô nguyên cột màu đậm gây rối mắt.
+    const VIEN_DAM = { style: "medium", color: { argb: "FF94A3B8" } }; // slate-400
+    const dauNhomCot = new Set();
+    { let c = 1; NHOM.forEach(n => { dauNhomCot.add(c); c += n.cols.length; }); }
+
+    const tieuDe = ws.addRow([`PHÂN CÔNG HỒ SƠ — xuất ngày ${fmtDate(new Date())}`]);
+    tieuDe.font = { bold: true, size: 13 };
+    ws.mergeCells(tieuDe.number, 1, tieuDe.number, tongSoCot);
+
+    const ghiChu = ws.addRow([
+      `Chỉ tính vụ "Đang giải quyết". "2 vụ Điều tra gần nhất" tính theo ngày tạo vụ (coi là ngày nhận), chỉ trong giai đoạn Điều tra.`,
+    ]);
+    ghiChu.font = { italic: true, size: 10, color: { argb: "FF64748B" } };
+    ws.mergeCells(ghiChu.number, 1, ghiChu.number, tongSoCot);
+
+    const hangNhom = ws.addRow([]);
+    const hangCon = ws.addRow([]);
+    let col = 1;
+    NHOM.forEach(n => {
+      const rong = n.cols.length;
+      if (rong === 1) {
+        ws.mergeCells(hangNhom.number, col, hangCon.number, col); // KSV chiếm dọc cả 2 hàng header
+        hangNhom.getCell(col).value = n.cols[0];
+      } else {
+        ws.mergeCells(hangNhom.number, col, hangNhom.number, col + rong - 1);
+        hangNhom.getCell(col).value = n.nhan;
+        n.cols.forEach((c, j) => { hangCon.getCell(col + j).value = c; });
+      }
+      for (let c = col; c < col + rong; c++) {
+        [hangNhom, hangCon].forEach(h => {
+          const cell = h.getCell(c);
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: n.mau } };
+          cell.font = { bold: true };
+          cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+          cell.border = { ...oVien, ...(dauNhomCot.has(c) && c > 1 ? { left: VIEN_DAM } : {}) };
+        });
+      }
+      col += rong;
+    });
+    ws.views = [{ state: "frozen", ySplit: hangCon.number }];
+
+    const doRong = [26, 6, 6, 6, 6, 6, 6, 7, 7, 30, 12, 6, 30, 12, 6];
+    doRong.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+    hienThi.forEach((r, idx) => {
+      const [v1, v2] = r.ganNhatDieuTra;
+      const row = ws.addRow([
         r.ksv,
         r.theoGD.dieu_tra.soVu, r.theoGD.dieu_tra.soBiCan,
         r.theoGD.truy_to.soVu, r.theoGD.truy_to.soBiCan,
         r.theoGD.xet_xu.soVu, r.theoGD.xet_xu.soBiCan,
         r.tongVu, r.tongBiCan,
-        v1 ? hienThiMa(v1) : "", v1 ? (v1.tenVu || "") : "", v1 ? (NHAN_GIAI_DOAN[v1.coQuanThuLy] || "") : "", v1 ? fmtDate(v1.ngayTao) : "",
-        v2 ? hienThiMa(v2) : "", v2 ? (v2.tenVu || "") : "", v2 ? (NHAN_GIAI_DOAN[v2.coQuanThuLy] || "") : "", v2 ? fmtDate(v2.ngayTao) : "",
+        v1 ? (v1.tenVu || "(chưa đặt tên)") : "", v1 ? fmtDate(v1.ngayTao) : "", v1 ? (v1.soBiCan ?? 0) : "",
+        v2 ? (v2.tenVu || "(chưa đặt tên)") : "", v2 ? fmtDate(v2.ngayTao) : "", v2 ? (v2.soBiCan ?? 0) : "",
       ]);
+      const nenXen = idx % 2 === 1 ? "FFF8FAFC" : "FFFFFFFF"; // zebra striping — dễ dò theo hàng
+      row.eachCell({ includeEmpty: true }, (cell, c) => {
+        cell.border = { ...oVien, ...(dauNhomCot.has(c) && c > 1 ? { left: VIEN_DAM } : {}) };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: nenXen } };
+        cell.alignment = c === 1 || c === 10 || c === 13
+          ? { vertical: "middle", wrapText: true }                       // KSV/Tên vụ — text, canh trái
+          : { vertical: "middle", horizontal: "center", wrapText: true }; // số/ngày — canh giữa
+      });
+      row.getCell(1).font = { bold: true };
+      row.getCell(8).font = { bold: true, color: { argb: "FFB45309" } }; // Tổng - Vụ, khớp tông amber header
+      row.getCell(9).font = { bold: true, color: { argb: "FFB45309" } }; // Tổng - BC
     });
+
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const url = URL.createObjectURL(blob);
@@ -16492,8 +16551,8 @@ function PhanCongHoSoModule() {
       <h2 className="text-lg font-semibold mb-1">Phân công hồ sơ</h2>
       <div className="text-sm text-slate-500 mb-4">
         Số vụ/số bị can đang thụ lý của từng KSV chính, theo từng giai đoạn — chỉ tính vụ "Đang
-        giải quyết", cộng 2 vụ gần nhất (theo ngày tạo, coi là ngày nhận) để tham khảo lúc phân
-        công hồ sơ mới.
+        giải quyết", cộng 2 vụ Điều tra gần nhất (theo ngày tạo, coi là ngày nhận) để tham khảo
+        lúc phân công hồ sơ điều tra mới.
       </div>
 
       <div className="flex items-center justify-between mb-3 gap-3">
@@ -16521,7 +16580,7 @@ function PhanCongHoSoModule() {
                 <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Xét xử (BC)</th>
                 <ThSort nhan="Tổng (Vụ)" cot="tongVu" sortCot={sortCot} sortChieu={sortChieu} onBam={doiSort} />
                 <ThSort nhan="Tổng (BC)" cot="tongBiCan" sortCot={sortCot} sortChieu={sortChieu} onBam={doiSort} />
-                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">2 vụ gần nhất (ngày nhận)</th>
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">2 vụ Điều tra gần nhất (ngày nhận · số BC)</th>
               </tr>
             </thead>
             <tbody>
@@ -16537,12 +16596,12 @@ function PhanCongHoSoModule() {
                   <td className="px-3 py-2 font-semibold">{r.tongVu}</td>
                   <td className="px-3 py-2 font-semibold text-slate-600">{r.tongBiCan}</td>
                   <td className="px-3 py-2">
-                    {r.ganNhat.length === 0 && <span className="text-slate-300">—</span>}
-                    {r.ganNhat.map(v => (
+                    {r.ganNhatDieuTra.length === 0 && <span className="text-slate-300">—</span>}
+                    {r.ganNhatDieuTra.map(v => (
                       <div key={v.id} className="mb-0.5 last:mb-0">
-                        <Badge mau={MAU_GIAI_DOAN[v.coQuanThuLy]}>{fmtDate(v.ngayTao)}</Badge>{" "}
+                        <Badge mau="bg-indigo-100 text-indigo-700">{fmtDate(v.ngayTao)}</Badge>{" "}
                         <span className="text-slate-700">{v.tenVu || "(chưa đặt tên)"}</span>
-                        <span className="text-slate-400"> — {hienThiMa(v)}</span>
+                        <span className="text-slate-400"> — {v.soBiCan ?? 0} BC</span>
                       </div>
                     ))}
                   </td>

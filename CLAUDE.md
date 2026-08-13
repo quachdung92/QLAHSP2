@@ -42,13 +42,39 @@ vụ)/1 chỉ có trong dữ liệu không có trong roster — đúng tình hu�
 PASS: đếm đúng vụ/bị can theo từng giai đoạn, tổng đúng, "2 vụ gần nhất" giữ đúng thứ tự mới→cũ,
 KSV 0 vụ vẫn hiện đúng (không bị lọc mất), vai trò khác `ksv` (VD `dtv`) không lọt vào danh sách.
 
+**Sửa lại theo phản hồi Dũng ngay sau bản đầu (cùng ngày)**: (1) "2 vụ gần nhất" đổi từ lấy 2 vụ mới
+nhất BẤT KỲ giai đoạn nào của KSV sang **chỉ lấy trong giai đoạn Điều tra** (`theoGD.dieu_tra.arr`,
+lưu thêm mảng gốc `arr` bên trong `theoGD[gd]` để tái dùng, không tính lại) — đúng nguyên văn yêu
+cầu "2 vụ gần nhất chỉ là 2 vụ phân công điều tra gần nhất": vụ Truy tố/Xét xử KSV đang giữ thường
+đã theo từ trước, không phản ánh đúng nhịp phân công MỚI; (2) bỏ hẳn cột "mã vụ" ở cả bảng màn hình
+lẫn Excel (không cần để ra quyết định phân công); (3) thêm số bị can vào mỗi vụ gần nhất (cả UI lẫn
+Excel); (4) viết lại HOÀN TOÀN format Excel — từ 1 hàng header phẳng sang **2 hàng header nhóm+cột
+con** (merge ngang cho tên nhóm — Điều tra/Truy tố/Xét xử/Tổng/2 vụ ĐT gần nhất, merge dọc cho cột
+KSV xuyên cả 2 hàng header), tô màu NỀN THEO NHÓM (khớp tông `MAU_GIAI_DOAN` đã dùng ở nơi khác:
+xanh dương/tím/xanh lá cho ĐT/TT/XX, hổ phách nổi bật cho Tổng, chàm nhạt cho 2 vụ gần nhất), viền
+lưới mảnh mọi ô + viền trái ĐẬM HƠN ở đầu mỗi nhóm (ranh giới rõ mà không cần tô nguyên cột màu đậm
+gây rối mắt), zebra-striping xen kẽ trắng/xám nhạt theo hàng, canh giữa cột số/ngày — canh trái cột
+tên, bold cột KSV + cột Tổng (màu amber khớp header). Thêm 2 dòng đầu sheet: tiêu đề lớn + 1 dòng
+ghi chú nhỏ giải thích phạm vi tính (giúp người mở file không có ngữ cảnh vẫn hiểu đúng số liệu).
+
+**Đã kiểm chứng lại sau khi sửa**: (1) test cô lập logic `ganNhatDieuTra` (5/5 PASS) — xác nhận vụ
+Truy tố MỚI HƠN không lọt vào "2 vụ gần nhất" dù mới hơn về ngày, đúng 2 vụ Điều tra gần nhất được
+chọn, "Tổng" vẫn đếm đủ mọi giai đoạn (không bị ảnh hưởng bởi việc lọc riêng phần "gần nhất"), KSV
+không có vụ Điều tra nào ra mảng rỗng không lỗi; (2) test dựng lại CHÍNH XÁC thân hàm
+`xuatExcelPhanCong` bằng package `exceljs` thật (ghi ra `.xlsx` rồi đọc lại, không phải chỉ tin
+code) — 18/18 PASS: đúng 15 cột, merge ngang nhóm/dọc cột KSV đúng vị trí, freeze pane đúng sau
+hàng header thứ 2, dữ liệu "Tổng" không bị nhầm với riêng cột Điều tra, "2 vụ gần nhất" đúng thứ
+tự mới→cũ và có số bị can, KSV không có vụ Điều tra hiện ô trống không lỗi, viền đậm đúng ở đầu
+nhóm/viền thường ở giữa nhóm. Compile-check qua `@babel/core`+`@babel/preset-react` — sạch.
+
 **CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật** — phiên này không có tài khoản đăng nhập
 `admin@qlva.local` (không tìm thấy mật khẩu lưu ở đâu trong repo/scratchpad, đúng vì đây là bí mật
 không nên lưu trong code). Trước khi merge/deploy, nên tự mở `qlahs-sup.web.app`, vào tab "Phân
 công hồ sơ", xác nhận: (1) số vụ/bị can từng giai đoạn của vài KSV quen thuộc khớp với đếm tay qua
-"Danh sách vụ án" lọc theo KSV; (2) "2 vụ gần nhất" đúng là 2 vụ KSV đó vừa được nhập gần đây nhất;
-(3) bấm "Tải Excel" ra file mở được, đủ cột, số liệu khớp màn hình. **Chưa merge vào `main`, chưa
-deploy** — chỉ đang ở nhánh `phan-cong-ho-so-ksv`.
+"Danh sách vụ án" lọc theo KSV; (2) "2 vụ Điều tra gần nhất" đúng là 2 vụ Điều tra KSV đó vừa được
+nhập gần đây nhất (không lẫn vụ Truy tố/Xét xử); (3) bấm "Tải Excel", mở bằng Excel thật, xác nhận
+format 2 hàng header/màu/viền hiện đúng như mô tả, dễ đọc. **Chưa merge vào `main`, chưa deploy** —
+chỉ đang ở nhánh `phan-cong-ho-so-ksv`.
 
 ## Biểu B10 C39-C42 ("Phân loại tội phạm" ở Truy tố) — sửa đọc đúng mức độ nghiêm trọng CỦA BỊ CAN thay vì field cấp vụ (2026-08-09, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
