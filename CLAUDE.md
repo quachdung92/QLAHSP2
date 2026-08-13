@@ -91,6 +91,31 @@ lúc viết test**: với 1 hàng ĐÃ MERGE nguyên hàng (tiêu đề/ghi chú
 ô "bên trong" phạm vi merge (dù không sai, không lỗi) không có tác dụng hiển thị gì thêm, vì Excel
 không vẽ đường kẻ nội bộ bên trong 1 ô đã merge.
 
+**Sửa lại lần 3 theo phản hồi Dũng (cùng ngày) — "mỗi KSV phải có độ rộng ô tối thiểu (vụ nào
+nhiều thông tin thì có thể rộng hơn)"**: hiểu đây là yêu cầu về ĐỘ CAO DÒNG (không phải độ rộng
+cột — cột dùng chung cho cả bảng, chỉ dòng mới thay đổi được theo TỪNG KSV) — mỗi dòng KSV cần
+tối thiểu 1 độ cao đủ đọc, nhưng dòng có nhiều chữ hơn (tên KSV dài, tên vụ trong "2 vụ gần nhất"
+dài) thì phải cao hơn để không bị cắt chữ. **Lý do kỹ thuật quan trọng**: ExcelJS/Excel KHÔNG tự
+tính lại chiều cao dòng theo `wrapText` khi ghi bằng code (khác lúc gõ tay trong Excel, nơi
+autofit chạy tự động) — nếu không tự đặt `row.height`, dòng có tên vụ dài bị wrap 2-3 dòng trong
+ô rộng cố định sẽ bị CẮT HÌNH (chữ tràn ra ngoài, ẩn mất phần dưới) khi mở bằng Excel thật — đúng
+bài học đã áp dụng trước đó ở "Tải toàn bộ lịch sử giao nhận" (`row.height = Math.max(46,
+events.length * 15)`), giờ áp dụng tương tự cho sheet này.
+
+**Đã sửa**: thêm `CAO_TOI_THIEU=20` (pt, sàn cho mọi dòng) + `CAO_MOI_DONG=15` (pt/dòng, khớp
+pattern đã dùng ở nơi kia) + hàm `soDongCanThiet(text, doRongCot)` ước lượng số dòng cần wrap
+bằng `ceil(độ dài chữ / độ rộng cột tính ký tự)` — chỉ là ước lượng gần đúng (không đo pixel font
+thật), nhưng đủ dùng cho tên KSV/tên vụ thông thường. Mỗi dòng dữ liệu: tính `soDongMax` = max của
+3 giá trị (số dòng cần cho tên KSV theo độ rộng cột A, số dòng cần cho tên vụ 1 theo cột J, số
+dòng cần cho tên vụ 2 theo cột M) rồi `row.height = Math.max(CAO_TOI_THIEU, soDongMax *
+CAO_MOI_DONG)`.
+
+**Đã kiểm chứng bằng `exceljs` thật** (ghi rồi đọc lại, không chỉ tin công thức) — 3/3 PASS: dòng
+KSV tên ngắn/không có vụ gần nhất giữ đúng CAO_TOI_THIEU (20pt); dòng có tên vụ rất dài (95 ký tự,
+cần 4 dòng wrap trong ô rộng 30 ký tự) tự nở ra đúng 60pt (4×15), cao hơn hẳn dòng ngắn — xác nhận
+đúng ý "vụ nào nhiều thông tin thì rộng hơn". Compile-check qua `@babel/core`+`@babel/preset-react`
+— sạch.
+
 **CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật, và CHƯA in thử ra giấy thật** — phiên này
 không có tài khoản đăng nhập `admin@qlva.local` (không tìm thấy mật khẩu lưu ở đâu trong repo/
 scratchpad, đúng vì đây là bí mật không nên lưu trong code). Trước khi merge/deploy, nên tự mở

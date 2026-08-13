@@ -16514,6 +16514,19 @@ function PhanCongHoSoModule() {
     const doRong = [26, 6, 6, 6, 6, 6, 6, 7, 7, 30, 12, 6, 30, 12, 6];
     doRong.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
 
+    // Mỗi dòng KSV có ĐỘ CAO TỐI THIỂU (2026-08-13, theo yêu cầu Dũng "mỗi KSV phải có độ rộng ô
+    // tối thiểu, vụ nào nhiều thông tin thì có thể rộng hơn") — ExcelJS/Excel KHÔNG tự tính lại
+    // chiều cao dòng theo `wrapText` (khác autofit của Excel khi gõ tay), nên nếu không tự đặt
+    // `row.height`, dòng KSV có tên vụ dài (bị wrap 2-3 dòng trong ô rộng 30 ký tự) sẽ bị CẮT HÌNH
+    // (chữ tràn ra ngoài ô, không hiện hết) khi mở bằng Excel thật — đúng bài học đã áp dụng ở
+    // "Tải toàn bộ lịch sử giao nhận" (`row.height = Math.max(46, events.length * 15)`).
+    // Ước lượng số dòng cần wrap = ceil(độ dài chữ / độ rộng cột tính bằng ký tự) — chỉ là ước
+    // lượng gần đúng (không đo pixel thật của font), nhưng đủ để tránh cắt chữ trong đa số trường
+    // hợp thực tế (tên vụ/tên KSV không quá dài bất thường).
+    const CAO_TOI_THIEU = 20; // pt — đủ cho 1 dòng chữ thường, có đệm cho zebra/canh giữa dễ nhìn
+    const CAO_MOI_DONG = 15;  // pt/dòng — khớp pattern đã dùng ở "Tải toàn bộ lịch sử giao nhận"
+    const soDongCanThiet = (text, doRongCot) => text ? Math.max(1, Math.ceil(String(text).length / doRongCot)) : 1;
+
     hienThi.forEach((r, idx) => {
       const [v1, v2] = r.ganNhatDieuTra;
       const row = ws.addRow([
@@ -16525,6 +16538,12 @@ function PhanCongHoSoModule() {
         v1 ? (v1.tenVu || "(chưa đặt tên)") : "", v1 ? fmtDate(v1.ngayTao) : "", v1 ? (v1.soBiCan ?? 0) : "",
         v2 ? (v2.tenVu || "(chưa đặt tên)") : "", v2 ? fmtDate(v2.ngayTao) : "", v2 ? (v2.soBiCan ?? 0) : "",
       ]);
+      const soDongMax = Math.max(
+        soDongCanThiet(r.ksv, doRong[0]),
+        v1 ? soDongCanThiet(v1.tenVu || "(chưa đặt tên)", doRong[9]) : 1,
+        v2 ? soDongCanThiet(v2.tenVu || "(chưa đặt tên)", doRong[12]) : 1,
+      );
+      row.height = Math.max(CAO_TOI_THIEU, soDongMax * CAO_MOI_DONG);
       const nenXen = idx % 2 === 1 ? "FFF8FAFC" : "FFFFFFFF"; // zebra striping — dễ dò theo hàng
       row.eachCell({ includeEmpty: true }, (cell, c) => {
         cell.border = { ...oVien, ...(dauNhomCot.has(c) && c > 1 ? { left: VIEN_DAM } : {}) };
