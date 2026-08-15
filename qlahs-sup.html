@@ -1160,10 +1160,10 @@ function Badge({ mau, children }) {
 }
 
 // Tiêu đề cột bấm được để sort tăng/giảm — dùng chung cho các bảng danh sách vụ án.
-function ThSort({ nhan, cot, sortCot, sortChieu, onBam }) {
+function ThSort({ nhan, cot, sortCot, sortChieu, onBam, className = "" }) {
   const dangChon = sortCot === cot;
   return (
-    <th className="text-left px-3 py-2 border-b border-slate-200 font-medium cursor-pointer select-none hover:text-slate-700"
+    <th className={`text-left px-3 py-2 border-b border-slate-200 font-medium cursor-pointer select-none hover:text-slate-700 ${className}`}
         onClick={() => onBam(cot)}>
       {nhan}{dangChon && <span className="ml-0.5">{sortChieu === "asc" ? "▲" : "▼"}</span>}
     </th>
@@ -7498,7 +7498,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
         <table className="w-full text-sm border-collapse">
           <thead className="bg-slate-100 text-slate-500 text-xs sticky top-0 z-10">
             <tr>
-              <ThSort nhan="Mã vụ" cot="maVu" sortCot={sortCot} sortChieu={sortChieu} onBam={bamSort} />
+              <ThSort nhan="Mã vụ" cot="maVu" sortCot={sortCot} sortChieu={sortChieu} onBam={bamSort} className="hidden md:table-cell" />
               <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Tên vụ / KSV</th>
               {!cotAn.has("biCan") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Bị can</th>}
               {!cotAn.has("giaiDoan") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Giai đoạn</th>}
@@ -7516,7 +7516,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
           <tbody>
             {dangTai && Array(6).fill(0).map((_, i) => (
               <tr key={`sk${i}`} className="animate-pulse border-b border-slate-100">
-                <td className="px-3 py-3"><div className="h-3 bg-slate-100 rounded w-24" /></td>
+                <td className="hidden md:table-cell px-3 py-3"><div className="h-3 bg-slate-100 rounded w-24" /></td>
                 <td className="px-3 py-3"><div className="h-3 bg-slate-100 rounded" style={{width:`${55+i*7}%`}} /></td>
                 <td colSpan={soCotHien - 2} className="px-3 py-3">
                   <div className="h-3 bg-slate-100 rounded w-16" />
@@ -7532,7 +7532,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
                     selectedId === v.id ? "bg-indigo-50 border-l-indigo-500"
                       : i % 2 === 0 ? "bg-white border-l-transparent hover:bg-slate-50" : "bg-slate-50/70 border-l-transparent hover:bg-slate-100"
                   }`}>
-                <td className="px-3 py-2 text-xs text-slate-500 align-top whitespace-nowrap">{hienThiMa(v)}</td>
+                <td className="hidden md:table-cell px-3 py-2 text-xs text-slate-500 align-top whitespace-nowrap">{hienThiMa(v)}</td>
                 <td className="px-3 py-2 align-top">
                   <div className="font-medium text-slate-800">{v.tenVu || "(chưa đặt tên)"}</div>
                   {v.ksvChinh && <div className="text-xs text-slate-400 mt-0.5">{v.ksvChinh}</div>}
@@ -7967,7 +7967,7 @@ function BiaHoSoModal({ duLieu, onDong }) {
 
 const SO_BI_CAN_MAC_DINH = 10;
 
-function ChiTietPanel({ vuAnId, onDoiSelected }) {
+function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
   const [vuAn, setVuAn] = useState(null);
   const [biCanList, setBiCanList] = useState([]);
   const [lichSu, setLichSu] = useState([]);
@@ -8033,19 +8033,39 @@ function ChiTietPanel({ vuAnId, onDoiSelected }) {
     }
   };
 
+  // Mobile/tablet (< lg, gồm cả điện thoại nằm ngang ~700-900px — 2026-08-15, phát hiện qua test
+  // landscape thật: ở "md" (768px) sidebar ĐÃ chuyển sang cột tĩnh 240px, nếu panel chi tiết cũng
+  // ép cột tĩnh 420px ngay từ 768px thì danh sách chỉ còn ~100px, gần như vô dụng) — panel chi tiết
+  // là overlay TOÀN MÀN HÌNH có nút "← Quay lại" thay vì cột 420px cố định. Chỉ từ "lg" (1024px,
+  // đủ rộng để chứa cả sidebar 240px + danh sách + cột 420px thoải mái) trở lên mới dùng cột tĩnh.
   if (!vuAnId) {
     return (
-      <div className="w-[420px] shrink-0 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 text-sm text-center px-4">
+      <div className="hidden lg:flex lg:w-[420px] lg:shrink-0 bg-white border border-slate-200 rounded-xl items-center justify-center text-slate-400 text-sm text-center px-4">
         Chọn 1 vụ án ở danh sách bên trái để xem chi tiết.
       </div>
     );
   }
   if (!vuAn) {
-    return <div className="w-[420px] shrink-0 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 text-sm">Đang tải...</div>;
+    return (
+      <div className="fixed inset-0 z-30 bg-white flex items-center justify-center text-slate-400 text-sm
+          lg:static lg:z-auto lg:w-[420px] lg:shrink-0 lg:border lg:border-slate-200 lg:rounded-xl">
+        Đang tải...
+      </div>
+    );
   }
 
   return (
-    <div className="w-[420px] shrink-0 bg-white border border-slate-200 rounded-xl overflow-auto min-h-0">
+    <div className="fixed inset-0 z-30 bg-white overflow-auto min-h-0
+        lg:static lg:z-auto lg:w-[420px] lg:shrink-0 lg:border lg:border-slate-200 lg:rounded-xl">
+      {onDong && (
+        <button onClick={onDong}
+                className="lg:hidden sticky top-0 z-10 w-full flex items-center gap-1 px-4 py-3 bg-white border-b border-slate-200 text-indigo-600 text-sm font-medium">
+          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          Quay lại danh sách
+        </button>
+      )}
       <div className="p-5 border-b border-slate-100">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -8683,9 +8703,9 @@ function DanhSachVuAnModule({ currentUser }) {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
         <h2 className="text-lg font-semibold">Danh sách vụ án</h2>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           {loiXuat && <span className="text-xs text-red-600">{loiXuat}</span>}
           <button onClick={() => xuatExcel(setDangXuat, setLoiXuat)} disabled={dangXuat}
                   title="Xuất toàn bộ dữ liệu hiện tại ra 1 bản DSAT/DSBCT dễ đọc (đã kiểm tra lại mapping cột 2026-07-11, khớp với dữ liệu hệ thống). Đây là bản xem/lưu trữ, KHÔNG dùng để nhập ngược lại qua Import Excel — cột đã gộp/đổi khác cấu trúc file gốc."
@@ -8699,9 +8719,9 @@ function DanhSachVuAnModule({ currentUser }) {
         </div>
       </div>
       <ThongKeKyHienTai />
-      <div className="flex-1 flex gap-4 min-h-0">
+      <div className="flex-1 flex gap-4 min-h-[280px]">
         <DanhSachPanel selectedId={selectedId} onSelect={setSelectedId} />
-        <ChiTietPanel vuAnId={selectedId} onDoiSelected={setSelectedId} />
+        <ChiTietPanel vuAnId={selectedId} onDoiSelected={setSelectedId} onDong={() => setSelectedId(null)} />
       </div>
       {showForm && (
         <ThemVuAnForm
@@ -13379,7 +13399,7 @@ function AnDaGiaiQuyetModule() {
         ))}
       </div>
 
-      <div className="flex-1 flex gap-4 min-h-0">
+      <div className="flex-1 flex gap-4 min-h-[280px]">
         <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
           {(tabCgdDangChon ? dangTaiCgd : dangTai) && <div className="p-4 text-sm text-slate-400">Đang tải...</div>}
           {loiTai && <div className="p-4 text-sm text-red-600">{loiTai}</div>}
@@ -13486,7 +13506,7 @@ function AnDaGiaiQuyetModule() {
           // Tab chuyển giai đoạn không nằm trong cache lạnh ở trên — tải lại riêng để phản ánh
           // đúng thay đổi (VD vụ vừa sửa lại vừa là vụ đang hiện trong 1 trong 2 tab này).
           taiDsCgd();
-        }} />
+        }} onDong={() => setSelectedId(null)} />
       </div>
     </div>
   );
@@ -18734,46 +18754,86 @@ function OfflineBanner() {
 
 function AppShell({ user }) {
   const [tab, setTab] = useState("list");
+  // Sidebar cố định w-60 chiếm gần hết bề rộng màn hình điện thoại (2026-08-15, theo yêu cầu Dũng
+  // "mở phần danh sách vụ án trên điện thoại... phần thông tin chi tiết che mất toàn bộ nội dung")
+  // — trên mobile (< md), sidebar đổi thành drawer trượt ra, mặc định ẩn, có thanh trên cùng với
+  // nút hamburger để mở. Desktop (md trở lên) giữ nguyên hành vi cũ (sidebar luôn hiện, không có
+  // thanh trên cùng).
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const chonTab = (id) => { setTab(id); setMobileNavOpen(false); };
 
+  // h-[100dvh] (KHÔNG phải h-screen = 100vh) — trên trình duyệt di động thật, "100vh" tính theo
+  // chiều cao viewport LỚN NHẤT (lúc thanh địa chỉ ẩn), luôn CAO HƠN phần thực sự nhìn thấy lúc mới
+  // tải trang (thanh địa chỉ còn hiện) — khiến khối dưới cùng (bảng danh sách) bị đẩy ra NGOÀI vùng
+  // nhìn thấy thật, mà cuộn cũng không tới được vì cuộn nằm BÊN TRONG `main` (overflow-auto), không
+  // phải cuộn trang — 1 dạng bug rất hay gặp trên di động thật (Playwright/DevTools mô phỏng kích
+  // thước cố định, không mô phỏng đúng hành vi thanh địa chỉ co giãn nên không phát hiện được lúc
+  // test). "100dvh" (dynamic viewport height) tự cập nhật đúng theo phần ĐANG thực sự hiển thị —
+  // đủ hỗ trợ trên mọi máy tầm iPhone 12 trở lên/Samsung S25 (2026-08-15, theo phản hồi Dũng test
+  // trên điện thoại thật).
   return (
-    <div className="h-screen flex overflow-hidden">
+    <div className="h-[100dvh] flex flex-col overflow-hidden">
       <OfflineBanner />
       <ToastContainer />
-      <aside className="w-60 bg-slate-900 text-slate-300 flex flex-col shrink-0 overflow-y-auto">
-        <div className="px-4 py-5 border-b border-slate-800">
-          <div className="text-white font-semibold">QLVA</div>
-          <div className="text-xs text-slate-500">Phòng 2 — VKSND Hà Nội</div>
-        </div>
-        <nav className="flex-1 py-2">
-          {MODULES.map(m => (
-            <button key={m.id} onClick={() => setTab(m.id)}
-              className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between
-                ${tab === m.id ? "bg-indigo-600 text-white" : "hover:bg-slate-800"}`}>
-              <span>{m.label}</span>
+      <div className="md:hidden flex items-center gap-3 bg-slate-900 text-white px-3 py-3 shrink-0 border-b border-slate-800">
+        <button onClick={() => setMobileNavOpen(true)} aria-label="Mở menu"
+                className="p-1.5 -ml-1 rounded-lg hover:bg-slate-800">
+          <svg viewBox="0 0 24 24" className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <div className="font-semibold">{MODULES.find(m => m.id === tab)?.label || (tab === "setting" ? "Cài đặt" : "QLVA")}</div>
+      </div>
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        {mobileNavOpen && (
+          <div className="md:hidden fixed inset-0 z-40 bg-black/40" onClick={() => setMobileNavOpen(false)} />
+        )}
+        <aside className={`w-60 bg-slate-900 text-slate-300 flex flex-col shrink-0 overflow-y-auto
+            fixed md:static inset-y-0 left-0 z-50 md:z-auto transition-transform duration-200 md:translate-x-0
+            ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"}`}>
+          <div className="px-4 py-5 border-b border-slate-800 flex items-center justify-between">
+            <div>
+              <div className="text-white font-semibold">QLVA</div>
+              <div className="text-xs text-slate-500">Phòng 2 — VKSND Hà Nội</div>
+            </div>
+            <button onClick={() => setMobileNavOpen(false)} aria-label="Đóng menu"
+                    className="md:hidden p-1 rounded hover:bg-slate-800 text-slate-400">
+              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
-          ))}
-          <div className="mx-4 mt-3 mb-1 border-t border-slate-700" />
-          <button onClick={() => setTab("setting")}
-            className={`w-full text-left px-4 py-2.5 text-sm
-              ${tab === "setting" ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-800 hover:text-slate-300"}`}>
-            Cài đặt
-          </button>
-        </nav>
-        <div className="px-4 py-3 border-t border-slate-800 text-xs">
-          <div className="text-slate-400 mb-2 truncate">{user.email}</div>
-          <button onClick={() => auth.signOut()} className="text-slate-500 hover:text-slate-300">Đăng xuất</button>
-        </div>
-      </aside>
-      <main className="flex-1 p-8 overflow-auto">
-        {tab === "list"        && <DanhSachVuAnModule currentUser={user} />}
-        {tab === "phancong"    && <PhanCongHoSoModule />}
-        {tab === "dagiaiquyet" && <AnDaGiaiQuyetModule />}
-        {tab === "giaonhan"    && <GiaoNhanHoSoModule currentUser={user} />}
-        {tab === "nopluukho"   && <NopLuuKhoModule />}
-        {tab === "ky"          && <KyBaoCaoModule />}
-        {tab === "dashboard"   && <DashboardModule />}
-        {tab === "setting"     && <CaiDatModule />}
-      </main>
+          </div>
+          <nav className="flex-1 py-2">
+            {MODULES.map(m => (
+              <button key={m.id} onClick={() => chonTab(m.id)}
+                className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between
+                  ${tab === m.id ? "bg-indigo-600 text-white" : "hover:bg-slate-800"}`}>
+                <span>{m.label}</span>
+              </button>
+            ))}
+            <div className="mx-4 mt-3 mb-1 border-t border-slate-700" />
+            <button onClick={() => chonTab("setting")}
+              className={`w-full text-left px-4 py-2.5 text-sm
+                ${tab === "setting" ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-800 hover:text-slate-300"}`}>
+              Cài đặt
+            </button>
+          </nav>
+          <div className="px-4 py-3 border-t border-slate-800 text-xs">
+            <div className="text-slate-400 mb-2 truncate">{user.email}</div>
+            <button onClick={() => auth.signOut()} className="text-slate-500 hover:text-slate-300">Đăng xuất</button>
+          </div>
+        </aside>
+        <main className="flex-1 p-3 md:p-8 overflow-auto min-h-0">
+          {tab === "list"        && <DanhSachVuAnModule currentUser={user} />}
+          {tab === "phancong"    && <PhanCongHoSoModule />}
+          {tab === "dagiaiquyet" && <AnDaGiaiQuyetModule />}
+          {tab === "giaonhan"    && <GiaoNhanHoSoModule currentUser={user} />}
+          {tab === "nopluukho"   && <NopLuuKhoModule />}
+          {tab === "ky"          && <KyBaoCaoModule />}
+          {tab === "dashboard"   && <DashboardModule />}
+          {tab === "setting"     && <CaiDatModule />}
+        </main>
+      </div>
     </div>
   );
 }

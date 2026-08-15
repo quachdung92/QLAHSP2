@@ -2,6 +2,167 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Giao diện điện thoại — Danh sách vụ án: sidebar drawer + panel chi tiết full-screen thay vì đè lên danh sách (2026-08-15, `qlahs-sup.html`, nhánh `mobile-danhsach-responsive`, CHƯA merge/deploy)
+
+Theo yêu cầu Dũng: "tạo 1 branch mới để khi mở phần danh sách vụ án trên điện thoại dễ quan sát hơn
+và có thể tra cứu được, hiện tại phần thông tin chi tiết hiển thị che mất toàn bộ nội dung" —
+`AppShell`/`DanhSachVuAnModule` trước đây HOÀN TOÀN không có xử lý responsive nào (0 breakpoint
+`md:`/`sm:` trong toàn bộ file) — sidebar cố định `w-60` (240px) + panel chi tiết `ChiTietPanel` cố
+định `w-[420px] shrink-0` nằm cùng hàng ngang với danh sách (`flex gap-4`, không wrap) khiến trên
+màn hình điện thoại (~375-414px) tổng bề rộng các panel vượt xa viewport, panel chi tiết 420px chiếm
+gần hết/che khuất mọi thứ, danh sách bị ép còn vài chục px không dùng được.
+
+**2 thay đổi độc lập, đều CHỈ dùng Tailwind responsive classes (`md:` = 768px), không cần JS phát
+hiện kích thước màn hình**:
+1. **`AppShell`** — sidebar đổi từ luôn hiện (row cố định) sang **drawer trượt ra** trên mobile (< md):
+   mặc định ẩn ngoài màn hình (`-translate-x-full`), có thanh trên cùng riêng (nút ☰ hamburger + tên
+   module đang xem, `md:hidden`) để mở, kèm backdrop mờ bấm ra ngoài để đóng. Từ md trở lên giữ
+   NGUYÊN hành vi cũ 100% (`md:static md:translate-x-0`, không có thanh trên cùng). Bọc thêm 1 tầng
+   `<div className="flex-1 flex overflow-hidden min-h-0">` quanh `aside`+`main` (đổi outer container
+   từ `flex` sang `flex flex-col` để chứa thêm thanh trên cùng phía trên) — **giữ đúng bất biến `h-*`/
+   `min-h-0`/`overflow-auto` đã ghi ở mục "Bố cục cuộn trang"**, không quay lại lỗi cũ `min-h-screen`
+   làm cuộn cả trang thay vì cuộn nội bộ từng panel.
+2. **`ChiTietPanel`** (dùng chung ở cả `DanhSachVuAnModule` LẪN `AnDaGiaiQuyetModule`, xem 2 lời gọi)
+   — thêm prop `onDong` (tuỳ chọn, callback đóng panel = `() => setSelectedId(null)` ở nơi gọi). Trên
+   mobile, panel chi tiết đổi từ cột 420px ép chung hàng thành **overlay TOÀN MÀN HÌNH** (`fixed
+   inset-0 z-30 bg-white`) kèm nút "← Quay lại danh sách" dính đầu trang (`sticky top-0`, chỉ hiện
+   `md:hidden`) — che có chủ đích và có đường quay lại rõ ràng, khác hẳn kiểu "che mất không lối
+   thoát" trước đây. Khi chưa chọn vụ nào, panel ẩn hẳn trên mobile (`hidden md:flex`) để danh sách
+   chiếm trọn màn hình thay vì luôn chiếm 420px cố định như trên desktop. Từ md trở lên giữ NGUYÊN
+   behavior cũ (cột tĩnh 420px, luôn hiện kể cả placeholder "Chọn 1 vụ..."). Áp dụng cho cả 2 nơi gọi
+   `ChiTietPanel` (Danh sách vụ án + Án đã giải quyết) vì cùng 1 component dùng chung.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong scratchpad,
+gỡ ngay sau) — sạch, không lỗi cú pháp. Mở thử qua server tĩnh cục bộ (`python -m http.server`) ở
+viewport mobile (375×812) — trang tải sạch, 0 lỗi console thật (chỉ cảnh báo Babel kích thước file vô
+hại đã biết). **CHƯA đăng nhập thật để xem trực tiếp danh sách/panel chi tiết trên mobile** (không có
+tài khoản trong phiên này) — nên tự thử trên `qlahs-sup.web.app` bằng điện thoại thật hoặc DevTools
+responsive mode trước khi merge/deploy: (1) thu nhỏ trình duyệt xuống bề rộng điện thoại, xác nhận
+sidebar ẩn, có nút ☰ mở drawer, bấm ra ngoài đóng được; (2) vào "Danh sách vụ án", xác nhận bảng danh
+sách chiếm trọn bề rộng, không có panel chi tiết nào chiếm chỗ khi chưa chọn vụ; (3) bấm 1 dòng vụ
+án, xác nhận panel chi tiết mở TOÀN MÀN HÌNH kèm nút "← Quay lại danh sách" ở đầu trang, bấm vào đó
+quay về đúng danh sách (không mất vị trí cuộn/bộ lọc đã chọn — `DanhSachPanel` không bị remount vì
+vẫn giữ nguyên state, chỉ ẩn/hiện qua CSS); (4) lặp lại tương tự ở "Án đã giải quyết"; (5) mở lại ở
+desktop (thu nhỏ trình duyệt lại về >768px), xác nhận layout y hệt trước khi sửa (sidebar luôn hiện,
+2 cột song song, không có nút ☰/"Quay lại").
+
+**Ngoài phạm vi (chưa làm)**: bảng `DanhSachPanel` (13 cột) trên mobile vẫn là 1 bảng rộng cuộn ngang
+(`overflow-auto` có sẵn từ trước), CHƯA đổi sang dạng thẻ/card xếp dọc — đủ dùng (tra cứu/cuộn ngang
+được) nhưng chưa tối ưu tối đa cho màn hình hẹp; các module 2-panel khác dùng pattern tương tự (Nộp
+lưu kho, Giao nhận hồ sơ...) chưa được rà/sửa responsive — nếu Dũng thấy cần, làm tiếp ở nhánh riêng.
+
+**Bổ sung ngay sau đó (cùng ngày, theo yêu cầu Dũng "khi ở dạng mobile thì có thể bỏ cái mã vụ đi
+được không, còn khi hiện bản PC thì đầy đủ")** — cột đầu tiên "Mã vụ" của bảng `DanhSachPanel` (dùng
+`ThSort`, đã thêm prop `className` tuỳ chọn để truyền responsive class) giờ ẩn trên mobile
+(`hidden md:table-cell`, áp dụng cho cả `<th>` lẫn `<td>` từng dòng VÀ ô skeleton lúc đang tải) —
+"Tên vụ / KSV" (đã có sẵn, không đổi) trở thành cột đầu tiên nhìn thấy trên mobile, đủ để nhận diện
+vụ mà không cần cuộn ngang tìm "Mã vụ" trước. Desktop (≥768px) giữ nguyên đủ cột như cũ. Chỉ áp dụng
+cho bảng này (module Danh sách vụ án) — chưa đụng tới cột "Mã vụ" ở bảng khác (VD Án đã giải quyết,
+dùng `<th>` thường không phải `ThSort`, không nằm trong yêu cầu lần này).
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm, gỡ ngay sau) —
+sạch. CHƯA xem qua UI thật (không có tài khoản đăng nhập trong phiên này) — tự xác nhận qua DevTools
+responsive mode/điện thoại thật: mobile không còn cột "Mã vụ", desktop vẫn đủ.
+
+**Bổ sung tiếp — test riêng chế độ NẰM NGANG (landscape) của điện thoại, phát hiện + sửa 2 bug thật
+(2026-08-15, cùng nhánh)**: theo yêu cầu Dũng "test cả giao diện nằm ngang của điện thoại nữa" —
+phiên này TÌNH CỜ có sẵn 1 phiên đăng nhập Supabase THẬT còn lưu trong trình duyệt test (không phải
+tự đăng nhập, session cũ từ trước còn sống) nên kiểm chứng được bằng dữ liệu thật (419 vụ án) thay vì
+chỉ đọc code. Test ở 2 mức bề ngang landscape hay gặp — điện thoại nhỏ (667×375, kiểu iPhone SE) và
+điện thoại lớn (844×390, kiểu iPhone 14 trở lên) — phát hiện:
+1. **Bug thật #1 — 844×390: danh sách chỉ còn ~97px bề rộng, gần như vô dụng.** Nguyên nhân: bề rộng
+   này đã vượt breakpoint `md` (768px) nên `AppShell` chuyển sidebar sang cột tĩnh (240px) VÀ
+   `ChiTietPanel` cũng chuyển sang cột tĩnh 420px CÙNG LÚC (kể cả khi chưa chọn vụ nào, panel vẫn
+   luôn chiếm 420px theo đúng thiết kế desktop ở bản sửa buổi sáng) — 844−240−420 chỉ còn ~180px
+   trừ tiếp padding/gap. Đây CHÍNH LÀ dạng bug ban đầu ("che mất nội dung") tái diễn ở 1 dải bề rộng
+   khác (768-1024px, vùng điện thoại nằm ngang/tablet nhỏ) mà bản sửa buổi sáng chưa lường tới.
+   **Đã sửa**: nâng breakpoint chuyển cột tĩnh 420px của `ChiTietPanel` từ `md:` (768px) lên **`lg:`**
+   (1024px) — dưới 1024px vẫn dùng overlay toàn màn hình + nút quay lại (như mobile), TỪ 1024px mới
+   đủ rộng cho sidebar+danh sách+cột 420px thoải mái. Sidebar (`AppShell`) GIỮ NGUYÊN breakpoint
+   `md:` (768px) — cột nav tĩnh 240px không gây vấn đề tương tự vì nó không "nuốt" thêm 1 cột 420px
+   cố định như panel chi tiết.
+2. **Bug thật #2 — cả 2 mức: bảng danh sách bị bóp xuống 0px chiều cao, hoàn toàn không thấy được.**
+   Đo trực tiếp qua `getBoundingClientRect()`: vùng `flex-1 flex gap-4 min-h-0` (chứa danh sách+chi
+   tiết) chỉ được cấp ~173px chiều cao ở 375px chiều cao màn hình (header module + khối thống kê
+   "Kỳ hiện tại"/"Mới trong kỳ" + khối tìm-kiếm/lọc riêng của `DanhSachPanel` — search box + 2 hàng
+   nút lọc + dropdown KSV — đã chiếm gần hết phần đó), khiến vùng cuộn bảng con (`flex-1 overflow-
+   auto` bọc `<table>`) bị ép còn ĐÚNG 0px — 419 dòng dữ liệu tồn tại trong DOM nhưng không ai nhìn
+   thấy được, kể cả cuộn trang cũng không lộ ra (vì `min-h-0` cho phép item flex co tới 0 vô điều
+   kiện). **Đã sửa**: đổi `min-h-0` thành `min-h-[280px]` (giá trị cố định, KHÔNG phải `auto` — vẫn
+   giữ đúng tính chất "không phải auto" cần thiết để `overflow-auto` bên trong hoạt động, chỉ khác
+   là có 1 sàn tối thiểu 280px thay vì co tới 0) cho cùng 1 khối `flex-1 flex gap-4` ở CẢ 2 nơi dùng
+   pattern này (`DanhSachVuAnModule` lẫn `AnDaGiaiQuyetModule`, cùng cấu trúc). Kết quả: màn hình
+   quá thấp để vừa hết thì TOÀN BỘ module (kể cả phần trên) tự tràn xuống dưới `<main>` (đã có sẵn
+   `overflow-auto` từ trước, đúng nguyên tắc "Bố cục cuộn trang") — người dùng cuộn xuống 1 chút là
+   thấy được bảng, thay vì bảng biến mất vĩnh viễn không cách nào xem.
+
+**Đã kiểm chứng lại đầy đủ SAU 2 bug fix trên, bằng dữ liệu thật + đo DOM trực tiếp** (không dùng
+screenshot — môi trường test này screenshot bị "đứng hình"/không refresh sau tương tác, đã xác nhận
+qua thử đổi `outline` màu đỏ lên `<body>` rồi chụp lại vẫn không đổi gì trên ảnh, đúng loại hạn chế
+môi trường đã ghi nhận trước đây ở các mục khác trong file này — `javascript_tool`/đo
+`getBoundingClientRect`/`getComputedStyle` vẫn phản hồi chính xác nên chuyển hẳn sang kiểm chứng
+bằng cách này):
+- 667×375: `flexRowH` đúng sàn 280px, vùng bảng còn 72px (nhỏ nhưng KHÔNG còn 0), cuộn `main` lộ ra
+  đúng phần bảng, cột "Mã vụ" vẫn ẩn đúng (< md).
+- 844×390: danh sách rộng lại bình thường (không đo lại con số cụ thể nhưng bảng đã hiện đủ header
+  đầy đủ cột kể cả "Mã vụ" vì ≥ md), bấm 1 dòng thật mở đúng overlay toàn màn hình
+  (`position:fixed`, rộng bằng đúng viewport, nút "Quay lại danh sách" `display:flex`).
+- 1280×800 (desktop thật): xác nhận KHÔNG hồi quy — nút quay lại `display:none`, sidebar
+  `position:static`, thanh trên cùng mobile `display:none`, danh sách rộng 541px (thoải mái).
+- 375×812 (portrait mobile gốc): xác nhận KHÔNG hồi quy — `main` không cần cuộn (mọi thứ vừa đủ),
+  bảng cao 345px hiện đủ, bấm 1 dòng mở overlay rồi bấm "Quay lại danh sách" quay về đúng danh sách
+  (419 dòng vẫn nguyên, nút quay lại biến mất đúng).
+Compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm, gỡ ngay sau) — sạch.
+
+**Lưu ý về phiên đăng nhập thật dùng để test**: phiên trình duyệt test này còn giữ session Supabase
+đã đăng nhập từ trước (không phải do phiên này tự đăng nhập) — mọi thao tác kiểm chứng ở trên chỉ
+ĐỌC (đổi kích thước cửa sổ, bấm chọn dòng để mở/đóng panel chi tiết), không có ghi/xoá/sửa dữ liệu
+nào. Vẫn CHƯA tự tay thử trên điện thoại thật xoay ngang — nên Dũng tự xoay ngang điện thoại thật 1
+lần trên `qlahs-sup.web.app` sau khi deploy để cảm nhận trực tiếp, đặc biệt với điện thoại màn hình
+nhỏ (kiểu iPhone SE) — vùng bảng vẫn hơi chật (72px ở mức đo được), cần cuộn xuống mới thấy đủ, đây
+là giới hạn vật lý thật của màn hình quá thấp chứ không phải lỗi, chưa có cách nào ưu tiên hơn được
+nữa mà không thu gọn/ẩn bớt khối thống kê "Kỳ hiện tại" phía trên (chưa làm — nếu Dũng thấy vẫn chưa
+đủ dùng, có thể ẩn khối đó hoặc thu gọn thêm ở 1 vòng chỉnh sửa tiếp theo).
+
+**Dũng phản hồi ngay sau đó: không cần lo trường hợp màn hình quá nhỏ đó — điện thoại thực tế dùng
+đều từ iPhone 12 trở lên, iPhone 17 Pro Max, Samsung S25...** — đã đo lại đúng dải kích thước này
+(nằm ngang) thay vì lo cho iPhone SE: 844×390 (iPhone 12, đã đo ở lượt trước), 780×360 (khớp Samsung
+dòng S), 932×430 (khớp iPhone Pro Max đời mới). Cả 3 đều **dưới ngưỡng `lg` (1024px)** nên tự động
+dùng đúng kiểu overlay toàn màn hình đã sửa (không rơi vào bug "cột 420px cố định làm bóp danh
+sách"), danh sách rộng rãi (469-628px tuỳ máy), không tràn ngang, vùng bảng chỉ cần cuộn tối đa ~70px
+(ở mức thấp nhất 360px chiều cao) — dùng tốt trên cả dải máy Dũng nêu, không cần sửa gì thêm.
+
+**Bug thật khác phát hiện ngay sau đó, khi Dũng tự thử trên điện thoại thật (không phải giả lập)**:
+"không quan sát được danh sách vụ án do phần đầu bị fix cứng, phần danh sách lại ở dưới, scroll
+down cũng không thấy gì" — đây là 1 lỗi kinh điển của `h-screen` (=`height:100vh`) trên trình duyệt
+di động THẬT (Safari iOS/Chrome Android), mà mọi phép đo ở các mục trên (Playwright/DevTools mô
+phỏng kích thước cố định) KHÔNG thể tái hiện được vì môi trường giả lập không mô phỏng đúng hành vi
+thanh địa chỉ co giãn của trình duyệt thật.
+
+**Nguyên nhân**: "100vh" trên di động thật được trình duyệt tính theo chiều cao viewport LỚN NHẤT
+(lúc thanh địa chỉ đã ẩn đi khi cuộn), luôn CAO HƠN phần thực sự nhìn thấy lúc mới mở trang (thanh
+địa chỉ còn hiện) — `AppShell` root dùng `h-screen ... overflow-hidden` (khoá cứng, không cho cuộn
+cả trang) + `main` bên trong có `overflow-auto` riêng, nên phần "thừa" phía dưới (do 100vh bị tính
+cao hơn thực tế) bị đẩy ra NGOÀI vùng nhìn thấy thật — mà cuộn `main` (chỉ cuộn ĐÚNG bên trong hộp
+đã bị `h-screen` ấn định trước, không phải cuộn cả trang) không cách nào "kéo" phần đó vào lại vùng
+nhìn thấy, vì bản thân hộp `main` đã được đo/định vị theo con số 100vh sai lệch ngay từ đầu. Đúng
+khớp mô tả của Dũng: phần đầu (tiêu đề+thống kê+bộ lọc) chiếm hết màn hình thật nhìn thấy, phần bảng
+danh sách nằm "sau" ranh giới đó, cuộn không tới được.
+
+**Đã sửa**: đổi `h-screen` (100vh) thành **`h-[100dvh]`** (100 "dynamic viewport height" — đơn vị
+CSS hiện đại, TỰ ĐỘNG cập nhật đúng theo phần đang thực sự hiển thị, kể cả khi thanh địa chỉ co
+giãn) ở đúng root của `AppShell`. Đủ hỗ trợ trên mọi máy tầm iPhone 12 trở lên (iOS 15.4+, 2022)/
+Samsung S25 (Android hiện đại) — đúng dải máy Dũng xác nhận là thực tế đang dùng, không cần thêm
+lớp dự phòng cho trình duyệt quá cũ (trước 2022) không hiểu đơn vị `dvh`.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Đo qua
+`getComputedStyle` trong trình duyệt (Playwright) xác nhận `h-[100dvh]` được Tailwind sinh đúng CSS
+`height:100dvh` và trình duyệt tính ra chiều cao hợp lệ khớp viewport; không hồi quy ở portrait mobile
+(375×812, 419 dòng vẫn hiện đủ, không tràn ngang). **Không thể tái hiện ĐÚNG lỗi gốc lẫn xác nhận
+trực quan bản sửa bằng công cụ giả lập** (không mô phỏng được thanh địa chỉ co giãn thật) — đây là
+lỗi CHỈ lộ ra trên trình duyệt di động thật, nên việc Dũng tự thử lại trên `qlahs-sup.web.app` bằng
+chính điện thoại thật sau khi deploy là bước kiểm chứng DUY NHẤT đáng tin cho lần sửa này.
+
 ## Module mới "Phân công hồ sơ" — khối lượng công việc từng KSV theo giai đoạn + 2 vụ gần nhất (2026-08-13, `qlahs-sup.html`, nhánh `phan-cong-ho-so-ksv` (đã merge fast-forward vào `main`), ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng: "thêm 1 branch mới. để hiển thị và download excel danh sách số vụ/số bị can
