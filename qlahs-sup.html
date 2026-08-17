@@ -5558,6 +5558,69 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   const [inBiaSauKhiLuu, setInBiaSauKhiLuu] = useState(false);
   const [duLieuBiaMoi, setDuLieuBiaMoi] = useState(null);
 
+  // Cảnh báo trùng Số/Ngày QĐ KTVA với vụ án đã có (2026-08-14, theo yêu cầu Dũng) — kiểm tra
+  // SỐNG khi gõ đủ cả 2 trường (debounce 500ms, tránh query Firestore mỗi phím gõ). Tiêu chí trùng
+  // giống hệt `byQdNgay` của ImportExcelModule (Số QĐ khớp + cùng Ngày QĐ) — vụ đã vào Thùng rác
+  // (`daXoa`) không tính là trùng, đúng nguyên tắc đã áp dụng ở đó.
+  const kyBaoCaoListTrung = useCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  const kyTenTheoIdTrung = useMemo(
+    () => Object.fromEntries(kyBaoCaoListTrung.map(k => [k.id, k.tenKy])),
+    [kyBaoCaoListTrung]
+  );
+  const [vuTrung, setVuTrung] = useState(null); // { id, tenVu, dsBiCanText, ksvChinh, tenKy } | null
+  const [dangKiemTraTrung, setDangKiemTraTrung] = useState(false);
+  useEffect(() => {
+    const soQd = soQdKtva.trim();
+    if (!soQd || !ngayQdKtva) { setVuTrung(null); setDangKiemTraTrung(false); return; }
+    let huy = false;
+    setDangKiemTraTrung(true);
+    const timer = setTimeout(async () => {
+      try {
+        const ngayTim = fromInputDate(ngayQdKtva);
+        const snap = await db.collection("vuan").where("soQdKtva", "==", soQd).get();
+        const trungDoc = snap.docs.find(d => {
+          const v = d.data();
+          return !v.daXoa && fmtDate(v.ngayQdKtva) === fmtDate(ngayTim);
+        });
+        if (huy) return;
+        if (!trungDoc) { setVuTrung(null); return; }
+        const bcSnap = await db.collection("bican").where("maVuAn", "==", trungDoc.id).limit(6).get();
+        if (huy) return;
+        const dsTen = bcSnap.docs.map(d => d.data().hoTen).filter(Boolean);
+        const dsBiCanText = dsTen.length === 0 ? "(chưa có bị can)"
+          : dsTen.length <= 5 ? dsTen.join(", ")
+          : dsTen.slice(0, 5).join(", ") + " và đồng phạm";
+        const kyId = bcSnap.docs[0]?.data()?.kyThongKeKhoiTo;
+        const tenKy = kyId ? (kyTenTheoIdTrung[kyId] || "(kỳ đã xoá)") : "— chưa gán kỳ —";
+        const v = trungDoc.data();
+        setVuTrung({
+          id: trungDoc.id, tenVu: v.tenVu || "(chưa đặt tên)", dsBiCanText,
+          ksvChinh: v.ksvChinh || "(chưa gán KSV)", tenKy,
+        });
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (!huy) setDangKiemTraTrung(false);
+      }
+    }, 500);
+    return () => { huy = true; clearTimeout(timer); };
+  }, [soQdKtva, ngayQdKtva, kyTenTheoIdTrung]);
+  // Bắt buộc BẤM VÀO Ô CẢNH BÁO để xác nhận đã đọc (thay vì window.confirm dễ bấm OK theo phản
+  // xạ) — reset lại mỗi khi vụ trùng đổi (kể cả về lại đúng vụ cũ sau khi tạm hết trùng), không
+  // "nhớ" xác nhận cũ cho 1 vụ trùng khác. `rungCanhBaoTrung` bật đỏ-nhấp-nháy ~1.2s khi cán bộ cố
+  // bấm "Lưu" mà chưa xác nhận, ép chú ý đúng chỗ cần bấm thay vì chỉ báo lỗi chữ suông.
+  const [xacNhanTrung, setXacNhanTrung] = useState(false);
+  const [rungCanhBaoTrung, setRungCanhBaoTrung] = useState(false);
+  const rungTrungTimerRef = useRef(null);
+  useEffect(() => { setXacNhanTrung(false); }, [vuTrung?.id]);
+  const rungCanhBaoDeXacNhanTrung = () => {
+    setRungCanhBaoTrung(true);
+    if (rungTrungTimerRef.current) clearTimeout(rungTrungTimerRef.current);
+    rungTrungTimerRef.current = setTimeout(() => setRungCanhBaoTrung(false), 1200);
+  };
+
   useEffect(() => {
     if (tenVuDaSua) return;
     const coTen = biCanRows.filter(bc => bc.hoTen.trim());
@@ -5624,6 +5687,11 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
     if (capNhatKetQua && !ngayQuyetDinhKQ) { setLoi("Đã chọn vụ án có kết quả giải quyết thì cần nhập ngày giải quyết."); return; }
     if (capNhatKetQua && trangThaiKetQua === "da_xet_xu" && coQuanThuLy !== "xet_xu") {
       setLoi("Chỉ vụ án ở giai đoạn Xét xử mới chọn được hình thức \"Đã xét xử\".");
+      return;
+    }
+    if (vuTrung && !xacNhanTrung) {
+      setLoi("Vui lòng bấm vào ô cảnh báo trùng vụ án bên dưới để xác nhận trước khi lưu.");
+      rungCanhBaoDeXacNhanTrung();
       return;
     }
     setLoi("");
@@ -5851,6 +5919,31 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
           <Truong nhan="Ngày QĐ khởi tố VA *">
             <NhapNgay value={ngayQdKtva} onChange={e => setNgayQdKtva(e.target.value)} onTachSo={setSoQdKtva} className={oInput} />
           </Truong>
+          {dangKiemTraTrung && !vuTrung && (
+            <div className="col-span-2 text-[11px] text-slate-400">Đang kiểm tra trùng Số/Ngày QĐ KTVA...</div>
+          )}
+          {vuTrung && (
+            <div
+              onClick={() => setXacNhanTrung(true)}
+              className={
+                "col-span-2 rounded-lg border p-2.5 text-xs space-y-1 cursor-pointer select-none transition " +
+                (rungCanhBaoTrung
+                  ? "bg-red-100 border-red-400 border-2 text-red-800 animate-pulse"
+                  : xacNhanTrung
+                  ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                  : "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100")
+              }
+            >
+              <div className="font-semibold">
+                {xacNhanTrung ? "✓ Đã xác nhận — bấm \"Lưu vụ án\" để tiếp tục" : "⚠ Trùng Số/Ngày QĐ khởi tố vụ án — bấm vào đây để xác nhận"}
+              </div>
+              <div>
+                Đã có vụ án <span className="font-medium">"{vuTrung.tenVu}"</span>; {vuTrung.dsBiCanText};
+                của KSV <span className="font-medium">{vuTrung.ksvChinh}</span> đã được phân công trong kỳ{" "}
+                <span className="font-medium">{vuTrung.tenKy}</span>.
+              </div>
+            </div>
+          )}
 
           <Truong nhan="Hạn điều tra">
             <NhapNgay value={hanDieuTra} onChange={e => { setHanDieuTra(e.target.value); setHanDieuTraDaSua(true); }} className={oInput} />
@@ -8675,11 +8768,29 @@ function ThongKeKyHienTai() {
   );
 }
 
+// Cùng cơ chế giữ "trang hiện tại" khi F5 như `KHOA_TAB_HIEN_TAI` ở AppShell — vụ án ĐANG XEM ở
+// panel chi tiết cũng là 1 phần của "trang hiện tại" (mở lại vụ đang xem thay vì về màn trống).
+// Vụ không còn tồn tại (đã xoá/thùng rác) thì `ChiTietPanel` tự hiện "Đang tải..." — chấp nhận
+// được, không cần validate lại ở đây (khác `layTabBanDau` — module là 1 tập cố định nhỏ dễ kiểm
+// tra, còn "vụ án có tồn tại không" cần 1 lượt query riêng, không đáng để làm chỉ cho trường hợp
+// hiếm gặp "vừa refresh vừa đúng lúc vụ đó bị xoá ở máy khác").
+const KHOA_VU_DANG_CHON = "qlva_selectedId_list";
+function laySelectedIdBanDau() {
+  try { return sessionStorage.getItem(KHOA_VU_DANG_CHON) || null; } catch (e) { return null; }
+}
+
 function DanhSachVuAnModule({ currentUser }) {
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(laySelectedIdBanDau);
   const [showForm, setShowForm] = useState(false);
   const [dangXuat, setDangXuat] = useState(false);
   const [loiXuat, setLoiXuat] = useState("");
+
+  useEffect(() => {
+    try {
+      if (selectedId) sessionStorage.setItem(KHOA_VU_DANG_CHON, selectedId);
+      else sessionStorage.removeItem(KHOA_VU_DANG_CHON);
+    } catch (e) { /* bỏ qua nếu bị chặn */ }
+  }, [selectedId]);
 
   return (
     <div className="h-full flex flex-col">
@@ -18732,8 +18843,27 @@ function OfflineBanner() {
   );
 }
 
+// Giữ nguyên module đang xem sau khi F5 (2026-08-14, theo yêu cầu Dũng) — trước đây `tab` chỉ là
+// state React thuần, F5 luôn reset về "Danh sách vụ án". Dùng `sessionStorage` (KHÔNG phải
+// `localStorage`) — sống theo đúng 1 tab trình duyệt, tự xoá khi đóng tab: F5 vẫn giữ nguyên,
+// nhưng mở tab MỚI (hoặc quay lại sau khi đóng hẳn trình duyệt) trở về mặc định "Danh sách vụ án"
+// — đúng ý nghĩa "giữ khi refresh", không phải "nhớ vĩnh viễn" (khác các cài đặt dùng localStorage
+// khác trong app như `qlva_blhsMacDinh`). Validate lại giá trị đọc được so với danh sách module
+// HIỆN TẠI (`MODULES`) — phòng giá trị cũ trỏ tới 1 module đã bị đổi tên/xoá ở bản code sau này.
+const KHOA_TAB_HIEN_TAI = "qlva_tab_hienTai";
+function layTabBanDau() {
+  try {
+    const luu = sessionStorage.getItem(KHOA_TAB_HIEN_TAI);
+    if (luu && (luu === "setting" || MODULES.some(m => m.id === luu))) return luu;
+  } catch (e) { /* sessionStorage có thể bị chặn (chế độ ẩn danh nghiêm ngặt...) — bỏ qua, dùng mặc định */ }
+  return "list";
+}
+
 function AppShell({ user }) {
-  const [tab, setTab] = useState("list");
+  const [tab, setTab] = useState(layTabBanDau);
+  useEffect(() => {
+    try { sessionStorage.setItem(KHOA_TAB_HIEN_TAI, tab); } catch (e) { /* bỏ qua nếu bị chặn */ }
+  }, [tab]);
 
   return (
     <div className="h-screen flex overflow-hidden">
