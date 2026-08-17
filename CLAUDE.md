@@ -2,7 +2,44 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Giao diện điện thoại — Danh sách vụ án: sidebar drawer + panel chi tiết full-screen thay vì đè lên danh sách (2026-08-15, `qlahs-sup.html`, nhánh `mobile-danhsach-responsive`, CHƯA merge/deploy)
+## Giữ trang/vụ án đang xem khi F5 + cảnh báo trùng Số/Ngày QĐ KTVA khi thêm vụ mới (2026-08-17, `qlahs-sup.html`, nhánh `giu-trang-khi-f5`, ĐÃ MERGE vào `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
+
+Theo yêu cầu Dũng — 2 việc độc lập gộp chung 1 phiên làm việc:
+
+**1. F5 không còn reset về "Danh sách vụ án"/mất vụ đang xem** — `tab` (module đang mở, AppShell)
+và `selectedId` (vụ đang chọn ở panel chi tiết, `DanhSachVuAnModule`) lưu qua `sessionStorage`
+(`qlva_tab_hienTai`/`qlva_selectedId_list` — KHÔNG dùng `localStorage`: sống theo đúng 1 tab trình
+duyệt, F5 giữ nguyên nhưng mở tab mới/mở lại trình duyệt về mặc định "Danh sách vụ án", không phải
+"nhớ vĩnh viễn"). `layTabBanDau` validate lại giá trị đọc được so với `MODULES` hiện tại (phòng
+module đã đổi tên/xoá ở bản code sau); vụ đã bị xoá/vào Thùng rác thì `ChiTietPanel` tự hiện "Đang
+tải..." — chấp nhận được, không validate lại (trường hợp hiếm).
+
+**2. Cảnh báo trùng Số/Ngày QĐ khởi tố vụ án khi Thêm vụ án mới** (`ThemVuAnForm`) — kiểm tra SỐNG
+(debounce 500ms) khi gõ đủ cả Số + Ngày QĐ KTVA, tiêu chí trùng giống hệt `byQdNgay` của
+`ImportExcelModule` (Số QĐ khớp + cùng Ngày QĐ, vụ đã vào Thùng rác không tính là trùng). Trùng thì
+hiện khối cảnh báo hổ phách (tên vụ/danh sách bị can rút gọn/KSV/kỳ đã phân công) — **bắt bấm vào
+chính ô cảnh báo để xác nhận** (không dùng `window.confirm`, dễ bấm "OK" theo phản xạ mà không đọc
+kỹ) mới cho lưu; cố bấm "Lưu vụ án" khi chưa xác nhận thì bị chặn + hiệu ứng rung-đỏ ~1.2s
+(`rungCanhBaoDeXacNhanTrung`) ép chú ý đúng chỗ cần bấm. Xác nhận reset lại mỗi khi vụ trùng đổi
+(không "nhớ" xác nhận cũ cho 1 vụ trùng khác).
+
+**Đã kiểm chứng đầy đủ qua UI thật** (đăng nhập `admin@qlva.local` cục bộ trước khi merge, rồi
+compile-check + smoke test lại sau merge) — F5 giữ đúng tab đang xem lẫn vụ án đang chọn; gõ đúng
+Số/Ngày QĐ KTVA trùng 1 vụ có sẵn → cảnh báo hiện đúng thông tin; bấm "Lưu vụ án" khi chưa xác nhận
+→ bị chặn + rung đỏ đúng; bấm vào ô cảnh báo → chuyển xanh "✓ Đã xác nhận"; bấm lưu lại → mở đúng
+modal "Tính vào kỳ báo cáo nào?" (không còn bị chặn) — đã Huỷ modal + đóng form, không tạo dữ liệu
+test nào. 0 lỗi console thật (chỉ cảnh báo Babel kích thước file vô hại đã biết) xuyên suốt.
+
+**Merge vào `main`** sau khi `main` đã fast-forward theo `origin/main` (gồm cả tính năng giao diện
+điện thoại `mobile-danhsach-responsive` vừa merge trước đó, xem mục ngay dưới) — 1 xung đột duy nhất
+ở khởi tạo state `tab` trong `AppShell` (2 nhánh cùng sửa dòng `useState`), gộp cả `layTabBanDau`/
+`sessionStorage` (nhánh này) lẫn `mobileNavOpen`/`chonTab` (nhánh mobile), không mất phần nào của cả
+2 bên. Đã compile-check qua Babel thật + đăng nhập UI thật lại sau merge (F5 giữ đúng tab "Kỳ báo
+cáo" trên bản đã gộp) trước khi deploy. Đã deploy `qlahs-sup.web.app` rồi `qlahsp2.web.app` qua
+`./deploy.sh sup` rồi `./deploy.sh prod` — smoke test cả 2 URL sau deploy (`curl` 200, màn đăng nhập
+hiện đúng qua trình duyệt thật, 0 lỗi console thật) — theo yêu cầu trực tiếp "ok chạy hết đi".
+
+## Giao diện điện thoại — Danh sách vụ án: sidebar drawer + panel chi tiết full-screen thay vì đè lên danh sách (2026-08-15, `qlahs-sup.html`, nhánh `mobile-danhsach-responsive`, ĐÃ MERGE vào `main`)
 
 Theo yêu cầu Dũng: "tạo 1 branch mới để khi mở phần danh sách vụ án trên điện thoại dễ quan sát hơn
 và có thể tra cứu được, hiện tại phần thông tin chi tiết hiển thị che mất toàn bộ nội dung" —
