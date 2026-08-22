@@ -7498,7 +7498,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
   const filtered = useMemo(() => nguonDanhSach.filter(v => {
     if (chiDangGiaiQuyet && v.trangThai !== "dang_giai_quyet") return false;
     if (giaiDoan !== "tat_ca" && v.coQuanThuLy !== giaiDoan) return false;
-    if (ksv !== "tat_ca" && v.ksvChinh !== ksv) return false;
+    if (ksv !== "tat_ca" && !(v.ksvChinh || "").toLowerCase().includes(ksv.trim().toLowerCase())) return false;
     if (tuKhoa.trim()) {
       const k = tuKhoa.trim().toLowerCase();
       // dsBiCan: tải theo yêu cầu (debounce, xem effect ở trên) — trong lúc chưa tải xong, vẫn
@@ -7582,10 +7582,11 @@ function DanhSachPanel({ selectedId, onSelect }) {
             </button>
           ))}
         </div>
-        <select value={ksv} onChange={e => setKsv(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white">
-          <option value="tat_ca">Tất cả KSV</option>
-          {dsKsv.map(k => <option key={k} value={k}>{k}</option>)}
-        </select>
+        <input list="ds-ksv-danhsach" value={ksv === "tat_ca" ? "" : ksv}
+               onChange={e => setKsv(e.target.value.trim() === "" ? "tat_ca" : e.target.value)}
+               placeholder="Tất cả KSV — gõ hoặc chọn tên để lọc"
+               className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white" />
+        <datalist id="ds-ksv-danhsach">{dsKsv.map(k => <option key={k} value={k} />)}</datalist>
       </div>
       <div className="flex-1 overflow-auto">
         <table className="w-full text-sm border-collapse">
