@@ -6142,12 +6142,12 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
               )}
               <NhomTruong so={2} ten="Quyết định khởi tố bị can" />
               <div className="grid grid-cols-4 gap-3">
+                <Truong nhan="Số QĐ khởi tố bị can">
+                  <input value={bcHienTai.soQdKtBiCan||""} onChange={e => suaBiCan(bcHienTai.id, { soQdKtBiCan: e.target.value })} placeholder="VD: 15/QĐ-VKS" className={oInput} />
+                </Truong>
                 <Truong nhan="Ngày khởi tố bị can">
                   <NhapNgay value={bcHienTai.ngayKhoiTo} onChange={e => suaBiCan(bcHienTai.id, { ngayKhoiTo: e.target.value })}
                             onTachSo={so => suaBiCan(bcHienTai.id, { soQdKtBiCan: so })} className={oInput} />
-                </Truong>
-                <Truong nhan="Số QĐ khởi tố bị can">
-                  <input value={bcHienTai.soQdKtBiCan||""} onChange={e => suaBiCan(bcHienTai.id, { soQdKtBiCan: e.target.value })} placeholder="VD: 15/QĐ-VKS" className={oInput} />
                 </Truong>
               </div>
               <div className="mt-2">
@@ -6827,8 +6827,8 @@ function SuaBiCanForm({ biCan, vuAn, onDong, onXong }) {
 
       <NhomTruong so={2} ten="Quyết định khởi tố bị can" />
       <div className="grid grid-cols-4 gap-3 mb-3">
-        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
         <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
+        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
       </div>
       <div className="mb-4">
         <BlhsSelector />
@@ -7107,8 +7107,8 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
 
       <NhomTruong so={2} ten="Quyết định khởi tố bị can" />
       <div className="grid grid-cols-4 gap-3 mb-3">
-        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
         <Truong nhan="Số QĐ khởi tố bị can"><input value={soQdKtBiCan} onChange={e => setSoQdKtBiCan(e.target.value)} placeholder="VD: 15/QĐ-VKS" className={oInput} /></Truong>
+        <Truong nhan="Ngày khởi tố bị can"><NhapNgay value={ngayKhoiTo} onChange={e => setNgayKhoiTo(e.target.value)} onTachSo={setSoQdKtBiCan} className={oInput} /></Truong>
       </div>
       <div className="mb-4">
         <BlhsSelector />
