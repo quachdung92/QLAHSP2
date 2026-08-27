@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Giao nhận hồ sơ — ô tìm vụ nâng cấp (toggle phạm vi + xem bị can) + tự xoá phiên rỗng (2026-08-27, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app` (test), CHƯA deploy production)
+## Giao nhận hồ sơ — ô tìm vụ nâng cấp (toggle phạm vi + xem bị can) + tự xoá phiên rỗng (2026-08-27, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng — 2 việc trong `GiaoNhanHoSoModule` (yêu cầu mở rộng thêm giữa chừng):
 
@@ -48,7 +48,9 @@ sinh/tội danh; "+ Thêm" đưa vụ vào phiên + tự đặt tên phiên; tì
 toggle "Đã giải quyết" nạp cache lạnh + tìm "đánh bạc" ra 36 vụ đã giải quyết; "Lưu phiên" khoá khi
 0 hồ sơ; xoá dòng cuối rồi "Phiên mới" → `phienGiaoNhan` bị xoá (0 sự kiện mồ côi); phiên rỗng
 backdate > 15 phút bị `donDepPhienRong` xoá khi load lại trang. 0 lỗi console thật (chỉ cảnh báo
-Babel kích thước file). Đã dọn sạch mọi phiên/sự kiện test. **CHƯA deploy production `qlahsp2.web.app`.**
+Babel kích thước file). Đã dọn sạch mọi phiên/sự kiện test. Đã commit `c9d49bc` + push `main`, deploy
+`qlahs-sup.web.app` rồi `qlahsp2.web.app` (production) — smoke test sau deploy: trang tải sạch, 0 lỗi
+console thật.
 
 ## Giữ trang/vụ án đang xem khi F5 + cảnh báo trùng Số/Ngày QĐ KTVA khi thêm vụ mới (2026-08-17, `qlahs-sup.html`, nhánh `giu-trang-khi-f5`, ĐÃ MERGE vào `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
