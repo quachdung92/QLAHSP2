@@ -13671,6 +13671,43 @@ const GOI_Y_LY_DO_GIAO_NHAN = [
   "Hồ sơ tạm đình chỉ", "Hồ sơ đình chỉ", "Hồ sơ trả điều tra bổ sung",
 ];
 
+// Hiển thị QĐ KTVA gọn dạng "Số/ngày" (VD "1853/24.6.2026") — dùng ở ô kết quả tìm thủ công của
+// Giao nhận hồ sơ (2026-08-27, theo yêu cầu Dũng: "QĐKTVA ghi rõ là 1853/24.6.2026").
+function fmtQdKtvaGon(v) {
+  const so = (v && v.soQdKtva) || "";
+  const d = v && v.ngayQdKtva;
+  if (!d) return so || "—";
+  const dt = d.toDate ? d.toDate() : (d instanceof Date ? d : new Date(d));
+  if (isNaN(dt)) return so || "—";
+  const ngay = `${dt.getDate()}.${dt.getMonth() + 1}.${dt.getFullYear()}`;
+  return so ? `${so}/${ngay}` : ngay;
+}
+
+// Danh sách bị can của 1 vụ, hiện khi bấm mở rộng 1 dòng kết quả tìm thủ công (2026-08-27, theo yêu
+// cầu Dũng: "ấn vào ô để mở rộng xem các bị can của vụ mới tìm chính xác được"). Tải 1 lần lúc mở.
+function BiCanCuaVuTim({ vuId }) {
+  const [bc, setBc] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    batchLayBiCanList([vuId])
+      .then(m => { if (alive) setBc(m[vuId] || []); })
+      .catch(() => { if (alive) setBc([]); });
+    return () => { alive = false; };
+  }, [vuId]);
+  if (bc === null) return <div className="text-xs text-slate-400 px-3 pb-2">Đang tải bị can...</div>;
+  if (bc.length === 0) return <div className="text-xs text-slate-400 px-3 pb-2">Vụ chưa có bị can.</div>;
+  return (
+    <ul className="text-xs text-slate-600 px-3 pb-2 pt-1 space-y-0.5 border-t border-slate-100">
+      {bc.map((b, i) => (
+        <li key={b.id || i}>
+          • {b.hoTen || "(chưa có tên)"}{b.namSinh ? ` (${b.namSinh})` : ""}
+          {b.toiDanh && b.toiDanh[0] ? ` — ${b.toiDanh[0]}` : ""}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function fmtNgayGio(d) {
   if (!d) return "—";
   const dt = d.toDate ? d.toDate() : (d instanceof Date ? d : new Date(d));
@@ -14187,7 +14224,9 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [loiQuet, setLoiQuet] = useState("");
   const [dangXuLy, setDangXuLy] = useState(false);
   const [hienBienBan, setHienBienBan] = useState(false);
-  const [hienTimThuCong, setHienTimThuCong] = useState(false);
+  // Mặc định MỞ ô tìm thủ công khi phiên đang mở (2026-08-27, theo yêu cầu Dũng) — giao/nhận hồ sơ
+  // của vụ CHƯA KỊP DÁN MÃ QR là tình huống thường gặp, không nên giấu sau 1 link phụ. Vẫn ẩn được.
+  const [hienTimThuCong, setHienTimThuCong] = useState(true);
   // "Tìm thủ công" (2026-07-18) — dùng chung nguồn "đang giải quyết" với DanhSachPanel qua
   // useDanhSachDangGiaiQuyet thay vì tự fetchWithTtlCache riêng — 2 nơi cùng cần ĐÚNG 1 tập dữ liệu
   // (where trangThai=="dang_giai_quyet"), gộp lại tránh 2 cơ chế cache khác nhau cùng tồn tại cho
@@ -14198,6 +14237,13 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const [dsVuDangGQ, dangTaiVuDangGQ] = useDanhSachDangGiaiQuyet();
   const [tuKhoaTim, setTuKhoaTim] = useState("");
   const [ksvTim, setKsvTim] = useState("tat_ca");
+  // Phạm vi tìm thủ công (2026-08-27, theo yêu cầu Dũng) — không chỉ vụ đang giải quyết; hồ sơ
+  // giao/nhận cũng có vụ đã giải quyết. "dang" = đang giải quyết (mặc định, hay dùng nhất) / "da" =
+  // đã giải quyết / "tat_ca" = cả 2. Cache "đã giải quyết" nạp LƯỜI khi chọn "da"/"tat_ca".
+  const [phamViTim, setPhamViTim] = useState("dang");
+  const [dsVuDaGQ, setDsVuDaGQ] = useState(null);
+  const [dangTaiDaGQ, setDangTaiDaGQ] = useState(false);
+  const [vuMoRongTim, setVuMoRongTim] = useState(null); // id vụ đang mở rộng xem bị can trong ô kết quả
   const [dangTaiLichSu, setDangTaiLichSu] = useState(false);
   const [luuTruMoi, setLuuTruMoi] = useState(false); // bật "Nộp hồ sơ lưu trữ" trước khi bắt đầu phiên Nhận
   const [dsPhienGanDay, setDsPhienGanDay] = useState(null); // null = chưa tải; danh sách phiên (mọi trạng thái) để mở lại
@@ -14232,6 +14278,52 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const ketThucSuaDong = () => setDangSuaId(null);
   const inputRef = React.useRef(null);
 
+  // Xoá phiên rỗng khi rời đi (2026-08-27, theo yêu cầu Dũng: "phiên ko phát sinh hồ sơ nào thì
+  // xoá cho đỡ rác, cũng ko tự lưu"). Phiên được `.add()` NGAY lúc bấm "Bắt đầu phiên"
+  // (batDauPhien) — bỏ dở / đóng nhầm trình duyệt trước khi quét vụ nào sẽ để lại 1 doc
+  // phienGiaoNhan trống. Dùng ref để cleanup lúc unmount đọc được giá trị mới nhất (không dính
+  // closure cũ). Chỉ xoá khi: phiên đang mở + chưa có dòng nào + không có thao tác quét đang chạy.
+  const phienRef = React.useRef(null);
+  const dsQuetLenRef = React.useRef(0);
+  const dangXuLyRef = React.useRef(false);
+  useEffect(() => { phienRef.current = phien; }, [phien]);
+  useEffect(() => { dsQuetLenRef.current = dsQuet.length; }, [dsQuet.length]);
+  useEffect(() => { dangXuLyRef.current = dangXuLy; }, [dangXuLy]);
+  const xoaPhienNeuRong = () => {
+    const p = phienRef.current;
+    if (p && p.trangThai === "dang_mo" && dsQuetLenRef.current === 0 && !dangXuLyRef.current) {
+      db.collection("phienGiaoNhan").doc(p.id).delete().catch(err => console.error(err));
+      return true;
+    }
+    return false;
+  };
+  useEffect(() => () => { xoaPhienNeuRong(); }, []);
+
+  // Dọn phiên "rác" đã tồn tại từ trước (2026-08-27) — phiên giao nhận KHÔNG có sự kiện
+  // giao_nhan_ho_so nào. Chạy 1 lần mỗi khi quay lại màn "Phiên gần đây". Quét đúng 1 truy vấn đếm
+  // sự kiện của các phiên nghi ngờ rồi xoá phiên nào 0 sự kiện: mọi phiên "Đã lưu" (đã kết thúc,
+  // chắc chắn rác), và phiên "Đang mở" đã bắt đầu > 15 phút (đủ lâu để chắc chắn không phải phiên
+  // vừa mở ở máy/tab khác — tránh xoá nhầm khi nhiều người dùng thao tác cùng lúc, xem
+  // [[qlahsp2-main-concurrent-edits]]).
+  const donDepPhienRong = useCallback(async (dsPhien) => {
+    const NGUONG_MS = 15 * 60 * 1000;
+    const now = Date.now();
+    const toMs = (t) => (t?.toDate?.() ?? (t instanceof Date ? t : new Date(t))).getTime();
+    const ungVien = dsPhien.filter(p =>
+      p.trangThai === "da_luu" ||
+      (p.trangThai === "dang_mo" && p.thoiDiemBatDau && now - toMs(p.thoiDiemBatDau) > NGUONG_MS)
+    );
+    if (ungVien.length === 0) return;
+    const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "phienGiaoNhanId", ungVien.map(p => p.id),
+      q => q.where("loaiSuKien", "==", "giao_nhan_ho_so"));
+    const coSuKien = new Set(docs.map(d => d.data().phienGiaoNhanId));
+    for (const p of ungVien) {
+      if (!coSuKien.has(p.id)) {
+        await db.collection("phienGiaoNhan").doc(p.id).delete().catch(err => console.error(err));
+      }
+    }
+  }, []);
+
   // Danh sách phiên gần đây (2026-07-17) — trước đây bấm "Phiên mới"/đóng trình duyệt là MẤT hẳn
   // đường vào lại 1 phiên đã có (kể cả phiên đã "Lưu phiên" chỉ còn xem/in được, hay phiên "Đang
   // mở" bị bỏ dở giữa chừng do đóng nhầm tab) — không có danh sách nào liệt kê `phienGiaoNhan` để
@@ -14240,11 +14332,18 @@ function GiaoNhanHoSoModule({ currentUser }) {
   // cần composite index mới. Chỉ tải khi đang ở màn hình chưa mở phiên (phien === null).
   useEffect(() => {
     if (phien) return;
+    let daDonDep = false;
     return db.collection("phienGiaoNhan").orderBy("thoiDiemBatDau", "desc").limit(30).onSnapshot(
-      snap => setDsPhienGanDay(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      snap => {
+        const ds = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setDsPhienGanDay(ds);
+        // Dọn 1 lần / lượt quay lại màn này — onSnapshot sẽ tự bắn lại danh sách mới (đã bớt phiên
+        // rác) sau khi xoá, nhưng cờ này chặn chạy lại vòng dọn.
+        if (!daDonDep) { daDonDep = true; donDepPhienRong(ds).catch(err => console.error(err)); }
+      },
       err => console.error(err)
     );
-  }, [phien]);
+  }, [phien, donDepPhienRong]);
 
   // Trước đây tránh dùng orderBy kèm where ở đây để khỏi cần thêm composite index Firestore, tự
   // sort lại phía client — checklist Supabase mục 5: Postgres không cần "deploy" index riêng như
@@ -14265,8 +14364,24 @@ function GiaoNhanHoSoModule({ currentUser }) {
   }, [phien, dsQuet]);
 
   // Đổi sang phiên khác (từ "Phiên gần đây" hoặc "Phiên mới") thì đóng luôn form sửa tên đang dở
-  // của phiên cũ, tránh Lưu nhầm vào phiên mới đang xem.
-  useEffect(() => { setDangSuaTenPhien(false); setTenPhienDangSua(""); }, [phien?.id]);
+  // của phiên cũ (tránh Lưu nhầm vào phiên mới), VÀ reset ô "Tìm thủ công" về mặc định (2026-08-27)
+  // — không mang từ khoá / phạm vi tìm / dòng đang mở rộng của phiên trước sang phiên mới.
+  useEffect(() => {
+    setDangSuaTenPhien(false); setTenPhienDangSua("");
+    setTuKhoaTim(""); setKsvTim("tat_ca"); setPhamViTim("dang");
+    setVuMoRongTim(null); setHienTimThuCong(true);
+  }, [phien?.id]);
+
+  // Nạp LƯỜI cache "vụ đã giải quyết" khi người dùng chuyển phạm vi tìm sang "Đã giải quyết"/"Tất
+  // cả" (2026-08-27) — không nạp sẵn để đỡ tốn đọc nếu chỉ tìm vụ đang giải quyết như thường lệ.
+  useEffect(() => {
+    if (phamViTim === "dang" || dsVuDaGQ !== null || dangTaiDaGQ) return;
+    setDangTaiDaGQ(true);
+    dongBoColdCacheVuAnDaGiaiQuyet()
+      .then(docs => setDsVuDaGQ(docs.filter(v => !v.daXoa)))
+      .catch(err => { console.error(err); setDsVuDaGQ([]); })
+      .finally(() => setDangTaiDaGQ(false));
+  }, [phamViTim, dsVuDaGQ, dangTaiDaGQ]);
 
   // "Nộp hồ sơ lưu trữ" (laLuuTru, 2026-07-16) — chỉ chọn được khi bắt đầu phiên NHẬN (nộp lưu
   // trữ nghĩa là bộ phận lưu trữ NHẬN hồ sơ từ KSV/ĐTV), đánh dấu cả phiên là 1 đợt nộp lưu trữ để
@@ -14389,17 +14504,35 @@ function GiaoNhanHoSoModule({ currentUser }) {
     || (v.ksvChinh || "").toLowerCase().includes(k)
     || khopSoQdKtva(v, k);
 
+  // Nguồn vụ để tìm — theo phạm vi đang chọn (đang / đã / cả 2 giải quyết). `null` = chưa nạp xong.
+  const nguonTim = useMemo(() => {
+    if (phamViTim === "dang") return dsVuDangGQ;
+    if (phamViTim === "da") return dsVuDaGQ;
+    if (!dsVuDangGQ || !dsVuDaGQ) return null;
+    return [...dsVuDangGQ, ...dsVuDaGQ];
+  }, [phamViTim, dsVuDangGQ, dsVuDaGQ]);
+  const dangTaiNguonTim = phamViTim === "dang" ? dangTaiVuDangGQ
+    : phamViTim === "da" ? (dangTaiDaGQ || dsVuDaGQ === null)
+    : (dangTaiVuDangGQ || dangTaiDaGQ || dsVuDaGQ === null);
+
   // Cho phép lọc riêng theo KSV (không bắt buộc gõ từ khoá kèm theo) — VD chọn 1 KSV để xem hết
-  // hồ sơ đang giải quyết của người đó, khỏi phải nhớ gõ đúng tên.
+  // hồ sơ của người đó, khỏi phải nhớ gõ đúng tên.
+  const GIOI_HAN_KET_QUA_TIM = 30;
   const ketQuaTimThuCong = useMemo(() => {
-    if (!dsVuDangGQ) return [];
+    if (!nguonTim) return { list: [], tong: 0 };
     const k = tuKhoaTim.trim().toLowerCase();
-    if (!k && ksvTim === "tat_ca") return [];
-    let rows = dsVuDangGQ;
-    if (ksvTim !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksvTim);
+    if (!k && ksvTim === "tat_ca") return { list: [], tong: 0 };
+    let rows = nguonTim;
+    // Khớp "chứa" (không phải "===") để ô KSV cho gõ tự do tìm theo tên — đồng bộ với LocKsvComboBox
+    // ở DanhSachPanel (xem "Quy chuẩn UI" trong CLAUDE.md).
+    if (ksvTim !== "tat_ca") rows = rows.filter(v => (v.ksvChinh || "").toLowerCase().includes(ksvTim.trim().toLowerCase()));
     if (k) rows = rows.filter(v => khopTuKhoaTim(v, k));
-    return rows.slice(0, 15);
-  }, [dsVuDangGQ, ksvTim, tuKhoaTim]);
+    return { list: rows.slice(0, GIOI_HAN_KET_QUA_TIM), tong: rows.length };
+  }, [nguonTim, ksvTim, tuKhoaTim]);
+
+  // Vụ đã có sẵn trong phiên — để ô kết quả tìm phân biệt rõ "vụ chưa thêm" (bấm để thêm) với "vụ
+  // đã thêm vào danh sách" (khung xám, không bấm được nữa) thay vì chỉ chặn bằng toast lúc bấm.
+  const maDaCoTrongPhien = useMemo(() => new Set(dsQuet.map(d => d.maVuAn)), [dsQuet]);
 
   const chonVuThuCong = async (v) => {
     if (dangXuLy) return;
@@ -14413,6 +14546,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
     try {
       await ghiNhanVuVaoPhien(v.id, v);
       setTuKhoaTim("");
+      setVuMoRongTim(null);
     } catch (err) {
       console.error(err);
       setLoiQuet("Lỗi khi ghi nhận: " + err.message);
@@ -14759,7 +14893,8 @@ function GiaoNhanHoSoModule({ currentUser }) {
         <div className="flex flex-col items-end gap-1">
         <div className="flex gap-2">
           {phien.trangThai === "dang_mo" && (
-            <button onClick={luuPhien}
+            <button onClick={luuPhien} disabled={dsQuet.length === 0}
+                    title={dsQuet.length === 0 ? "Chưa quét/thêm hồ sơ nào — không lưu phiên rỗng (bấm \"Phiên mới\" để thoát, phiên rỗng sẽ tự xoá)" : ""}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
               Lưu phiên
             </button>
@@ -14772,7 +14907,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
                   className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
             {dangTaiLichSu ? "Đang tải..." : "⬇ Tải toàn bộ lịch sử"}
           </button>
-          <button onClick={() => setPhien(null)} className="text-sm text-slate-500 hover:text-slate-700 px-2">Phiên mới</button>
+          <button onClick={() => { xoaPhienNeuRong(); setPhien(null); }} className="text-sm text-slate-500 hover:text-slate-700 px-2">Phiên mới</button>
         </div>
         </div>
       </div>
@@ -14790,41 +14925,85 @@ function GiaoNhanHoSoModule({ currentUser }) {
         <div className="mb-4">
           {!hienTimThuCong ? (
             <button onClick={moTimThuCong} className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline">
-              Không có mã QR? Tìm thủ công theo tên vụ / KSV / tội danh / số QĐ KTVA...
+              🔍 Mở ô tìm vụ (khi không quét được mã QR)
             </button>
           ) : (
-            <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/60">
+            /* Khung TÍM riêng cho "vùng tìm & thêm" — tách rõ khỏi bảng "đã thêm vào phiên" bên dưới
+               (2026-08-27, theo yêu cầu Dũng "UI khung đổi màu để phân biệt vụ đang tìm để thêm và
+               vụ đã thêm vào danh sách"). */
+            <div className="border-2 border-indigo-200 rounded-lg p-3 bg-indigo-50/40">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-medium text-slate-600">Tìm thủ công (chỉ trong vụ đang giải quyết)</div>
-                <button onClick={() => { setHienTimThuCong(false); setTuKhoaTim(""); setKsvTim("tat_ca"); }}
-                        className="text-xs text-slate-400 hover:text-slate-600">Đóng</button>
+                <div className="text-xs font-semibold text-indigo-700">
+                  🔍 Tìm vụ để thêm vào phiên (khi không quét được mã QR)
+                </div>
+                <button onClick={() => { setHienTimThuCong(false); setTuKhoaTim(""); setKsvTim("tat_ca"); setVuMoRongTim(null); }}
+                        className="text-xs text-slate-400 hover:text-slate-600">Ẩn ô tìm</button>
+              </div>
+              {/* Toggle phạm vi: đang / đã / cả 2 giải quyết (2026-08-27) */}
+              <div className="flex items-center gap-1 mb-2">
+                {[["dang", "Đang giải quyết"], ["da", "Đã giải quyết"], ["tat_ca", "Tất cả"]].map(([gt, nhan]) => (
+                  <button key={gt} onClick={() => setPhamViTim(gt)}
+                          className={"text-xs rounded-full px-2.5 py-1 border " + (phamViTim === gt
+                            ? "bg-indigo-600 text-white border-indigo-600"
+                            : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50")}>
+                    {nhan}
+                  </button>
+                ))}
               </div>
               <div className="flex gap-2 mb-2">
-                <input value={tuKhoaTim} onChange={e => setTuKhoaTim(e.target.value)} autoFocus
+                {/* KHÔNG autoFocus — ô "Quét mã QR" bên trên mới là ô cần giữ focus mặc định cho
+                    đầu đọc QR; ô này bấm vào để gõ khi cần. */}
+                <input value={tuKhoaTim} onChange={e => setTuKhoaTim(e.target.value)}
                        placeholder="Gõ tên vụ, tên KSV, tội danh/điều luật, hoặc số QĐ KTVA..."
                        className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm" />
-                <select value={ksvTim} onChange={e => setKsvTim(e.target.value)}
-                        className="border border-slate-300 rounded-lg px-2 py-2 text-sm bg-white">
-                  <option value="tat_ca">Tất cả KSV</option>
-                  {dsKsvTim.map(k => <option key={k} value={k}>{k}</option>)}
-                </select>
+                {/* Ô lọc KSV cho gõ tự do (combobox dùng chung LocKsvComboBox) — quy chuẩn UI: dropdown
+                    chọn từ danh sách MỞ (tên người...) phải gõ tìm được, xem "Quy chuẩn UI" trong CLAUDE.md. */}
+                <div className="w-56 shrink-0"><LocKsvComboBox dsKsv={dsKsvTim} ksv={ksvTim} onDoi={setKsvTim} /></div>
               </div>
-              {dangTaiVuDangGQ && <div className="text-xs text-slate-400">Đang tải danh sách vụ đang giải quyết...</div>}
-              {!dangTaiVuDangGQ && (tuKhoaTim.trim() || ksvTim !== "tat_ca") && ketQuaTimThuCong.length === 0 && (
+              {dangTaiNguonTim && <div className="text-xs text-slate-400">Đang tải danh sách vụ án...</div>}
+              {!dangTaiNguonTim && (tuKhoaTim.trim() || ksvTim !== "tat_ca") && ketQuaTimThuCong.list.length === 0 && (
                 <div className="text-xs text-slate-400">Không tìm thấy vụ nào khớp.</div>
               )}
-              {ketQuaTimThuCong.length > 0 && (
-                <div className="border border-slate-200 rounded-lg overflow-hidden bg-white max-h-64 overflow-y-auto">
-                  {ketQuaTimThuCong.map(v => (
-                    <button key={v.id} onClick={() => chonVuThuCong(v)} disabled={dangXuLy}
-                            className="w-full text-left px-3 py-2 text-sm border-t border-slate-100 first:border-t-0 hover:bg-indigo-50 disabled:opacity-50">
-                      <div className="font-medium text-slate-800">{v.tenVu || "(chưa đặt tên)"}</div>
-                      <div className="text-xs text-slate-400 mt-0.5">
-                        {hienThiMa(v)} — KSV: {v.ksvChinh || "—"} — {v.dieuLuat || "—"} — QĐ KTVA: {v.soQdKtva || "—"}
-                      </div>
-                    </button>
-                  ))}
-                </div>
+              {ketQuaTimThuCong.list.length > 0 && (
+                <>
+                  <div className="text-xs text-slate-500 mb-1">
+                    Khớp {ketQuaTimThuCong.tong} vụ{ketQuaTimThuCong.tong > GIOI_HAN_KET_QUA_TIM ? ` — hiện ${GIOI_HAN_KET_QUA_TIM} vụ đầu, gõ thêm để thu hẹp` : ""}.
+                    {" "}Bấm dòng để xem bị can; bấm "+ Thêm" (khung tím) để đưa vào phiên.
+                  </div>
+                  <div className="border border-slate-200 rounded-lg overflow-hidden bg-white max-h-80 overflow-y-auto divide-y divide-slate-100">
+                    {ketQuaTimThuCong.list.map(v => {
+                      const daThem = maDaCoTrongPhien.has(v.id);
+                      const moRong = vuMoRongTim === v.id;
+                      return (
+                        <div key={v.id} className={daThem
+                          ? "bg-slate-100 border-l-4 border-slate-300"
+                          : "bg-white border-l-4 border-indigo-400"}>
+                          <div className="flex items-stretch justify-between gap-2">
+                            <button onClick={() => setVuMoRongTim(moRong ? null : v.id)}
+                                    className="flex-1 text-left px-3 py-2 text-sm hover:bg-black/5">
+                              <div className={"font-medium " + (daThem ? "text-slate-500" : "text-slate-800")}>
+                                {v.tenVu || "(chưa đặt tên)"}
+                              </div>
+                              <div className="text-xs text-slate-400 mt-0.5">
+                                {hienThiMa(v)} — KSV: {v.ksvChinh || "—"} — {v.dieuLuat || "—"} — QĐ KTVA: {fmtQdKtvaGon(v)}
+                                <span className="ml-1 text-indigo-500">{moRong ? "▴ ẩn bị can" : "▾ xem bị can"}</span>
+                              </div>
+                            </button>
+                            <div className="flex items-center pr-3 shrink-0">
+                              {daThem
+                                ? <span className="text-xs font-medium text-emerald-600 whitespace-nowrap">✓ Đã thêm vào phiên</span>
+                                : <button onClick={() => chonVuThuCong(v)} disabled={dangXuLy}
+                                          className="text-xs font-medium text-indigo-600 border border-indigo-300 rounded-full px-2 py-0.5 whitespace-nowrap hover:bg-indigo-50 disabled:opacity-50">
+                                    + Thêm
+                                  </button>}
+                            </div>
+                          </div>
+                          {moRong && <BiCanCuaVuTim vuId={v.id} />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}

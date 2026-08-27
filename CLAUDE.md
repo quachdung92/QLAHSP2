@@ -2,6 +2,54 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Giao nhận hồ sơ — ô tìm vụ nâng cấp (toggle phạm vi + xem bị can) + tự xoá phiên rỗng (2026-08-27, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app` (test), CHƯA deploy production)
+
+Theo yêu cầu Dũng — 2 việc trong `GiaoNhanHoSoModule` (yêu cầu mở rộng thêm giữa chừng):
+
+**1. Ô "Tìm thủ công" nâng cấp** (dùng khi không quét được mã QR — hồ sơ vụ chưa kịp dán QR):
+- **Mở sẵn** khi phiên đang mở (`hienTimThuCong` khởi tạo `true`, vẫn "Ẩn ô tìm" được).
+- Khung **viền tím `border-2 border-indigo-200 bg-indigo-50/40`** — tách rõ "vùng tìm & thêm" khỏi
+  bảng "đã thêm vào phiên".
+- **Toggle phạm vi `phamViTim`** ("dang" = đang giải quyết mặc định / "da" = đã giải quyết / "tat_ca"
+  = cả 2) — KHÔNG còn giới hạn chỉ vụ đang giải quyết. Cache vụ đã giải quyết nạp LƯỜI qua
+  `dongBoColdCacheVuAnDaGiaiQuyet()` (dùng chung `AnDaGiaiQuyetModule`) khi chọn "da"/"tat_ca".
+  `nguonTim`/`dangTaiNguonTim` gộp nguồn theo phạm vi; `ketQuaTimThuCong` đổi từ mảng → `{list, tong}`
+  ("Khớp N vụ", cap 30, trước 15).
+- **Bấm dòng kết quả để mở rộng xem bị can** (`vuMoRongTim` = id vụ đang mở; component mới
+  `BiCanCuaVuTim` fetch `batchLayBiCanList([vuId])` 1 lần) — hiện "• Họ tên (năm sinh) — tội danh[0]",
+  giúp tìm chính xác khi trùng tên/điều luật. Nút "+ Thêm" tách riêng bên phải (không lồng `<button>`
+  trong `<button>`).
+- **QĐ KTVA hiện dạng "Số/ngày"** qua helper mới `fmtQdKtvaGon(v)` → VD `1853/24.6.2026`
+  (`d.m.yyyy` không zero-pad). Vụ thiếu số → chỉ hiện ngày.
+- Vụ **đã có trong phiên** (`maDaCoTrongPhien` = Set từ `dsQuet`): khung xám `bg-slate-100
+  border-l-4 border-slate-300` + "✓ Đã thêm vào phiên", không có nút "+ Thêm" (vẫn mở rộng xem bị
+  can được).
+- Reset ô tìm (từ khoá / phạm vi / dòng mở rộng / `hienTimThuCong`) khi đổi `phien?.id` — không mang
+  trạng thái tìm của phiên trước sang phiên mới. Bỏ `autoFocus` ô tìm (ô "Quét mã QR" giữ focus cho
+  đầu đọc).
+- Ô lọc KSV đổi từ `<select>` thuần sang combobox gõ tìm `LocKsvComboBox` (dùng chung với
+  `DanhSachPanel`), khớp "chứa" thay vì `===` — theo "Quy chuẩn UI" mới (xem mục đó).
+
+**2. Phiên rỗng (0 hồ sơ) tự xoá, không cho lưu** — phiên `.add()` NGAY lúc "Bắt đầu phiên" nên bỏ
+dở để lại `phienGiaoNhan` trống làm rối "Phiên gần đây". (a) "Lưu phiên" `disabled` khi
+`dsQuet.length === 0`. (b) `xoaPhienNeuRong()` (đọc qua `phienRef`/`dsQuetLenRef`/`dangXuLyRef` tránh
+closure cũ) xoá phiên `dang_mo` + 0 dòng + không có thao tác quét đang chạy — cleanup lúc unmount
+(`useEffect(() => () => xoaPhienNeuRong(), [])`) + onClick "Phiên mới". (c) `donDepPhienRong(dsPhien)`
+chạy 1 lần mỗi lượt quay lại "Phiên gần đây": 1 truy vấn `chiaLoTruyVanIn` đếm sự kiện
+`giao_nhan_ho_so` của các phiên nghi ngờ trong **top-30 danh sách** (mọi phiên `da_luu`; `dang_mo`
+đã bắt đầu > 15 phút — mốc an toàn tránh xoá phiên vừa mở ở máy/tab khác, xem
+[[qlahsp2-main-concurrent-edits]]) rồi xoá phiên 0 sự kiện. Phiên rỗng bỏ dở bằng F5/đóng tab
+(không qua "Phiên mới") sẽ được `donDepPhienRong` dọn ở lượt sau khi đã > 15 phút; phiên rỗng cũ
+NẰM NGOÀI top-30 hiện chưa dọn (vô hại, không hiện trong UI).
+
+**Đã kiểm chứng qua UI thật trên `qlahs-sup.web.app`** (đăng nhập `admin@qlva.local`) — tìm "Nguyễn"
+ra "Khớp 274 vụ", QĐ KTVA hiện đúng `2174/21.8.2026`; bấm dòng mở rộng thấy đủ 10 bị can kèm năm
+sinh/tội danh; "+ Thêm" đưa vụ vào phiên + tự đặt tên phiên; tìm lại vụ đó → khung xám "✓ Đã thêm";
+toggle "Đã giải quyết" nạp cache lạnh + tìm "đánh bạc" ra 36 vụ đã giải quyết; "Lưu phiên" khoá khi
+0 hồ sơ; xoá dòng cuối rồi "Phiên mới" → `phienGiaoNhan` bị xoá (0 sự kiện mồ côi); phiên rỗng
+backdate > 15 phút bị `donDepPhienRong` xoá khi load lại trang. 0 lỗi console thật (chỉ cảnh báo
+Babel kích thước file). Đã dọn sạch mọi phiên/sự kiện test. **CHƯA deploy production `qlahsp2.web.app`.**
+
 ## Giữ trang/vụ án đang xem khi F5 + cảnh báo trùng Số/Ngày QĐ KTVA khi thêm vụ mới (2026-08-17, `qlahs-sup.html`, nhánh `giu-trang-khi-f5`, ĐÃ MERGE vào `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng — 2 việc độc lập gộp chung 1 phiên làm việc:
@@ -5377,6 +5425,25 @@ THẬT (không phải "result" cache JS) sẽ tính SAI ngay khi mở, dù code 
 - Trang in QR: A4, QR ~5x5cm chỉ chứa chuỗi mã vụ án thuần (tương thích hệ thống giao nhận hồ
   sơ PWA/Firebase khác đã có sẵn của người dùng — KHÔNG liên quan CSDL của dự án này, chỉ mượn
   format QR).
+
+## Quy chuẩn UI (áp dụng cho MỌI màn hình từ nay — 2026-08-27, theo yêu cầu Dũng)
+
+**Dropdown chọn từ danh sách MỞ (tên người: KSV/ĐTV/cán bộ; dân tộc; tên đơn vị... — bất cứ danh
+sách nào có thể dài / có giá trị hợp lệ nằm ngoài danh mục) PHẢI cho GÕ TÌM, không dùng `<select>`
+thuần.**
+- Nếu là ô lọc KSV: dùng lại thẳng component `LocKsvComboBox({ dsKsv, ksv, onDoi })` (input + dropdown
+  tự dựng `absolute` ngay dưới ô, backdrop `fixed inset-0` để đóng — KHÔNG dùng `<datalist>` trình
+  duyệt vì nó bung lệch vị trí). Giá trị "tất cả" = chuỗi `"tat_ca"`, ô trống ⇒ `"tat_ca"`.
+- Nơi khác chưa có component riêng: `<input list="...">` + `<datalist>` (pattern đã dùng ở
+  `ds-canbo-gnhs`/`ds-ksv-excel`/`ds-dtv-excel`/`ds-dantoc-excel`), hoặc dựng combobox tương tự
+  `LocKsvComboBox` nếu cần kiểm soát vị trí dropdown.
+- Logic lọc/khớp phải là **"chứa" (`.toLowerCase().includes(...)`)**, KHÔNG phải `===` — người dùng
+  gõ 1 phần tên là ra, không cần gõ đủ/đúng.
+
+**Ngoại lệ — GIỮ `<select>` thuần** cho dropdown chọn từ tập ENUM CỐ ĐỊNH có ý nghĩa nghiệp vụ
+(Giai đoạn / Trạng thái / Nguồn / Mức độ nghiêm trọng / Biện pháp ngăn chặn / Giới tính / Đảng viên /
+Loại bị can / Hình thức giải quyết...) — các giá trị này được logic thống kê ở khắp nơi dựa vào, KHÔNG
+cho gõ giá trị lạ (xem thêm phân biệt `OSelectExcelEnum` vs `OCellCombo` ở mục Bảng dữ liệu Excel).
 
 ## Lưu ý khi tiếp tục code
 
