@@ -37,12 +37,28 @@ dòng md liên tục 1..N; `tinhBieu2` ra 60 dòng có giá trị / `tinhBieu3` 
 `D77 = D57+D59+D60+D62+D71+D73−D61−D75`, `D272 = D93`, `D273 = D96`, `D72 = C7`, `D154/156 =
 tonCuoi ĐT`, `D17/18 = C60/C61` — đều khớp.
 
-**CHƯA làm / cần Dũng**: (1) xuất Excel 1 kỳ THẬT, mở 2 sheet "Biểu 2"/"Biểu 3", đối chiếu vài dòng
-"✓ Tự động tính" với số tay; (2) **nếu Dũng tìm lại được 3 file `Danh_sach_quy_tac_bieu_*.md`** →
-v2 có thể tự SUY RA thêm nhiều dòng qua quan hệ `D26 = D25 − D27` (hiện chỉ có ~10 quan hệ rút từ
-code + comment nhánh cũ); (3) quyết định có port tiếp refactor B10 C25-C26/C36-C37 + "hồi tố" từ
-`feature/tong-ke-dong` không (2 việc riêng, có thể đụng B10 đã kiểm chứng kỹ trên `main`); (4)
-merge `ton-ky-thong-nhat` TRƯỚC (nhánh này tách từ đó).
+**Cột "Quy tắc kiểm tra" + "Kiểm tra" (2026-08-28, Dũng cung cấp 3 file quy tắc — ĐÃ commit
+`quy_tac_bieu_2.md` / `quy_tac_bieu_3.md` / `quy_tac_bieu_10.md` vào gốc repo, GIỮ LÀM NGUỒN)**:
+- Sheet Biểu 2/3 giờ có 6 cột: Tiêu chí | Mã dòng | Số liệu | Trạng thái | **Quy tắc kiểm tra** |
+  **Kiểm tra (Excel tự tính khi nhập tay)**.
+- `BIEU2_QUY_TAC_RAW` (161 dòng) + `BIEU3_QUY_TAC_RAW` (84) = chép nguyên quy tắc từ 2 file md
+  (dạng `D26=D25-D27` / `D165>=D166` / `D77=D57+D58-...`). `phanTichQuyTacDong(raw)` parse → `{op,
+  lhs, rhs, anchor (D-code đầu vế trái), tuKiemTra}`. Quy tắc có `[b]` (kỳ trước) hoặc `Cxx_10173`/
+  `Dxx_10238` (liên biểu) → `tuKiemTra=false`.
+- Cột "Kiểm tra" = **CÔNG THỨC EXCEL** neo vào ĐÚNG dòng vế trái: `IF(NOT((C{md+1})op(...)),"✗
+  <raw>", IF(...,"✓ khớp (N quy tắc)"))` — mã dòng K ở hàng Excel K+1, giá trị ở cột C. Cán bộ nhập
+  tay ô "Số liệu" → công thức tự đối chiếu, vi phạm hiện "✗ <quy tắc>". Ô trống Excel = 0 nên dòng
+  chưa nhập không báo giả. `tuKiemTra=false` → ô ghi "(tra tay — liên biểu / kỳ trước)".
+- 5 dòng ghi chú cuối sheet giải thích 3 màu trạng thái + ý nghĩa cột Kiểm tra + lưu ý "dòng ✓ Tự
+  động tính dùng công thức RÚT GỌN, nhập tay dòng thiếu xong nhớ cập nhật lại dòng tổng".
+- Test cô lập: 161/161 + 84/84 quy tắc parse OK (140 + 75 tự-kiểm-tra được); công thức dài nhất
+  328 ký tự (giới hạn Excel 8192); offset `Dk → C{k+1}` đúng (D57→C58, D75→C76...).
+
+**CHƯA làm / cần Dũng**: (1) xuất Excel 1 kỳ THẬT, mở 2 sheet, đối chiếu vài dòng "✓ Tự động tính"
+với số tay + thử nhập 1 dòng ⚠ sai quy tắc xem ô "Kiểm tra" có báo "✗" không (cần Excel 2016+ cho
+IF lồng); (2) quyết định có port tiếp refactor B10 C25-C26/C36-C37 + "hồi tố Thêm bị can" từ
+`feature/tong-ke-dong` không (2 việc riêng, có thể đụng B10 đã kiểm chứng kỹ trên `main`); (3) merge
+`ton-ky-thong-nhat` TRƯỚC (nhánh này tách từ đó).
 
 ## Thống nhất HOÀN TOÀN công thức "tồn" theo KỲ THỐNG KÊ + loại bỏ tàn dư snapshot Firebase (2026-08-28, `qlahs-sup.html`, nhánh `ton-ky-thong-nhat`, RPC ĐÃ chạy lên Supabase thật — JS CHƯA merge/deploy, chờ Dũng kiểm chứng UI)
 

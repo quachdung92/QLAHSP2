@@ -11474,31 +11474,350 @@ function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC
 // Dựng 2 sheet "Biểu 2"/"Biểu 3" — 4 cột: Tiêu chí | Mã dòng | Số liệu | Trạng thái. Mỗi dòng lấy
 // giá trị từ tinhBieu2/tinhBieu3 nếu có; không có mà nằm trong BIEU23_CAN_XAC_NHAN thì hiện
 // "❓ Cần xác nhận công thức" (vàng cam); còn lại hiện "⚠ Chưa có dữ liệu" (xám, chờ nhập tay).
+// ── Quy tắc kiểm tra chéo Biểu 2 / Biểu 3
+// NGUỒN SỰ THẬT: quy_tac_bieu_2.md / quy_tac_bieu_3.md ở gốc repo (Dũng cung cấp — GIỮ LẠI, sửa thì cập nhật CẢ 2 nơi).
+// Dạng "D26=D25-D27" / "D165>=D166" / "D77=D57+D58-...". Neo vào DÒNG VẾ TRÁI. Cột "Quy tắc" + "Kiểm tra"
+// bên phải sheet: khi cán bộ NHẬP TAY 1 dòng, công thức Excel tự đối chiếu — vi phạm hiện "✗ ...".
+// Quy tắc có [b] (KỲ TRƯỚC) hoặc liên biểu (Cxx_10173 / Dxx_10238) → CHỈ hiện text, không tự kiểm tra.
+const BIEU2_QUY_TAC_RAW = [
+  "D165>=D166",
+  "D167=D168+D170+D172+D174+D176+D178+D180",
+  "D168>=D169",
+  "D170>=D171",
+  "D172>=D173",
+  "D174>=D175",
+  "D176>=D177",
+  "D178>=D179",
+  "D180>=D181",
+  "D182>=D183",
+  "D209>=D210",
+  "D211>=D212",
+  "D213>=D214",
+  "D215>=D216",
+  "D221=D222+D223+D224",
+  "D225=D226+D227+D228",
+  "D229>=D230+D231+D232+D233+D234+D236+D238+D240+D242+D244",
+  "D234>=D235",
+  "D236>=D237",
+  "D237<=D236",
+  "D238>=D239",
+  "D240>=D241",
+  "D242>=D243",
+  "D245<=D209+D236",
+  "D246<=D211+D238",
+  "D247>=D248",
+  "D249>=D250+D251+D252",
+  "D249<=D77",
+  "D270=D92-D93+D396",
+  "D280=D260+D261+D262+D263-D264+D270+D272+D274-D276-D278",
+  "D281=D265+D266+D267+D268-D269+D271+D273+D275-D277-D279",
+  "D282=D292+D300",
+  "D282>=D283",
+  "D282>=D284",
+  "D285=D296+D310",
+  "D285>=D286",
+  "D285>=D290",
+  "D286<=D287+D288+D289",
+  "D290>=D291",
+  "D292>=D293",
+  "D292>=D294",
+  "D292>=D295",
+  "D297>=D293",
+  "D298>=D294",
+  "D299>=D295",
+  "D300>=D301",
+  "D300>=D302+D303+D304+D305+D306+D307",
+  "D308>=D309",
+  "D310>=D311",
+  "D310>=D300",
+  "D310=D312+D313+D314+D315+D316+D317+D318+D319+D320+D321+D322",
+  "D312>=D302",
+  "D313>=D303",
+  "D314>=D304",
+  "D319>=D305",
+  "D320>=D306",
+  "D321>=D307",
+  "D323<=D319+D320+D321",
+  "D324>=D325",
+  "D326=D327+D328+D329+D330+D331",
+  "D332=D333+D334+D335+D336+D337",
+  "D338<=D339+D340+D341",
+  "D344>=D345",
+  "D344=D280-D282-D326",
+  "D346=D281-D285-D332",
+  "D347<=D348+D349+D350",
+  "D352>=D353",
+  "D352=D354+D355+D356+D357+D358",
+  "D352>=D359",
+  "D352>=D360",
+  "D361=D362+D363+D364+D365+D366",
+  "D367>=D352",
+  "D368>=D361",
+  "D372>=D373",
+  "D374>=D375+D377+D379+D380",
+  "D381>=D317",
+  "D395>=D396",
+  "D57=D154[b]+D209+D213+D236+D240",
+  "D64=D156[b]+D211+D215+D238+D242",
+  "D62<D151[b]",
+  "D69<=D153[b]",
+  "D151=D151[b]-D62-D115+D134-D213-D240",
+  "D153=D153[b]-D69-D132+D141-D215-D242",
+  "D260=D344[b]+D375+D379",
+  "D261<=D342[b]",
+  "D265=D346[b]+D377+D380",
+  "D342=D342[b]-D261+D326-D308",
+  "D343=D343[b]-D266+D332-D324",
+  "D271=D95-D96",
+  "D93=D272",
+  "D96=D273",
+  "C29_10173=D117",
+  "C31_10173=D134",
+  "C32_10173=D141",
+  "C53_10173=D300",
+  "C56_10173=D326",
+  "C57_10173=D332",
+  "C6_10173=D71",
+  "C7_10173=D72",
+  "D361=C58_10173",
+  "D368=C59_10173",
+  "D3>=D4+D5+D6+D7+D8",
+  "D4=D10+D14",
+  "D9>=D10+D11+D12+D13",
+  "D14>=D15",
+  "D18>=D19",
+  "D20>=D21",
+  "D22>=D23",
+  "D22>=D24",
+  "D24>=D25",
+  "D26>=D27",
+  "D36>=D37+D38",
+  "D38>=D39+D40",
+  "D43<=D44+D45+D46",
+  "D47<=D48+D49+D50",
+  "D52>=D53+D54",
+  "D62>=D63",
+  "D69>=D70",
+  "D77=D57+D58+D59+D60-D61+D62+D71+D73-D75",
+  "D77>=D78",
+  "D79=D64+D65+D66+D67-D68+D69+D72+D74-D76",
+  "D80<=D78",
+  "D81>=D82",
+  "D81<=D77",
+  "D83>=D84",
+  "D83>=D85",
+  "D83>=D92+D100",
+  "D85<=D78",
+  "D86>=D87",
+  "D86>=D91",
+  "D86>=D95+D117",
+  "D87<=D88+D89+D90",
+  "D92>=D93",
+  "D92>=D94",
+  "D95>=D96",
+  "D95>=D97",
+  "D95>=D99",
+  "D96>=D93",
+  "D98<=D97",
+  "D100>=D101",
+  "D100>=D102+D103+D104+D105+D106+D107+D108+D109+D110+D112+D114",
+  "D110>=D111",
+  "D112>=D113",
+  "D115>=D116",
+  "D117>=D118",
+  "D117>=D119+D120+D121+D122+D123+D124+D125+D126+D127+D129+D131",
+  "D127>=D128",
+  "D129>=D130",
+  "D132>=D133",
+  "D134=D135+D136+D137+D138+D139+D140",
+  "D141=D142+D143+D144+D146",
+  "D147<=D141",
+  "D147<=D148+D149+D150",
+  "D151>=D152",
+  "D154=D77-D83-D134",
+  "D154>=D155",
+  "D156=D79-D86-D141",
+  "D156>=D157",
+  "D157<=D158+D159+D160",
+  "D162<=D71+D58+D62+D209+D213+D236+D240",
+  "D163>=D162",
+];
+
+const BIEU3_QUY_TAC_RAW = [
+  "D10<=D9",
+  "D11<=D10",
+  "D13<=D12",
+  "D14<=D13",
+  "D17=D1+D2+D3+D4+D9-D15",
+  "D18=D5+D6+D7+D8+D12-D16",
+  "D22>=D23",
+  "D22>=D25",
+  "D22>=D27",
+  "D22>=D28",
+  "D22>=D29",
+  "D22>=D30",
+  "D22>=D31",
+  "D22>=D32",
+  "D22>=D34",
+  "D23>=D24",
+  "D25>=D26",
+  "D32>=D33",
+  "D35>=D36",
+  "D35>=D40",
+  "D35>=D42",
+  "D35>=D46",
+  "D35>=D49",
+  "D40>=D41",
+  "D42=D43+D44+D45",
+  "D46=D47+D48",
+  "D49=D50+D51",
+  "D52>=D53+D54+D55+D56+D57+D58+D59",
+  "D61>=D62+D63+D64+D65+D66+D67+D68",
+  "D70=D71+D72+D73+D74+D75",
+  "D76=D77+D78+D79+D80+D81",
+  "D84=D17-D22-D52-D70",
+  "D84>=D85",
+  "D86=D18-D35-D61-D76",
+  "D86>=D87",
+  "D88=D89+D90+D91+D92+D93+D94",
+  "D88>=D95",
+  "D88>=D96",
+  "D88>=D97",
+  "D98=D99+D100+D101+D102+D103+D104",
+  "D98>=D105",
+  "D107>=D108",
+  "D109>=D110",
+  "D111>=D112",
+  "D116>=D117",
+  "D116>=D118",
+  "D118>=D119",
+  "D120>=D121",
+  "D120>=D122",
+  "D123>=D124",
+  "D123>=D125",
+  "D126>=D127",
+  "D126>=D128",
+  "D136>=D137",
+  "D20<=D19",
+  "D36>=D37",
+  "D36>=D38",
+  "D36>=D39",
+  "D62>=D53",
+  "D63>=D54",
+  "D64>=D55",
+  "D65>=D56",
+  "D66>=D57",
+  "D67>=D58",
+  "D68>=D59",
+  "D77>=D71",
+  "D78>=D72",
+  "D79>=D73",
+  "D80>=D74",
+  "D81>=D75",
+  "D111>=D88",
+  "D113>=D98",
+  "D120>=D116",
+  "D126>=D123",
+  "D130>=D129",
+  "C60_10173=D17",
+  "C61_10173=D18",
+  "C70_10173=D76",
+  "C67_10173=D61",
+  "C66_10173=D52",
+  "C64_10173=D35",
+  "C63_10173=D22",
+  "C71_10173=D98",
+  "C72_10173=D113",
+];
+
+function phanTichQuyTacDong(raw) {
+  const s = raw.replace(/\s+/g, "");
+  let op = "=", iOp = s.indexOf("=");
+  for (const o of [">=", "<=", ">", "<"]) { const i = s.indexOf(o); if (i >= 0) { op = o; iOp = i; break; } }
+  let tuKiemTra = true;
+  const parseVe = (str) => {
+    const terms = []; let m;
+    const re = /([+-]?)(D\d+\[b\]|D\d+_\d+|D\d+|C\d+(?:_\d+)?|\d+)/g;
+    while ((m = re.exec(str))) {
+      const dau = m[1] === "-" ? -1 : 1, tok = m[2], md = tok.match(/^D(\d+)$/);
+      if (md) terms.push({ md: +md[1], dau });
+      else if (/^\d+$/.test(tok)) terms.push({ num: +tok, dau });
+      else { tuKiemTra = false; terms.push({ khac: tok, dau }); }
+    }
+    return terms;
+  };
+  const lhs = parseVe(s.slice(0, iOp)), rhs = parseVe(s.slice(iOp + op.length));
+  const anchor = lhs.find(t => t.md != null)?.md ?? rhs.find(t => t.md != null)?.md ?? null;
+  if (anchor == null) return null;
+  return { raw, op, lhs, rhs, anchor, tuKiemTra };
+}
+const BIEU2_QUY_TAC = BIEU2_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
+const BIEU3_QUY_TAC = BIEU3_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
+
+
 function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3) {
   const MAU = { tuDong: "FFD1FAE5", canXacNhan: "FFFEF3C7", chuaCo: "FFF1F5F9" };
-  const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan) => {
+  // Trong sheet: dòng mã K nằm ở HÀNG Excel K+1 (1 hàng tiêu đề trên cùng), giá trị ở CỘT C.
+  // Term "Dk" trong quy tắc → ô Excel `C{k+1}`. Ô trống Excel = 0 nên dòng chưa nhập không báo giả.
+  const oCua = (t) => (t.md != null ? `C${t.md + 1}` : String(t.num));
+  const bieuThuc = (ve) => {
+    const xs = ve.filter(t => t.md != null || t.num != null);
+    return xs.length ? xs.map((t, i) => (t.dau < 0 ? "-" : (i === 0 ? "" : "+")) + oCua(t)).join("") : "0";
+  };
+  const congThucKiemTra = (qtList) => {
+    const auto = qtList.filter(q => q.tuKiemTra);
+    if (!auto.length) return qtList.length ? "(tra tay — liên biểu / kỳ trước)" : null;
+    let f = `"✓ khớp (${auto.length} quy tắc)"`;
+    for (let i = auto.length - 1; i >= 0; i--) {
+      const q = auto[i];
+      const cond = `(${bieuThuc(q.lhs)})${q.op}(${bieuThuc(q.rhs)})`;
+      f = `IF(NOT(${cond}),"✗ ${q.raw.replace(/"/g, "'")}",${f})`;
+    }
+    return { formula: "=" + f };
+  };
+  const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan, quyTacList) => {
     const ws = wb.addWorksheet(tenSheet);
     ws.views = [{ state: "frozen", ySplit: 1 }];
-    ws.columns = [{ width: 70 }, { width: 10 }, { width: 14 }, { width: 34 }];
-    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái"]);
+    ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }];
+    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái", "Quy tắc kiểm tra", "Kiểm tra (Excel tự tính khi nhập tay)"]);
     hRow.font = { bold: true };
     hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    const qtTheoNeo = new Map();
+    for (const q of quyTacList) {
+      if (!qtTheoNeo.has(q.anchor)) qtTheoNeo.set(q.anchor, []);
+      qtTheoNeo.get(q.anchor).push(q);
+    }
     for (const r of rows) {
       const co = giaTriMap.has(r.md);
       const canXN = !co && BIEU23_CAN_XAC_NHAN.has(`${tienToXacNhan}:${r.md}`);
       const trangThai = co ? "✓ Tự động tính"
-        : (canXN ? "❓ Cần xác nhận công thức (xem CLAUDE.md)" : "⚠ Chưa có dữ liệu — cần bổ sung tính năng");
-      const row = ws.addRow([r.tc, r.md, co ? giaTriMap.get(r.md) : null, trangThai]);
+        : (canXN ? "❓ Cần xác nhận công thức (xem quy_tac_bieu_*.md)" : "⚠ Chưa có dữ liệu — nhập tay");
+      const qtDong = qtTheoNeo.get(r.md) || [];
+      const row = ws.addRow([
+        r.tc, r.md, co ? giaTriMap.get(r.md) : null, trangThai,
+        qtDong.length ? qtDong.map(q => q.raw).join("\n") : null,
+        congThucKiemTra(qtDong),
+      ]);
       row.getCell(1).alignment = { wrapText: true, vertical: "top" };
+      row.getCell(5).alignment = { wrapText: true, vertical: "top" };
       row.getCell(4).font = { color: { argb: co ? "FF065F46" : (canXN ? "FF92400E" : "FF64748B") } };
-      row.eachCell(cell => {
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: co ? MAU.tuDong : (canXN ? MAU.canXacNhan : MAU.chuaCo) } };
-      });
+      for (let c = 1; c <= 4; c++) {
+        row.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: co ? MAU.tuDong : (canXN ? MAU.canXacNhan : MAU.chuaCo) } };
+      }
     }
+    ws.addRow([]);
+    [
+      ["Ghi chú:"],
+      ["• Cột 'Số liệu': ✓ Tự động tính (xanh) = hệ thống điền từ dữ liệu. ⚠ Chưa có dữ liệu (xám) = tự nhập tay. ❓ Cần xác nhận công thức (vàng) = có manh mối nhưng chưa chắc, tự nhập rồi đối chiếu."],
+      ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗' = đang VI PHẠM quy tắc đó — kiểm tra lại các dòng liên quan."],
+      ["• Dòng '✓ Tự động tính' dùng công thức RÚT GỌN (bỏ các số hạng chưa có tính năng theo dõi) — khi bạn nhập tay các dòng còn thiếu, ô 'Kiểm tra' của dòng tổng có thể báo '✗', lúc đó cập nhật lại dòng tổng cho khớp."],
+      ["• Quy tắc có '[b]' (giá trị kỳ TRƯỚC) hoặc 'C.._10173 / D.._10238' (liên biểu) không tự kiểm tra được — cột 'Kiểm tra' ghi '(tra tay)', đối chiếu thủ công với báo cáo kỳ trước / Biểu 10."],
+      ["• Nguồn quy tắc: quy_tac_bieu_2.md / quy_tac_bieu_3.md trong mã nguồn hệ thống."],
+    ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
     return ws;
   };
-  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2");
-  themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3");
+  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC);
+  themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC);
 }
 
 
