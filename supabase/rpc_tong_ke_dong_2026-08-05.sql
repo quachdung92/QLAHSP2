@@ -1,3 +1,6 @@
+-- ⚠ LỖI THỜI (2026-08-28) — hàm này đã được ĐỊNH NGHĨA LẠI ở supabase/rpc_ton_ky_thong_nhat_2026-08-28.sql
+-- (thống nhất tồn theo KỲ THỐNG KÊ, bỏ lọc theo ngayKhoiTo). File này giữ làm lịch sử, KHÔNG chạy lại.
+
 -- ============================================================================
 -- QLVA — Phase 1: RPC tính "vụ án đang tồn tại giai đoạn nào, TÍNH TỚI 1 KỲ BẤT KỲ K" bằng
 -- query động trên toàn bộ lịch sử (lichsuChuyenGiaiDoan) — KHÔNG phụ thuộc snapshot/chốt kỳ

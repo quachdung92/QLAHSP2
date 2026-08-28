@@ -2,6 +2,96 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Thống nhất HOÀN TOÀN công thức "tồn" theo KỲ THỐNG KÊ + loại bỏ tàn dư snapshot Firebase (2026-08-28, `qlahs-sup.html`, nhánh `ton-ky-thong-nhat`, RPC ĐÃ chạy lên Supabase thật — JS CHƯA merge/deploy, chờ Dũng kiểm chứng UI)
+
+Theo chỉ đạo trực tiếp của Dũng: *"tất cả công thức phải base on kỳ thống kê. Nếu không phát sinh
+xử lý ở kỳ thống kê thì phải tính là tồn. Cách tính tồn theo `ngayKhoiTo <= ngày chốt kỳ` là TÀN DƯ
+của hệ thống Firebase. Chỉnh lại thống nhất và chính xác. Lần sửa này phải là FINAL. Loại bỏ tàn dư
+hệ thống snap của Firebase."* + *"tất cả bị can/vụ án đều đã gán kỳ rồi, trừ các bị can tôi cố ý cho
+vào kỳ lưu trữ (hợp thức số liệu / bổ sung vụ thiếu, KHÔNG muốn tính thống kê)."* + RPC lỗi thì
+*"cứ chặn đi, sau này tôi tính phương án index song song."*
+
+**MÔ HÌNH TỒN THỐNG NHẤT (mới)** — mọi số "tồn" (Kỳ báo cáo, Biểu B10, Cân đối số liệu, Dashboard):
+1. **Chỉ dựa `kyThongKe` của sự kiện, KHÔNG dựa ngày thật.** Bỏ hẳn `ngayKhoiTo <= ngày chốt kỳ`.
+2. **Sự kiện gán kỳ lưu trữ = NGOÀI mọi thống kê tồn.** Vụ/bị can mà mọi sự kiện đổi giai đoạn đều ở
+   kỳ lưu trữ → không xuất hiện trong báo cáo nào. Vụ có ≥1 sự kiện kỳ THẬT (VD lưu trữ rồi phục hồi
+   thật) → chỉ sự kiện kỳ thật quyết định trạng thái.
+3. **Bị can tồn đến hết kỳ K** = vụ của họ đang tồn ở K **VÀ** có sự kiện `khoi_to_bican` ở 1 kỳ
+   THẬT thứ tự ≤ K. Bị can khởi tố ở kỳ thật SAU K → là "mới" của kỳ đó, không tính tồn ở K.
+4. **RPC động là NGUỒN DUY NHẤT.** Không còn: `kybaocao.tonCuoiKy/tonCuoiBiCan/tonCuoiKyTheoTD/
+   tonCuoiKyIds/baoCaoLuu` (snapshot chốt), `tinhSnapTonTheoTD`/`tachBaoCaoLuu`/`tinhLaiBaoCaoLuu`,
+   nhánh "kỳ đã chốt đọc baoCaoLuu", nhánh `_tonCuoiKyNguon === "duphong"` + banner, 2 công cụ Cài
+   đặt (`TaiTaoTonTheoTDTool` "Sửa lại tồn cuối kỳ...", `SoSanhRPCTonKyTool` "So sánh RPC vs
+   snapshot"), `taiTaoTonCuoiKyTheoTDTatCa`, cột "Tồn cuối kỳ (xem nhanh)" + nút "Tính lại số liệu"
+   ở danh sách Kỳ báo cáo. **RPC lỗi (mất mạng/Postgres) → THROW, chặn xem/xuất báo cáo** (không có
+   dự phòng). Dashboard: kỳ nào RPC lỗi → để trống trên biểu đồ.
+5. **`chotKyBaoCao` CHỈ đổi `trangThai/ngayChot/nguoiChot/thoiDiemChot`** — không ghi ảnh chụp số
+   liệu nào. `ngayChot` vẫn ghi (dữ kiện hành chính hiển thị) nhưng KHÔNG còn là input công thức
+   (RPC xếp hạng kỳ theo `ngayBatDau`). → Không có bước "chốt lại"/"tính lại" cho kỳ đã chốt nữa.
+   Các field snapshot CŨ trên `kybaocao` **để nguyên, không xoá** (đúng "không sửa data") — chỉ
+   ngừng ghi + ngừng đọc.
+
+**RPC — file mới `supabase/rpc_ton_ky_thong_nhat_2026-08-28.sql`** (thay 2 file `..._2026-08-05.sql`,
+giữ 2 file cũ làm lịch sử — KHÔNG chạy lại chúng). ĐÃ `create or replace` lên Supabase thật (backup
+trước: `gh workflow run backup-supabase.yml`, run `33188104626` success). 2 thay đổi:
+- `layTrangThaiVuTaiKy`: `ky_hop_le` CHỈ nhận kỳ `loai IS NULL` (loại hẳn kỳ lưu trữ — trước coi
+  -infinity). Kiểm chứng dữ liệu thật 2026-08-28: **0 tác động** (mọi vụ lưu trữ đều khởi tố + hoàn
+  thành cùng kỳ lưu trữ → net 0; đúng 1 vụ `QLVA_E01.53_2511_0018` lưu trữ rồi phục hồi thật kỳ
+  08/2026 → vẫn tồn Điều tra, đúng).
+- `layTrangThaiBiCanTaiKy`: BỎ `bican.ngayKhoiTo <= ky_cutoff.moc`, thay bằng `join` với sự kiện
+  `khoi_to_bican` ở kỳ THẬT thứ tự ≤ K (strict — bị can không có `khoi_to_bican` ở kỳ thật nào →
+  KHÔNG tính; thiếu gán kỳ là việc vệ sinh dữ liệu, tự lộ ở "Cân đối số liệu").
+
+**Số ĐỔI trên dữ liệu thật (kiểm chứng qua pooler, 2026-08-28)** — CHỈ Điều tra–Bị can đổi:
+| Kỳ | ĐT bị can: cũ → mới | TT/XX bị can | Số VỤ (mọi giai đoạn) |
+|---|---|---|---|
+| 06/2026 (đã chốt) | 741 → **736** | không đổi | không đổi |
+| 07/2026 | 813 → **811** | không đổi | không đổi |
+| 08/2026 | 869 → 869 | không đổi | không đổi |
+5 (kỳ 06) + 2 (kỳ 07) bị can đó = thêm vào vụ Điều tra đã có, ngày khởi tố sớm nhưng sự kiện gán kỳ
+07/08 → theo mô hình mới thuộc kỳ 07/08. Lệch "Cân đối số liệu" 814/819 (ghi nhận 09/08) khép lại.
+
+**JS — thay đổi chính trong `qlahs-sup.html`**:
+- `locBiCanTheoCutoff(bcList, cutoff)` → **`locBiCanTheoKy(bcList, kyThongKeSuKien, bcKyKhoiToMap,
+  kyRankMap)`** (lọc theo kỳ, không theo ngày) + helper mới `layKyRankMap()` (Map kỳ THẬT → rank,
+  kỳ lưu trữ không có).
+- `vuAnTuLogDocs(logDocs, kyRankMap)` — truyền `kyRankMap` → `_soBiCan` lọc theo kỳ (hàm tự
+  `fetchKyKhoiToBiCan`); field gắn kèm đổi `_bcCutoff` → `_bcKyGioiHan` (= `l.kyThongKe`).
+- `tinhBaoCaoKyTuLog`: `tonCuoiKy`/`tonCuoiBiCanKy` = LUÔN từ `layTonTheoKyRPC(ky.id)` (throw nếu
+  null); `tonDauKy`/`tonDauBiCan` = RPC as-of kỳ TRƯỚC (throw nếu null). Bỏ nhánh `if da_chot đọc
+  ky.tonCuoiKy` + toàn bộ khối ledger `bcMoi`/`boSungTonBc`/`tonCuoiKy = tonDauKy + soMoi.tong −
+  soGiaiQuyetVu`. `soMoi` (vụ) + `_soBiCan` trong `ds.*` (đã lọc kỳ) vẫn tính — nuôi dòng "Tổng số
+  mới"/"Đã giải quyết" + cột "Tồn cuối (tính)" của "Cân đối số liệu" (cross-check độc lập với RPC).
+  `hoan_thanh` cũng lọc `_soBiCan` theo kỳ.
+- `tinhBaoCaoKy` → wrapper mỏng gọi thẳng `tinhBaoCaoKyTuLog` (bỏ baoCaoLuu/duphong/apDungRpcTonDau).
+- `tinhBieu10`: bỏ `kyTruoc.tonCuoiKyTheoTD`/`ky.tonCuoiKyTheoTD` snapshot + nhánh `tonTheoLogD`
+  (cộng dồn sổ cái). "Tồn kỳ trước/này" theo D = CHỈ `gomRpcTheoTD(rpcTonTruocList/rpcTonList)`
+  (rpcTonTruocList=null ⇒ kỳ đầu ⇒ 0). Bỏ 2 field `tonTD_truoc`/`kyTonTD` khỏi return.
+- `xuatBaoCaoThangExcel`: `rpcTonKyNay`/`rpcTonKyTruoc` THROW nếu RPC lỗi (bỏ `.catch(()=>null)`);
+  thêm `layKyRankMap()` vào Promise.all; `addSheetVu` lọc bị can qua `locBiCanTheoKy(list,
+  vu._bcKyGioiHan, bcKyKhoiToMap, kyRankMap)`.
+- Tab "Kết thúc điều tra"/"Kết thúc truy tố" (`AnDaGiaiQuyetModule.taiDsCgd`): tách "cũ (trả ĐTBS)/
+  mới" theo KỲ của lần trả hồ sơ (`locBiCanTheoKy`), không theo ngày.
+- Xoá component `TaiTaoTonTheoTDTool`, `SoSanhRPCTonKyTool` + render trong Cài đặt; xoá hàm
+  `taiTaoTonCuoiKyTheoTDTatCa`; xoá state/handler `dangTinhLai`/`bamTinhLai` + cột xem nhanh ở
+  `KyBaoCaoModule`; cập nhật mọi text UI "vào Kỳ báo cáo bấm Tính lại số liệu" (SuaKyModal,
+  XoaVuAnModal, XoaHinhThucGiaiQuyetModal) sang "tự tính lại từ log".
+
+**ĐÃ kiểm chứng**: RPC — pooler, 736/811, deterministic (chạy 2 lần khớp), vụ không đổi. JS —
+compile-check qua `@babel/core`+`@babel/preset-react` sạch qua nhiều vòng. Đối chiếu sổ cái VỤ kỳ 07
+Điều tra: vào 66 − ra 56 = +10 vs RPC +9 — lệch 1 VỤ, đây là imprecision CÓ SẴN TỪ TRƯỚC của sổ cái
+(đếm sự kiện) so với RPC (đếm trạng thái cuối distinct) khi 1 vụ có ≥2 sự kiện "vào" cùng kỳ; "Cân
+đối số liệu" tô đỏ đúng chỗ này theo thiết kế, KHÔNG phải regression.
+
+**CHƯA làm / cần Dũng**: (1) merge nhánh `ton-ky-thong-nhat` + deploy sau khi Dũng mở báo cáo thật
+trên `qlahs-sup.web.app` (đăng nhập) xác nhận: Biểu B10 "Tồn kỳ trước/này" ra số đúng, "Cân đối số
+liệu" chênh lệch chấp nhận được (0 hoặc ±nhỏ đã giải thích), Kỳ báo cáo hiện đúng 736/811, Dashboard
+tải được; mở file Excel THẬT xác nhận công thức B10 không vỡ. (2) **RPC đã LIVE trên Supabase dùng
+chung** — nên `qlahsp2.web.app`/`qlahs-sup.web.app` (còn chạy JS CŨ) HIỆN ĐÃ hiển thị 736/811 (JS cũ
+vẫn ưu tiên RPC cho tồn cuối kỳ, chỉ khác là còn giữ code dự phòng); revert nhanh = chạy lại 2 file
+`..._2026-08-05.sql` nếu cần. (3) Cập nhật `schema.sql` (không cần — cột snapshot vẫn tồn tại, chỉ
+ngừng dùng).
+
 ## Tab "Đã xét xử" — nhập điểm/khoản + mức án TỪNG tội danh của TỪNG bị can, panel chính riêng (2026-08-28, `qlahs-sup.html`, nhánh `main`, ĐÃ chạy migration + deploy `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng — nâng cấp tab "Đã xét xử" trong module "Án đã giải quyết" (`AnDaGiaiQuyetModule`).
