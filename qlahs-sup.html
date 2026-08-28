@@ -4986,6 +4986,67 @@ function mucAnBiCanCaoNhat(dsBiCan) {
   return best;
 }
 
+// ---- Hình phạt chi tiết TỪNG tội danh của TỪNG bị can (2026-08-28) ----
+// Lưu ở bican.hinhPhatChiTiet (jsonb) — mảng SONG SONG theo index với bican.toiDanh:
+//   [{ khoan, diem, mucAnLoai, mucAnNam, mucAnThang }, ...]
+// khoan/diem: chuỗi tự do (VD khoan "2", diem "a, b"). mucAn*: cùng enum NHAN_LOAI_MUC_AN.
+// bican.mucAnLoai/mucAnNam/mucAnThang (mức án "chung" của bị can — dùng tính Thời hạn bảo quản khi
+// nộp lưu kho) giờ TỰ TÍNH cộng dồn từ hinhPhatChiTiet theo Điều 55 BLHS 2025 (xem tongHopHinhPhat).
+// Nhập/sửa ở tab "Đã xét xử" của module "Án đã giải quyết" (PanelDaXetXu).
+function chuanHoaHinhPhatChiTiet(toiDanh, hpct) {
+  const n = Math.max(1, (toiDanh || [""]).length);
+  const src = Array.isArray(hpct) ? hpct : [];
+  return Array.from({ length: n }, (_, i) => {
+    const x = src[i] || {};
+    let nam = x.mucAnNam === "" || x.mucAnNam == null ? null : Number(x.mucAnNam);
+    let thang = x.mucAnThang === "" || x.mucAnThang == null ? null : Number(x.mucAnThang);
+    // Cột "mucAnThang" bên trong jsonb không có CHECK như cột thật, nhưng vẫn quy đổi cho nhất quán
+    // (gõ tắt "40 tháng" -> 3 năm 4 tháng) để hiển thị/tổng hợp đúng.
+    if (thang != null && thang >= 12) { nam = (nam || 0) + Math.floor(thang / 12); thang = thang % 12; }
+    return {
+      khoan: (x.khoan == null ? "" : String(x.khoan)).trim(),
+      diem: (x.diem == null ? "" : String(x.diem)).trim(),
+      mucAnLoai: x.mucAnLoai || "",
+      mucAnNam: Number.isFinite(nam) ? nam : null,
+      mucAnThang: Number.isFinite(thang) ? thang : null,
+    };
+  });
+}
+
+// Tổng hợp hình phạt của nhiều tội (Điều 55 BLHS 2025) → { mucAnLoai, mucAnNam, mucAnThang }.
+// - Có tử hình → tử hình. Có chung thân (không tử hình) → chung thân.
+// - Có tù có thời hạn → cộng dồn (gồm cả phần án treo — tổng hợp thì buộc chấp hành), TỐI ĐA 30 năm.
+// - Toàn án treo → giữ án treo, lấy mức dài nhất (luật không quy định cộng dồn thời gian thử thách).
+// - Toàn phạt tiền → phạt tiền. Chưa nhập tội nào có mức án → mucAnLoai = null (coi như chưa có).
+function tongHopHinhPhat(hpct) {
+  const items = (hpct || []).filter(x => x && x.mucAnLoai);
+  if (items.length === 0) return { mucAnLoai: null, mucAnNam: null, mucAnThang: null };
+  if (items.some(x => x.mucAnLoai === "tu_hinh")) return { mucAnLoai: "tu_hinh", mucAnNam: null, mucAnThang: null };
+  if (items.some(x => x.mucAnLoai === "chung_than")) return { mucAnLoai: "chung_than", mucAnNam: null, mucAnThang: null };
+  if (items.some(x => x.mucAnLoai === "nam")) {
+    let thang = 0;
+    items.forEach(x => {
+      if (x.mucAnLoai === "nam" || x.mucAnLoai === "an_treo")
+        thang += (Number(x.mucAnNam) || 0) * 12 + (Number(x.mucAnThang) || 0);
+    });
+    if (thang > 360) thang = 360; // Điều 55: tù có thời hạn tổng hợp không quá 30 năm
+    return { mucAnLoai: "nam", mucAnNam: Math.floor(thang / 12), mucAnThang: thang % 12 };
+  }
+  if (items.every(x => x.mucAnLoai === "an_treo")) {
+    let best = { mucAnLoai: "an_treo", mucAnNam: 0, mucAnThang: 0 }, bestM = -1;
+    items.forEach(x => {
+      const m = (Number(x.mucAnNam) || 0) * 12 + (Number(x.mucAnThang) || 0);
+      if (m > bestM) { bestM = m; best = { mucAnLoai: "an_treo", mucAnNam: Number(x.mucAnNam) || 0, mucAnThang: Number(x.mucAnThang) || 0 }; }
+    });
+    return best;
+  }
+  if (items.every(x => x.mucAnLoai === "phat_tien")) return { mucAnLoai: "phat_tien", mucAnNam: null, mucAnThang: null };
+  const best = mucAnBiCanCaoNhat(items.map(x => ({ mucAnLoai: x.mucAnLoai, mucAnNam: x.mucAnNam, mucAnThang: x.mucAnThang })));
+  return best
+    ? { mucAnLoai: best.mucAnLoai, mucAnNam: best.mucAnNam ?? null, mucAnThang: best.mucAnThang ?? null }
+    : { mucAnLoai: null, mucAnNam: null, mucAnThang: null };
+}
+
 function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [vuAn, setVuAn] = useState(null);
@@ -13343,6 +13404,247 @@ async function dongBoColdCacheVuAnDaGiaiQuyet() {
   return coldGetAll(idb, COLD_STORE_VUAN_GQ);
 }
 
+// ====================================================================
+// Tab "Đã xét xử" — panel CHÍNH riêng: nhập điểm/khoản + mức án TỪNG tội danh của TỪNG bị can
+// (2026-08-28, theo yêu cầu Dũng). Panel chi tiết bên phải giữ nguyên nhưng ẩn được (quá nhỏ để
+// thao tác nhập liệu) — xem `anChiTiet` ở AnDaGiaiQuyetModule.
+// ====================================================================
+
+// "Đ.174/25" từ "Điều 174 BLHS 2025".
+function badgeDieuLuatGon(dieuLuat) {
+  if (!dieuLuat) return null;
+  const m = dieuLuat.match(/Điều\s+(\d+[a-zA-Z]*)\s+BLHS\s+\d{2}(\d{2})/i);
+  return m ? `Đ.${m[1]}/${m[2]}` : dieuLuat;
+}
+
+// 1 bị can — bảng tội danh × (khoản/điểm + mức án riêng), "hình phạt chung" tự tính cộng dồn, nút Lưu.
+function BanAnBiCanCard({ bc, onSaved }) {
+  const toiDanh = (bc.toiDanh && bc.toiDanh.length ? bc.toiDanh : [""]);
+  const dieuLuatBC = bc.dieuLuatBC || [];
+  const goc = useMemo(() => chuanHoaHinhPhatChiTiet(toiDanh, bc.hinhPhatChiTiet), [bc.id]);
+  const [rows, setRows] = useState(goc);
+  const [trangThai, setTrangThai] = useState("idle"); // idle | dang | ok | loi
+  const [loi, setLoi] = useState("");
+  const gocKey = useRef(JSON.stringify(goc));
+  useEffect(() => { setRows(goc); gocKey.current = JSON.stringify(goc); setTrangThai("idle"); setLoi(""); }, [bc.id]);
+
+  const doiRow = (i, patch) => setRows(rs => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const chung = tongHopHinhPhat(chuanHoaHinhPhatChiTiet(toiDanh, rows));
+  const dirty = JSON.stringify(chuanHoaHinhPhatChiTiet(toiDanh, rows)) !== gocKey.current;
+  const laPhapNhan = bc.loaiBiCan === "phap_nhan";
+
+  const luu = async () => {
+    setTrangThai("dang"); setLoi("");
+    try {
+      const chiTiet = chuanHoaHinhPhatChiTiet(toiDanh, rows);
+      const th = tongHopHinhPhat(chiTiet);
+      await db.collection("bican").doc(bc.id).update({
+        hinhPhatChiTiet: chiTiet,
+        mucAnLoai: th.mucAnLoai, mucAnNam: th.mucAnNam, mucAnThang: th.mucAnThang,
+        ngayCapNhat: new Date(), nguoiCapNhatCuoi: auth.currentUser?.email || "",
+      });
+      gocKey.current = JSON.stringify(chiTiet);
+      setRows(chiTiet);
+      setTrangThai("ok");
+      if (onSaved) onSaved(bc.maVuAn, bc.id, th);
+      setTimeout(() => setTrangThai(s => (s === "ok" ? "idle" : s)), 2500);
+    } catch (e) {
+      console.error(e);
+      setLoi(e.message || String(e));
+      setTrangThai("loi");
+    }
+  };
+
+  return (
+    <div className="border border-slate-200 rounded-lg bg-white">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-100 rounded-t-lg">
+        <div className="text-sm font-semibold text-slate-800">
+          {bc.hoTen || (laPhapNhan ? bc.tenPhapNhan || "(pháp nhân)" : "(chưa rõ tên)")}
+          {bc.namSinh ? <span className="text-slate-400 font-normal"> — {bc.namSinh}</span> : null}
+          {laPhapNhan ? <span className="ml-1 text-[10px] font-medium text-purple-600">Pháp nhân</span> : null}
+        </div>
+        <Badge mau={MAU_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || MAU_BIEN_PHAP_NGAN_CHAN.tai_ngoai}>
+          {NHAN_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || NHAN_BIEN_PHAP_NGAN_CHAN.tai_ngoai}
+        </Badge>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-slate-400">
+            <tr className="border-b border-slate-100">
+              <th className="text-left px-3 py-1.5 font-medium min-w-[160px]">Tội danh</th>
+              <th className="text-left px-2 py-1.5 font-medium w-16">Khoản</th>
+              <th className="text-left px-2 py-1.5 font-medium w-28">Điểm</th>
+              <th className="text-left px-2 py-1.5 font-medium w-32">Loại mức án</th>
+              <th className="text-left px-2 py-1.5 font-medium w-16">Năm</th>
+              <th className="text-left px-2 py-1.5 font-medium w-16">Tháng</th>
+            </tr>
+          </thead>
+          <tbody>
+            {toiDanh.map((td, i) => {
+              const r = rows[i] || { khoan: "", diem: "", mucAnLoai: "", mucAnNam: null, mucAnThang: null };
+              const dlb = badgeDieuLuatGon(dieuLuatBC[i]);
+              return (
+                <tr key={i} className={i % 2 ? "bg-slate-50/60" : ""}>
+                  <td className="px-3 py-1.5 align-top">
+                    <div className="text-slate-700">{td || <span className="text-slate-300">(chưa có tội danh)</span>}</div>
+                    {dlb && <div className="text-[10px] font-mono text-indigo-600 mt-0.5">{dlb}</div>}
+                    {i === 0 && <div className="text-[10px] text-slate-400 mt-0.5">Tội chính</div>}
+                  </td>
+                  <td className="px-2 py-1.5 align-top">
+                    <input value={r.khoan} onChange={e => doiRow(i, { khoan: e.target.value })}
+                           placeholder="2" className={oInput + " py-1 px-1.5"} />
+                  </td>
+                  <td className="px-2 py-1.5 align-top">
+                    <input value={r.diem} onChange={e => doiRow(i, { diem: e.target.value })}
+                           placeholder="a, b" className={oInput + " py-1 px-1.5"} />
+                  </td>
+                  <td className="px-2 py-1.5 align-top">
+                    <select value={r.mucAnLoai} onChange={e => doiRow(i, { mucAnLoai: e.target.value })}
+                            className={oInput + " py-1 px-1.5"}>
+                      <option value="">— chưa nhập —</option>
+                      {Object.entries(NHAN_LOAI_MUC_AN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1.5 align-top">
+                    {r.mucAnLoai === "nam" || r.mucAnLoai === "an_treo" ? (
+                      <input type="number" min="0" step="1" value={r.mucAnNam ?? ""}
+                             onChange={e => doiRow(i, { mucAnNam: e.target.value })}
+                             className={oInput + " py-1 px-1.5"} />
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-2 py-1.5 align-top">
+                    {r.mucAnLoai === "nam" || r.mucAnLoai === "an_treo" ? (
+                      <input type="number" min="0" max="11" step="1" value={r.mucAnThang ?? ""}
+                             onChange={e => doiRow(i, { mucAnThang: e.target.value })}
+                             onBlur={e => {
+                               const chuan = chuanHoaThangLe(r.mucAnNam, e.target.value);
+                               if (chuan) doiRow(i, { mucAnNam: chuan.mucAnNam, mucAnThang: chuan.mucAnThang });
+                             }}
+                             className={oInput + " py-1 px-1.5"} />
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-t border-slate-100">
+        <div className="text-xs text-slate-500">
+          Hình phạt chung <span className="text-slate-400">(tự tính cộng dồn theo Điều 55 BLHS)</span>:{" "}
+          <span className="font-semibold text-slate-800">{moTaMucAn(chung)}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {trangThai === "ok" && <span className="text-xs text-emerald-600">✓ Đã lưu</span>}
+          {trangThai === "loi" && <span className="text-xs text-red-600" title={loi}>Lỗi: {loi.slice(0, 80)}</span>}
+          <button onClick={luu} disabled={!dirty || trangThai === "dang"}
+                  className="text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+            {trangThai === "dang" ? "Đang lưu..." : "Lưu bản án bị can"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Khối "bản án" xổ ra dưới 1 dòng vụ ở PanelDaXetXu — tải bị can 1 lần, mỗi bị can 1 card.
+function BanAnCuaVu({ vu, onSaved }) {
+  const [bcList, setBcList] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    batchLayBiCanList([vu.id])
+      .then(m => { if (alive) setBcList(m[vu.id] || []); })
+      .catch(err => { console.error(err); if (alive) setBcList([]); });
+    return () => { alive = false; };
+  }, [vu.id]);
+  if (bcList === null) return <div className="p-3 text-xs text-slate-400">Đang tải bị can...</div>;
+  if (bcList.length === 0) return <div className="p-3 text-xs text-slate-400">Vụ này chưa có bị can nào.</div>;
+  return (
+    <div className="p-3 bg-indigo-50/40 space-y-3">
+      {bcList.map(bc => <BanAnBiCanCard key={bc.id} bc={bc} onSaved={onSaved} />)}
+    </div>
+  );
+}
+
+function PanelDaXetXu({ list, dangTai, loiTai, tenKyDangChon, locKy, selectedId, onSelect, onSaved }) {
+  const [moRong, setMoRong] = useState(() => new Set());
+  const toggle = (id) => setMoRong(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  return (
+    <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
+      {dangTai && <div className="p-4 text-sm text-slate-400">Đang tải...</div>}
+      {loiTai && <div className="p-4 text-sm text-red-600">{loiTai}</div>}
+      {!dangTai && list.length === 0 && (
+        <div className="p-4 text-sm text-slate-400">
+          {locKy && locKy !== "tat_ca"
+            ? `Không có vụ "Đã xét xử" nào trong ${tenKyDangChon || "kỳ đã chọn"}.`
+            : 'Chưa có vụ "Đã xét xử" nào.'}
+        </div>
+      )}
+      {list.length > 0 && (
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead className="bg-slate-100 text-slate-500 text-xs sticky top-0 z-10">
+              <tr>
+                <th className="px-2 py-2 border-b border-slate-200 w-8"></th>
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Mã vụ</th>
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Tên vụ</th>
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">KSV chính</th>
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Số bản án</th>
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Ngày xét xử</th>
+                <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Bản án bị can</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((v, i) => {
+                const mr = moRong.has(v.id);
+                return (
+                  <React.Fragment key={v.id}>
+                    <tr onClick={() => onSelect(v.id)}
+                        className={`cursor-pointer border-b border-l-4 border-slate-100 ${
+                          selectedId === v.id ? "bg-indigo-50 border-l-indigo-500"
+                            : i % 2 === 0 ? "bg-white border-l-transparent hover:bg-slate-50" : "bg-slate-50/70 border-l-transparent hover:bg-slate-100"
+                        }`}>
+                      <td className="px-2 py-2 text-center">
+                        <button onClick={e => { e.stopPropagation(); toggle(v.id); }}
+                                className="text-indigo-600 text-xs font-bold w-5">{mr ? "▾" : "▸"}</button>
+                      </td>
+                      <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{hienThiMa(v)}</td>
+                      <td className="p-3 font-medium text-slate-800">{v.tenVu}</td>
+                      <td className="p-3">{v.ksvChinh || "—"}</td>
+                      <td className="p-3 text-xs whitespace-nowrap">{v.soBanAn || "—"}</td>
+                      <td className={`p-3 text-xs whitespace-nowrap ${v.ngayQuyetDinhUocTinh ? "text-red-600 font-medium" : ""}`}
+                          title={v.ngayQuyetDinhUocTinh ? "Ngày ước tính do import thiếu dữ liệu — cần cập nhật lại." : ""}>
+                        {fmtDate(v.ngayQuyetDinh)}{v.ngayQuyetDinhUocTinh ? " ⚠" : ""}
+                      </td>
+                      <td className="p-3">
+                        <button onClick={e => { e.stopPropagation(); toggle(v.id); }}
+                                className="text-xs text-indigo-600 hover:underline whitespace-nowrap">
+                          {mr ? "Ẩn" : "Nhập điểm khoản / mức án"}
+                        </button>
+                      </td>
+                    </tr>
+                    {mr && (
+                      <tr>
+                        <td colSpan={7} className="border-b border-slate-200 p-0">
+                          <BanAnCuaVu vu={v} onSaved={onSaved} />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="text-xs text-slate-400 px-3 py-2 border-t border-slate-100">
+        {list.length} vụ "Đã xét xử"{locKy && locKy !== "tat_ca" ? ` trong ${tenKyDangChon}` : " (tất cả kỳ)"}.
+        {" "}Bấm ▸ ở mỗi vụ để nhập điểm/khoản + mức án từng tội danh của từng bị can.
+      </div>
+    </div>
+  );
+}
+
 function AnDaGiaiQuyetModule() {
   const [hinhThuc, setHinhThuc] = useState("da_xet_xu");
   const [list, setList] = useState([]);       // TOÀN BỘ vụ đã giải quyết (mọi hình thức) từ cache lạnh
@@ -13352,6 +13654,9 @@ function AnDaGiaiQuyetModule() {
   const [tuKhoa, setTuKhoa] = useState("");
   const [ksv, setKsv] = useState("tat_ca");
   const [selectedId, setSelectedId] = useState(null); // vụ đang chọn — hiện chi tiết ở panel phải
+  // Riêng tab "Đã xét xử" (2026-08-28): ẩn panel chi tiết bên phải để panel CHÍNH (nhập điểm/khoản
+  // + mức án từng tội danh) rộng thoải mái — panel chi tiết quá nhỏ để thao tác nhập liệu.
+  const [anChiTiet, setAnChiTiet] = useState(false);
 
   // Dữ liệu riêng cho 2 tab "Kết thúc điều tra"/"Kết thúc truy tố" (xem TAB_CHUYEN_GIAI_DOAN) —
   // KHÔNG lấy từ cache lạnh `list` (chỉ chứa vụ đã trangThai != "dang_giai_quyet"), mà truy vấn
@@ -13495,6 +13800,14 @@ function AnDaGiaiQuyetModule() {
   }, [listTheoHinhThuc, tabCgdDangChon, locKy, ksv, tuKhoa]);
 
   const tenKyDangChon = dsKy.find(k => k.id === locKy)?.tenKy;
+  const laDaXetXu = !tabCgdDangChon && hinhThuc === "da_xet_xu";
+
+  // Làm mới cache lạnh sau khi ChiTietPanel/PanelDaXetXu ghi dữ liệu (delta theo ngayCapNhat — rẻ).
+  const lamMoiCacheLanh = useCallback(() => {
+    dongBoColdCacheVuAnDaGiaiQuyet()
+      .then(docs => setList(docs.filter(v => !v.daXoa)))
+      .catch(err => console.error(err));
+  }, []);
 
   // Bố cục 2 cột giống hệt module Danh sách vụ án (DanhSachPanel + ChiTietPanel dùng chung) —
   // panel trái flex-1 là danh sách chính, panel phải cố định 420px hiện chi tiết + mọi hành động
@@ -13526,24 +13839,38 @@ function AnDaGiaiQuyetModule() {
           </select>
         </div>
       </div>
-      <div className="flex gap-1 mb-4 w-fit bg-slate-100 rounded-lg p-1">
-        {TAB_CHUYEN_GIAI_DOAN.map(t => (
-          <button key={t.id} onClick={() => setHinhThuc(t.id)}
-                  title="Vụ đã chuyển giai đoạn trong kỳ — có thể vẫn đang giải quyết tiếp, chưa hẳn có kết quả cuối cùng."
-                  className={`text-sm px-4 py-1.5 rounded-md ${hinhThuc === t.id ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
-            {t.label}
+      <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+        <div className="flex gap-1 w-fit bg-slate-100 rounded-lg p-1">
+          {TAB_CHUYEN_GIAI_DOAN.map(t => (
+            <button key={t.id} onClick={() => setHinhThuc(t.id)}
+                    title="Vụ đã chuyển giai đoạn trong kỳ — có thể vẫn đang giải quyết tiếp, chưa hẳn có kết quả cuối cùng."
+                    className={`text-sm px-4 py-1.5 rounded-md ${hinhThuc === t.id ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
+              {t.label}
+            </button>
+          ))}
+          <div className="w-px bg-slate-300 my-1" />
+          {TAB_DA_GIAI_QUYET.map(([v, l]) => (
+            <button key={v} onClick={() => setHinhThuc(v)}
+                    className={`text-sm px-4 py-1.5 rounded-md ${hinhThuc === v ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+        {laDaXetXu && (
+          <button onClick={() => setAnChiTiet(a => !a)}
+                  className="text-xs border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-slate-600 hover:bg-slate-50 whitespace-nowrap">
+            {anChiTiet ? "Hiện panel chi tiết" : "Ẩn panel chi tiết (nhập liệu rộng hơn)"}
           </button>
-        ))}
-        <div className="w-px bg-slate-300 my-1" />
-        {TAB_DA_GIAI_QUYET.map(([v, l]) => (
-          <button key={v} onClick={() => setHinhThuc(v)}
-                  className={`text-sm px-4 py-1.5 rounded-md ${hinhThuc === v ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
-            {l}
-          </button>
-        ))}
+        )}
       </div>
 
       <div className="flex-1 flex gap-4 min-h-[280px]">
+        {laDaXetXu ? (
+          <PanelDaXetXu list={listHienThi} dangTai={dangTai} loiTai={loiTai}
+                        tenKyDangChon={tenKyDangChon} locKy={locKy}
+                        selectedId={selectedId} onSelect={setSelectedId}
+                        onSaved={lamMoiCacheLanh} />
+        ) : (
         <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
           {(tabCgdDangChon ? dangTaiCgd : dangTai) && <div className="p-4 text-sm text-slate-400">Đang tải...</div>}
           {loiTai && <div className="p-4 text-sm text-red-600">{loiTai}</div>}
@@ -13638,19 +13965,20 @@ function AnDaGiaiQuyetModule() {
             {locKy && locKy !== "tat_ca" ? ` trong ${tenKyDangChon}` : " (tất cả kỳ)"}.
           </div>
         </div>
+        )}
+        {!(laDaXetXu && anChiTiet) && (
         <ChiTietPanel vuAnId={selectedId} onDoiSelected={(id) => {
           setSelectedId(id);
           // ChiTietPanel báo có thay đổi (VD vừa "Phục hồi"/"Xoá hình thức giải quyết" ngay tại
           // panel bên phải, không qua remount cả module) — làm mới cache lạnh ngay để danh sách
           // bên trái không bị vênh với trạng thái mới của chính vụ vừa sửa. Rẻ vì chỉ đồng bộ phần
           // THAY ĐỔI (delta theo ngayCapNhat), không phải tải lại toàn bộ.
-          dongBoColdCacheVuAnDaGiaiQuyet()
-            .then(docs => setList(docs.filter(v => !v.daXoa)))
-            .catch(err => console.error(err));
+          lamMoiCacheLanh();
           // Tab chuyển giai đoạn không nằm trong cache lạnh ở trên — tải lại riêng để phản ánh
           // đúng thay đổi (VD vụ vừa sửa lại vừa là vụ đang hiện trong 1 trong 2 tab này).
           taiDsCgd();
         }} onDong={() => setSelectedId(null)} />
+        )}
       </div>
     </div>
   );

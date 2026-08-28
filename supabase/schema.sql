@@ -237,6 +237,14 @@ create table "bican" (
                                                           -- thật (Phase 4) là CŨNG có trên "bican"
                                                           -- (2160/2252 dòng thật) — bỏ sót ở audit
                                                           -- text-based ban đầu.
+  -- Mức án "chung" của bị can (add_mucan_bican_2026-07-21.sql) — dùng tính Thời hạn bảo quản.
+  -- Từ 2026-08-28 TỰ TÍNH cộng dồn từ hinhPhatChiTiet (Điều 55 BLHS 2025), xem tongHopHinhPhat.
+  "mucAnLoai"          text check ("mucAnLoai" in ('nam','an_treo','phat_tien','chung_than','tu_hinh')),
+  "mucAnNam"           integer,
+  "mucAnThang"         integer check ("mucAnThang" between 0 and 11),
+  -- Điểm/khoản + mức án TỪNG tội danh (add_hinh_phat_chi_tiet_bican_2026-08-28.sql) — mảng jsonb
+  -- SONG SONG theo index với "toiDanh": [{ khoan, diem, mucAnLoai, mucAnNam, mucAnThang }, ...].
+  "hinhPhatChiTiet"   jsonb not null default '[]'::jsonb,
   "ngayTao"            timestamptz,
   "nguoiTao"           text,
   "ngayCapNhat"        timestamptz,

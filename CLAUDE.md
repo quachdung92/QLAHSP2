@@ -2,6 +2,48 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Tab "Đã xét xử" — nhập điểm/khoản + mức án TỪNG tội danh của TỪNG bị can, panel chính riêng (2026-08-28, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app` (test), CHƯA chạy migration / CHƯA deploy production)
+
+Theo yêu cầu Dũng — nâng cấp tab "Đã xét xử" trong module "Án đã giải quyết" (`AnDaGiaiQuyetModule`).
+4 quyết định thiết kế đã hỏi rõ qua `AskUserQuestion`:
+1. **Hình phạt chung TỰ TÍNH cộng dồn** theo Điều 55 BLHS 2025 (KHÔNG nhập tay): có tử hình → tử
+   hình; có chung thân → chung thân; có tù có thời hạn → cộng dồn (gồm cả phần án treo — tổng hợp
+   thì buộc chấp hành) TỐI ĐA 30 năm; toàn án treo → giữ án treo lấy mức dài nhất; toàn phạt tiền
+   → phạt tiền. Hàm `tongHopHinhPhat(hpct)`.
+2. **Điểm/khoản = 2 ô riêng** "Khoản" + "Điểm" (chuỗi tự do, VD Khoản "2" / Điểm "a, b").
+3. **UI**: panel chi tiết bên PHẢI giữ nguyên nhưng **ẩn được** (`anChiTiet`, chỉ hiện nút toggle ở
+   tab này — panel chi tiết quá nhỏ để nhập liệu); các cải tạo dồn vào **panel CHÍNH bên trái riêng
+   cho tab này** (`PanelDaXetXu` thay hẳn bảng chung khi `hinhThuc === "da_xet_xu"`).
+4. **Phạm vi**: CHỈ hình phạt chính từng tội (loại + năm/tháng) + điểm/khoản. KHÔNG hình phạt bổ
+   sung, KHÔNG ngày hiệu lực/kháng cáo.
+
+**Cột mới `bican.hinhPhatChiTiet` (jsonb, default `[]`)** — mảng SONG SONG theo index với
+`bican.toiDanh`: `[{ khoan, diem, mucAnLoai, mucAnNam, mucAnThang }, ...]`. `bican.mucAnLoai/mucAnNam/
+mucAnThang` (mức án "chung" — đã có từ 2026-07-21, dùng tính Thời hạn bảo quản ở Nộp lưu kho) giờ
+**TỰ TÍNH** từ `hinhPhatChiTiet` mỗi lần Lưu (không nhập tay nữa ở luồng này). Migration:
+`supabase/add_hinh_phat_chi_tiet_bican_2026-08-28.sql` — **CHƯA CHẠY THẬT** (phiên này không có mật
+khẩu DB). Trước khi chạy migration, mọi lần bấm "Lưu bản án bị can" báo lỗi rõ ràng inline "Could
+not find the 'hinhPhatChiTiet' column" — đã kiểm chứng, KHÔNG crash, đường ĐỌC không bị ảnh hưởng
+(cột thiếu → coi như `[]`).
+
+**Component mới** (đặt trước `AnDaGiaiQuyetModule`): `PanelDaXetXu` (bảng vụ, mỗi dòng bấm ▸ để xổ
+"bản án"), `BanAnCuaVu` (tải bị can 1 lần qua `batchLayBiCanList`), `BanAnBiCanCard` (bảng tội danh
+× [Khoản/Điểm/Loại/Năm/Tháng], "Hình phạt chung" hiện live, nút "Lưu bản án bị can" ghi 1 doc
+`bican`). Helper `chuanHoaHinhPhatChiTiet(toiDanh, hpct)` (căn độ dài theo `toiDanh`, chuẩn hoá
+tháng ≥12), `badgeDieuLuatGon`.
+
+**Đã kiểm chứng qua UI thật trên `qlahs-sup.web.app`** (chưa migration): panel mới render đúng, ▸ xổ
+ra card bị can + bảng tội danh + badge "Đ.123/25"; gõ Khoản/Điểm + chọn "Tù giam" + Năm 15 →
+"Hình phạt chung: 15 năm" live; nút toggle "Ẩn/Hiện panel chi tiết" đúng; `tongHopHinhPhat` test
+live 6 ca (cap 30 năm / chung thân / tử hình / tù+treo cộng dồn / toàn treo lấy max / rỗng→null) —
+đúng hết; các tab khác (Chuyển đi/Tạm đình chỉ...) KHÔNG hồi quy, vẫn bảng chung 9 cột. "Lưu" báo
+lỗi cột thiếu đúng như dự kiến (chưa migration).
+
+**Việc còn lại**: (1) chạy `add_hinh_phat_chi_tiet_bican_2026-08-28.sql` lên Supabase thật; (2) test
+Lưu thật + đối chiếu `bican.mucAn*` tự tính đúng; (3) deploy production. **Giới hạn đã biết**: panel
+chi tiết bên phải (nếu đang mở cùng vụ) KHÔNG tự cập nhật sau khi Lưu ở panel trái — bấm lại dòng để
+nạp lại; `hinhPhatChiTiet` CHƯA dùng ở báo cáo B10/thống kê nào (mới là bước thu thập dữ liệu).
+
 ## Giao nhận hồ sơ — ô tìm vụ nâng cấp (toggle phạm vi + xem bị can) + tự xoá phiên rỗng (2026-08-27, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng — 2 việc trong `GiaoNhanHoSoModule` (yêu cầu mở rộng thêm giữa chừng):
