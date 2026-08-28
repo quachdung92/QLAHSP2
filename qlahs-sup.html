@@ -13410,28 +13410,31 @@ async function dongBoColdCacheVuAnDaGiaiQuyet() {
 // thao tác nhập liệu) — xem `anChiTiet` ở AnDaGiaiQuyetModule.
 // ====================================================================
 
-// "Đ.174/25" từ "Điều 174 BLHS 2025".
-function badgeDieuLuatGon(dieuLuat) {
-  if (!dieuLuat) return null;
-  const m = dieuLuat.match(/Điều\s+(\d+[a-zA-Z]*)\s+BLHS\s+\d{2}(\d{2})/i);
-  return m ? `Đ.${m[1]}/${m[2]}` : dieuLuat;
-}
-
-// 1 bị can — bảng tội danh × (khoản/điểm + mức án riêng), "hình phạt chung" tự tính cộng dồn, nút Lưu.
-function BanAnBiCanCard({ bc, onSaved }) {
+// 1 bị can — card mở/gấp; khi mở: mỗi tội danh 1 khối [Khoản/Điểm/Loại mức án/Năm/Tháng], "hình
+// phạt chung" tự tính cộng dồn, nút Lưu. Header (lúc gấp) hiện đủ tên/SN/địa chỉ/tội danh + trạng
+// thái nhập để dò đúng bị can theo bản án.
+function BanAnBiCanCard({ bc, stt, onSaved, moRong, onToggle }) {
   const toiDanh = (bc.toiDanh && bc.toiDanh.length ? bc.toiDanh : [""]);
   const dieuLuatBC = bc.dieuLuatBC || [];
   const goc = useMemo(() => chuanHoaHinhPhatChiTiet(toiDanh, bc.hinhPhatChiTiet), [bc.id]);
   const [rows, setRows] = useState(goc);
+  // `daLuu` = bản ghi ĐÃ LƯU gần nhất — cập nhật ngay sau khi Lưu để header (badge trạng thái / HP
+  // chung lúc card đang gấp) phản ánh đúng, không cần chờ tải lại cả danh sách bị can.
+  const [daLuu, setDaLuu] = useState(goc);
   const [trangThai, setTrangThai] = useState("idle"); // idle | dang | ok | loi
   const [loi, setLoi] = useState("");
-  const gocKey = useRef(JSON.stringify(goc));
-  useEffect(() => { setRows(goc); gocKey.current = JSON.stringify(goc); setTrangThai("idle"); setLoi(""); }, [bc.id]);
+  useEffect(() => { setRows(goc); setDaLuu(goc); setTrangThai("idle"); setLoi(""); }, [bc.id]);
 
   const doiRow = (i, patch) => setRows(rs => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const chung = tongHopHinhPhat(chuanHoaHinhPhatChiTiet(toiDanh, rows));
-  const dirty = JSON.stringify(chuanHoaHinhPhatChiTiet(toiDanh, rows)) !== gocKey.current;
+  const rowsChuan = chuanHoaHinhPhatChiTiet(toiDanh, rows);
+  const chung = tongHopHinhPhat(rowsChuan);
+  const dirty = JSON.stringify(rowsChuan) !== JSON.stringify(daLuu);
   const laPhapNhan = bc.loaiBiCan === "phap_nhan";
+  const ten = bc.hoTen || (laPhapNhan ? bc.tenPhapNhan || "(pháp nhân)" : "(chưa rõ tên)");
+  // Tóm tắt trạng thái nhập theo dữ liệu ĐÃ LƯU — để xem nhanh khi card đang gấp.
+  const daCoMucAn = daLuu.filter(r => r.mucAnLoai).length;
+  const tong = toiDanh.length;
+  const ttNhap = daCoMucAn === 0 ? "chua" : daCoMucAn < tong ? "mot_phan" : "du";
 
   const luu = async () => {
     setTrangThai("dang"); setLoi("");
@@ -13443,8 +13446,8 @@ function BanAnBiCanCard({ bc, onSaved }) {
         mucAnLoai: th.mucAnLoai, mucAnNam: th.mucAnNam, mucAnThang: th.mucAnThang,
         ngayCapNhat: new Date(), nguoiCapNhatCuoi: auth.currentUser?.email || "",
       });
-      gocKey.current = JSON.stringify(chiTiet);
       setRows(chiTiet);
+      setDaLuu(chiTiet);
       setTrangThai("ok");
       if (onSaved) onSaved(bc.maVuAn, bc.id, th);
       setTimeout(() => setTrangThai(s => (s === "ok" ? "idle" : s)), 2500);
@@ -13456,112 +13459,186 @@ function BanAnBiCanCard({ bc, onSaved }) {
   };
 
   return (
-    <div className="border border-slate-200 rounded-lg bg-white">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-100 rounded-t-lg">
-        <div className="text-sm font-semibold text-slate-800">
-          {bc.hoTen || (laPhapNhan ? bc.tenPhapNhan || "(pháp nhân)" : "(chưa rõ tên)")}
-          {bc.namSinh ? <span className="text-slate-400 font-normal"> — {bc.namSinh}</span> : null}
-          {laPhapNhan ? <span className="ml-1 text-[10px] font-medium text-purple-600">Pháp nhân</span> : null}
+    <div className={"border rounded-lg bg-white " + (dirty ? "border-amber-300 ring-1 ring-amber-200" : "border-slate-200")}>
+      {/* Header — bấm để mở/gấp; hiện đủ tên/SN/địa chỉ để dò đúng bị can theo bản án */}
+      <button onClick={onToggle}
+              className="w-full flex items-start justify-between gap-3 px-3 py-2.5 text-left hover:bg-slate-50 rounded-lg">
+        <div className="flex items-start gap-2 min-w-0">
+          <span className="shrink-0 mt-0.5 w-6 h-6 grid place-items-center rounded-full bg-slate-200 text-slate-600 text-xs font-semibold">{stt}</span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-slate-800">{ten}</span>
+              {bc.namSinh ? <span className="text-xs text-slate-400">SN {bc.namSinh}</span> : null}
+              {laPhapNhan ? <span className="text-[10px] font-medium text-purple-600">Pháp nhân</span> : null}
+              <Badge mau={MAU_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || MAU_BIEN_PHAP_NGAN_CHAN.tai_ngoai}>
+                {NHAN_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || NHAN_BIEN_PHAP_NGAN_CHAN.tai_ngoai}
+              </Badge>
+            </div>
+            {bc.diaChi ? <div className="text-[11px] text-slate-400 truncate mt-0.5">{bc.diaChi}</div> : null}
+            <div className="text-[11px] text-slate-400 truncate mt-0.5">
+              {toiDanh.filter(Boolean).join(" · ") || "(chưa có tội danh)"}
+            </div>
+          </div>
         </div>
-        <Badge mau={MAU_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || MAU_BIEN_PHAP_NGAN_CHAN.tai_ngoai}>
-          {NHAN_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || NHAN_BIEN_PHAP_NGAN_CHAN.tai_ngoai}
-        </Badge>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="text-slate-400">
-            <tr className="border-b border-slate-100">
-              <th className="text-left px-3 py-1.5 font-medium min-w-[160px]">Tội danh</th>
-              <th className="text-left px-2 py-1.5 font-medium w-16">Khoản</th>
-              <th className="text-left px-2 py-1.5 font-medium w-28">Điểm</th>
-              <th className="text-left px-2 py-1.5 font-medium w-32">Loại mức án</th>
-              <th className="text-left px-2 py-1.5 font-medium w-16">Năm</th>
-              <th className="text-left px-2 py-1.5 font-medium w-16">Tháng</th>
-            </tr>
-          </thead>
-          <tbody>
-            {toiDanh.map((td, i) => {
-              const r = rows[i] || { khoan: "", diem: "", mucAnLoai: "", mucAnNam: null, mucAnThang: null };
-              const dlb = badgeDieuLuatGon(dieuLuatBC[i]);
-              return (
-                <tr key={i} className={i % 2 ? "bg-slate-50/60" : ""}>
-                  <td className="px-3 py-1.5 align-top">
-                    <div className="text-slate-700">{td || <span className="text-slate-300">(chưa có tội danh)</span>}</div>
-                    {dlb && <div className="text-[10px] font-mono text-indigo-600 mt-0.5">{dlb}</div>}
-                    {i === 0 && <div className="text-[10px] text-slate-400 mt-0.5">Tội chính</div>}
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
-                    <input value={r.khoan} onChange={e => doiRow(i, { khoan: e.target.value })}
-                           placeholder="2" className={oInput + " py-1 px-1.5"} />
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
-                    <input value={r.diem} onChange={e => doiRow(i, { diem: e.target.value })}
-                           placeholder="a, b" className={oInput + " py-1 px-1.5"} />
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex items-center gap-2">
+            {dirty && <span className="text-[10px] font-medium text-amber-600">• chưa lưu</span>}
+            <span className={"text-[10px] font-medium rounded-full px-2 py-0.5 " + (
+              ttNhap === "du" ? "bg-emerald-100 text-emerald-700"
+                : ttNhap === "mot_phan" ? "bg-amber-100 text-amber-700"
+                  : "bg-slate-100 text-slate-500")}>
+              {ttNhap === "du" ? `✓ đủ ${tong}/${tong} tội` : ttNhap === "mot_phan" ? `${daCoMucAn}/${tong} tội` : "chưa nhập"}
+            </span>
+            <span className="text-slate-400 text-xs w-4 text-center">{moRong ? "▾" : "▸"}</span>
+          </div>
+          <span className="text-[11px] text-slate-500">HP chung: <span className="font-semibold text-slate-700">{moTaMucAn(tongHopHinhPhat(daLuu))}</span></span>
+        </div>
+      </button>
+
+      {moRong && (
+        <div className="border-t border-slate-100 p-3 space-y-2.5 bg-slate-50/60">
+          {toiDanh.map((td, i) => {
+            const r = rows[i] || { khoan: "", diem: "", mucAnLoai: "", mucAnNam: null, mucAnThang: null };
+            const coSoNam = r.mucAnLoai === "nam" || r.mucAnLoai === "an_treo";
+            return (
+              <div key={i} className="border border-slate-200 rounded-lg bg-white p-2.5">
+                <div className="flex items-start gap-2 mb-2">
+                  <span className="shrink-0 text-[10px] font-semibold text-slate-500 mt-0.5 whitespace-nowrap">Tội {i + 1}{i === 0 ? " (chính)" : ""}</span>
+                  <div className="min-w-0">
+                    <div className="text-sm text-slate-800">{td || <span className="text-slate-300">(chưa có tội danh)</span>}</div>
+                    <div className="text-[11px] text-slate-400">{dieuLuatBC[i] || "(chưa có điều luật)"}</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-end gap-x-3 gap-y-2 pl-1">
+                  <label className="block">
+                    <span className="block text-[10px] text-slate-500 mb-0.5">Khoản</span>
+                    <input value={r.khoan} onChange={e => doiRow(i, { khoan: e.target.value })} placeholder="2"
+                           className={oInput + " py-1.5 px-2 w-20 text-center"} />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[10px] text-slate-500 mb-0.5">Điểm</span>
+                    <input value={r.diem} onChange={e => doiRow(i, { diem: e.target.value })} placeholder="a, b"
+                           className={oInput + " py-1.5 px-2 w-28"} />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[10px] text-slate-500 mb-0.5">Loại mức án</span>
                     <select value={r.mucAnLoai} onChange={e => doiRow(i, { mucAnLoai: e.target.value })}
-                            className={oInput + " py-1 px-1.5"}>
+                            className={oInput + " py-1.5 px-2 w-40"}>
                       <option value="">— chưa nhập —</option>
                       {Object.entries(NHAN_LOAI_MUC_AN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select>
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
-                    {r.mucAnLoai === "nam" || r.mucAnLoai === "an_treo" ? (
-                      <input type="number" min="0" step="1" value={r.mucAnNam ?? ""}
-                             onChange={e => doiRow(i, { mucAnNam: e.target.value })}
-                             className={oInput + " py-1 px-1.5"} />
-                    ) : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
-                    {r.mucAnLoai === "nam" || r.mucAnLoai === "an_treo" ? (
-                      <input type="number" min="0" max="11" step="1" value={r.mucAnThang ?? ""}
-                             onChange={e => doiRow(i, { mucAnThang: e.target.value })}
-                             onBlur={e => {
-                               const chuan = chuanHoaThangLe(r.mucAnNam, e.target.value);
-                               if (chuan) doiRow(i, { mucAnNam: chuan.mucAnNam, mucAnThang: chuan.mucAnThang });
-                             }}
-                             className={oInput + " py-1 px-1.5"} />
-                    ) : <span className="text-slate-300">—</span>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-t border-slate-100">
-        <div className="text-xs text-slate-500">
-          Hình phạt chung <span className="text-slate-400">(tự tính cộng dồn theo Điều 55 BLHS)</span>:{" "}
-          <span className="font-semibold text-slate-800">{moTaMucAn(chung)}</span>
+                  </label>
+                  {coSoNam && (
+                    <>
+                      <label className="block">
+                        <span className="block text-[10px] text-slate-500 mb-0.5">Năm</span>
+                        <input type="number" min="0" step="1" value={r.mucAnNam ?? ""}
+                               onChange={e => doiRow(i, { mucAnNam: e.target.value })}
+                               className={oInput + " py-1.5 px-2 w-16 text-center"} />
+                      </label>
+                      <label className="block">
+                        <span className="block text-[10px] text-slate-500 mb-0.5">Tháng</span>
+                        <input type="number" min="0" max="11" step="1" value={r.mucAnThang ?? ""}
+                               onChange={e => doiRow(i, { mucAnThang: e.target.value })}
+                               onBlur={e => {
+                                 const chuan = chuanHoaThangLe(r.mucAnNam, e.target.value);
+                                 if (chuan) doiRow(i, { mucAnNam: chuan.mucAnNam, mucAnThang: chuan.mucAnThang });
+                               }}
+                               className={oInput + " py-1.5 px-2 w-16 text-center"} />
+                      </label>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <div className="text-xs text-slate-600">
+              Hình phạt chung <span className="text-slate-400">(tự tính cộng dồn — Điều 55 BLHS)</span>:{" "}
+              <span className="font-semibold text-slate-900 text-sm">{moTaMucAn(chung)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {trangThai === "ok" && <span className="text-xs text-emerald-600">✓ Đã lưu</span>}
+              {trangThai === "loi" && <span className="text-xs text-red-600" title={loi}>Lỗi: {loi.slice(0, 80)}</span>}
+              <button onClick={luu} disabled={!dirty || trangThai === "dang"}
+                      className="text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                {trangThai === "dang" ? "Đang lưu..." : "Lưu bản án bị can"}
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {trangThai === "ok" && <span className="text-xs text-emerald-600">✓ Đã lưu</span>}
-          {trangThai === "loi" && <span className="text-xs text-red-600" title={loi}>Lỗi: {loi.slice(0, 80)}</span>}
-          <button onClick={luu} disabled={!dirty || trangThai === "dang"}
-                  className="text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
-            {trangThai === "dang" ? "Đang lưu..." : "Lưu bản án bị can"}
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
 
-// Khối "bản án" xổ ra dưới 1 dòng vụ ở PanelDaXetXu — tải bị can 1 lần, mỗi bị can 1 card.
+// Khối "bản án" xổ ra dưới 1 dòng vụ ở PanelDaXetXu — tải bị can 1 lần, có ô TÌM bị can (thứ tự bị
+// can trong phần mềm không khớp bản án nên cần tìm theo tên) + mở/gấp từng card cho dễ nhập.
 function BanAnCuaVu({ vu, onSaved }) {
   const [bcList, setBcList] = useState(null);
+  const [tuKhoa, setTuKhoa] = useState("");
+  const [moRongSet, setMoRongSet] = useState(() => new Set());
   useEffect(() => {
     let alive = true;
     batchLayBiCanList([vu.id])
-      .then(m => { if (alive) setBcList(m[vu.id] || []); })
+      .then(m => {
+        if (!alive) return;
+        const arr = m[vu.id] || [];
+        setBcList(arr);
+        if (arr.length <= 2) setMoRongSet(new Set(arr.map(b => b.id))); // vụ ít bị can — mở sẵn
+      })
       .catch(err => { console.error(err); if (alive) setBcList([]); });
     return () => { alive = false; };
   }, [vu.id]);
+
+  const loc = useMemo(() => {
+    if (!bcList) return [];
+    const k = tuKhoa.trim().toLowerCase();
+    if (!k) return bcList;
+    return bcList.filter(bc =>
+      (bc.hoTen || "").toLowerCase().includes(k)
+      || (bc.tenPhapNhan || "").toLowerCase().includes(k)
+      || (bc.diaChi || "").toLowerCase().includes(k)
+      || String(bc.namSinh || "").includes(k)
+      || (bc.toiDanh || []).some(t => (t || "").toLowerCase().includes(k))
+    );
+  }, [bcList, tuKhoa]);
+
+  // Gõ tìm còn đúng 1 bị can → tự mở để nhập luôn.
+  useEffect(() => {
+    if (tuKhoa.trim() && loc.length === 1) {
+      setMoRongSet(s => (s.has(loc[0].id) ? s : new Set(s).add(loc[0].id)));
+    }
+  }, [tuKhoa, loc.length]);
+
+  const toggle = (id) => setMoRongSet(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
   if (bcList === null) return <div className="p-3 text-xs text-slate-400">Đang tải bị can...</div>;
   if (bcList.length === 0) return <div className="p-3 text-xs text-slate-400">Vụ này chưa có bị can nào.</div>;
+  const sttTheoId = new Map(bcList.map((b, i) => [b.id, i + 1]));
+
   return (
-    <div className="p-3 bg-indigo-50/40 space-y-3">
-      {bcList.map(bc => <BanAnBiCanCard key={bc.id} bc={bc} onSaved={onSaved} />)}
+    <div className="p-3 bg-indigo-50/40">
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)}
+               placeholder="🔍 Tìm bị can theo tên / năm sinh / địa chỉ / tội danh..."
+               className="flex-1 min-w-[220px] border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white" />
+        <span className="text-xs text-slate-500 whitespace-nowrap">{loc.length}/{bcList.length} bị can</span>
+        <button onClick={() => setMoRongSet(new Set(loc.map(b => b.id)))}
+                className="text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white hover:bg-slate-50 whitespace-nowrap">Mở tất cả</button>
+        <button onClick={() => setMoRongSet(new Set())}
+                className="text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white hover:bg-slate-50 whitespace-nowrap">Thu gọn</button>
+      </div>
+      {loc.length === 0 ? (
+        <div className="text-xs text-slate-400 py-2">Không có bị can nào khớp "{tuKhoa}".</div>
+      ) : (
+        <div className="space-y-2">
+          {loc.map(bc => (
+            <BanAnBiCanCard key={bc.id} bc={bc} stt={sttTheoId.get(bc.id)} onSaved={onSaved}
+                            moRong={moRongSet.has(bc.id)} onToggle={() => toggle(bc.id)} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
