@@ -2,6 +2,48 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Biểu 2 & Biểu 3 — port lại từ nhánh cũ `feature/tong-ke-dong`, đặt lên nền hệ thống hiện tại (2026-08-28, `qlahs-sup.html`, nhánh `bieu-2-3` = tách từ `ton-ky-thong-nhat`, CHƯA merge/deploy — chỉ compile-check + test cô lập)
+
+**Bối cảnh**: Biểu 2 & Biểu 3 (2 sheet trong "Xuất Excel báo cáo tháng", cạnh Biểu 10) ĐÃ được
+build ngày 2026-08-06 trên nhánh `feature/tong-ke-dong`, kèm 3 file quy tắc ngành Dũng cung cấp
+(`Danh_sach_quy_tac_bieu_10/2/3.md` — **KHÔNG commit vào git, đã mất**; Dũng nói các quy tắc chủ
+yếu dạng `D26 = D25 − D27`, không đổi). Nhánh đó **chưa merge**, giờ lạc hậu ~30 commit so với
+`main` (kiến trúc "tồn" đã đổi hẳn — xem mục ngay dưới). Theo yêu cầu Dũng "tạo branch mới phát
+triển trên nền hiện tại".
+
+**Đã port sang `bieu-2-3`** (tách từ `ton-ky-thong-nhat`):
+- `BIEU2_ROWS` (396 dòng `{md, tc}`) + `BIEU3_ROWS` (150 dòng) — **cấu trúc mẫu ngành, chép nguyên
+  văn từ nhánh cũ**, không đổi. `BIEU23_CAN_XAC_NHAN` (Set các dòng "❓ cần xác nhận công thức").
+- `tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau,
+  ttTraDi_TrucTiep, tongC7)` + `tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60,
+  tongC61)` + `themSheetBieu2Va3(wb, m2, m3)` — chép nguyên, KHÔNG cần sửa (dạng dữ liệu `baoCao`
+  của kiến trúc mới **tương thích**: vẫn có `tonDauKy/tonDauBiCan/tonCuoiKy/tonCuoiBiCanKy/soNhapVu`
+  + `ds.{khoiToTrucTiep,tachVu,traVe,phucHoi,chuyenDi,traDi,hoanThanh.{chuyen_di,dinh_chi,tam_dinh_chi,da_xet_xu},nhapVu}`).
+- **Wire vào `xuatBaoCaoThangExcel`** (khối ngay trước "Sheet 2: TK tội danh"): tự dựng 4 bộ lọc
+  `dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/`ttTraDi_TrucTiep`/`xxTraDi_KhongLapKy` (lọc "lần đầu"/
+  round-trip qua `lichSuCTMap` — 1 query `chuyen_giai_doan`+`tra_ho_so` của `_vuIdsChoBaoCao`,
+  bọc try/catch, lỗi → coi mọi vụ "lần đầu") + `dtKhoiToMoiThat` (lọc `nguon ∈ {an_khoi_to_moi,
+  tin_bao_khoi_to_len}`). `tongC7/C60/C61` = `b10Tong[8]/[69]/[70]` (cùng layout cột B10, đã đối
+  chiếu `B10_HEADER_CHI_TIET`). **KHÔNG đụng `tinhBieu10`/B10** — các bộ lọc này chỉ nuôi Biểu 2/3,
+  hoàn toàn tách khỏi B10 (khác nhánh cũ — ở đó dùng chung, kèm cả refactor C25-C26/C36-C37 + tính
+  năng "hồi tố Thêm bị can", CẢ 2 việc đó CHƯA port).
+
+**Trạng thái mỗi dòng trong sheet**: ✓ Tự động tính (xanh) / ❓ Cần xác nhận công thức (vàng) /
+⚠ Chưa có dữ liệu — cần bổ sung tính năng (xám, ~475/546 dòng: bắt giữ/biện pháp ngăn chặn/cưỡng
+chế/luật sư/hoạt động điều tra chi tiết... — cần thiết kế UI/schema mới, không phải sửa công thức).
+
+**Đã kiểm chứng**: compile-check `@babel/core` sạch. Test cô lập (`scratchpad`, không commit): 396/150
+dòng md liên tục 1..N; `tinhBieu2` ra 60 dòng có giá trị / `tinhBieu3` 18; các quy tắc nội bộ dạng
+`D77 = D57+D59+D60+D62+D71+D73−D61−D75`, `D272 = D93`, `D273 = D96`, `D72 = C7`, `D154/156 =
+tonCuoi ĐT`, `D17/18 = C60/C61` — đều khớp.
+
+**CHƯA làm / cần Dũng**: (1) xuất Excel 1 kỳ THẬT, mở 2 sheet "Biểu 2"/"Biểu 3", đối chiếu vài dòng
+"✓ Tự động tính" với số tay; (2) **nếu Dũng tìm lại được 3 file `Danh_sach_quy_tac_bieu_*.md`** →
+v2 có thể tự SUY RA thêm nhiều dòng qua quan hệ `D26 = D25 − D27` (hiện chỉ có ~10 quan hệ rút từ
+code + comment nhánh cũ); (3) quyết định có port tiếp refactor B10 C25-C26/C36-C37 + "hồi tố" từ
+`feature/tong-ke-dong` không (2 việc riêng, có thể đụng B10 đã kiểm chứng kỹ trên `main`); (4)
+merge `ton-ky-thong-nhat` TRƯỚC (nhánh này tách từ đó).
+
 ## Thống nhất HOÀN TOÀN công thức "tồn" theo KỲ THỐNG KÊ + loại bỏ tàn dư snapshot Firebase (2026-08-28, `qlahs-sup.html`, nhánh `ton-ky-thong-nhat`, RPC ĐÃ chạy lên Supabase thật — JS CHƯA merge/deploy, chờ Dũng kiểm chứng UI)
 
 Theo chỉ đạo trực tiếp của Dũng: *"tất cả công thức phải base on kỳ thống kê. Nếu không phát sinh
@@ -76,6 +118,12 @@ trước: `gh workflow run backup-supabase.yml`, run `33188104626` success). 2 t
   `taiTaoTonCuoiKyTheoTDTatCa`; xoá state/handler `dangTinhLai`/`bamTinhLai` + cột xem nhanh ở
   `KyBaoCaoModule`; cập nhật mọi text UI "vào Kỳ báo cáo bấm Tính lại số liệu" (SuaKyModal,
   XoaVuAnModal, XoaHinhThucGiaiQuyetModal) sang "tự tính lại từ log".
+- Sheet "Cân đối số liệu" (theo lựa chọn Dũng "giữ, làm dịu cảnh báo"): nhãn "Tồn cuối (chốt)"→
+  "(RPC)", "(tính)"→"(sổ cái)"; chỉ tô ĐỎ khi `|chênh lệch| > 1` (chênh 0 = xanh, ±1 = vàng — là
+  imprecision vô hại giữa "đếm sự kiện" và "đếm trạng thái cuối" khi 1 vụ có ≥2 lần "vào" cùng kỳ;
+  chênh > 1 = lỗi dữ liệu thật). Ghi chú trong sheet viết lại theo mô hình mới. **KHÔNG có Biểu 2/
+  Biểu 3 trong file xuất** — mới chỉ có Biểu 10 (B10); Biểu 2/3 là việc build tiếp theo, cần Dũng
+  cấp file mẫu ngành cho Biểu 3.
 
 **ĐÃ kiểm chứng**: RPC — pooler, 736/811, deterministic (chạy 2 lần khớp), vụ không đổi. JS —
 compile-check qua `@babel/core`+`@babel/preset-react` sạch qua nhiều vòng. Đối chiếu sổ cái VỤ kỳ 07

@@ -10751,6 +10751,757 @@ const B10_HEADER_CHI_TIET = [
   "Vụ (XX-AH)","BC (XX-AH)",
 ];
 
+const BIEU2_ROWS = [
+  {md:1, tc:"1. Thực hành quyền công tố và kiểm sát việc áp dụng, thay đổi, huỷ bỏ các biện pháp ngăn chặn, biện pháp cưỡng chế"},
+  {md:2, tc:"1.1. Thực hành quyền công tố và kiểm sát việc áp dụng, thay đổi, huỷ bỏ các biện pháp ngăn chặn"},
+  {md:3, tc:"Số người bị bắt trong kỳ thống kê"},
+  {md:4, tc:"Trong đó: -  Bắt người bị giữ trong trường hợp khẩn cấp"},
+  {md:5, tc:"- Bắt người phạm tội quả tang"},
+  {md:6, tc:"- Bắt người đang bị truy nã"},
+  {md:7, tc:"- Do người phạm tội đầu thú"},
+  {md:8, tc:"- Do người phạm tội tự thú"},
+  {md:9, tc:"Số trường hợp VKS không phê chuẩn các biện pháp ngăn chặn."},
+  {md:10, tc:"Trong đó: - Lệnh bắt người bị giữ trong trường hợp khẩn cấp"},
+  {md:11, tc:"- Lệnh tạm giam"},
+  {md:12, tc:"- Lệnh bắt tạm giam"},
+  {md:13, tc:"-  Quyết định gia hạn tạm giữ (lần thứ nhất, thứ hai)"},
+  {md:14, tc:"Số người VKS phê chuẩn lệnh bắt người bị giữ trong trường hợp khẩn cấp"},
+  {md:15, tc:"Trong đó: - Số người VKS tham gia hoặc trực tiếp  lấy lời khai, gặp hỏi người bị giữ trong trường hợp khẩn cấp trước khi xem xét phê chuẩn."},
+  {md:16, tc:"Số bị can VKS không phê chuẩn lệnh tạm giam phạm tội mới"},
+  {md:17, tc:"Số bị can VKS không phê chuẩn lệnh tạm giam bỏ trốn"},
+  {md:18, tc:"Số người VKS quyết định phê chuẩn lệnh bắt người bị giữ trong trường hợp khẩn cấp sau đó trả tự do do không có hành vi  phạm tội"},
+  {md:19, tc:"Trong đó: - Số người xử lý hành chính"},
+  {md:20, tc:"Số người bị bắt giữ được trả tự do do không có hành vi phạm tội"},
+  {md:21, tc:"Trong đó: - Số người xử lý hành chính"},
+  {md:22, tc:"Số người VKS phê chuẩn Quyết định gia hạn tạm giữ (mỗi bị can chỉ thống kê 1 lần) đã giải quyết, xử lý trong kỳ"},
+  {md:23, tc:"Trong đó: - Số đã khởi tố bị can"},
+  {md:24, tc:"- Số người bắt người bị giữ trong trường hợp khẩn cấp"},
+  {md:25, tc:"Tr.đó: + + Số đã khởi tố bị can"},
+  {md:26, tc:"Số người bắt người bị giữ trong trường hợp khẩn cấp và VKS phê chuẩn gia hạn tạm giữ đã xử lý, giải quyết trong kỳ"},
+  {md:27, tc:"Trong đó: - Số đã khởi tố bị can"},
+  {md:28, tc:"Số người bị bắt, tạm giữ đã khởi tố bị can"},
+  {md:29, tc:"Số người bị bắt, tạm giữ trả tự do không xử lý hình sự có trách nhiệm của VKS (đã phê chuẩn lệnh gia hạn tạm giữ; phê chuẩn lệnh bắt giữ người trong trường hợp khẩn cấp…)"},
+  {md:30, tc:"Số bị can VKS phê chuẩn lệnh bắt tạm giam"},
+  {md:31, tc:"Số bị can VKS không phê chuẩn gia hạn tạm giam"},
+  {md:32, tc:"Số bị can VKS yêu cầu CQĐT bắt tạm giam"},
+  {md:33, tc:"Số bị can CQĐT đã bắt tạm giam theo yêu cầu của VKS"},
+  {md:34, tc:"Số bị can VKS yêu cầu CQĐT truy nã"},
+  {md:35, tc:"Số bị can CQĐT đã truy nã theo yêu cầu của VKS"},
+  {md:36, tc:"Số trường hợp Viện kiểm sát hủy bỏ các biện pháp ngăn chặn."},
+  {md:37, tc:"Trong đó:   - Số người VKS huỷ bỏ quyết định tạm giữ"},
+  {md:38, tc:"- Số bị can VKS quyết định huỷ bỏ biện pháp tạm giam, thay thế bằng biện pháp ngăn chặn khác"},
+  {md:39, tc:"Tr.đó:   + Số bị can áp dụng biện pháp bảo lĩnh"},
+  {md:40, tc:"+ Số bị can áp dụng biện pháp đặt tiền để bảo đảm"},
+  {md:41, tc:"Số bị can VKS quyết định huỷ bỏ biện pháp tạm giam, thay thế bằng biện pháp ngăn chặn khác, sau đó bị can phạm tội mới"},
+  {md:42, tc:"Số bị can VKS quyết định huỷ bỏ biện pháp tạm giam, thay thế bằng biện pháp ngăn chặn khác, sau đó bị can bỏ trốn"},
+  {md:43, tc:"Số người bị tạm giữ có người bào chữa"},
+  {md:44, tc:"Trong đó:  - Luật sư"},
+  {md:45, tc:"- Bào chữa viên nhân dân"},
+  {md:46, tc:"- Trợ giúp viên pháp lý"},
+  {md:47, tc:"Số bị can bị tạm giam có người bào chữa"},
+  {md:48, tc:"Trong đó:  - Luật sư"},
+  {md:49, tc:"- Bào chữa viên nhân dân"},
+  {md:50, tc:"- Trợ giúp viên pháp lý"},
+  {md:51, tc:"1.2. Thực hành quyền công tố và kiểm sát việc áp dụng, thay đổi, huỷ bỏ các biện pháp cưỡng chế"},
+  {md:52, tc:"Số người, bị can, bị cáo bị áp dụng biện pháp cưỡng chế"},
+  {md:53, tc:"Trong đó:  - Số bị can, bị cáo bị áp dụng biện pháp kê biên tài sản"},
+  {md:54, tc:"- Số bị can, bị cáo bị áp dụng biện pháp phong toả tài khoản"},
+  {md:55, tc:"II. Thực hành quyền công tố và kiểm sát việc khởi tố, điều tra vụ án hình sự"},
+  {md:56, tc:"2.1. Thực hành quyền công tố và kiểm sát các hoạt động điều tra"},
+  {md:57, tc:"Số vụ án còn lại của kỳ trước"},
+  {md:58, tc:"Số vụ án mới nhận để điều tra lại"},
+  {md:59, tc:"Số vụ án mới nhận lại để điều tra bổ sung (tính cả những vụ VKS trả theo yêu cầu của Tòa án)"},
+  {md:60, tc:"Số vụ án được tách từ vụ án khác"},
+  {md:61, tc:"Số vụ án nhập vào vụ án khác"},
+  {md:62, tc:"Số vụ án tạm đình chỉ phục hồi điều tra trong kỳ"},
+  {md:63, tc:"Trong đó: - Số vụ án phục hồi theo yêu cầu của VKS"},
+  {md:64, tc:"Số bị can còn lại của kỳ trước"},
+  {md:65, tc:"Số bị can mới nhận để điều tra lại"},
+  {md:66, tc:"Số bị can mới nhận để điều tra bổ sung (tính cả những vụ VKS trả theo yêu cầu của Tòa án)"},
+  {md:67, tc:"Số bị can được tách từ vụ án khác"},
+  {md:68, tc:"Số bị can nhập vào vụ án khác"},
+  {md:69, tc:"Số bị can tạm đình chỉ phục hồi điều tra trong kỳ"},
+  {md:70, tc:"Trong đó: - Số bị can phục hồi theo yêu cầu của VKS"},
+  {md:71, tc:"Số vụ án mới khởi tố"},
+  {md:72, tc:"Số bị can mới khởi tố"},
+  {md:73, tc:"Số vụ án nơi khác chuyển đến"},
+  {md:74, tc:"Số bị can nơi khác chuyển đến"},
+  {md:75, tc:"Số vụ án chuyển đi nơi khác"},
+  {md:76, tc:"Số bị can chuyển đi nơi khác"},
+  {md:77, tc:"Tổng số vụ án CQĐT thụ lý điều tra"},
+  {md:78, tc:"Trong đó: - Số vụ án xác định trọng điểm"},
+  {md:79, tc:"Tổng số bị can CQĐT thụ lý điều tra"},
+  {md:80, tc:"Số vụ án xác định án trọng điểm trong kỳ thống kê"},
+  {md:81, tc:"Số vụ án đủ điều kiện áp dụng thủ tục rút gọn theo quy định của pháp luật"},
+  {md:82, tc:"Trong đó: Số vụ áp dụng thủ tục rút gọn"},
+  {md:83, tc:"Số vụ án CQĐT đã giải quyết (đề nghị truy tố + đình chỉ )"},
+  {md:84, tc:"Trong đó: -  Số vụ án áp dụng thủ tục rút gọn"},
+  {md:85, tc:"- Số vụ xác định án trọng điểm"},
+  {md:86, tc:"Số bị can CQĐT đã giải quyết (đề nghị truy tố + đình chỉ )"},
+  {md:87, tc:"Trong đó: - Số bị can có người bào chữa"},
+  {md:88, tc:"Tr.đó:   + Luật sư"},
+  {md:89, tc:"+ Bào chữa viên nhân dân"},
+  {md:90, tc:"+ Trợ giúp viên pháp lý"},
+  {md:91, tc:"- Số  bị can VKS đã trực tiếp hoặc tham gia hỏi cung bị can"},
+  {md:92, tc:"Số vụ án đề nghị truy tố"},
+  {md:93, tc:"Trong đó: - Số vụ án đã đề nghị truy tố ở kỳ thống kê trước (do trả hồ sơ điều tra bổ sung)"},
+  {md:94, tc:"- Số vụ án quá thời hạn điều tra"},
+  {md:95, tc:"Số bị can đề nghị truy tố"},
+  {md:96, tc:"Trong đó:  - Số đã đề nghị truy tố ở kỳ thống kê trước (do trả hồ sơ điều tra bổ sung)"},
+  {md:97, tc:"- Số bị can khi phạm tội là đảng viên"},
+  {md:98, tc:"Tr. đó:+ Số bị can là đảng viên giữ chức vụ quản lý"},
+  {md:99, tc:"- Số bị can quá thời hạn điều tra"},
+  {md:100, tc:"Số vụ án CQĐT đình chỉ điều tra"},
+  {md:101, tc:"Trong đó:  - Số vụ án VKS trả hồ sơ cho CQĐT để điều tra bổ sung nhưng sau đó đình chỉ điều tra"},
+  {md:102, tc:"- Do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu (K2 Đ155 BLTTHS)"},
+  {md:103, tc:"- Không có sự việc phạm tội hoặc hành vi không cấu thành tội phạm (theo K1,2 Đ157 BLTTHS) không tính trường hợp đình chỉ do bị can bị tâm thần hoặc bị can phạm nhiều tội nhưng chỉ đình chỉ 01 tội."},
+  {md:104, tc:"- Số vụ án đình chỉ điều tra do người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu TNHS (theo K3 Đ157 BLTTHS)"},
+  {md:105, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:106, tc:"- Số vụ án đình chỉ điều tra do bị can chết (theo K7 Đ157 BLTTHS)"},
+  {md:107, tc:"- Số vụ án đình chỉ điều tra do bị can bị mắc bệnh tâm thần"},
+  {md:108, tc:"- Số vụ án đình chỉ vì hết thời hạn điều tra mà không chứng minh được tội phạm (điểm b, khoản 1 Điều 230)"},
+  {md:109, tc:"- Số vụ án đình chỉ điều tra do  bị can được miễn TNHS theo K 2 Đ91 BLHS"},
+  {md:110, tc:"- Số vụ án đình chỉ điều tra do bị can được miễn trách nhiệm hình sự theo K1 Đ29 BLHS"},
+  {md:111, tc:"Tr. đó: + Số vụ án tham nhũng, chức vụ"},
+  {md:112, tc:"- Số vụ án đình chỉ điều tra do bị can được miễn trách nhiệm hình sự theo K2 Đ29 BLHS"},
+  {md:113, tc:"Tr. đó: + Số vụ án tham nhũng, chức vụ"},
+  {md:114, tc:"- Số vụ án đình chỉ điều tra do bị can được miễn TNHS theo K3 Đ29 BLHS"},
+  {md:115, tc:"Số vụ án đình chỉ điều tra do trước đó đã ra quyết định tạm đình chỉ điều tra, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS, nhưng không có quyết định phục hồi"},
+  {md:116, tc:"Trong đó:- Số đã hết thời hiệu truy cứu trách nhiệm hình sự"},
+  {md:117, tc:"Số bị can CQĐT đình chỉ điều tra"},
+  {md:118, tc:"Trong đó: - Số bị can VKS trả hồ sơ cho CQĐT để điều tra bổ sung nhưng sau đó đình chỉ điều tra"},
+  {md:119, tc:"- Do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu (K2 Đ155 BLTTHS)"},
+  {md:120, tc:"-Số bị can đình chỉ điều tra do không có sự việc phạm tội hoặc hành vi không cấu thành tội phạm (theo K1,2 Đ157 BLTTHS),(không tính trường hợp đình chỉ do bị can bị tâm thần hoặc bị can phạm nhiều tội nhưng chỉ đình chỉ 1 tội)"},
+  {md:121, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu TNHS (theo K3 Đ157 BLTTHS)"},
+  {md:122, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:123, tc:"- Số bị can đình chỉ điều tra do bị can chết (theo K7 Đ157 BLTTHS)"},
+  {md:124, tc:"- Số bị can đình chỉ vì hết thời hạn điều tra mà không chứng minh được bị can đã thực hiện tội phạm (theo điểm b K1 Đ230 BLTTHS)"},
+  {md:125, tc:"- Bị can bị mắc bệnh tâm thần"},
+  {md:126, tc:"- Số bị can đình chỉ điều tra theo K 2 Đ91 BLHS"},
+  {md:127, tc:"- Số bị can đình chỉ do được miễn trách nhiệm hình sự theo K1 Đ29 BLHS"},
+  {md:128, tc:"Tr. đó: + Số bị can phạm tội tham nhũng, chức vụ"},
+  {md:129, tc:"- Số bị can đình chỉ do được miễn trách nhiệm hình sự theo K2 Đ29 BLHS"},
+  {md:130, tc:"Tr. đó: + Số bị can phạm tội tham nhũng, chức vụ"},
+  {md:131, tc:"- Số bị can đình chỉ điều tra do được miễn TNHS theo K3 Đ29 BLHS"},
+  {md:132, tc:"Số bị can đình chỉ điều tra do trước đó đã ra quyết định tạm đình chỉ điều tra, nay xác định bị can chết hoặc hết thời hiệu truy cứu trách nhiệm hình sự nhưng không có quyết định phục hồi"},
+  {md:133, tc:"Trong đó: - Số đã hết thời hiệu truy cứu trách nhiệm hình sự"},
+  {md:134, tc:"Số vụ án CQĐT tạm đình chỉ điều tra trong kỳ thống kê"},
+  {md:135, tc:"Trong đó:  - Chưa xác định được bị can"},
+  {md:136, tc:"- Không biết rõ bị can đang ở đâu nhưng đã hết thời hạn điều tra vụ án (điểm a K1 Đ229 BLTTHS)"},
+  {md:137, tc:"- Khi có kết luận giám định tư pháp xác định bị can bị bệnh tâm thần hoặc bệnh hiểm nghèo theo điểm b K1 Đ229 BLTTHS"},
+  {md:138, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp chưa có kết quả nhưng đã hết thời hạn điều tra (theo điểm c K1 Đ229 BLTTHS)"},
+  {md:139, tc:"- Do không thể kết thúc điều tra vì lý do bất khả kháng do thiên tai, dịch bệnh nhưng đã hết thời hạn điều tra"},
+  {md:140, tc:"- Vì các lý do khác"},
+  {md:141, tc:"Số bị can CQĐT tạm đình chỉ điều tra trong kỳ thống kê"},
+  {md:142, tc:"Trong đó: - Khi không biết rõ bị can đang ở đâu nhưng đã hết thời hạn điều tra (điểm a K1 Đ229 BLTTHS)"},
+  {md:143, tc:"- Khi có kết luận giám định tư pháp xác định bị can bị bệnh tâm thần hoặc bệnh hiểm nghèo theo điểm b K1 Đ229 BLTTHS (có thể tạm đình chỉ trước khi hết thời hạn điều tra)"},
+  {md:144, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp chưa có kết quả nhưng đã hết thời hạn điều tra (điểm c K1 Đ229 BLTTHS)"},
+  {md:145, tc:"- Do không thể kết thúc điều tra vì lý do bất khả kháng do thiên tai, dịch bệnh nhưng đã hết thời hạn điều tra"},
+  {md:146, tc:"- Vì các lý do khác"},
+  {md:147, tc:"- Số bị can có người bào chữa"},
+  {md:148, tc:"Tr.đó:   + Luật sư"},
+  {md:149, tc:"+ Bào chữa viên nhân dân"},
+  {md:150, tc:"+ Trợ giúp viên pháp lý"},
+  {md:151, tc:"Tổng số vụ án CQĐT ra quyết định tạm đình chỉ điều tra tính đến cuối kỳ thống kê"},
+  {md:152, tc:"Trong đó: - Số vụ tạm đình chỉ đã hết thời hiệu truy cứu trách nhiệm hình sự chưa được đình chỉ."},
+  {md:153, tc:"Tổng số bị can CQĐT ra quyết định tạm đình chỉ điều tra tính đến cuối kỳ thống kê"},
+  {md:154, tc:"Số vụ án còn lại chưa kết thúc điều tra"},
+  {md:155, tc:"Trong đó:   - Số vụ án chưa kết thúc điều tra đã quá thời hạn luật định"},
+  {md:156, tc:"Số bị can còn lại chưa kết thúc điều tra"},
+  {md:157, tc:"Trong đó: -Số bị can có người bào chữa"},
+  {md:158, tc:"Trong đó: + Luật sư"},
+  {md:159, tc:"+ Bào chữa viên nhân dân"},
+  {md:160, tc:"+ Trợ giúp viên pháp lý"},
+  {md:161, tc:"2.2 Các hoạt động khác"},
+  {md:162, tc:"Số vụ án VKS đã ban hành yêu cầu điều tra (Trong số vụ án khởi tố mới; phục hồi điều tra; trả hồ sơ điều tra lại)"},
+  {md:163, tc:"Số bản yêu cầu điều tra của VKS đã ban hành trong kỳ thống kê"},
+  {md:164, tc:"Số bản yêu cầu điều tra không được cơ quan điều tra thực hiện (toàn bộ)"},
+  {md:165, tc:"Số vụ án về tham nhũng, kinh tế, chức vụ có đủ căn cứ để áp dụng biện pháp cưỡng chế kê biên tài sản, phong tỏa tài khoản nhưng CQĐT chưa áp dụng"},
+  {md:166, tc:"Trong đó -  Số vụ VKS đã ban hành văn bản yêu cầu CQĐT áp dụng biện pháp cưỡng chế kê biên tài sản, phong tỏa tài khoản"},
+  {md:167, tc:"Số lần CQĐT thực hiện các hoạt động điều tra mà Kiểm sát viên trực tiếp kiểm sát theo Điều 42 Khoản d BLTTHS"},
+  {md:168, tc:"Trong đó -  Hoạt động khám nghiệm hiện trường"},
+  {md:169, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:170, tc:"- Hoạt động khám nghiệm tử thi"},
+  {md:171, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:172, tc:"- Hoạt động đối chất"},
+  {md:173, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:174, tc:"-  Hoạt động nhận dạng"},
+  {md:175, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:176, tc:"- Hoạt động động nhận biết giọng nói"},
+  {md:177, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:178, tc:"- Hoạt động khám xét"},
+  {md:179, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:180, tc:"- Hoạt động thực nghiệm điều tra"},
+  {md:181, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:182, tc:"Số lần VKS trực tiếp tiến hành một số hoạt động điều tra trong giai đoạn điều tra"},
+  {md:183, tc:"Trong đó:   - Số lần VKS trực tiếp hỏi cung bị can"},
+  {md:184, tc:"Số lần VKS tham gia hỏi cung bị can"},
+  {md:185, tc:"Số vụ, việc VKS yêu cầu CQĐT, cơ quan được giao nhiệm vụ tiến hành một số hoạt động điều tra cung cấp tài liệu, chứng cứ để kiểm sát việc khởi tố"},
+  {md:186, tc:"Số người VKS có văn bản yêu cầu CQĐT, cơ quan được giao nhiệm vụ tiến hành một số hoạt động điều tra tiếp tục cung cấp tài liệu, chứng cứ để xét phê chuẩn quyết định khởi tố bị can"},
+  {md:187, tc:"Số vụ án VKS yêu cầu CQĐT huỷ bỏ quyết định khởi tố"},
+  {md:188, tc:"Số người VKS yêu cầu CQĐT hủy bỏ QĐ khởi tố bị can"},
+  {md:189, tc:"Số vụ án CQĐT đã huỷ bỏ quyết định khởi tố theo yêu cầu của VKS"},
+  {md:190, tc:"Số người CQĐT hủy bỏ Quyết định khởi tố bị can theo yêu cầu của VKS"},
+  {md:191, tc:"Số vụ án VKS yêu cầu CQĐT hủy bỏ quyết định thay đổi, bổ sung quyết định khởi tố vụ án hình sự"},
+  {md:192, tc:"Số vụ án CQĐT hủy bỏ quyết định thay đổi, bổ sung quyết định khởi tố vụ án hình sự theo yêu cầu của VKS"},
+  {md:193, tc:"Số vụ án VKS yêu cầu CQĐT thay đổi, bổ sung quyết định khởi tố"},
+  {md:194, tc:"Số bị can VKS yêu cầu CQĐT thay đổi, bổ sung quyết định khởi tố"},
+  {md:195, tc:"Số vụ án CQĐT đã thay đổi, bổ sung quyết định khởi tố theo yêu cầu của VKS"},
+  {md:196, tc:"Số bị can CQĐT đã thay đổi, bổ sung quyết định khởi tố theo yêu cầu của VKS"},
+  {md:197, tc:"Số vụ, việc VKS yêu cầu hủy bỏ quyết định không khởi tố"},
+  {md:198, tc:"Số vụ, việc CQĐT chấp nhận và ban hành quyết định khởi tố vụ án theo yêu cầu của VKS"},
+  {md:199, tc:"Số vụ án đủ căn cứ khởi tố nhưng cơ quan điều tra không khởi tố"},
+  {md:200, tc:"Số bị can có đủ căn cứ khởi tố nhưng cơ quan điều tra không khởi tố"},
+  {md:201, tc:"Số vụ án VKS yêu cầu CQĐT khởi tố"},
+  {md:202, tc:"Số người VKS yêu cầu CQĐT khởi tố"},
+  {md:203, tc:"Số vụ án CQĐT đã khởi tố theo yêu cầu của VKS"},
+  {md:204, tc:"Số bị can CQĐT đã khởi tố theo yêu cầu của VKS"},
+  {md:205, tc:"Số vụ án VKS khởi tố, yêu cầu CQĐT điều tra"},
+  {md:206, tc:"Số bị can VKS khởi tố, yêu cầu CQĐT điều tra"},
+  {md:207, tc:"Số vụ án VKS thay đổi, bổ sung quyết định khởi tố"},
+  {md:208, tc:"Số bị can VKS thay đổi, bổ sung quyết định khởi tố"},
+  {md:209, tc:"Số vụ án CQĐT huỷ bỏ quyết định đình chỉ điều tra đối với vụ án"},
+  {md:210, tc:"Trong đó:Số vụ án hủy theo yêu cầu của VKS"},
+  {md:211, tc:"Số bị can CQĐT huỷ bỏ quyết định đình chỉ điều tra đối với bị can"},
+  {md:212, tc:"Trong đó: - Số bị can hủy theo yêu cầu của VKS"},
+  {md:213, tc:"Số vụ án CQĐT huỷ bỏ quyết định tạm đình chỉ điều tra vụ án"},
+  {md:214, tc:"Trong đó: - Số vụ án hủy theo yêu cầu của VKS"},
+  {md:215, tc:"Số bị can CQĐT huỷ bỏ quyết định tạm đình chỉ điều tra đối với bị can"},
+  {md:216, tc:"Trong đó: - Số bị can hủy theo yêu cầu của VKS"},
+  {md:217, tc:"Số lần VKS yêu cầu CQĐT trưng cầu giám định, giám định pháp y"},
+  {md:218, tc:"Số vụ án CQĐT ra quyết định trưng cầu giám định, giám định pháp y theo yêu cầu của VKS"},
+  {md:219, tc:"Số lần VKS không phê chuẩn lệnh khám xét"},
+  {md:220, tc:"Số lần VKS không phê chuẩn lệnh thu giữ thư tín, điện tín, bưu kiện, bưu phẩm tại cơ quan, tổ chức bưu chính, viễn thông"},
+  {md:221, tc:"Số vụ án áp dụng biện pháp điều tra tố tụng đặc biệt"},
+  {md:222, tc:"Trong đó:  - Ghi âm, ghi hình bí mật"},
+  {md:223, tc:"- Nghe điện thoại bí mật"},
+  {md:224, tc:"- Thu thập bí mật dữ liệu điện tử"},
+  {md:225, tc:"Số vụ án VKS không phê chuẩn áp dụng biện pháp điều tra tố tụng đặc biệt"},
+  {md:226, tc:"Trong đó:  - Ghi âm, ghi hình bí mật"},
+  {md:227, tc:"- Nghe điện thoại bí mật"},
+  {md:228, tc:"- Thu thập bí mật dữ liệu điện tử"},
+  {md:229, tc:"Số trường hợp VKS hủy bỏ các Quyết định không có căn cứ  của CQĐT."},
+  {md:230, tc:"Trong đó:  - Quyết định khởi tố vụ án"},
+  {md:231, tc:"- Quyết định khởi tố bị can"},
+  {md:232, tc:"- Quyết định thay đổi, bổ sung quyết định khởi tố vụ án"},
+  {md:233, tc:"- Quyết định thay đổi, bổ sung quyết định khởi tố bị can"},
+  {md:234, tc:"-  Quyết định không khởi tố vụ án"},
+  {md:235, tc:"Tr.đó : VKS cấp trên hủy bỏ"},
+  {md:236, tc:"- Quyết định đình chỉ điều tra vụ án"},
+  {md:237, tc:"Tr.đó : VKS yêu cầu điều tra, giải quyết đúng quy định"},
+  {md:238, tc:"- Quyết định đình chỉ điều tra bị can"},
+  {md:239, tc:"Tr.đó : VKS yêu cầu điều tra, giải quyết đúng quy định"},
+  {md:240, tc:"- Quyết định tạm đình chỉ điều tra vụ án"},
+  {md:241, tc:"Tr.đó : VKS yêu cầu điều tra, giải quyết đúng quy định"},
+  {md:242, tc:"- Quyết định tạm đình chỉ điều tra đối với bị can"},
+  {md:243, tc:"Tr.đó : VKS yêu cầu điều tra, giải quyết đúng quy định"},
+  {md:244, tc:"- Quyết định áp dụng thủ tục rút gọn"},
+  {md:245, tc:"Số vụ án CQĐT đình chỉ do không phạm tội hoặc miễn TNHS không có căn cứ bị hủy bỏ (bao gồm CQĐT tự hủy bỏ và VKS hủy bỏ)"},
+  {md:246, tc:"Số bị can CQĐT đình chỉ do không phạm tội hoặc miễn TNHS không có căn cứ bị hủy bỏ (bao gồm CQĐT tự hủy bỏ và VKS hủy bỏ)"},
+  {md:247, tc:"Số vụ án TĐC đủ căn cứ để ban hành quyết định xử lý theo quy định của pháp luật nhưng CQĐT chưa ra quyết định xử lý"},
+  {md:248, tc:"Trong đó:  - Số vụ án VKS  tự ban hành hoặc có văn bản yêu cầu CQĐT ra quyết định xử lý"},
+  {md:249, tc:"Số vụ án VKS gia hạn thời hạn điều tra"},
+  {md:250, tc:"Trong đó: - Số vụ án gia hạn lần 1"},
+  {md:251, tc:"- Số vụ án gia hạn lần 2"},
+  {md:252, tc:"- Số vụ án gia hạn lần 3"},
+  {md:253, tc:"Số bị can không áp dụng biện pháp tạm giam nhưng bỏ trốn phải ra Lệnh truy nã"},
+  {md:254, tc:"Số trường hợp CQĐT không kịp thời khởi tố bị can, để người phạm tội bỏ trốn sau đó mới ra quyết định khởi tố bị can và ra lệnh truy nã bị can"},
+  {md:255, tc:"Số bị can được VKS ra quyết định áp dụng biện pháp tư pháp bắt buộc chữa bệnh trong giai đoạn điều tra"},
+  {md:256, tc:"Số báo cáo thỉnh thị VKS đã tiếp nhận"},
+  {md:257, tc:"Số trả lời thỉnh thị đúng hạn"},
+  {md:258, tc:"Số thông báo rút kinh nghiệm"},
+  {md:259, tc:"II. Thực hành quyền công tố và kiểm sát hoạt động tư pháp trong giai đoạn truy tố"},
+  {md:260, tc:"Số vụ án còn lại của kỳ trước"},
+  {md:261, tc:"Số vụ án tạm đình chỉ được phục hồi để truy tố trong kỳ"},
+  {md:262, tc:"Số vụ án mới nhận lại để điều tra bổ sung"},
+  {md:263, tc:"Số vụ án được tách từ vụ án khác"},
+  {md:264, tc:"Số vụ án nhập vào vụ án khác"},
+  {md:265, tc:"Số bị can còn lại của kỳ trước"},
+  {md:266, tc:"Số bị can tạm đình chỉ được phục hồi để truy tố trong kỳ"},
+  {md:267, tc:"Số bị can mới nhận để điều tra bổ sung"},
+  {md:268, tc:"Số bị can được tách từ vụ án khác"},
+  {md:269, tc:"Số bị can nhập vào vụ án khác"},
+  {md:270, tc:"Số vụ án mới thụ lý"},
+  {md:271, tc:"Số bị can mới thụ lý"},
+  {md:272, tc:"Số vụ án nhận lại do CQĐT hoàn lại sau khi ĐTBS"},
+  {md:273, tc:"Số bị can nhận lại do CQĐT hoàn lại sau khi ĐTBS"},
+  {md:274, tc:"Số vụ án nơi khác chuyển đến"},
+  {md:275, tc:"Số bị can nơi khác chuyển đến"},
+  {md:276, tc:"Số vụ án chuyển đi nơi khác"},
+  {md:277, tc:"Số bị can chuyển đi nơi khác"},
+  {md:278, tc:"Số vụ án VKS  trả hồ sơ điều tra bổ sung trong kỳ (cả những vụ án do VKS trả hồ sơ để điều tra bổ sung theo yêu cầu của Tòa án) đến cuối kỳ chưa nhận lại"},
+  {md:279, tc:"Số bị can VKS trả hồ sơ điều tra bổ sung trong kỳ (cả những bị can do VKS trả hồ sơ để điều tra bổ sung theo yêu cầu của Tòa án) đến cuối kỳ chưa nhận lại"},
+  {md:280, tc:"Tổng số vụ án VKS thụ lý giải quyết"},
+  {md:281, tc:"Tổng số bị can VKS thụ lý giải quyết"},
+  {md:282, tc:"Số vụ án VKS đã giải quyết (truy tố + đình chỉ )"},
+  {md:283, tc:"Trong đó:  - Số vụ án áp dụng theo thủ tục rút gọn"},
+  {md:284, tc:"- Số vụ án xác định trọng điểm"},
+  {md:285, tc:"Số bị can VKS đã giải quyết (truy tố + đình chỉ )"},
+  {md:286, tc:"Trong đó:  - Số bị can có người bào chữa"},
+  {md:287, tc:"Tr.đó: + Luật sư"},
+  {md:288, tc:"+ Bào chữa viên nhân dân"},
+  {md:289, tc:"+ Trợ giúp viên pháp lý"},
+  {md:290, tc:"- Số bị can VKS đã trực tiếp hỏi cung bị can"},
+  {md:291, tc:"Tr.đó: + Số bị can VKS đã trực tiếp hỏi cung trước khi ra Quyết định truy tố."},
+  {md:292, tc:"Số vụ án truy tố"},
+  {md:293, tc:"Trong đó:  - Số vụ án đã truy tố ở kỳ thống kê trước (do trả hồ sơ điều tra bổ sung)"},
+  {md:294, tc:"- Số vụ án VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ thẩm"},
+  {md:295, tc:"- Số vụ án quá thời hạn đã quyết định truy tố"},
+  {md:296, tc:"Số bị can truy tố"},
+  {md:297, tc:"Trong đó:  - Số bị can đã truy tố ở kỳ thống kê trước (do trả điều tra bổ sung)"},
+  {md:298, tc:"- Số bị can VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ thẩm"},
+  {md:299, tc:"- Số bị can quá thời hạn đã quyết định truy tố"},
+  {md:300, tc:"Số vụ án VKS quyết định không truy tố và ra quyết định đình chỉ"},
+  {md:301, tc:"Tr.đó: -  Số vụ án Toà án trả hồ sơ cho VKS để điều tra bổ sung nhưng sau đó đình chỉ"},
+  {md:302, tc:"- Do bị hại rút yêu cầu khởi tố hoặc người đại diện của bị hại rút đơn yêu cầu (theo K2 Đ155 BLTTHS)"},
+  {md:303, tc:"- Số vụ án đình chỉ do không có sự việc phạm tội hoặc hành vi không cấu thành tội phạm theo K1,2 Đ157 BLTTHS, (không tính trường hợp đình chỉ do bị can bị tâm thần hoặc bị can phạm nhiều tội nhưng chỉ đình chỉ 1 tội)."},
+  {md:304, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu TNHS (theo K3 Đ157 BLTTHS)"},
+  {md:305, tc:"- Số vụ án đình chỉ do được miễn trách nhiệm hình sự theo K1 Đ29 BLHS"},
+  {md:306, tc:"- Số vụ án đình chỉ do được miễn trách nhiệm hình sự theo K2Đ29BLHS"},
+  {md:307, tc:"- Số vụ án đình chỉ do được miễn TNHS theo K3Đ29 BLHS"},
+  {md:308, tc:"Số vụ án VKS đình chỉ do trước đó đã ra quyết định tạm đình chỉ, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS nhưng không có quyết định phục hồi"},
+  {md:309, tc:"Trong đó: - Số đã hết thời hiệu truy cứu trách nhiệm hình sự"},
+  {md:310, tc:"Số bị can VKS quyết định không truy tố và ra quyết định đình chỉ vụ án đối với bị can"},
+  {md:311, tc:"Trong đó:  - Số bị can Toà án trả hồ sơ cho VKS để điều tra bổ sung nhưng sau đó đình chỉ"},
+  {md:312, tc:"- Do bị hại rút yêu cầu khởi tố hoặc người đại diện của bị hại rút đơn yêu cầu (theo K2 Đ155 BLTTHS)"},
+  {md:313, tc:"- Số bị can đình chỉ do không có sự việc phạm tội hoặc hành vi không cấu thành tội phạm theo K1,2 Đ157 BLTTHS, (không tính trường hợp đình chỉ do bị can bị tâm thần hoặc bị can phạm nhiều tội nhưng chỉ đình chỉ 1 tội)."},
+  {md:314, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu TNHS (theo K3 Đ157 BLTTHS)"},
+  {md:315, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:316, tc:"- Số bị can đình chỉ do bị can chết (theo K7 Đ157 BLTTHS)"},
+  {md:317, tc:"- Bị can bị mắc bệnh tâm thần"},
+  {md:318, tc:"- Số bị can đình chỉ theo K2 Đ91BLHS"},
+  {md:319, tc:"- Số bị can đình chỉ do được miễn trách nhiệm hình sự theo K1 Đ29 BLHS"},
+  {md:320, tc:"- Số bị can đình chỉ do được miễn trách nhiệm hình sự theo K2Đ29BLHS"},
+  {md:321, tc:"- Số bị can đình chỉ do được miễn TNHS theo K3Đ29 BLHS"},
+  {md:322, tc:"- Vì lý do khác"},
+  {md:323, tc:"- Số bị can tham phạm tội nhũng, chức vụ  được miễn TNHS theo Điều 29 BLHS"},
+  {md:324, tc:"Số bị can VKS đình chỉ do trước đó đã ra quyết định tạm đình chỉ, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS nhưng không có quyết định phục hổi"},
+  {md:325, tc:"Trong đó: - Số đã hết thời hiệu truy cứu trách nhiệm hình sự"},
+  {md:326, tc:"Số vụ án VKS tạm đình chỉ trong kỳ thống kê"},
+  {md:327, tc:"Trong đó:  - Khi bị can bỏ trốn mà không biết rõ bị can đang ở đâu nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:328, tc:"- Khi có kết luận giám định tư pháp xác định bị can bị bệnh tâm thần hoặc bệnh hiểm nghèo"},
+  {md:329, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp mà chưa có kết quả nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:330, tc:"- Vì lý do bất khả kháng do thiên tai, dịch bệnh nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:331, tc:"- Vì lý do khác"},
+  {md:332, tc:"Số bị can VKS tạm đình chỉ trong kỳ thống kê"},
+  {md:333, tc:"Trong đó:  - Khi bị can bỏ trốn mà không biết rõ bị can đang ở đâu nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:334, tc:"- Khi có kết luận giám định tư pháp xác định bị can bị bệnh tâm thần hoặc bệnh hiểm nghèo"},
+  {md:335, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp mà chưa có kết quả nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:336, tc:"- Vì  lý do bất khả kháng do thiên tai, dịch bệnh nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:337, tc:"- Vì các lý do khác"},
+  {md:338, tc:"- Số bị can có người bào chữa"},
+  {md:339, tc:"Tr.đó: + Luật sư"},
+  {md:340, tc:"+ Bào chữa viên nhân dân"},
+  {md:341, tc:"+ Trợ giúp viên pháp lý"},
+  {md:342, tc:"Tổng số vụ án VKS tạm đình chỉ tính đến cuối kỳ thống kê"},
+  {md:343, tc:"Tổng số bị can VKS tạm đình chỉ tính đến cuối kỳ thống kê"},
+  {md:344, tc:"Số vụ án còn lại cuối kỳ chưa giải quyết"},
+  {md:345, tc:"Trong đó: - Số chưa giải quyết đã quá thời hạn luật định"},
+  {md:346, tc:"Số bị can còn lại cuối kỳ chưa giải quyết"},
+  {md:347, tc:"Trong đó: -  Số bị can có người bào chữa"},
+  {md:348, tc:"Tr.đó: + Luật sư"},
+  {md:349, tc:"+ Bào chữa viên nhân dân"},
+  {md:350, tc:"+ Trợ giúp viên pháp lý"},
+  {md:351, tc:"Số vụ án VKS gia hạn thời hạn quyết định việc truy tố"},
+  {md:352, tc:"Số vụ án VKS trả hồ sơ cho CQĐT để điều tra bổ sung (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:353, tc:"Trong đó:  - Số vụ án tham nhũng, chức vụ"},
+  {md:354, tc:"- Còn thiếu chứng cứ"},
+  {md:355, tc:"- Có căn cứ khởi tố bị can về một hay nhiều tội phạm khác"},
+  {md:356, tc:"- Có đồng phạm hoặc người phạm tội khác nhưng chưa được khởi tố"},
+  {md:357, tc:"- Có vi phạm nghiêm trọng thủ tục tố tụng"},
+  {md:358, tc:"- Do phát sinh tình tiết mới hoặc lý do khác"},
+  {md:359, tc:"- Số vụ án CQĐT không thực hiện, hoặc không thực hiện đầy đủ yêu cầu điều tra sau đó phải trả hồ sơ để điều tra bổ sung với chính lý do mà VKS đã yêu cầu"},
+  {md:360, tc:"- Số vụ án VKS trả hồ sơ cho CQĐT yêu cầu điều tra bổ sung có trách nhiệm của VKS"},
+  {md:361, tc:"Số vụ án CQĐT chấp nhận VKS trả hồ điều tra bổ sung (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:362, tc:"Trong đó:  - Còn thiếu chứng cứ"},
+  {md:363, tc:"- Có căn cứ khởi tố bị can về một hay nhiều tội phạm khác"},
+  {md:364, tc:"- Có đồng phạm hoặc người phạm tội khác nhưng chưa được khởi tố"},
+  {md:365, tc:"- Có vi phạm nghiêm trọng thủ tục tố tụng"},
+  {md:366, tc:"- Do phát sinh tình tiết mới hoặc lý do khác"},
+  {md:367, tc:"Số bị can VKS trả hồ sơ cho cơ quan điều tra để điều tra bổ sung (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:368, tc:"Số bị can CQĐT chấp nhận VKS trả hồ sơ cho cơ quan điều tra để điều tra bổ sung  (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:369, tc:"Số vụ án CQĐT không chấp nhận VKS trả hồ sơ điều tra bổ sung và có văn bản trả lời giữ nguyên quan điểm đề nghị truy tố (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:370, tc:"Số vụ án VKS phải trả hồ sơ để điều tra bổ sung 2 lần"},
+  {md:371, tc:"Số vụ án VKS phải trả hồ sơ để điều tra bổ sung trên 2 lần"},
+  {md:372, tc:"Số lần VKS trực tiếp tiến hành một số hoạt động điều tra để quyết định việc truy tố"},
+  {md:373, tc:"Trong đó: - Số lần VKS trực tiếp tiến hành hỏi cung bị can"},
+  {md:374, tc:"Số Quyết định tố tụng của VKS cấp dưới không có căn cứ bị  VKS cấp trên ra  Quyết định hủy bỏ (QĐ ĐC,TĐC…............)"},
+  {md:375, tc:"Trong đó:  -  Quyết định đình chỉ vụ án"},
+  {md:376, tc:"Tr.đó: +Đình chỉ do không phạm tội hoặc Miễn TNHS"},
+  {md:377, tc:"-  Quyết định đình chỉ bị can"},
+  {md:378, tc:"Tr.đó: +Đình chỉ do không phạm tội hoặc Miễn TNHS"},
+  {md:379, tc:"-  Quyết định tạm đình chỉ vụ án"},
+  {md:380, tc:"-  Quyết định tạm đình chỉ bị can"},
+  {md:381, tc:"Số bị can được VKS ra QĐ áp dụng biện pháp tư pháp bắt buộc chữa bệnh trong giai đoạn truy tố"},
+  {md:382, tc:"Số báo cáo thỉnh thị VKS đã tiếp nhận"},
+  {md:383, tc:"Số trả lời thỉnh thị đúng hạn"},
+  {md:384, tc:"Số thông báo rút kinh nghiệm"},
+  {md:385, tc:"Số bản kiến nghị của VKS yêu cầu khắc phục vi phạm trong hoạt động điều tra"},
+  {md:386, tc:"Trong đó: Số bản kiến nghị yêu cầu CQĐT khắc phục vi phạm trong việc đình chỉ điều tra vụ án, bị can do không phạm tội và đình chỉ miễn trách nhiệm hình sự"},
+  {md:387, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:388, tc:"Số bản kiến nghị không được chấp nhận"},
+  {md:389, tc:"Số bản VKS yêu cầu, kiến nghị cơ quan, tổ chức, cá nhân có thẩm quyền xử lý người tham gia tố tụng vi phạm pháp luật"},
+  {md:390, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:391, tc:"Số bản yêu cầu, kiến nghị không được chấp nhận"},
+  {md:392, tc:"Số bản kiến nghị của VKS với cơ quan, tổ chức hữu quan áp dụng biện pháp phòng ngừa tội phạm và vi phạm pháp luật"},
+  {md:393, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:394, tc:"Số bản kiến nghị không được chấp nhận"},
+  {md:395, tc:"Số vụ án VKS  Quyết định hủy bỏ quyết định đình chỉ điều tra (có thể trước và trong kỳ thống kê) sau đó CQĐT ra QĐ đình chỉ hoặc VKS ra quyết định giải quyết  (truy tố, đình chỉ hoặc tạm đình chỉ) trong kỳ thống kê"},
+  {md:396, tc:"Trong đó:  -Số vụ án VKS ra quyết định truy tố"},
+];
+const BIEU3_ROWS = [
+  {md:1, tc:"Số vụ án còn lại của kỳ thống kê trước"},
+  {md:2, tc:"Số vụ án hủy mới nhận để xét xử lại"},
+  {md:3, tc:"Số vụ án điều tra bổ sung mới nhận lại"},
+  {md:4, tc:"Số vụ án tạm đình chỉ đã phục hồi xét xử trong kỳ thống kê"},
+  {md:5, tc:"Số bị cáo còn lại của kỳ thống kê trước"},
+  {md:6, tc:"Số bị cáo hủy mới nhận để xét xử lại"},
+  {md:7, tc:"Số bị can, bị cáo điều tra bổ sung mới nhận lại"},
+  {md:8, tc:"Số bị cáo tạm đình chỉ đã phục hồi xét xử trong kỳ thống kê"},
+  {md:9, tc:"Số vụ án mới thụ lý xét xử sơ thẩm"},
+  {md:10, tc:"Trong đó: - Số vụ án VKS cấp trên phân công THQCT, KSXX"},
+  {md:11, tc:"Tr.đó: + Do VKSND tối cao phân công"},
+  {md:12, tc:"Số bị cáo mới thụ lý xét xử sơ thẩm"},
+  {md:13, tc:"Trong đó: - Số bị cáo của vụ án VKS cấp trên phân công THQCT, KSXX"},
+  {md:14, tc:"Tr. đó: + Do VKSND tối cao phân công"},
+  {md:15, tc:"Số vụ TA trả hồ sơ điều tra bổ sung trong kỳ thống kê đến cuối kỳ chưa nhận lại"},
+  {md:16, tc:"Số bị can trả hồ sơ điều tra bổ sung trong kỳ thống kê đến cuối kỳ chưa nhận lại"},
+  {md:17, tc:"Tổng số vụ án Tòa án thụ lý xét xử sơ thẩm"},
+  {md:18, tc:"Tổng số bị cáo Tòa án thụ lý xét xử sơ thẩm"},
+  {md:19, tc:"Số vụ án tạm ngừng phiên toà (theo Đ251 BLTTHS)"},
+  {md:20, tc:"Trong đó: - Cần phải xác minh, thu thập, bổ sung chứng cứ, tài liệu… (theo điểm a K1 Đ251 BLTTHS)"},
+  {md:21, tc:"Số vụ án Tòa án hoãn phiên tòa (theo Đ297 BLTTHS)"},
+  {md:22, tc:"Số vụ án đã xét xử sơ thẩm"},
+  {md:23, tc:"Trong đó - Số vụ án có người bào chữa"},
+  {md:24, tc:"Tr.đó: + Luật sư"},
+  {md:25, tc:"- Số vụ án VKS cấp trên phân công THQCT, KSXX"},
+  {md:26, tc:"Tr.đó: + Do VKSND tối cao phân công"},
+  {md:27, tc:"- Số vụ án lãnh đạo VKS trực tiếp thực hành quyền công tố, kiểm sát xét xử sơ thẩm."},
+  {md:28, tc:"- Số vụ án xét xử theo thủ tục rút gọn"},
+  {md:29, tc:"- Số vụ án xác định trọng điểm"},
+  {md:30, tc:"- Số vụ án xét xử trực tuyến (Theo NQ 33/2021/QH15 của Quốc hội)"},
+  {md:31, tc:"- Số phiên tòa phối hợp với Tòa án “số hóa hồ sơ” và công bố tài liệu, chứng cứ bằng hình ảnh tại phiên tòa"},
+  {md:32, tc:"- Số phiên tòa VKS rút kinh nghiệm"},
+  {md:33, tc:"Tr.đó: + Số phiên tòa VKS rút kinh nghiệm bằng hình thức trực tuyến"},
+  {md:34, tc:"- Số vụ án VKS chuyển lại sau khi điều tra bổ sung"},
+  {md:35, tc:"Số bị cáo đã xét xử sơ thẩm"},
+  {md:36, tc:"Trong đó:  - Số bị cáo có người bào chữa"},
+  {md:37, tc:"Tr.đó: + Luật sư"},
+  {md:38, tc:"+ Bào chữa viên nhân dân"},
+  {md:39, tc:"+ Trợ giúp viên pháp lý"},
+  {md:40, tc:"- Số bị cáo Toà án sơ thẩm tuyên không phạm tội"},
+  {md:41, tc:"Tr.đó: + Số bị cáo mà trước đó VKS đã ra QĐ hủy bỏ QĐ đình chỉ điều tra của CQĐT"},
+  {md:42, tc:"- Số bị cáo Tòa án xét xử tội danh khác với tội danh mà VKS đã truy tố"},
+  {md:43, tc:"Tr.đó:  +  Tòa án xét xử về một tội danh khác nặng hơn tội danh VKS truy tố"},
+  {md:44, tc:"+ Tòa án xét xử về một tội danh khác bằng tội danh VKS truy tố"},
+  {md:45, tc:"+ Tòa án xét xử về một tội danh khác nhẹ hơn tội danh VKS truy tố"},
+  {md:46, tc:"- Số bị cáo Tòa án xét xử theo khoản khác trong cùng điều luật mà VKS đã truy tố"},
+  {md:47, tc:"Tr.đó: + Tòa án xét xử theo khoản khác nhẹ hơn trong cùng điều luật"},
+  {md:48, tc:"+ Tòa án xét xử theo khoản khác nặng hơn trong cùng điều luật"},
+  {md:49, tc:"- Số bị cáo Tòa án tuyên phạt hình phạt khác với đề nghị của Kiểm sát viên tại phiên tòa"},
+  {md:50, tc:"Tr.đó: + Tòa án tuyên phạt hình phạt nặng hơn"},
+  {md:51, tc:"+ Tòa án tuyên phạt hình phạt nhẹ hơn"},
+  {md:52, tc:"Số vụ án Toà án đình chỉ"},
+  {md:53, tc:"Trong đó: - Do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu (theo K2 Đ155 BLTTHS)"},
+  {md:54, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu trách nhiệm hình sự (theo K3 Đ157 BLTTHS)"},
+  {md:55, tc:"- Người mà hành vi phạm tội của họ đã có bản án hoặc quyết định đình chỉ vụ án có hiệu lực pháp luật (theo K4 Đ157 BLTTHS)"},
+  {md:56, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:57, tc:"- Tội phạm đã được đại xá (theo K6 Đ157 BLTTHS)"},
+  {md:58, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội đã chết (theo K7 Đ157 BLTTHS)"},
+  {md:59, tc:"- Vì lý do khác"},
+  {md:60, tc:"Số vụ án đình chỉ do trước đó đã ra quyết định tạm đình chỉ điều tra, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS, nhưng không có quyết định phục hồi"},
+  {md:61, tc:"Số bị cáo Toà án đình chỉ"},
+  {md:62, tc:"Trong đó:  - Do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu (theo K2 Đ155 BLTTHS)"},
+  {md:63, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu trách nhiệm hình sự (theo K3 Đ157 BLTTHS)"},
+  {md:64, tc:"- Người mà hành vi phạm tội của họ đã có bản án hoặc quyết định đình chỉ vụ án có hiệu lực pháp luật (theo K4 Đ157 BLTTHS)"},
+  {md:65, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:66, tc:"- Tội phạm đã được đặc xá (theo K6 Đ157 BLTTHS)"},
+  {md:67, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội đã chết (theo K7 Đ157 BLTTHS)"},
+  {md:68, tc:"- Vì lý do khác"},
+  {md:69, tc:"Số bị cáo đình chỉ do trước đó đã ra quyết định tạm đình chỉ điều tra, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS, nhưng không có quyết định phục hồi"},
+  {md:70, tc:"Số vụ án Tòa án tạm đình chỉ trong kỳ thống kê"},
+  {md:71, tc:"Trong đó: - Do không biết rõ bị cáo đang ở đâu mà hết thời hạn chuẩn bị xét xử"},
+  {md:72, tc:"- Khi có kết luận giám định tư pháp bị cáo bị tâm thần hoặc mắc bệnh hiểm nghèo (theo điểm b K1 Đ229 BLTTHS)"},
+  {md:73, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp chưa có kết quả (theo điểm c K1 Đ229 BLTTHS)"},
+  {md:74, tc:"- Chờ kết quả xử lý văn bản pháp luật mà Toà án kiến nghị (theo điểm c K1 Đ281 BLTTHS)"},
+  {md:75, tc:"- Vì lý do khác"},
+  {md:76, tc:"Số bị cáo Tòa án tạm đình chỉ trong kỳ thống kê"},
+  {md:77, tc:"Trong đó - Do không biết rõ bị cáo đang ở đâu mà hết thời hạn chuẩn bị xét xử (theo điểm b K1 Đ281 BLTTHS)"},
+  {md:78, tc:"- Khi có kết luận giám định tư pháp bị cáo bị tâm thần hoặc mắc bệnh hiểm nghèo (theo điểm b K1 Đ229 BLTTHS)"},
+  {md:79, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp chưa có kết quả (theo điểm c K1 Đ229 BLTTHS)"},
+  {md:80, tc:"- Chờ kết quả xử lý văn bản pháp luật mà Toà án kiến nghị (theo điểm c K1 Đ281 BLTTHS)"},
+  {md:81, tc:"- Vì lý do khác"},
+  {md:82, tc:"Tổng số vụ án Toà án tạm đình chỉ tính đến cuối kỳ thống kê"},
+  {md:83, tc:"Tổng số bị cáo Toà án tạm đình chỉ tính đến cuối kỳ thống kê"},
+  {md:84, tc:"Số vụ án còn lại chưa giải quyết"},
+  {md:85, tc:"Trong đó: - Số vụ án còn lại chưa giải quyết đã quá hạn luật định"},
+  {md:86, tc:"Số bị cáo còn lại chưa giải quyết"},
+  {md:87, tc:"Trong đó: -Số bị cáo đã quá hạn tạm giam"},
+  {md:88, tc:"Số vụ án Tòa án trả hồ sơ cho VKS để điều tra bổ sung"},
+  {md:89, tc:"Trong đó: - Thiếu chứng cứ mà không thể bổ sung tại phiên tòa được (theo điểm a K1 Đ280 BLTTHS)"},
+  {md:90, tc:"- Có căn cứ cho rằng ngoài hành vi mà VKS đã truy tố, bị can còn thực hiện hành vi khác mà BLHS quy định là tội phạm (theo điểm b K1 Đ280 BLTTHS)"},
+  {md:91, tc:"- Có căn cứ cho rằng còn có đồng phạm khác hoặc có người khác thực hiện hành vi mà BLHS quy định là tội phạm liên quan đến vụ án nhưng chưa được khởi tố vụ án, khởi tố bị can (theo điểm c K1 Đ280 BLTTHS)"},
+  {md:92, tc:"- Việc khởi tố, điều tra, truy tố vi phạm nghiêm trọng về thủ tục tố tụng (theo điểm d K1 Đ280 BLTTHS)"},
+  {md:93, tc:"- Khi có căn cứ cho rằng bị can hoặc bị cáo phạm tội khác nặng hơn tội danh mà VKS đã truy tố (theo K3 Đ298 BLTTHS)"},
+  {md:94, tc:"- Do phát sinh tình tiết mới hoặc lý do khác"},
+  {md:95, tc:"- Số vụ án Tòa án trả hồ sơ để điều tra bổ sung do CQĐT không thực hiện hoặc thực hiện không đầy đủ yêu cầu điều tra của VKS"},
+  {md:96, tc:"- Số vụ án VKSND tối cao phân công Viện kiểm sát cấp dưới thực hành quyền công tố và kiểm sát xét xử sơ thẩm"},
+  {md:97, tc:"- Số vụ án Tòa án trả hồ sơ để điều tra bổ sung có trách nhiệm của Viện kiểm sát"},
+  {md:98, tc:"Số vụ án VKS chấp nhận Tòa án trả hồ sơ VKS điều tra bổ sung"},
+  {md:99, tc:"Trong đó:  - Thiếu chứng cứ mà không thể bổ sung tại phiên tòa được (theo điểm a K1 Đ280 BLTTHS)"},
+  {md:100, tc:"- Có căn cứ cho rằng ngoài hành vi mà VKS đã truy tố, bị can còn thực hiện hành vi khác mà BLHS quy định là tội phạm (theo điểm b K1 Đ280 BLTTHS)"},
+  {md:101, tc:"- Có căn cứ cho rằng còn có đồng phạm khác hoặc có người khác thực hiện hành vi mà BLHS quy định là tội phạm liên quan đến vụ án nhưng chưa được khởi tố vụ án, khởi tố bị can (theo điểm c K1 Đ280 BLTTHS)"},
+  {md:102, tc:"- Việc khởi tố, điều tra, truy tố vi phạm nghiêm trọng về thủ tục tố tụng (theo điểm d K1 Đ280 BLTTHS)"},
+  {md:103, tc:"- Khi có căn cứ cho rằng bị can hoặc bị cáo phạm tội khác nặng hơn tội danh mà VKS đã truy tố (theo K3 Đ298 BLTTHS)"},
+  {md:104, tc:"- Do phát sinh tình tiết mới hoặc lý do khác"},
+  {md:105, tc:"- Số vụ do VKS đề nghị trả hồ sơ để điều tra bổ sung"},
+  {md:106, tc:"Số vụ án VKS chấp nhận Tòa án trả hồ sơ ĐTBS, sau đó VKS thay đổi quan điểm truy tố"},
+  {md:107, tc:"Số vụ án VKS chấp nhận Tòa án trả hồ sơ ĐTBS, sau đó có văn bản trả lời giữ nguyên quan điểm truy tố"},
+  {md:108, tc:"Trong đó: - Số vụ án VKS tự tiến hành điều tra bổ sung, sau đó có văn bản trả lời giữ nguyên quan điểm truy tố"},
+  {md:109, tc:"Số vụ án VKS không chấp nhận Tòa án trả hồ sơ ĐTBS và có văn bản trả lời giữ nguyên quan điểm truy tố"},
+  {md:110, tc:"Trong đó: - Số vụ do VKSND tối cao phân công"},
+  {md:111, tc:"Số bị cáo Toà án trả hồ sơ cho VKS để điều tra bổ sung"},
+  {md:112, tc:"Trong đó: Số bị cáo phạm tội tham nhũng, chức vụ"},
+  {md:113, tc:"Số bị cáo VKS chấp nhận Toà án trả hồ sơ để điều tra bổ sung"},
+  {md:114, tc:"Số vụ án Tòa án trả bổ sung 2 lần"},
+  {md:115, tc:"Số vụ án Tòa án trả bổ sung trên 2 lần"},
+  {md:116, tc:"Số vụ án VKS rút toàn bộ quyết định truy tố"},
+  {md:117, tc:"Trong đó:  - Số vụ án VKS rút truy tố của VKS cấp dưới"},
+  {md:118, tc:"- Số vụ án VKS rút truy tố trước khi mở phiên tòa"},
+  {md:119, tc:"Tr. đó: + Số vụ đề nghị tòa đình chỉ vụ án"},
+  {md:120, tc:"Số bị can, bị cáo VKS rút toàn bộ quyết định truy tố"},
+  {md:121, tc:"Trong đó: - Số bị can, bị cáo VKS cấp trên rút truy tố của VKS cấp dưới"},
+  {md:122, tc:"- Số bị can VKS rút truy tố trước khi mở phiên tòa"},
+  {md:123, tc:"Số vụ án VKS rút một phần quyết định truy tố"},
+  {md:124, tc:"Trong đó:  - VKS cấp trên rút truy tố của VKS cấp dưới"},
+  {md:125, tc:"- Số vụ án VKS rút một phần quyết định truy tố trước khi mở phiên tòa"},
+  {md:126, tc:"Số bị can, bị cáo VKS rút một phần quyết định truy tố"},
+  {md:127, tc:"Trong đó:  -  VKS cấp trên rút truy tố của VKS cấp dưới"},
+  {md:128, tc:"- Số bị can, bị cáo VKS rút một phần quyết định truy tố trước khi mở phiên tòa"},
+  {md:129, tc:"Số vụ án VKS huỷ quyết định rút quyết định truy tố"},
+  {md:130, tc:"Số bị can, bị cáo VKS Huỷ quyết định rút quyết định truy tố"},
+  {md:131, tc:"Số biên bản phiên tòa không được Kiểm sát viên kiểm sát theo quy định (không lập phiếu kiểm sát)"},
+  {md:132, tc:"Số biên bản phiên tòa phải sửa đổi bổ sung theo yêu cầu của Viện kiểm sát"},
+  {md:133, tc:"Số bản án, Quyết định sơ thẩm VKS không kiểm sát theo quy định của pháp luật (không lập phiếu kiểm sát)"},
+  {md:134, tc:"Số bị can, bị cáo tòa xét xử theo tội danh khác với tội danh VKS đã truy tố (truy tố sai tội danh, bản án đã có hiệu lực pháp luât trong kỳ thống kê)"},
+  {md:135, tc:"Số bị cáo tòa tuyên không phạm tội và không có kháng nghị kháng cáo (thời hạn hết KN, KC trong kỳ thông kê); hoặc có KN, KC nhưng HĐXX không chấp nhận"},
+  {md:136, tc:"Số Quyết định kháng nghị phúc thẩm đối với BA, QĐ của Toà án cùng cấp"},
+  {md:137, tc:"Trong đó:  - Số kháng nghị do bị cáo phạm tội tham nhũng được hưởng án treo"},
+  {md:138, tc:"Số Báo cáo đề nghị VKS cấp trên kháng nghị phúc thẩm"},
+  {md:139, tc:"Số Báo cáo đề nghị VKS có thẩm quyền kháng nghị giám đốc thẩm, tái thẩm"},
+  {md:140, tc:"Số vụ án về tham nhũng, kinh tế, chức vụ có đủ căn cứ để áp dụng biện pháp cưỡng chế kê biên tài sản, phong tỏa tài khoản nhưng Tòa án không ra lệnh áp dụng biện pháp cưỡng chế kê biên tài sản hoặc phong tỏa tài khoản."},
+  {md:141, tc:"Trong đó: Số vụ án VKS đã ban hành văn bản yêu cầu tòa án áp dụng biện pháp cưỡng chế kê biên tài sản, phong tỏa tài khoản"},
+  {md:142, tc:"Số báo cáo thỉnh thị VKS đã tiếp nhận trong kỳ thống kê"},
+  {md:143, tc:"Số công văn trả lời báo cáo thỉnh thị đúng hạn"},
+  {md:144, tc:"Số thông báo rút kinh nghiệm"},
+  {md:145, tc:"Số bản kiến nghị của VKS với Toà án yêu cầu khắc phục vi phạm trong hoạt động xét xử sơ thẩm"},
+  {md:146, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:147, tc:"Số bản kiến nghị không được chấp nhận"},
+  {md:148, tc:"Số bản kiến nghị của VKS với cơ quan, tổ chức hữu quan áp dụng biện pháp phòng ngừa tội phạm và vi phạm pháp luật trong hoạt động quản lý"},
+  {md:149, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:150, tc:"Số bản kiến nghị không được chấp nhận"},
+];
+
+// tinhBieu2/tinhBieu3: trả Map<maDong, number> — CHỈ chứa đúng những dòng đã xác nhận tính được từ
+// dữ liệu hệ thống hiện có (log-based, DÙNG LẠI `baoCao` mà tinhBaoCaoKyTuLog/tinhBieu10 đã tính —
+// không tính lại, không query thêm; `dtKhoiToMoiThat`/`dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/
+// `ttTraDi_TrucTiep`/`xxTraDi_KhongLapKy` DÙNG CHUNG với B10 — xem tinhBieu10, cùng đúng phạm vi
+// "lần đầu"/"trực tiếp" đã chỉnh theo yêu cầu Dũng 2026-08-06). Mọi công thức dưới đây đã ĐỐI CHIẾU
+// KHỚP CHÍNH XÁC với số liệu mẫu trong "Công cụ tính Biểu 10.xlsx" của Dũng (VD D77=871, D79=2373,
+// D83=254, D86=1619 — xem CLAUDE.md "Breakdown Biểu 2/3" để biết đầy đủ phép đối chiếu).
+//
+// Phần LỚN Biểu 2/3 (bắt giữ, biện pháp ngăn chặn/cưỡng chế, luật sư bào chữa, lý do đình chỉ/tạm
+// đình chỉ chi tiết theo từng khoản luật, hoạt động điều tra/kiểm sát cụ thể — khám nghiệm/giám
+// định/đối chất/khám xét..., kháng nghị, kiến nghị, thỉnh thị, thủ tục rút gọn, án trọng điểm, quá
+// thời hạn luật định...) CHƯA có BẤT KỲ tính năng theo dõi nào trong hệ thống (không có field/sự
+// kiện log tương ứng) — các dòng đó KHÔNG có trong Map, Excel tự hiện "⚠ Chưa có dữ liệu — cần bổ
+// sung tính năng" (xem themSheetBieu2Va3) để Dũng biết rõ cần nhập tay + cần làm gì tiếp, thay vì
+// lặng lẽ bỏ trống không rõ lý do — đúng yêu cầu "note vào để cập nhật tính năng dần dần".
+//
+// BIEU23_CAN_XAC_NHAN: các dòng ĐÃ CÓ manh mối công thức (qua "Công cụ tính Biểu 10.xlsx") nhưng
+// CHƯA CHẮC CHẮN khớp đúng 100% định nghĩa chính thức — VD "Tổng số VKS/Toà án thụ lý" (D77/79 ĐT
+// đã xác nhận khớp, nhưng D280/281 TT và D17/18 XX có 1 thành phần "trả hồ sơ ĐTBS mới nhận lại"
+// (D262/267 TT, D2/3 XX) mà ý nghĩa nghiệp vụ CHƯA rõ ràng — số mẫu không tự khớp phép cộng trừ đơn
+// giản khi thử). Cố ý KHÔNG tự tính các dòng này (tránh đưa ra số SAI trông như đã tính đúng) —
+// đánh dấu riêng "❓ Cần xác nhận công thức" để phân biệt với "chưa có tính năng" (2 lý do khác
+// nhau: 1 bên thiếu tính năng theo dõi, 1 bên có đủ dữ liệu nhưng công thức tổng hợp còn mơ hồ).
+const BIEU23_CAN_XAC_NHAN = new Set([
+  "B2:78","B2:80","B2:81","B2:82","B2:84","B2:85",  // ĐT: trọng điểm/rút gọn (D77/79 ĐÃ tự tính, xem tinhBieu2)
+  "B2:262","B2:267","B2:280","B2:281",                              // TT: dòng "mới nhận lại ĐTBS" mơ hồ + Tổng thụ lý TT
+  "B2:294","B2:298","B2:299","B2:303","B2:304",                     // TT: cấp trên phân công / quá hạn
+  "B3:2","B3:3","B3:6","B3:7",                                      // XX: hủy mới nhận / ĐTBS mới nhận lại (D17/18 ĐÃ tự tính qua b10Tong)
+]);
+
+function tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7) {
+  const m = new Map();
+  const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds;
+  const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
+  const demBcTruong = (vuArr, truong, giaTri) => {
+    let n = 0;
+    for (const vu of (vuArr || [])) {
+      for (const bc of (biCanByVu[vu.id] || [])) { if (bc[truong] === giaTri) n++; }
+    }
+    return n;
+  };
+
+  // ── Điều tra (dòng 57-160) — đã đối chiếu khớp mẫu: D77=871, D79=2373, D83=254, D86=1619 ──
+  m.set(57, baoCao.dieu_tra.tonDauKy);
+  m.set(59, (dt.traVe || []).length);
+  m.set(60, (dt.tachVu || []).length);
+  m.set(61, baoCao.dieu_tra.soNhapVu);
+  m.set(62, (dt.phucHoi || []).length);
+  m.set(64, baoCao.dieu_tra.tonDauBiCan);
+  m.set(66, soBc(dt.traVe));
+  m.set(67, soBc(dt.tachVu));
+  m.set(68, soBc(dt.nhapVu));
+  m.set(69, soBc(dt.phucHoi));
+  const dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
+  m.set(71, dtKhoiToMoiThat.length);
+  // D72 "Số bị can mới khởi tố" — quy tắc chính thức `D72_10238=C7` (bằng ĐÚNG tổng cột C7 của
+  // B10, cộng dồn qua mọi tội danh — KHÔNG PHẢI chỉ soBc(dtKhoiToMoiThat) như bản đầu tiên, vì C7
+  // = dt_ktBcMoiKy = "mới" (kỳ khớp riêng theo bị can) + "bổ sung" (bị can thêm vào vụ đã có) —
+  // dùng THẲNG `tongC7` (đã cộng dồn sẵn ở xuatBaoCaoThangExcel qua b10Tong) để chắc chắn khớp
+  // tuyệt đối với B10, không tính lại logic "kỳ khởi tố riêng từng BC"/"bổ sung" một lần nữa ở đây.
+  m.set(72, tongC7);
+  m.set(73, dtNoiKhac.length);
+  m.set(74, soBc(dtNoiKhac));
+  m.set(75, (dt.hoanThanh?.chuyen_di || []).length);
+  m.set(76, soBc(dt.hoanThanh?.chuyen_di));
+  // D77/D79 "Tổng số CQĐT thụ lý điều tra" — CÔNG THỨC RIÊNG của Biểu 2 (KHÁC B10's "Tổng thụ lý"
+  // C3/C4, xem BIEU23_CAN_XAC_NHAN — đó là câu hỏi riêng "B10 có nên khớp D77 hay D77-D59", KHÔNG
+  // liên quan tới việc D77 tự nó tính đúng hay không) — đã đối chiếu khớp CHÍNH XÁC số mẫu (871,
+  // 2373) qua test cô lập test_bieu2_3.js.
+  m.set(77, m.get(57) + m.get(59) + m.get(60) + m.get(62) + m.get(71) + m.get(73) - m.get(61) - m.get(75));
+  m.set(79, m.get(64) + m.get(66) + m.get(67) + m.get(69) + m.get(72) + m.get(74) - m.get(68) - m.get(76));
+  m.set(83, (dt.chuyenDi || []).length + (dt.hoanThanh?.dinh_chi || []).length);
+  m.set(86, soBc(dt.chuyenDi) + soBc(dt.hoanThanh?.dinh_chi));
+  m.set(92, (dt.chuyenDi || []).length);
+  m.set(93, (dt.chuyenDi || []).length - dtChuyenDi_LanDau.length);
+  m.set(95, soBc(dt.chuyenDi));
+  m.set(96, soBc(dt.chuyenDi) - soBc(dtChuyenDi_LanDau));
+  m.set(97, demBcTruong(dt.chuyenDi, "dangVien", "co"));
+  m.set(98, demBcTruong(dt.chuyenDi, "dangVienGiuChucVu", true));
+  m.set(100, (dt.hoanThanh?.dinh_chi || []).length);
+  m.set(117, soBc(dt.hoanThanh?.dinh_chi));
+  m.set(134, (dt.hoanThanh?.tam_dinh_chi || []).length);
+  m.set(141, soBc(dt.hoanThanh?.tam_dinh_chi));
+  m.set(154, baoCao.dieu_tra.tonCuoiKy);
+  m.set(156, baoCao.dieu_tra.tonCuoiBiCanKy);
+
+  // ── Truy tố (dòng 260-401) — đã đối chiếu khớp mẫu: D270+D272=D92 (158+89=247), D293=8 ──
+  m.set(260, baoCao.truy_to.tonDauKy);
+  m.set(261, (tt.phucHoi || []).length);
+  m.set(263, (tt.tachVu || []).length);
+  m.set(264, baoCao.truy_to.soNhapVu);
+  m.set(265, baoCao.truy_to.tonDauBiCan);
+  m.set(266, soBc(tt.phucHoi));
+  m.set(268, soBc(tt.tachVu));
+  m.set(269, soBc(tt.nhapVu));
+  // Bug đã sửa (2026-08-06, phát hiện qua đối chiếu "Danh sách quy tắc biểu 2.md" chính thức —
+  // quy tắc `D93=D272`/`D96=D273` bắt buộc): D270-273 ("mới thụ lý"/"nhận lại do CQĐT hoàn lại sau
+  // ĐTBS", giai đoạn TT) mô tả dòng chảy ĐT→TT (TT NHẬN từ ĐT) — PHẢI dùng `dt.chuyenDi`/
+  // `dtChuyenDi_LanDau` (phía ĐT, sự kiện chuyen_giai_doan denGiaiDoan=truy_to). Bản đầu tiên dùng
+  // NHẦM `ttChuyenDi_LanDau` (phía TT, dòng chảy TT→XX HOÀN TOÀN KHÁC, dùng cho D292-293 ngay
+  // dưới) — cùng tên biến "ChuyenDi" ở 2 giai đoạn dễ nhầm nếu không đọc kỹ chiều đi/đến.
+  m.set(270, dtChuyenDi_LanDau.length);
+  m.set(271, soBc(dtChuyenDi_LanDau));
+  // D272=D93, D273=D96 (quy tắc chính thức, cùng 1 tập bị can "chưa lần đầu" của dt.chuyenDi —
+  // alias TRỰC TIẾP qua m.get() thay vì tính lại, đảm bảo khớp tuyệt đối theo đúng quy tắc).
+  m.set(272, m.get(93));
+  m.set(273, m.get(96));
+  m.set(282, (tt.chuyenDi || []).length + (tt.hoanThanh?.dinh_chi || []).length);
+  m.set(285, soBc(tt.chuyenDi) + soBc(tt.hoanThanh?.dinh_chi));
+  m.set(292, (tt.chuyenDi || []).length);
+  m.set(293, (tt.chuyenDi || []).length - ttChuyenDi_LanDau.length);
+  m.set(296, soBc(tt.chuyenDi));
+  m.set(297, soBc(tt.chuyenDi) - soBc(ttChuyenDi_LanDau));
+  m.set(300, (tt.hoanThanh?.dinh_chi || []).length);
+  m.set(310, soBc(tt.hoanThanh?.dinh_chi));
+  m.set(326, (tt.hoanThanh?.tam_dinh_chi || []).length);
+  m.set(332, soBc(tt.hoanThanh?.tam_dinh_chi));
+  m.set(344, baoCao.truy_to.tonCuoiKy);
+  m.set(346, baoCao.truy_to.tonCuoiBiCanKy);
+  // D352/361/367/368 (VKS trả hồ sơ ĐTBS "không tính vụ do Toà án yêu cầu") — tái dùng
+  // ttTraDi_TrucTiep của B10 (C58-C59). Lưu ý NHỎ: B10 C58-C59 loại THÊM round-trip "cùng kỳ" mà
+  // Biểu 2 dòng 352 không yêu cầu — chấp nhận sai khác cực hiếm này (round-trip trong 1 kỳ), xem
+  // CLAUDE.md. "CQĐT chấp nhận" (D361/368) dùng CHUNG giá trị với "VKS trả hồ sơ" (D352/367) vì hệ
+  // thống không theo dõi riêng trường hợp CQĐT từ chối/không chấp nhận.
+  m.set(352, ttTraDi_TrucTiep.length);
+  m.set(361, ttTraDi_TrucTiep.length);
+  m.set(367, soBc(ttTraDi_TrucTiep));
+  m.set(368, soBc(ttTraDi_TrucTiep));
+
+  return m;
+}
+
+function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC61) {
+  const m = new Map();
+  const xx = baoCao.xet_xu.ds;
+  const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
+
+  m.set(1, baoCao.xet_xu.tonDauKy);
+  m.set(4, (xx.phucHoi || []).length);
+  m.set(5, baoCao.xet_xu.tonDauBiCan);
+  m.set(8, soBc(xx.phucHoi));
+  // D9/12 "Mới thụ lý xét xử sơ thẩm" — SUY RA theo đúng mẫu đã xác nhận ở Truy tố (D270: "mới thụ
+  // lý" = lần đầu, net-of-ĐTBS-lặp-lại) — CHƯA có số mẫu Biểu 3 cùng kỳ để đối chiếu độc lập, tin
+  // cậy thấp hơn phần Biểu 2 — nên kiểm tra lại khi có dữ liệu thật.
+  m.set(9, ttChuyenDi_LanDau.length);
+  m.set(12, soBc(ttChuyenDi_LanDau));
+  // D15/16 "TA trả hồ sơ ĐTBS trong kỳ đến cuối kỳ CHƯA NHẬN LẠI" — ĐÃ đối chiếu khớp mẫu qua phép
+  // tính D17=D1+D2+D3+D4+D9−D15 (76+0+11+2+128−10=207, khớp C22 mẫu) — xem CLAUDE.md.
+  m.set(15, xxTraDi_KhongLapKy.length);
+  m.set(16, soBc(xxTraDi_KhongLapKy));
+  // D17/18 "Tổng số vụ án/bị cáo Tòa án thụ lý xét xử sơ thẩm" — quy tắc chính thức
+  // `D17_10239=C60`/`D18_10239=C61` (KHÔNG cần trừ gì thêm, khác ĐT/TT — xem tinhBieu10 mục
+  // "Tổng thụ lý") — dùng THẲNG tongC60/tongC61 (= b10Tong[69]/[70], cộng dồn sẵn ở
+  // xuatBaoCaoThangExcel) thay vì tự dựng lại D1+D2+D3+D4+D9-D15 (D2/D3 "hủy/ĐTBS mới nhận lại"
+  // CHƯA tracked) — tránh sai sót do thiếu 2 thành phần đó.
+  m.set(17, tongC60);
+  m.set(18, tongC61);
+  m.set(22, (xx.hoanThanh?.da_xet_xu || []).length);
+  m.set(35, soBc(xx.hoanThanh?.da_xet_xu));
+  m.set(52, (xx.hoanThanh?.dinh_chi || []).length);
+  m.set(61, soBc(xx.hoanThanh?.dinh_chi));
+  m.set(70, (xx.hoanThanh?.tam_dinh_chi || []).length);
+  m.set(76, soBc(xx.hoanThanh?.tam_dinh_chi));
+  m.set(84, baoCao.xet_xu.tonCuoiKy);
+  m.set(86, baoCao.xet_xu.tonCuoiBiCanKy);
+
+  return m;
+}
+
+// Dựng 2 sheet "Biểu 2"/"Biểu 3" — 4 cột: Tiêu chí | Mã dòng | Số liệu | Trạng thái. Mỗi dòng lấy
+// giá trị từ tinhBieu2/tinhBieu3 nếu có; không có mà nằm trong BIEU23_CAN_XAC_NHAN thì hiện
+// "❓ Cần xác nhận công thức" (vàng cam); còn lại hiện "⚠ Chưa có dữ liệu" (xám, chờ nhập tay).
+function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3) {
+  const MAU = { tuDong: "FFD1FAE5", canXacNhan: "FFFEF3C7", chuaCo: "FFF1F5F9" };
+  const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan) => {
+    const ws = wb.addWorksheet(tenSheet);
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    ws.columns = [{ width: 70 }, { width: 10 }, { width: 14 }, { width: 34 }];
+    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái"]);
+    hRow.font = { bold: true };
+    hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    for (const r of rows) {
+      const co = giaTriMap.has(r.md);
+      const canXN = !co && BIEU23_CAN_XAC_NHAN.has(`${tienToXacNhan}:${r.md}`);
+      const trangThai = co ? "✓ Tự động tính"
+        : (canXN ? "❓ Cần xác nhận công thức (xem CLAUDE.md)" : "⚠ Chưa có dữ liệu — cần bổ sung tính năng");
+      const row = ws.addRow([r.tc, r.md, co ? giaTriMap.get(r.md) : null, trangThai]);
+      row.getCell(1).alignment = { wrapText: true, vertical: "top" };
+      row.getCell(4).font = { color: { argb: co ? "FF065F46" : (canXN ? "FF92400E" : "FF64748B") } };
+      row.eachCell(cell => {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: co ? MAU.tuDong : (canXN ? MAU.canXacNhan : MAU.chuaCo) } };
+      });
+    }
+    return ws;
+  };
+  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2");
+  themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3");
+}
+
+
 // Xuất Excel báo cáo tháng nhiều sheet, dựng thẳng từ đúng object `baoCao` đã hiển thị trên màn
 // hình (cùng 1 lần tính tinhBaoCaoKy, không tính lại) — đảm bảo số dòng từng sheet danh sách
 // luôn khớp đúng số trên sheet "Tổng hợp báo cáo" và trên báo cáo đang xem. Mọi sheet đều bật
@@ -11245,6 +11996,47 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         r.font = { color: { argb: "FFDC2626" } };
       });
     }
+  }
+
+  // ---- Sheet: Biểu 2 & Biểu 3 (mẫu thống kê ngành, đặt cạnh Biểu 10) ----
+  // Port từ nhánh feature/tong-ke-dong (2026-08-06), thích ứng kiến trúc "tồn theo kỳ thống kê"
+  // hiện tại. 396 dòng Biểu 2 + 150 dòng Biểu 3 — dòng nào tính được từ `baoCao` thì tự tính
+  // (xanh, "✓ Tự động tính"); dòng "❓ Cần xác nhận công thức" (vàng — có manh mối nhưng chưa chắc);
+  // còn lại "⚠ Chưa có dữ liệu — cần bổ sung tính năng" (xám — chờ nhập tay / làm tính năng sau).
+  {
+    const NGUON_MOI_THAT = new Set(["an_khoi_to_moi", "tin_bao_khoi_to_len"]);
+    const dtKhoiToMoiThat = (baoCao.dieu_tra.ds.khoiToTrucTiep || []).filter(v => NGUON_MOI_THAT.has(v.nguon));
+    // Lịch sử chuyển/trả giai đoạn của các vụ trong báo cáo — để lọc "lần đầu"/round-trip cho vài
+    // dòng "trong đó ..." (D93/96/272/273/293/297/352... Biểu 2; D9/12/15/16 Biểu 3). Lỗi tải →
+    // các bộ lọc trả về NGUYÊN mảng (coi mọi vụ là "lần đầu") — số "trong đó" có thể hơi cao, chấp
+    // nhận thay vì hỏng cả 2 sheet.
+    const lichSuCTMap = new Map();
+    try {
+      const ctSnap = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", _vuIdsChoBaoCao,
+        q => q.where("loaiSuKien", "in", ["chuyen_giai_doan", "tra_ho_so"]));
+      ctSnap.forEach(d => {
+        const l = d.data();
+        const raw = l.thoiDiemGhi;
+        const t = raw?.toMillis ? raw.toMillis() : (raw ? new Date(raw).getTime() : 0);
+        if (!lichSuCTMap.has(l.maVuAn)) lichSuCTMap.set(l.maVuAn, []);
+        lichSuCTMap.get(l.maVuAn).push({ loaiSuKien: l.loaiSuKien, denGiaiDoan: l.denGiaiDoan, _t: isNaN(t) ? 0 : t });
+      });
+    } catch (e) { console.warn("Biểu 2/3: không tải được lịch sử chuyển/trả giai đoạn —", e.message); }
+    const _tLog = (vu) => { const t = vu._log?.thoiDiemGhi; if (!t) return 0; const ms = t.toMillis ? t.toMillis() : new Date(t).getTime(); return isNaN(ms) ? 0 : ms; };
+    const _laLanDauChuyenToi = (vu, denGD) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); return !ls.some(e => e.loaiSuKien === "chuyen_giai_doan" && e.denGiaiDoan === denGD && e._t < t); };
+    const _chuaTungTraVeDT = (vu) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); return !ls.some(e => e.loaiSuKien === "tra_ho_so" && e.denGiaiDoan === "dieu_tra" && e._t < t); };
+    const _laTrucTiepVaoTT = (vu) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); let g = null; for (const e of ls) { if (e._t < t && (!g || e._t > g._t)) g = e; } if (!g) return true; return !(g.loaiSuKien === "tra_ho_so" && g.denGiaiDoan === "truy_to"); };
+    const _dtCDIds = new Set((baoCao.dieu_tra.ds.chuyenDi || []).map(v => v.id));
+    const _ttCDIds = new Set((baoCao.truy_to.ds.chuyenDi || []).map(v => v.id));
+    const dtChuyenDi_LanDau = (baoCao.dieu_tra.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "truy_to"));
+    const ttChuyenDi_LanDau = (baoCao.truy_to.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "xet_xu") && _chuaTungTraVeDT(vu) && !vu.uyQuyenXetXu);
+    const ttTraDi_TrucTiep = (baoCao.truy_to.ds.traDi || []).filter(vu => !_dtCDIds.has(vu.id) && _laTrucTiepVaoTT(vu));
+    const xxTraDi_KhongLapKy = (baoCao.xet_xu.ds.traDi || []).filter(vu => !_ttCDIds.has(vu.id));
+    themSheetBieu2Va3(
+      wb,
+      tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8]),
+      tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70]),
+    );
   }
 
   // ---- Sheet 2: Thống kê tội danh (pivot tổng hợp, công thức từ DS sheets) ----
