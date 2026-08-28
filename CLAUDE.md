@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Tab "Đã xét xử" — nhập điểm/khoản + mức án TỪNG tội danh của TỪNG bị can, panel chính riêng (2026-08-28, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app` (test), CHƯA chạy migration / CHƯA deploy production)
+## Tab "Đã xét xử" — nhập điểm/khoản + mức án TỪNG tội danh của TỪNG bị can, panel chính riêng (2026-08-28, `qlahs-sup.html`, nhánh `main`, ĐÃ chạy migration + deploy `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng — nâng cấp tab "Đã xét xử" trong module "Án đã giải quyết" (`AnDaGiaiQuyetModule`).
 4 quyết định thiết kế đã hỏi rõ qua `AskUserQuestion`:
@@ -20,11 +20,10 @@ Theo yêu cầu Dũng — nâng cấp tab "Đã xét xử" trong module "Án đ�
 **Cột mới `bican.hinhPhatChiTiet` (jsonb, default `[]`)** — mảng SONG SONG theo index với
 `bican.toiDanh`: `[{ khoan, diem, mucAnLoai, mucAnNam, mucAnThang }, ...]`. `bican.mucAnLoai/mucAnNam/
 mucAnThang` (mức án "chung" — đã có từ 2026-07-21, dùng tính Thời hạn bảo quản ở Nộp lưu kho) giờ
-**TỰ TÍNH** từ `hinhPhatChiTiet` mỗi lần Lưu (không nhập tay nữa ở luồng này). Migration:
-`supabase/add_hinh_phat_chi_tiet_bican_2026-08-28.sql` — **CHƯA CHẠY THẬT** (phiên này không có mật
-khẩu DB). Trước khi chạy migration, mọi lần bấm "Lưu bản án bị can" báo lỗi rõ ràng inline "Could
-not find the 'hinhPhatChiTiet' column" — đã kiểm chứng, KHÔNG crash, đường ĐỌC không bị ảnh hưởng
-(cột thiếu → coi như `[]`).
+**TỰ TÍNH** từ `hinhPhatChiTiet` mỗi lần Lưu (không nhập tay nữa ở luồng này). Migration
+`supabase/add_hinh_phat_chi_tiet_bican_2026-08-28.sql` **ĐÃ CHẠY THẬT** lên `eutatszoaseixchvjbtg`
+qua Session pooler (Dũng cấp mật khẩu DB trong phiên; script `pg` tạm trong scratchpad, gỡ sạch sau)
+— cột `jsonb NOT NULL default '[]'`. Đường ĐỌC an toàn kể cả khi cột chưa có (thiếu → coi như `[]`).
 
 **Component mới** (đặt trước `AnDaGiaiQuyetModule`): `PanelDaXetXu` (bảng vụ, mỗi dòng bấm ▸ để xổ
 "bản án"), `BanAnCuaVu` (tải bị can 1 lần qua `batchLayBiCanList`), `BanAnBiCanCard` (bảng tội danh
@@ -32,17 +31,19 @@ not find the 'hinhPhatChiTiet' column" — đã kiểm chứng, KHÔNG crash, đ
 `bican`). Helper `chuanHoaHinhPhatChiTiet(toiDanh, hpct)` (căn độ dài theo `toiDanh`, chuẩn hoá
 tháng ≥12), `badgeDieuLuatGon`.
 
-**Đã kiểm chứng qua UI thật trên `qlahs-sup.web.app`** (chưa migration): panel mới render đúng, ▸ xổ
-ra card bị can + bảng tội danh + badge "Đ.123/25"; gõ Khoản/Điểm + chọn "Tù giam" + Năm 15 →
-"Hình phạt chung: 15 năm" live; nút toggle "Ẩn/Hiện panel chi tiết" đúng; `tongHopHinhPhat` test
-live 6 ca (cap 30 năm / chung thân / tử hình / tù+treo cộng dồn / toàn treo lấy max / rỗng→null) —
-đúng hết; các tab khác (Chuyển đi/Tạm đình chỉ...) KHÔNG hồi quy, vẫn bảng chung 9 cột. "Lưu" báo
-lỗi cột thiếu đúng như dự kiến (chưa migration).
+**Đã kiểm chứng đầy đủ qua UI thật trên `qlahs-sup.web.app`** (sau migration, đăng nhập
+`admin@qlva.local`): panel mới render đúng, ▸ xổ ra card bị can + bảng tội danh + badge "Đ.123/25";
+`tongHopHinhPhat` test live 6 ca (cap 30 năm / chung thân / tử hình / tù+treo cộng dồn / toàn treo
+lấy max / rỗng→null) — đúng hết; các tab khác (Chuyển đi/Tạm đình chỉ...) KHÔNG hồi quy, vẫn bảng
+chung 9 cột; nút "Ẩn/Hiện panel chi tiết" đúng. **Lưu THẬT 2 lượt trên dữ liệu Supabase thật rồi
+đọc lại qua pooler**: (a) 1 bị can 1 tội (Khoản 1/Điểm a/Tù 15 năm 6 tháng) → `hinhPhatChiTiet` ghi
+đúng + `mucAn*` = 15 năm 6 tháng; (b) 1 bị can 2 tội (12 năm + 3 năm 6 tháng) → cộng dồn ra `mucAn*`
+= 15 năm 6 tháng. Đã **khôi phục nguyên trạng** cả 2 bị can test (`hinhPhatChiTiet=[]`, `mucAn*=null`).
 
-**Việc còn lại**: (1) chạy `add_hinh_phat_chi_tiet_bican_2026-08-28.sql` lên Supabase thật; (2) test
-Lưu thật + đối chiếu `bican.mucAn*` tự tính đúng; (3) deploy production. **Giới hạn đã biết**: panel
-chi tiết bên phải (nếu đang mở cùng vụ) KHÔNG tự cập nhật sau khi Lưu ở panel trái — bấm lại dòng để
-nạp lại; `hinhPhatChiTiet` CHƯA dùng ở báo cáo B10/thống kê nào (mới là bước thu thập dữ liệu).
+**Giới hạn đã biết**: panel chi tiết bên phải (nếu đang mở cùng vụ) KHÔNG tự cập nhật sau khi Lưu ở
+panel trái — bấm lại dòng để nạp lại; `hinhPhatChiTiet` CHƯA dùng ở báo cáo B10/thống kê nào (mới là
+bước thu thập dữ liệu); tổ hợp hình phạt hỗn hợp lạ (VD tù + phạt tiền) rơi về "loại cho thời hạn
+bảo quản dài nhất" — chưa có ô sửa tay hình phạt chung (Dũng yêu cầu tự tính).
 
 ## Giao nhận hồ sơ — ô tìm vụ nâng cấp (toggle phạm vi + xem bị can) + tự xoá phiên rỗng (2026-08-27, `qlahs-sup.html`, nhánh `main`, ĐÃ deploy `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
