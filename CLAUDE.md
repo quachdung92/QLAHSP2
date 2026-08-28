@@ -2,6 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Biểu 10 "Tổng thụ lý" (C3/C4/C33/C34/C60/C61) — BỎ trừ "án huỷ", đúng lại theo mẫu ngành (2026-08-29, `qlahs-sup.html`, nhánh `bieu-2-3`, CHƯA merge/deploy — compile-check sạch, chưa mở Excel thật)
+
+Theo yêu cầu Dũng ("công thức chuẩn ngành đã add vào rồi, biểu 10 lúc trước có vấn đề gì ko" →
+"ok fix triệt để đi"). Đối chiếu `quy_tac_bieu_10.md` (mới commit `6fcef9f`) + `bieu_B10_mo_ta.md`
+§3.2 phát hiện: JS `tinhBieu10` VÀ công thức Excel (`RA_THULY_GD` → `mkThuLyVu`/`mkThuLyBc`) đang
+**trừ thêm "án huỷ"** khỏi Tổng thụ lý — SAI về nguyên tắc:
+- `bieu_B10_mo_ta.md` §3.2: Tổng thụ lý = tồn kỳ trước + [mới đến G] + tách ra − nhập vụ − chuyển
+  đi. KHÔNG có "− án huỷ" (án huỷ là 1 hình thức GIẢI QUYẾT, vẫn nằm trong "đã thụ lý trong kỳ").
+- Quy tắc ngành: `D77_10238−D59_10238=C3`, `D79_10238−D66_10238=C4`, `D280_10238−D262_10238=C33`,
+  `D281_10238−D267_10238=C34`, `D17_10239=C60` (=`D1+D2+D3+D4+D9−D15`), `D18_10239=C61` — không
+  quy tắc nào trừ án huỷ.
+- Comment cũ ở `RA_THULY_GD` tự thừa nhận "mô tả §3.2 chỉ nêu 2 vế đầu, code LUÔN trừ thêm án huỷ,
+  giữ theo code để không đổi giá trị" — chính là chỗ lệch mẫu ngành.
+
+**Đã sửa**: bỏ hẳn số hạng `− vuCoD(...an_huy...)` / `− *_ahBc.length` khỏi C3/C4/C33/C34/C60/C61
+(JS, `tinhBieu10`); bỏ `"DS án huỷ ĐT/TT/XX"` khỏi `RA_THULY_GD` (Excel). GIỮ NGUYÊN: biến
+`dt_ahBc`/`tt_ahBc`/`xx_ahBc` + `dt_ah_vu`/... (vẫn nuôi 6 cột "Án huỷ" RIÊNG trong `vals[]`, idx
+82–87 `B10_FORMULA` `mkSfVu("DS án huỷ …")` — 2 khái niệm khác nhau, không đụng); sheet "DS án huỷ
+{gs}" vẫn tạo. VAO side (`VAO_GD`/`*_moi` gồm traVe/phucHoi/nhanLai) GIỮ NGUYÊN — §3.2 xác nhận
+"trả về ĐTBS" thuộc [mới đến G]; phục hồi/nhận lại là số hạng cân bằng (case tái nhập caseload).
+
+**Tác động số liệu thật = 0**: đã đếm qua pooler (phiên này) — `hoan_thanh` `hinhThucHoanThanh=an_huy`
+= 0 bản ghi ở MỌI kỳ thật. Sửa này chỉ "đúng lại nguyên tắc", không đổi con số nào đang có. An toàn
+merge, nhưng Dũng vẫn nên mở Excel B10 thật xác nhận C3/C4/C33/C34/C60/C61 không đổi + không #REF.
+
+**CHƯA làm (phần còn lại của "fix triệt để", scope riêng — rủi ro cao hơn, cần Dũng mở Excel thật
+kiểm chứng)**:
+1. **C6-C7/C25-C26/C36-C37/C58-C59/C71-C72 "đếm quá rộng"** — mẫu ngành muốn "khởi tố mới THẬT"
+   (nguồn `an_khoi_to_moi`/`tin_bao_khoi_to_len`) + "chuyển đến LẦN ĐẦU" (không tính vụ bị trả hồ
+   sơ rồi chuyển lại). Cần port `_laLanDauChuyenToi`/`_chuaTungTraVeDT`/`_laTrucTiepVaoTT` (đã có
+   sẵn trong khối Biểu 2/3, dùng cho `dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/...) vào `tinhBieu10`
+   (thêm tham số `lichSuChuyenTraMap`) + tạo sheet DS lọc mới + sửa `B10_FORMULA` idx 7/26/27/41/
+   42/63/71/72. ĐỔI SỐ THẬT (VD kỳ 07 ĐT −10 vụ traVe) → bắt buộc Dũng xác nhận.
+2. **Cột "Kiểm tra" Biểu 2/3 — công thức liên biểu**: hiện `congThucKiemTra` trả `"(tra tay — liên
+   biểu / kỳ trước)"` cho quy tắc `Cxx_10173`/`Dxx_10238`/`[b]`. Nâng thành công thức Excel thật
+   tham chiếu `'Biểu B10'!C{...}` (VD Biểu 2 D72 tự khớp B10 C7). Additive, không đụng B10.
+3. C33/C34 (TT) / C60/C61 (XX): quy tắc `D280−D262`/`D17=D1+D2+D3+D4+D9−D15` còn tham chiếu dòng
+   Biểu 2/3 (D262/D274/D278/D2/D3) CHƯA rõ nghĩa (thiếu tài liệu mô tả Biểu 2/3). Việc bỏ án huỷ
+   ở trên là phần ĐÚNG CHẮC CHẮN theo mọi quy tắc; thành phần đầy đủ của C33/C60 cần Dũng/tài liệu.
+
 ## Biểu 2 & Biểu 3 — port lại từ nhánh cũ `feature/tong-ke-dong`, đặt lên nền hệ thống hiện tại (2026-08-28, `qlahs-sup.html`, nhánh `bieu-2-3` = tách từ `ton-ky-thong-nhat`, CHƯA merge/deploy — chỉ compile-check + test cô lập)
 
 **Bối cảnh**: Biểu 2 & Biểu 3 (2 sheet trong "Xuất Excel báo cáo tháng", cạnh Biểu 10) ĐÃ được
