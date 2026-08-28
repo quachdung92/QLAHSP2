@@ -26,10 +26,19 @@ qua Session pooler (Dũng cấp mật khẩu DB trong phiên; script `pg` tạm 
 — cột `jsonb NOT NULL default '[]'`. Đường ĐỌC an toàn kể cả khi cột chưa có (thiếu → coi như `[]`).
 
 **Component mới** (đặt trước `AnDaGiaiQuyetModule`): `PanelDaXetXu` (bảng vụ, mỗi dòng bấm ▸ để xổ
-"bản án"), `BanAnCuaVu` (tải bị can 1 lần qua `batchLayBiCanList`), `BanAnBiCanCard` (bảng tội danh
-× [Khoản/Điểm/Loại/Năm/Tháng], "Hình phạt chung" hiện live, nút "Lưu bản án bị can" ghi 1 doc
-`bican`). Helper `chuanHoaHinhPhatChiTiet(toiDanh, hpct)` (căn độ dài theo `toiDanh`, chuẩn hoá
-tháng ≥12), `badgeDieuLuatGon`.
+"bản án"), `BanAnCuaVu` (tải bị can 1 lần qua `batchLayBiCanList`), `BanAnBiCanCard` (card mở/gấp).
+Helper `chuanHoaHinhPhatChiTiet(toiDanh, hpct)` (căn độ dài theo `toiDanh`, chuẩn hoá tháng ≥12).
+
+**Nâng cấp UI khối mở rộng bị can (2026-08-28, cùng ngày, theo yêu cầu Dũng "thứ tự bị can trong
+phần mềm không khớp bản án")**:
+- `BanAnCuaVu` thêm **ô tìm bị can** (tên / năm sinh / địa chỉ / tội danh, khớp "chứa") + "Mở tất
+  cả" / "Thu gọn" + đếm "N/M bị can". Gõ tìm còn đúng 1 bị can → tự mở card đó. Vụ ≤ 2 bị can mở sẵn.
+- `BanAnBiCanCard` thành **card mở/gấp**: header lúc gấp hiện STT (thứ tự gốc trong phần mềm, ổn
+  định khi lọc) + tên + SN + biện pháp + địa chỉ + tội danh + badge trạng thái ("✓ đủ N/N tội" /
+  "N/M tội" / "chưa nhập" / "• chưa lưu") + "HP chung: …". Khi mở: mỗi tội 1 khối thoáng
+  [Khoản/Điểm/Loại mức án/Năm/Tháng] có nhãn từng ô, viền amber khi có sửa chưa lưu.
+- Header dùng state **`daLuu`** (cập nhật ngay sau khi Lưu) thay vì `useMemo` theo `bc.id` — trước
+  đó badge/HP-chung ở header KHÔNG đổi sau khi Lưu (vì `bc.hinhPhatChiTiet` prop chưa refresh).
 
 **Đã kiểm chứng đầy đủ qua UI thật trên `qlahs-sup.web.app`** (sau migration, đăng nhập
 `admin@qlva.local`): panel mới render đúng, ▸ xổ ra card bị can + bảng tội danh + badge "Đ.123/25";
@@ -39,6 +48,9 @@ chung 9 cột; nút "Ẩn/Hiện panel chi tiết" đúng. **Lưu THẬT 2 lư�
 đọc lại qua pooler**: (a) 1 bị can 1 tội (Khoản 1/Điểm a/Tù 15 năm 6 tháng) → `hinhPhatChiTiet` ghi
 đúng + `mucAn*` = 15 năm 6 tháng; (b) 1 bị can 2 tội (12 năm + 3 năm 6 tháng) → cộng dồn ra `mucAn*`
 = 15 năm 6 tháng. Đã **khôi phục nguyên trạng** cả 2 bị can test (`hinhPhatChiTiet=[]`, `mucAn*=null`).
+Vòng nâng cấp UI: kiểm chứng trên vụ 15 bị can — tìm "Trần Huy" ra đúng 1 bị can (STT #8) + tự mở;
+"Mở tất cả" bung 15 card; Lưu 1 bị can → header cập nhật "HP chung" + badge NGAY (không cần reload);
+đã dọn dữ liệu test. Deploy `qlahs-sup.web.app` + `qlahsp2.web.app`.
 
 **Giới hạn đã biết**: panel chi tiết bên phải (nếu đang mở cùng vụ) KHÔNG tự cập nhật sau khi Lưu ở
 panel trái — bấm lại dòng để nạp lại; `hinhPhatChiTiet` CHƯA dùng ở báo cáo B10/thống kê nào (mới là
