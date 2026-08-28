@@ -11789,10 +11789,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     };
     const wsCd = wb.addWorksheet("Cân đối số liệu");
     wsCd.views = [{ state: "frozen", xSplit: 2, ySplit: 2 }];
-    const cdH1 = wsCd.addRow(["Giai đoạn","Loại","Tồn đầu kỳ","Vào kỳ","Ra kỳ","Tồn cuối (tính)","Tồn cuối (chốt)","Chênh lệch"]);
+    const cdH1 = wsCd.addRow(["Giai đoạn","Loại","Tồn đầu kỳ","Vào kỳ","Ra kỳ","Tồn cuối (sổ cái)","Tồn cuối (RPC)","Chênh lệch"]);
     cdH1.font = { bold: true };
     cdH1.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-    const cdH2 = wsCd.addRow(["","","Snapshot kỳ trước","=Σ SUM/COUNTIF(DS vào...)","=Σ SUM/COUNTIF(DS ra...)","=Đầu+Vào−Ra","Snapshot lúc chốt","=Tính−Chốt (nên=0)"]);
+    const cdH2 = wsCd.addRow(["","","RPC as-of kỳ trước","=Σ SUM/COUNTIF(DS vào...)","=Σ SUM/COUNTIF(DS ra...)","=Đầu+Vào−Ra (đếm sự kiện)","RPC as-of kỳ này (đếm trạng thái)","=Sổ cái−RPC (±1 vô hại)"]);
     cdH2.font = { size: 9, color: { argb: "FF6B7280" } };
     // 2026-07-19: thêm hàng "Bị can" song song hàng "Vụ" cho mỗi giai đoạn (trước chỉ có 1 trọng số
     // vụ án — audit theo yêu cầu Dũng "mọi phần thống kê phải có đủ 2 trọng số vụ án + bị can").
@@ -11841,10 +11841,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
           r.tonChot,
           { formula: `F${r.rowNum}-G${r.rowNum}`, result: r.chenhLech },
         ]);
+        // Chỉ tô ĐỎ khi chênh lệch > 1 (2026-08-28) — chênh ±1 là imprecision vô hại giữa sổ cái
+        // (đếm sự kiện) và RPC (đếm trạng thái cuối distinct) khi 1 vụ có ≥2 lần "vào" cùng kỳ.
+        // Chênh > 1 mới là dấu hiệu lỗi dữ liệu thật (sự kiện thiếu gán kỳ / bị can thiếu khởi tố).
+        const lechDangKe = Math.abs(r.chenhLech) > 1;
         cdRow.getCell(8).fill = { type: "pattern", pattern: "solid",
-          fgColor: { argb: r.chenhLech !== 0 ? "FFFECACA" : "FFD1FAE5" } };
-        cdRow.getCell(8).font = { bold: r.chenhLech !== 0,
-          color: { argb: r.chenhLech !== 0 ? "FFB91C1C" : "FF065F46" } };
+          fgColor: { argb: lechDangKe ? "FFFECACA" : (r.chenhLech === 0 ? "FFD1FAE5" : "FFFEF9C3") } };
+        cdRow.getCell(8).font = { bold: lechDangKe,
+          color: { argb: lechDangKe ? "FFB91C1C" : (r.chenhLech === 0 ? "FF065F46" : "FF854D0E") } };
         for (let c = 3; c <= 8; c++) cdRow.getCell(c).alignment = { horizontal: "center" };
       });
     });
@@ -11852,11 +11856,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     wsCd.addRow([]);
     [
       ["Ghi chú:"],
-      ["• Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ (kyThongKe=null). Xem Nhật ký thao tác → lọc 'Chưa gán kỳ'."],
+      ["• Sheet này là LƯỚI AN TOÀN đối chiếu 2 cách đếm độc lập: 'Tồn cuối (sổ cái)' = Tồn đầu + Σ sự kiện vào − Σ sự kiện ra; 'Tồn cuối (RPC)' = đếm trạng thái cuối cùng của từng vụ/bị can tính tới hết kỳ. Cả 2 đều 100% theo KỲ THỐNG KÊ."],
+      ["• Chênh lệch = 0 (xanh): khớp tuyệt đối. Chênh ±1 (vàng): bình thường — khi 1 vụ có ≥2 lần 'vào' trong cùng kỳ, sổ cái đếm 2 còn RPC đếm 1 trạng thái cuối. Chênh > 1 (đỏ): DẤU HIỆU LỖI DỮ LIỆU — có sự kiện thiếu gán kỳ, hoặc bị can thiếu sự kiện khởi tố ở kỳ thật. Xem Nhật ký thao tác để rà."],
       ["• 'DS ĐT chuyển TT' = cùng dữ liệu 'DS chuyển đến TT', từ góc nhìn giai đoạn nguồn (để tính đủ RA của ĐT)."],
-      ["• 'Tồn cuối (chốt)' = snapshot lúc chốt kỳ; 'Tồn cuối (tính)' = tính từ log kỳ này — hai cột nên bằng nhau."],
       ["• Hàng 'Bị can' đếm số BỊ CAN (cột 'Họ tên BC' của các sheet DS, loại bỏ dòng giả '(Chưa có BC)' của vụ 0 bị can) — song song hàng 'Vụ' phía trên."],
-      ["• 'DS tồn {gđ}' = số LIVE tại thời điểm bấm xuất báo cáo này; 'DS tồn cuối kỳ {gđ}' = danh sách khớp ĐÚNG 'Tồn cuối (chốt)' của kỳ đang xem — mở lại báo cáo cũ lâu sau vẫn ra đúng số đã chốt, dùng sheet này để đối chiếu nếu 2 số lệch nhau."],
+      ["• 'DS tồn {gđ}' = số LIVE lúc bấm xuất; 'DS tồn cuối kỳ {gđ}' = danh sách khớp ĐÚNG 'Tồn cuối (RPC)' của kỳ đang xem — mở lại báo cáo cũ lâu sau vẫn ra đúng số."],
     ].forEach(r => { const nr = wsCd.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; });
   }
 
