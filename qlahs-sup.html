@@ -11739,40 +11739,57 @@ function phanTichQuyTacDong(raw) {
   const s = raw.replace(/\s+/g, "");
   let op = "=", iOp = s.indexOf("=");
   for (const o of [">=", "<=", ">", "<"]) { const i = s.indexOf(o); if (i >= 0) { op = o; iOp = i; break; } }
-  let tuKiemTra = true;
+  let coKhac = false;   // token không kiểm tra được (VD Dxx[b] = kỳ trước)
+  let coB10 = false;    // token Cxx_10173 = tham chiếu sang sheet "Biểu B10" (kiểm tra LIÊN BIỂU được)
   const parseVe = (str) => {
     const terms = []; let m;
-    const re = /([+-]?)(D\d+\[b\]|D\d+_\d+|D\d+|C\d+(?:_\d+)?|\d+)/g;
+    const re = /([+-]?)(D\d+\[b\]|C\d+_10173|D\d+_\d+|D\d+|C\d+(?:_\d+)?|\d+)/g;
     while ((m = re.exec(str))) {
-      const dau = m[1] === "-" ? -1 : 1, tok = m[2], md = tok.match(/^D(\d+)$/);
+      const dau = m[1] === "-" ? -1 : 1, tok = m[2];
+      const md = tok.match(/^D(\d+)$/), b10 = tok.match(/^C(\d+)_10173$/);
       if (md) terms.push({ md: +md[1], dau });
       else if (/^\d+$/.test(tok)) terms.push({ num: +tok, dau });
-      else { tuKiemTra = false; terms.push({ khac: tok, dau }); }
+      else if (b10) { coB10 = true; terms.push({ b10: +b10[1], dau }); }
+      else { coKhac = true; terms.push({ khac: tok, dau }); }
     }
     return terms;
   };
   const lhs = parseVe(s.slice(0, iOp)), rhs = parseVe(s.slice(iOp + op.length));
   const anchor = lhs.find(t => t.md != null)?.md ?? rhs.find(t => t.md != null)?.md ?? null;
   if (anchor == null) return null;
-  return { raw, op, lhs, rhs, anchor, tuKiemTra };
+  // tuKiemTra: kiểm tra ĐƯỢC hết trong CHÍNH sheet này (chỉ Dxx + số). lienBieu: cần tham chiếu
+  // sheet "Biểu B10" (Cxx_10173) nhưng vẫn ra công thức Excel check được (xem congThucKiemTra).
+  return { raw, op, lhs, rhs, anchor, tuKiemTra: !coKhac && !coB10, lienBieu: coB10 && !coKhac };
 }
 const BIEU2_QUY_TAC = BIEU2_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
 const BIEU3_QUY_TAC = BIEU3_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
 
 
-function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3) {
+// b10RefCua(n): trả chuỗi tham chiếu Excel tới ô TỔNG của cột Cn trên sheet "Biểu B10"
+// (VD "'Biểu B10'!K95"), hoặc null nếu không map được. Truyền từ xuatBaoCaoThangExcel (nơi biết
+// layout B10 + số dòng TỔNG động). Quy tắc `Cn_10173=Dm` → cột "Kiểm tra" tự đối chiếu liên biểu.
+function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null) {
   const MAU = { tuDong: "FFD1FAE5", canXacNhan: "FFFEF3C7", chuaCo: "FFF1F5F9" };
   // Trong sheet: dòng mã K nằm ở HÀNG Excel K+1 (1 hàng tiêu đề trên cùng), giá trị ở CỘT C.
   // Term "Dk" trong quy tắc → ô Excel `C{k+1}`. Ô trống Excel = 0 nên dòng chưa nhập không báo giả.
-  const oCua = (t) => (t.md != null ? `C${t.md + 1}` : String(t.num));
+  // Term "Cn_10173" (b10) → ô TỔNG cột Cn trên sheet "Biểu B10" qua b10RefCua(n).
+  const oCua = (t) => {
+    if (t.md != null) return `C${t.md + 1}`;
+    if (t.b10 != null) return b10RefCua(t.b10) || "0";
+    return String(t.num);
+  };
   const bieuThuc = (ve) => {
-    const xs = ve.filter(t => t.md != null || t.num != null);
+    const xs = ve.filter(t => t.md != null || t.num != null || t.b10 != null);
     return xs.length ? xs.map((t, i) => (t.dau < 0 ? "-" : (i === 0 ? "" : "+")) + oCua(t)).join("") : "0";
   };
+  // Rule kiểm tra được = tự kiểm tra (chỉ Dxx) HOẶC liên biểu mà MỌI term b10 đều map được sang B10.
+  const dungDuoc = (q) => q.tuKiemTra
+    || (q.lienBieu && [...q.lhs, ...q.rhs].every(t => t.b10 == null || b10RefCua(t.b10)));
   const congThucKiemTra = (qtList) => {
-    const auto = qtList.filter(q => q.tuKiemTra);
-    if (!auto.length) return qtList.length ? "(tra tay — liên biểu / kỳ trước)" : null;
-    let f = `"✓ khớp (${auto.length} quy tắc)"`;
+    const auto = qtList.filter(dungDuoc);
+    if (!auto.length) return qtList.length ? "(tra tay — kỳ trước / nội bộ Biểu 2)" : null;
+    const soLien = auto.filter(q => q.lienBieu).length;
+    let f = `"✓ khớp (${auto.length} quy tắc${soLien ? `, ${soLien} liên biểu` : ""})"`;
     for (let i = auto.length - 1; i >= 0; i--) {
       const q = auto[i];
       const cond = `(${bieuThuc(q.lhs)})${q.op}(${bieuThuc(q.rhs)})`;
@@ -11816,7 +11833,8 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3) {
       ["• Cột 'Số liệu': ✓ Tự động tính (xanh) = hệ thống điền từ dữ liệu. ⚠ Chưa có dữ liệu (xám) = tự nhập tay. ❓ Cần xác nhận công thức (vàng) = có manh mối nhưng chưa chắc, tự nhập rồi đối chiếu."],
       ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗' = đang VI PHẠM quy tắc đó — kiểm tra lại các dòng liên quan."],
       ["• Dòng '✓ Tự động tính' dùng công thức RÚT GỌN (bỏ các số hạng chưa có tính năng theo dõi) — khi bạn nhập tay các dòng còn thiếu, ô 'Kiểm tra' của dòng tổng có thể báo '✗', lúc đó cập nhật lại dòng tổng cho khớp."],
-      ["• Quy tắc có '[b]' (giá trị kỳ TRƯỚC) hoặc 'C.._10173 / D.._10238' (liên biểu) không tự kiểm tra được — cột 'Kiểm tra' ghi '(tra tay)', đối chiếu thủ công với báo cáo kỳ trước / Biểu 10."],
+      ["• Quy tắc 'C.._10173 = D..' (LIÊN BIỂU): cột 'Kiểm tra' đã tự đối chiếu với ô TỔNG tương ứng trên sheet 'Biểu B10' trong CHÍNH file này (báo '✗' nếu lệch)."],
+      ["• Quy tắc có '[b]' (giá trị kỳ TRƯỚC) không tự kiểm tra được — cột 'Kiểm tra' ghi '(tra tay)', đối chiếu thủ công với báo cáo kỳ trước."],
       ["• Nguồn quy tắc: quy_tac_bieu_2.md / quy_tac_bieu_3.md trong mã nguồn hệ thống."],
     ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
     return ws;
@@ -12357,10 +12375,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const ttChuyenDi_LanDau = (baoCao.truy_to.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "xet_xu") && _chuaTungTraVeDT(vu) && !vu.uyQuyenXetXu);
     const ttTraDi_TrucTiep = (baoCao.truy_to.ds.traDi || []).filter(vu => !_dtCDIds.has(vu.id) && _laTrucTiepVaoTT(vu));
     const xxTraDi_KhongLapKy = (baoCao.xet_xu.ds.traDi || []).filter(vu => !_ttCDIds.has(vu.id));
+    // Cột "Kiểm tra" của Biểu 2/3: quy tắc liên biểu `Cn_10173=Dm` tự đối chiếu với ô TỔNG cột Cn
+    // trên sheet "Biểu B10" (cùng file). Map Cn → chữ cái cột từ nhãn "(Cn)" trong B10_HEADER_CHI_TIET
+    // (vals index = vị trí nhãn − 2; cột Excel 0-based = index + 3). Dòng TỔNG = B10_R0 + số điều luật.
+    const b10ColCuaC = {};
+    B10_HEADER_CHI_TIET.forEach((lbl, j) => {
+      const m = String(lbl).match(/\(C(\d+)\)$/);
+      if (m) b10ColCuaC[+m[1]] = b10Col(j + 1); // (j − 2) + 3 = j + 1
+    });
+    const b10TongRowNum = B10_R0 + b10Rows.length;
+    const b10RefCua = (n) => (b10ColCuaC[n] ? `'Biểu B10'!${b10ColCuaC[n]}${b10TongRowNum}` : null);
     themSheetBieu2Va3(
       wb,
       tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8]),
       tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70]),
+      b10RefCua,
     );
   }
 
