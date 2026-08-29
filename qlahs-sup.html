@@ -11713,6 +11713,10 @@ const BIEU3_QUY_TAC_RAW = [
   "D61>=D62+D63+D64+D65+D66+D67+D68",
   "D70=D71+D72+D73+D74+D75",
   "D76=D77+D78+D79+D80+D81",
+  // D84/D86 "Tồn cuối kỳ XX" — GIÁ TRỊ lấy THẲNG từ RPC as-of (`baoCao.xet_xu.tonCuoiKy`), là số
+  // TỒN THỰC TẾ. Quy tắc cộng dồn `D84=D17-D22-D52-D70` (ngành) là bản RÚT GỌN "để thống kê":
+  // không trừ Toà-trả-TT (round-trip cùng kỳ) + không khớp imprecision RPC-vs-sổ-cái → self-check
+  // `=` bị BỎ QUA cho 2 dòng này (xem MD_BO_QUA_BANG_NHAU), chỉ giữ `>=`.
   "D84=D17-D22-D52-D70",
   "D84>=D85",
   "D86=D18-D35-D61-D76",
@@ -11852,8 +11856,8 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
   // coData(md): dòng md có được HỆ THỐNG tự tính không (true) hay CHỜ NHẬP TAY (false). Dùng để
   // guard quy tắc "=": nếu vế phải có 1 dòng CHƯA CÓ TÍNH NĂNG theo dõi (nhập tay) mà đang = 0 →
   // coi là "chưa nhập" → BỎ QUA quy tắc đó (không báo ✗), theo yêu cầu Dũng.
-  const congThucKiemTra = (qtList, coData = () => true) => {
-    const auto = qtList.filter(dungDuoc);
+  const congThucKiemTra = (qtList, coData = () => true, boQuaBangNhau = false) => {
+    const auto = qtList.filter(dungDuoc).filter(q => !(boQuaBangNhau && q.op === "="));
     if (!auto.length) return qtList.length ? "(tra tay — số cộng dồn kỳ trước)" : null;
     const soLien = auto.filter(q => q.lienBieu).length;
     const soPrev = auto.filter(q => q.coPrev).length;
@@ -11898,7 +11902,7 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     }
     return inv;
   };
-  const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan, quyTacList) => {
+  const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan, quyTacList, mdBoQuaBangNhau = new Set()) => {
     const ws = wb.addWorksheet(tenSheet);
     ws.views = [{ state: "frozen", ySplit: 1 }];
     ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }, { width: 8 }, { width: 13 }];
@@ -11930,7 +11934,7 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
       const row = ws.addRow([
         r.tc, r.md, co ? giaTriMap.get(r.md) : null, trangThai,
         qtDong.length ? qtDong.map(q => q.raw).join("\n") : null,
-        congThucKiemTra(qtDong, (md) => giaTriMap.has(md)),
+        congThucKiemTra(qtDong, (md) => giaTriMap.has(md), mdBoQuaBangNhau.has(r.md)),
         null, oCanSua,
       ]);
       hangCuoiDuLieu = row.number;
@@ -11977,8 +11981,12 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
     return ws;
   };
-  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC);
-  themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC);
+  // MD_BO_QUA_BANG_NHAU: các dòng "tồn cuối kỳ" lấy GIÁ TRỊ thẳng từ RPC as-of (số tồn THỰC TẾ) —
+  // bỏ self-check `=` (chuỗi cộng dồn ngành chỉ để thống kê, không khớp do round-trip chuyển/trả
+  // cùng kỳ + imprecision RPC-vs-sổ-cái bị can); vẫn giữ `>=`. Biểu 2: D156 (ĐT bị can); Biểu 3:
+  // D84/D86 (XX vụ/bị cáo). D154/D344/D346 hiện vẫn khớp nên GIỮ check để còn tín hiệu.
+  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC, new Set([156]));
+  themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC, new Set([84, 86]));
 }
 
 

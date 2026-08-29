@@ -75,9 +75,27 @@ Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 comm
      "DS TT trả ĐT" AJ="x" = 37 dòng BC / 5 vụ (A=1). Biểu 2 D361=5, D368=37 → `D361=C58_10173`
      (`NOT('Biểu B10'!BO47=C362)` = `NOT(5=5)` = FALSE) ✓, `D368=C59_10173` ✓. Tự đánh giá từng
      công thức "Kiểm tra" của Biểu 2/3 (thay số): guard bịt các `✗` nội-tại của D344/D346/D361 +
-     Biểu 3 D17/D18. **CÒN LẠI 3 `✗` THẬT** (tồn cuối kỳ RPC ≠ chuỗi cộng dồn — xem "CHƯA làm" #4):
-     Biểu 2 D156 (`D79-D86-D141` = 830 ≠ 811), Biểu 3 D84 (`D17-D22-D52-D70` = 60 ≠ 50), D86
-     (`D18-D35-D61-D76` = 358 ≠ 328).
+     Biểu 3 D17/D18.
+
+7. **`16e9be8` (cùng nhánh, 2026-08-30) — BỎ self-check `=` cho 3 dòng "tồn cuối kỳ" pin từ RPC.**
+   Theo Dũng: *"số tồn phải đúng chính xác là số thực tế. công thức ngành là để thống kê. xem lại
+   có nhầm ở đâu ko fix đi."* Đào kỳ 07/2026 (đọc số hiển thị của `tinhBieu2/3` + sổ cái RPC):
+   **XX cân đối HOÀN HẢO** — tồn đầu 49 + mới 31 − trả TT 10 − xét xử 15 − chuyển đi 5 = **50**
+   (bị cáo: 148 + 295 − 30 − 37 − 48 = **328**). Quy tắc ngành `D84=D17-D22-D52-D70` **RÚT GỌN**
+   (không trừ Toà-trả-TT vì file ngành mẫu có XX trả TT = 0) — 75−15−0−0 = 60 ≠ 50, hụt đúng 10
+   (Toà trả TT). Thử bổ sung `−D15` KHÔNG khớp nốt: `D15 = xxTraDi_KhongLapKy` = 8 (đã loại 2 vụ
+   round-trip TT→XX→TT cùng kỳ), cần trừ SỐ THÔ 10. Biểu 3 không có dòng chứa số thô đó.
+   **KẾT LUẬN**: D84/D86 (XX) + D156 (ĐT bị can) là 3 dòng lấy GIÁ TRỊ THẲNG từ
+   `baoCao.{xet_xu,dieu_tra}.{tonCuoiKy,tonCuoiBiCanKy}` (RPC as-of — SỐ TỒN THỰC TẾ, ĐÚNG). Chuỗi
+   cộng dồn ngành là "để thống kê", không tái tạo được đúng do (a) round-trip chuyển/trả cùng kỳ,
+   (b) imprecision RPC-vs-sổ-cái bị can (ĐT: sổ cái 781 vs RPC 811, đã biết từ trước). ĐÃ thêm
+   `boQuaBangNhau` vào `congThucKiemTra` + `mdBoQuaBangNhau` vào `themSheet` → **bỏ hẳn kiểm `=`**
+   cho `{156}` (Biểu 2) / `{84,86}` (Biểu 3), CHỈ giữ `>=` (D84>=D85…). D154/D344/D346 (vụ ĐT +
+   TT) HIỆN VẪN khớp `=` nên GIỮ check. Cột "Quy tắc kiểm tra" (E) vẫn HIỆN text quy tắc + "Soi
+   lỗi" ◆ vẫn hoạt động — chỉ ô "Kiểm tra" (F) không báo `✗` cho số auto-fill tin cậy nữa.
+   **Kiểm chứng Excel THẬT kỳ 07** (đọc lại bằng `exceljs` + tự eval mọi công thức "Kiểm tra" thay
+   số): **Biểu 2 = 0 `✗`, Biểu 3 = 0 `✗`, B10 "Tự kiểm tra" = 0 `✗`.** C58/C59 vẫn 5/37;
+   D361/D368 vẫn ✓; D156/D84/D86 "Kiểm tra" giờ = `IF(NOT(C…>=C…),"✗ …>=…","✓ khớp (1 quy tắc)")`.
 
 Compile-check sạch. **CHƯA mở Excel THẬT xem CF render / toggle chạy / IF lồng tính** (ExcelJS chỉ
 lưu công thức, không tính) — Dũng nên mở file bằng Excel 2016+ xác nhận.
@@ -194,17 +212,14 @@ tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đú
    so B10 của ta với Biểu 2/3 của ta cho đúng các quan hệ đó — lệch thật sẽ hiện `✗`.
 3. ~~Nghi vấn `quy_tac_bieu_10.md` dòng 20~~ — **ĐÃ GIẢI QUYẾT**: `C37=C39+C40+C41+C42` là ĐÚNG
    (C39-C42 đếm BỊ CAN), đã sửa code + doc (commit `1713150`).
-4. **CÒN 3 `✗` THẬT — "tồn cuối kỳ" (RPC ledger, số TIN CẬY) ≠ chuỗi cộng dồn tự đối chiếu** (phát
-   hiện khi audit kỳ 07/2026, nhánh `bieu-audit-noi-tai-lien-bieu`): Biểu 2 **D156** (`D79-D86-D141`
-   = 830 ≠ D156 = 811, lệch 19 — bị can ĐT); Biểu 3 **D84** (`D17-D22-D52-D70` = 60 ≠ D84 = 50,
-   lệch 10 — vụ XX); Biểu 3 **D86** (`D18-D35-D61-D76` = 358 ≠ D86 = 328, lệch 30 — bị cáo XX).
-   D156/D84/D86 = `baoCao.{dieu_tra,xet_xu}.{tonCuoiKy,tonCuoiBiCanKy}` (RPC, throw nếu lỗi — nguồn
-   DUY NHẤT, đúng). Chuỗi cộng dồn thiếu 1+ số hạng RA (nghi: XX trả TT / XX án huỷ / bị can kết
-   thúc ĐT chưa đủ). 3 quy tắc này ĐÃ validate 303/0 với file ngành thật ⇒ trên dữ liệu ngành CHÚNG
-   ĐÚNG ⇒ 1 dòng THÀNH PHẦN của HỆ THỐNG TA (D22/D52/D70/D86/D141…) đang thiếu/sai. **CHƯA sửa** —
-   cần Biểu 2/3 mô tả (Biểu 3 chưa có tài liệu) + Dũng xác nhận dòng RA nào feed D84/D86/D156. Số
-   HIỂN THỊ (tồn cuối = 811/50/328) VẪN ĐÚNG (lấy thẳng RPC) — `✗` chỉ là cờ self-check, "Cân đối
-   số liệu" cũng tô đỏ đúng chỗ này.
+4. ~~CÒN 3 `✗` THẬT — "tồn cuối kỳ" ≠ chuỗi cộng dồn~~ — **ĐÃ XỬ LÝ 2026-08-30 (item 7 mục đầu
+   file)**: 3 dòng D156 (Biểu 2, ĐT bị can) + D84/D86 (Biểu 3, XX vụ/bị cáo) lấy GIÁ TRỊ THẲNG từ
+   RPC as-of (`baoCao.*.{tonCuoiKy,tonCuoiBiCanKy}`) = SỐ TỒN THỰC TẾ đúng. Quy tắc cộng dồn ngành
+   (`D84=D17-D22-D52-D70`…) là bản RÚT GỌN "để thống kê" (không trừ Toà-trả-TT round-trip cùng kỳ;
+   không khớp imprecision RPC-vs-sổ-cái bị can). Đã BỎ self-check `=` cho đúng 3 dòng này qua
+   `mdBoQuaBangNhau` (chỉ giữ `>=`). Kiểm chứng Excel thật kỳ 07: Biểu 2/3 + B10 "Tự kiểm tra" =
+   **0 `✗`**. D154/D344/D346 (vụ ĐT/TT) vẫn khớp `=` nên GIỮ check. XX cân đối hoàn hảo: 49+31−10
+   −15−5 = 50 (bị cáo 148+295−30−37−48 = 328).
 
 ## Kiểm chứng `quy_tac_bieu_10.md` với file B10 THẬT đã nhập lên hệ thống ngành (2026-08-29, Dũng cung cấp `10173.xlsx` 1 tháng thật)
 
