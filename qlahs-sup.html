@@ -11795,29 +11795,65 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null)
     }
     return { formula: "=" + f };
   };
+  // Xây map "mỗi mã dòng md ĐƯỢC quy tắc nào (theo anchor) tham chiếu tới" — dùng cho tính năng
+  // "Soi lỗi": bật toggle → tự tô vàng mọi dòng là INPUT của 1 quy tắc đang báo ✗ (VD D1=D2+D3
+  // lỗi thì tô D1 + D2 + D3). refsOfAnchor(a) = mọi md xuất hiện trong lhs/rhs quy tắc neo tại a,
+  // cộng chính a. anchorsThamChieu[md] = danh sách anchor mà md nằm trong refsOf(anchor).
+  const buildAnchorsThamChieu = (quyTacList) => {
+    const refsOf = new Map(); // anchor -> Set(md)
+    for (const q of quyTacList) {
+      if (!refsOf.has(q.anchor)) refsOf.set(q.anchor, new Set([q.anchor]));
+      const s = refsOf.get(q.anchor);
+      for (const t of [...q.lhs, ...q.rhs]) if (t.md != null) s.add(t.md);
+    }
+    const inv = new Map(); // md -> [anchor,...]
+    for (const [a, set] of refsOf) for (const md of set) {
+      if (!inv.has(md)) inv.set(md, []);
+      inv.get(md).push(a);
+    }
+    return inv;
+  };
   const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan, quyTacList) => {
     const ws = wb.addWorksheet(tenSheet);
     ws.views = [{ state: "frozen", ySplit: 1 }];
-    ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }];
-    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái", "Quy tắc kiểm tra", "Kiểm tra (Excel tự tính khi nhập tay)"]);
+    ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }, { width: 14 }, { width: 30 }, { width: 6 }];
+    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái", "Quy tắc kiểm tra", "Kiểm tra (Excel tự tính khi nhập tay)", "🔍 Soi lỗi", "TẮT", null]);
     hRow.font = { bold: true };
-    hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    for (let c = 1; c <= 6; c++) hRow.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    // Ô toggle H1: chọn "BẬT — soi dòng liên quan lỗi" thì mọi dòng là input của 1 quy tắc đang ✗ tự tô vàng.
+    const oToggle = ws.getCell("H1");
+    oToggle.dataValidation = { type: "list", allowBlank: false, formulae: ['"TẮT,BẬT — soi dòng liên quan lỗi"'] };
+    oToggle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF9C3" } };
+    oToggle.font = { bold: true, color: { argb: "FF92400E" } };
+    oToggle.alignment = { horizontal: "center" };
+    ws.getCell("G1").alignment = { horizontal: "right" };
+
     const qtTheoNeo = new Map();
     for (const q of quyTacList) {
       if (!qtTheoNeo.has(q.anchor)) qtTheoNeo.set(q.anchor, []);
       qtTheoNeo.get(q.anchor).push(q);
     }
+    const anchorsThamChieu = buildAnchorsThamChieu(quyTacList);
+    let hangCuoiDuLieu = 1;
     for (const r of rows) {
       const co = giaTriMap.has(r.md);
       const canXN = !co && BIEU23_CAN_XAC_NHAN.has(`${tienToXacNhan}:${r.md}`);
       const trangThai = co ? "✓ Tự động tính"
         : (canXN ? "❓ Cần xác nhận công thức (xem quy_tac_bieu_*.md)" : "⚠ Chưa có dữ liệu — nhập tay");
       const qtDong = qtTheoNeo.get(r.md) || [];
+      // Cột I (ẩn): 1 nếu md này là input của ≥1 quy tắc (theo anchor) đang báo ✗. Mã dòng md nằm
+      // ở hàng Excel md+1, ô "Kiểm tra" ở cột F → dò "✗" đầu chuỗi qua LEFT(TRIM(...)).
+      const anchors = anchorsThamChieu.get(r.md) || [];
+      const oSoi = anchors.length
+        ? { formula: "MAX(" + anchors.map(a => `--(LEFT(TRIM($F$${a + 1}),1)="✗")`).join(",") + ")" }
+        : 0;
       const row = ws.addRow([
         r.tc, r.md, co ? giaTriMap.get(r.md) : null, trangThai,
         qtDong.length ? qtDong.map(q => q.raw).join("\n") : null,
         congThucKiemTra(qtDong),
+        null, null, oSoi,
       ]);
+      hangCuoiDuLieu = row.number;
       row.getCell(1).alignment = { wrapText: true, vertical: "top" };
       row.getCell(5).alignment = { wrapText: true, vertical: "top" };
       row.getCell(4).font = { color: { argb: co ? "FF065F46" : (canXN ? "FF92400E" : "FF64748B") } };
@@ -11825,11 +11861,27 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null)
         row.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: co ? MAU.tuDong : (canXN ? MAU.canXacNhan : MAU.chuaCo) } };
       }
     }
+    ws.getColumn(9).hidden = true; // cột phụ "đang bị lỗi tham chiếu"
+    // Conditional formatting: (1) dòng có ô Kiểm tra = "✗ ..." → tô đỏ nhạt (LUÔN bật);
+    // (2) khi H1 bắt đầu bằng "BẬT" VÀ cột I = 1 → tô vàng (dòng input của quy tắc đang lỗi).
+    if (hangCuoiDuLieu > 1) {
+      const vung = `A2:F${hangCuoiDuLieu}`;
+      ws.addConditionalFormatting({
+        ref: vung,
+        rules: [
+          { type: "expression", priority: 1, formulae: [`LEFT(TRIM($F2),1)="✗"`],
+            style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFFECACA" } } } },
+          { type: "expression", priority: 2, formulae: [`AND(LEFT($H$1,3)="BẬT",$I2=1)`],
+            style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFFEF08A" } } } },
+        ],
+      });
+    }
     ws.addRow([]);
     [
       ["Ghi chú:"],
       ["• Cột 'Số liệu': ✓ Tự động tính (xanh) = hệ thống điền từ dữ liệu. ⚠ Chưa có dữ liệu (xám) = tự nhập tay. ❓ Cần xác nhận công thức (vàng) = có manh mối nhưng chưa chắc, tự nhập rồi đối chiếu."],
       ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗ [nội tại] ...' = lệch với dòng khác TRONG chính biểu này; '✗ [LIÊN BIỂU] ...' = lệch với ô TỔNG tương ứng bên sheet 'Biểu B10'."],
+      ["• Ô 'Soi lỗi' (H1, góc trên phải): dòng đang vi phạm tự tô ĐỎ NHẠT. Chọn 'BẬT — soi dòng liên quan lỗi' ở ô đó → mọi dòng là THÀNH PHẦN của 1 quy tắc đang lỗi tự tô VÀNG (VD D1=D2+D3 sai thì D1 đỏ, D2 & D3 vàng) — dễ dò xem sửa dòng nào."],
       ["• Dòng '✓ Tự động tính' dùng công thức RÚT GỌN (bỏ các số hạng chưa có tính năng theo dõi) — khi bạn nhập tay các dòng còn thiếu, ô 'Kiểm tra' của dòng tổng có thể báo '✗', lúc đó cập nhật lại dòng tổng cho khớp."],
       ["• Quy tắc 'C.._10173 = D..' (LIÊN BIỂU): cột 'Kiểm tra' đã tự đối chiếu với ô TỔNG tương ứng trên sheet 'Biểu B10' trong CHÍNH file này (báo '✗' nếu lệch)."],
       ["• Quy tắc có '[b]' (giá trị kỳ TRƯỚC) không tự kiểm tra được — cột 'Kiểm tra' ghi '(tra tay)', đối chiếu thủ công với báo cáo kỳ trước."],
