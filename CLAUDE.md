@@ -44,7 +44,11 @@ Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 comm
    (b) **Narrow B10 C6** từ MỌI `khoiToTrucTiep` → CHỈ 2 nguồn `an_khoi_to_moi` +
    `tin_bao_khoi_to_len` (xem mục "CHƯA làm / kết luận" #1 dưới — file ngành thật chứng minh
    `D71=C6`, tách riêng nơi khác/phục hồi). `tinhBieu10` `dtKhoiToMoiThat_b10`; `B10_FORMULA[7]` =
-   SUMIFS "DS khởi tố ĐT" lọc cột Nguồn (AH). Kỳ 07: C6 = D71 = 35 → hết `✗ [LIÊN BIỂU] C6_10173=D71`.
+   SUMIFS "DS khởi tố ĐT" lọc cột Nguồn (AH).
+   (c) **D71 (Biểu 2) = `b10Tong[7]` (tổng C6) tĩnh** — y hệt `D72 = tongC7`. Trước đó D71 tự đếm
+   `dtKhoiToMoiThat.length` → lệch nhẹ với ô SUMIFS Excel của C6 khi Dũng mở file thật (`✗` vẫn
+   hiện dù JS "result" = khớp). Nay D71 pin đúng bằng tổng C6 → `C6_10173=D71` chắc chắn ✓ (giống
+   `C7_10173=D72` chưa bao giờ báo lỗi). Kỳ 07: C6 = D71 = 35.
 
 Compile-check sạch. **CHƯA mở Excel THẬT xem CF render / toggle chạy / IF lồng tính** (ExcelJS chỉ
 lưu công thức, không tính) — Dũng nên mở file bằng Excel 2016+ xác nhận.

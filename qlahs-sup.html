@@ -11339,7 +11339,7 @@ const BIEU23_CAN_XAC_NHAN = new Set([
   "B3:2","B3:3","B3:6","B3:7",                                      // XX: hủy mới nhận / ĐTBS mới nhận lại (D17/18 ĐÃ tự tính qua b10Tong)
 ]);
 
-function tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7, biCanBatTrongKy) {
+function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7, biCanBatTrongKy) {
   const m = new Map();
   const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds;
   const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
@@ -11386,7 +11386,11 @@ function tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuy
   m.set(68, soBc(dt.nhapVu));
   m.set(69, soBc(dt.phucHoi));
   const dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
-  m.set(71, dtKhoiToMoiThat.length);
+  // D71 "Số vụ án CQĐT khởi tố mới" — DÙNG THẲNG tổng cột C6 của B10 (= b10Tong[7], đã cộng dồn ở
+  // xuatBaoCaoThangExcel; C6 narrow 2 nguồn an_khoi_to_moi + tin_bao_khoi_to_len) để D71 KHỚP
+  // TUYỆT ĐỐI với B10 — quy tắc ngành `D71_10238=C6`, y hệt cách D72=tongC7. KHÔNG tự đếm lại
+  // (tránh lệch giữa cột SUMIFS Excel và số JS ở ô "Kiểm tra" liên biểu).
+  m.set(71, tongC6);
   // D72 "Số bị can mới khởi tố" — quy tắc chính thức `D72_10238=C7` (bằng ĐÚNG tổng cột C7 của
   // B10, cộng dồn qua mọi tội danh — KHÔNG PHẢI chỉ soBc(dtKhoiToMoiThat) như bản đầu tiên, vì C7
   // = dt_ktBcMoiKy = "mới" (kỳ khớp riêng theo bị can) + "bổ sung" (bị can thêm vào vụ đã có) —
@@ -12511,8 +12515,6 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // (xanh, "✓ Tự động tính"); dòng "❓ Cần xác nhận công thức" (vàng — có manh mối nhưng chưa chắc);
   // còn lại "⚠ Chưa có dữ liệu — cần bổ sung tính năng" (xám — chờ nhập tay / làm tính năng sau).
   {
-    const NGUON_MOI_THAT = new Set(["an_khoi_to_moi", "tin_bao_khoi_to_len"]);
-    const dtKhoiToMoiThat = (baoCao.dieu_tra.ds.khoiToTrucTiep || []).filter(v => NGUON_MOI_THAT.has(v.nguon));
     // Lịch sử chuyển/trả giai đoạn của các vụ trong báo cáo — để lọc "lần đầu"/round-trip cho vài
     // dòng "trong đó ..." (D93/96/272/273/293/297/352... Biểu 2; D9/12/15/16 Biểu 3). Lỗi tải →
     // các bộ lọc trả về NGUYÊN mảng (coi mọi vụ là "lần đầu") — số "trong đó" có thể hơi cao, chấp
@@ -12572,7 +12574,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const b10RefCua = (n) => (b10ColCuaC[n] ? `'Biểu B10'!${b10ColCuaC[n]}${b10TongRowNum}` : null);
     themSheetBieu2Va3(
       wb,
-      tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8], biCanBatTrongKy),
+      tinhBieu2(baoCao, biCanByVu, b10Tong[7], dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8], biCanBatTrongKy),
       tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70]),
       b10RefCua,
       giaTriKyTruoc,
