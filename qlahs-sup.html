@@ -10548,9 +10548,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const xx_nhapBc = bcCoD(xx.nhapVu || [], D);
     const xx_cdNoiBc = bcCoD(xx.hoanThanh?.chuyen_di || [], D);
     const xx_ahBc = bcCoD(xx.hoanThanh?.an_huy || [], D); // chỉ dùng cho cột "Án huỷ" riêng (vals)
-    // C60/C61 Tổng thụ lý XX — như C3/C4: KHÔNG trừ "án huỷ" (quy tắc D17_10239=C60 = D1+D2+D3+D4+D9−D15).
-    const C60 = xx_tp_vu + vuCoD(xx_moi, D).length - vuCoD(xx.nhapVu || [], D).length - vuCoD(xx.hoanThanh?.chuyen_di || [], D).length;
-    const C61 = xx_tp_bc + xx_moiBc.length - xx_nhapBc.length - xx_cdNoiBc.length;
+    // C60/C61 Tổng thụ lý XX — như C3/C4: KHÔNG trừ "án huỷ". TRỪ THÊM "Toà trả hồ sơ về TT"
+    // (`xx.traDi`, RAW — gồm cả round-trip cùng kỳ): vụ Toà trả về VKS không còn "thụ lý xét xử".
+    // Đây là điều kiện để `D84 = D17-D22-D52-D70` KHỚP số tồn thực tế khi upload lên phần mềm
+    // ngành (C60 = tồn cuối + đã xét xử + đình chỉ + tạm đình chỉ). File ngành mẫu có XX trả TT = 0
+    // nên C60 không đổi trên dữ liệu đó (đã kiểm 303/0). Kỳ 07/2026: 49+31-0-5-10 = 65; D84 = 65-15 = 50.
+    const C60 = xx_tp_vu + vuCoD(xx_moi, D).length - vuCoD(xx.nhapVu || [], D).length - vuCoD(xx.hoanThanh?.chuyen_di || [], D).length - vuCoD(xx.traDi || [], D).length;
+    const C61 = xx_tp_bc + xx_moiBc.length - xx_nhapBc.length - xx_cdNoiBc.length - bcCoD(xx.traDi || [], D).length;
     const C62 = xx_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     const xx_xxBc = bcCoD(xx.hoanThanh?.da_xet_xu || [], D);
@@ -11713,10 +11717,9 @@ const BIEU3_QUY_TAC_RAW = [
   "D61>=D62+D63+D64+D65+D66+D67+D68",
   "D70=D71+D72+D73+D74+D75",
   "D76=D77+D78+D79+D80+D81",
-  // D84/D86 "Tồn cuối kỳ XX" — GIÁ TRỊ lấy THẲNG từ RPC as-of (`baoCao.xet_xu.tonCuoiKy`), là số
-  // TỒN THỰC TẾ. Quy tắc cộng dồn `D84=D17-D22-D52-D70` (ngành) là bản RÚT GỌN "để thống kê":
-  // không trừ Toà-trả-TT (round-trip cùng kỳ) + không khớp imprecision RPC-vs-sổ-cái → self-check
-  // `=` bị BỎ QUA cho 2 dòng này (xem MD_BO_QUA_BANG_NHAU), chỉ giữ `>=`.
+  // D84/D86 "Tồn cuối kỳ XX" = D17-D22-D52-D70 (D17 = C60 nay ĐÃ trừ "Toà trả TT" — xem tinhBieu10
+  // C60/C61). Kết quả KHỚP số tồn thực tế RPC (kỳ 07: 65-15-0-0 = 50 vụ; 365-37-0-0 = 328 bị cáo)
+  // ⇒ upload lên phần mềm ngành không báo lỗi. Self-check `=` GIỮ nguyên (đã khép).
   "D84=D17-D22-D52-D70",
   "D84>=D85",
   "D86=D18-D35-D61-D76",
@@ -11981,12 +11984,14 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
     return ws;
   };
-  // MD_BO_QUA_BANG_NHAU: các dòng "tồn cuối kỳ" lấy GIÁ TRỊ thẳng từ RPC as-of (số tồn THỰC TẾ) —
-  // bỏ self-check `=` (chuỗi cộng dồn ngành chỉ để thống kê, không khớp do round-trip chuyển/trả
-  // cùng kỳ + imprecision RPC-vs-sổ-cái bị can); vẫn giữ `>=`. Biểu 2: D156 (ĐT bị can); Biểu 3:
-  // D84/D86 (XX vụ/bị cáo). D154/D344/D346 hiện vẫn khớp nên GIỮ check để còn tín hiệu.
+  // MD_BO_QUA_BANG_NHAU: bỏ self-check `=`, giữ `>=`. CHỈ còn D156 (Biểu 2, ĐT bị can) — chuỗi
+  // `D79-D86-D141` không khớp do (a) imprecision RPC-vs-sổ-cái bị can ĐT (808 vs 811, chênh -3,
+  // đã biết từ trước), (b) D79 ngành `+D65` = "ĐTBS mới nhận lại" hệ thống CHƯA track. Số HIỂN
+  // THỊ D156 = RPC = số tồn thực tế đúng. Cần Biểu 2 ĐT mô tả để khép hẳn.
+  // Biểu 3 D84/D86 (XX): ĐÃ khép được — C60/C61 nay trừ thêm "Toà trả TT" → `D84=D17-D22-D52-D70`
+  // KHỚP số tồn thực tế (xem tinhBieu10). D154/D344/D346 vẫn khớp → GIỮ check.
   themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC, new Set([156]));
-  themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC, new Set([84, 86]));
+  themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC);
 }
 
 

@@ -77,25 +77,28 @@ Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 comm
      công thức "Kiểm tra" của Biểu 2/3 (thay số): guard bịt các `✗` nội-tại của D344/D346/D361 +
      Biểu 3 D17/D18.
 
-7. **`16e9be8` (cùng nhánh, 2026-08-30) — BỎ self-check `=` cho 3 dòng "tồn cuối kỳ" pin từ RPC.**
-   Theo Dũng: *"số tồn phải đúng chính xác là số thực tế. công thức ngành là để thống kê. xem lại
-   có nhầm ở đâu ko fix đi."* Đào kỳ 07/2026 (đọc số hiển thị của `tinhBieu2/3` + sổ cái RPC):
-   **XX cân đối HOÀN HẢO** — tồn đầu 49 + mới 31 − trả TT 10 − xét xử 15 − chuyển đi 5 = **50**
-   (bị cáo: 148 + 295 − 30 − 37 − 48 = **328**). Quy tắc ngành `D84=D17-D22-D52-D70` **RÚT GỌN**
-   (không trừ Toà-trả-TT vì file ngành mẫu có XX trả TT = 0) — 75−15−0−0 = 60 ≠ 50, hụt đúng 10
-   (Toà trả TT). Thử bổ sung `−D15` KHÔNG khớp nốt: `D15 = xxTraDi_KhongLapKy` = 8 (đã loại 2 vụ
-   round-trip TT→XX→TT cùng kỳ), cần trừ SỐ THÔ 10. Biểu 3 không có dòng chứa số thô đó.
-   **KẾT LUẬN**: D84/D86 (XX) + D156 (ĐT bị can) là 3 dòng lấy GIÁ TRỊ THẲNG từ
-   `baoCao.{xet_xu,dieu_tra}.{tonCuoiKy,tonCuoiBiCanKy}` (RPC as-of — SỐ TỒN THỰC TẾ, ĐÚNG). Chuỗi
-   cộng dồn ngành là "để thống kê", không tái tạo được đúng do (a) round-trip chuyển/trả cùng kỳ,
-   (b) imprecision RPC-vs-sổ-cái bị can (ĐT: sổ cái 781 vs RPC 811, đã biết từ trước). ĐÃ thêm
-   `boQuaBangNhau` vào `congThucKiemTra` + `mdBoQuaBangNhau` vào `themSheet` → **bỏ hẳn kiểm `=`**
-   cho `{156}` (Biểu 2) / `{84,86}` (Biểu 3), CHỈ giữ `>=` (D84>=D85…). D154/D344/D346 (vụ ĐT +
-   TT) HIỆN VẪN khớp `=` nên GIỮ check. Cột "Quy tắc kiểm tra" (E) vẫn HIỆN text quy tắc + "Soi
-   lỗi" ◆ vẫn hoạt động — chỉ ô "Kiểm tra" (F) không báo `✗` cho số auto-fill tin cậy nữa.
-   **Kiểm chứng Excel THẬT kỳ 07** (đọc lại bằng `exceljs` + tự eval mọi công thức "Kiểm tra" thay
-   số): **Biểu 2 = 0 `✗`, Biểu 3 = 0 `✗`, B10 "Tự kiểm tra" = 0 `✗`.** C58/C59 vẫn 5/37;
-   D361/D368 vẫn ✓; D156/D84/D86 "Kiểm tra" giờ = `IF(NOT(C…>=C…),"✗ …>=…","✓ khớp (1 quy tắc)")`.
+7. **`cf1a34b` (cùng nhánh, 2026-08-30) — KHÉP chuỗi "tồn cuối kỳ XX" để KHỚP số thực tế + upload
+   ngành không lỗi.** Dũng yêu cầu 2 điều kiện: (1) số tồn ĐÚNG TUYỆT ĐỐI, (2) công thức đảm bảo
+   logic để upload lên phần mềm ngành KHÔNG bị báo lỗi. Bản đầu (bỏ self-check `=` trong sheet của
+   ta) chỉ đạt (1), KHÔNG đạt (2) — phần mềm ngành tự chạy `D84=D17-D22-D52-D70` trên số THÔ, vẫn
+   báo lỗi. **Gốc rễ**: `C60/C61` ("Tổng thụ lý XX" trong `tinhBieu10`) trừ nhập vụ + chuyển đi
+   NHƯNG **không trừ "Toà trả hồ sơ về TT"** (`xx.traDi`) — vụ Toà trả về VKS không còn "thụ lý xét
+   xử". ĐÃ thêm `- vuCoD(xx.traDi, D)` (C60) / `- bcCoD(xx.traDi, D)` (C61). Kỳ 07/2026: C60 =
+   49+31-0-5-**10** = **65** → `D17 = C60 = 65` → `D84 = 65-15-0-0 = 50` = tồn cuối RPC ✓✓; C61 =
+   148+295-0-48-**30** = **365** → `D86 = 365-37-0-0 = 328` ✓✓. File ngành mẫu có XX trả TT = 0 nên
+   C60/C61 KHÔNG đổi trên dữ liệu đó (giữ nguyên 303/0). `C60<=C61` / `C61>=C64+C67+C70` vẫn đúng.
+   **Kiểm chứng Excel THẬT kỳ 07** (đọc `exceljs` + tự eval MỌI công thức "Kiểm tra"): **Biểu 2 =
+   0 `✗`, Biểu 3 = 0 `✗`, B10 "Tự kiểm tra" = 0 `✗`.** B10 TỔNG C60=65/C61=365; D84 "Kiểm tra" =
+   `IF(AND(...NOT(C85=C18-C23-C53-C71))...` với `65-15-0-0=50` → "✓ khớp (2 quy tắc)"; D86 tương
+   tự "✓". `C60_10173=D17` / `C61_10173=D18` ✓. C58/C59 vẫn 5/37, D361/D368 ✓.
+   **CÒN 1 caveat (`mdBoQuaBangNhau = {156}`)**: Biểu 2 **D156** (`D79-D86-D141` = 936-106-0 = 830
+   ≠ D156 = 811) — do (a) imprecision RPC-vs-sổ-cái BỊ CAN ĐT (sổ cái 808 vs RPC 811, chênh -3, đã
+   biết từ lâu), (b) D79 ngành có `+D65` = "ĐTBS mới nhận lại" hệ thống CHƯA track. Số HIỂN THỊ 811
+   = RPC = tồn thực tế ĐÚNG; self-check `=` bị bỏ trong sheet của ta. **Khi upload ngành, D156 có
+   thể còn báo `✗`** — cần **Biểu 2 ĐT mô tả** (định nghĩa D58/D64/D65/D79 chính xác + cách ngành
+   đếm bị can bổ sung/nhận lại) để khép hẳn. `D17=D1+D2+D3+D4+D9-D15` (nội-tại Biểu 3, D2/D3 = "hủy
+   án"/"ĐTBS mới nhận lại" CHƯA track) cũng còn latent-lệch (72 ≠ 65) — guard bịt trong sheet ta,
+   ngành có thể báo nếu enforce D2/D3 rỗng = 0. Cần Biểu 3 mô tả.
 
 Compile-check sạch. **CHƯA mở Excel THẬT xem CF render / toggle chạy / IF lồng tính** (ExcelJS chỉ
 lưu công thức, không tính) — Dũng nên mở file bằng Excel 2016+ xác nhận.
@@ -212,14 +215,18 @@ tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đú
    so B10 của ta với Biểu 2/3 của ta cho đúng các quan hệ đó — lệch thật sẽ hiện `✗`.
 3. ~~Nghi vấn `quy_tac_bieu_10.md` dòng 20~~ — **ĐÃ GIẢI QUYẾT**: `C37=C39+C40+C41+C42` là ĐÚNG
    (C39-C42 đếm BỊ CAN), đã sửa code + doc (commit `1713150`).
-4. ~~CÒN 3 `✗` THẬT — "tồn cuối kỳ" ≠ chuỗi cộng dồn~~ — **ĐÃ XỬ LÝ 2026-08-30 (item 7 mục đầu
-   file)**: 3 dòng D156 (Biểu 2, ĐT bị can) + D84/D86 (Biểu 3, XX vụ/bị cáo) lấy GIÁ TRỊ THẲNG từ
-   RPC as-of (`baoCao.*.{tonCuoiKy,tonCuoiBiCanKy}`) = SỐ TỒN THỰC TẾ đúng. Quy tắc cộng dồn ngành
-   (`D84=D17-D22-D52-D70`…) là bản RÚT GỌN "để thống kê" (không trừ Toà-trả-TT round-trip cùng kỳ;
-   không khớp imprecision RPC-vs-sổ-cái bị can). Đã BỎ self-check `=` cho đúng 3 dòng này qua
-   `mdBoQuaBangNhau` (chỉ giữ `>=`). Kiểm chứng Excel thật kỳ 07: Biểu 2/3 + B10 "Tự kiểm tra" =
-   **0 `✗`**. D154/D344/D346 (vụ ĐT/TT) vẫn khớp `=` nên GIỮ check. XX cân đối hoàn hảo: 49+31−10
-   −15−5 = 50 (bị cáo 148+295−30−37−48 = 328).
+4. **CÒN 3 `✗` "tồn cuối kỳ" ≠ chuỗi cộng dồn** — item 6 (bỏ self-check) rồi item 7 (KHÉP thật)
+   ở mục đầu file:
+   - **D84/D86 (Biểu 3, XX vụ/bị cáo) — ĐÃ KHÉP HẲN** (item 7): `C60/C61` nay trừ thêm "Toà trả hồ
+     sơ về TT" (`xx.traDi`) → `D84=D17-D22-D52-D70` KHỚP số tồn thực tế (kỳ 07: 65-15-0-0 = 50 vụ;
+     365-37-0-0 = 328 bị cáo). Upload ngành: `D84=…`, `D17_10239=C60`, `C60<=C61` đều đúng. Số
+     TỒN = RPC = thực tế ĐÚNG.
+   - **D156 (Biểu 2, ĐT bị can) — CHƯA khép** (`mdBoQuaBangNhau={156}`): `D79-D86-D141` = 830 ≠
+     811. Do (a) imprecision RPC-vs-sổ-cái BỊ CAN ĐT (808 vs 811, đã biết từ lâu), (b) D79 ngành
+     `+D65` = "ĐTBS mới nhận lại" hệ thống CHƯA track. Số hiển thị 811 = RPC = ĐÚNG; self-check `=`
+     bỏ trong sheet ta nhưng **ngành có thể còn báo `✗` khi upload**. Cần **Biểu 2 ĐT mô tả** để khép.
+   - `D17=D1+D2+D3+D4+D9-D15` (nội-tại Biểu 3): D2/D3 ("hủy án"/"ĐTBS mới nhận lại") CHƯA track →
+     72 ≠ 65, guard bịt trong sheet ta; ngành có thể báo nếu enforce. Cần **Biểu 3 mô tả**.
 
 ## Kiểm chứng `quy_tac_bieu_10.md` với file B10 THẬT đã nhập lên hệ thống ngành (2026-08-29, Dũng cung cấp `10173.xlsx` 1 tháng thật)
 
