@@ -11759,6 +11759,24 @@ function phanTichQuyTacDong(raw) {
 const BIEU2_QUY_TAC = BIEU2_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
 const BIEU3_QUY_TAC = BIEU3_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
 
+// Quy tắc NỘI TẠI của Biểu 10 (từ quy_tac_bieu_10.md — CHỈ các dòng KHÔNG liên biểu, tức không có
+// _10238/_10239). 40 quy tắc, đã kiểm chứng đúng trên MỌI dòng điều luật + dòng TỔNG của file B10
+// ngành thật (10173.xlsx). Dùng cho cột "Tự kiểm tra" trên sheet "Biểu B10" — mỗi Cn thay bằng ô
+// <cột Cn><dòng hiện tại> (xem congThucKiemTraB10 trong xuatBaoCaoThangExcel).
+const BIEU10_QUY_TAC_RAW = [
+  "C3>=C25+C28+C31", "C4>=C26+C29+C32", "C4>=C5", "C7>=C8",
+  "C7-C8=C14+C15+C16+C17+C18", "C7-C8=C9+C10+C11+C12+C13",
+  "C7-C8>=C21", "C7-C8>=C20", "C7-C8>=C23", "C7-C8>=C24", "C7-C8>=C19",
+  "C21>=C22", "C26>=C27", "C29>=C30",
+  "C33>=C36+C53+C56", "C34>=C35", "C34>=C37+C54+C57",
+  "C37>=C38", "C37=C39+C40+C41+C42", "C37-C38=C43+C44+C45+C46+C47",
+  "C37-C38>=C48", "C37-C38>=C49", "C37-C38>=C50", "C37-C38>=C52",
+  "C50>=C51", "C54>=C55",
+  "C61>=C62", "C61>=C64+C67+C70", "C64>=C65", "C67>=C68",
+  "C53<=C54", "C36<=C37", "C56<=C57", "C60<=C61", "C63<=C64", "C66<=C67",
+  "C69<=C70", "C71<=C72", "C25<=C26", "C58<=C59",
+];
+
 
 // b10RefCua(n): trả chuỗi tham chiếu Excel tới ô TỔNG của cột Cn trên sheet "Biểu B10"
 // (VD "'Biểu B10'!K95"), hoặc null nếu không map được. Truyền từ xuatBaoCaoThangExcel (nơi biết
@@ -12108,8 +12126,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   wsB10.views = [{ state: "frozen", xSplit: 3, ySplit: 2 }];
   // Cột A (mới): Mã ĐL — khóa tra cứu cho SUMIF ở các cột "Vụ", cùng chuẩn với cột "Mã ĐL vụ" của sheets danh sách
   // Cột B: Số điều (hiển thị), Cột C: Tên tội danh, Cột D+: giá trị B10 (vals[0..87])
-  wsB10.addRow(["Mã ĐL", ...B10_HEADER_NHOM]).font = { bold: true };
-  wsB10.addRow(["",       ...B10_HEADER_CHI_TIET]).font = { bold: true };
+  wsB10.addRow(["Mã ĐL", ...B10_HEADER_NHOM, "Tự kiểm tra"]).font = { bold: true };
+  wsB10.addRow(["",       ...B10_HEADER_CHI_TIET, "40 quy tắc nội tại (quy_tac_bieu_10.md)"]).font = { bold: true };
+  const B10_COT_KIEMTRA = 3 + 88 + 1; // A,B,C + 88 vals + 1 = cột 92 (1-based)
   // Helper: "Điều 173 BLHS 2025" → "173"
   const extractSoDieu = (d) => { const m = (d||"").match(/Điều\s+(\d+[a-zA-Z]*)/i); return m ? m[1] : (d||""); };
   // Helper: chỉ số cột 0-based → chữ cái Excel (A=0, Z=25, AA=26, ...)
@@ -12117,6 +12136,31 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     let s = ""; let n = i + 1;
     while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
     return s;
+  };
+  // Map Cn → chữ cái cột trên sheet "Biểu B10" (nhãn "(Cn)" trong B10_HEADER_CHI_TIET; entry j →
+  // cột b10Col(j+1) vì hàng CHI_TIET là ["", ...B10_HEADER_CHI_TIET]). C14-C18 (nhãn gộp
+  // "ĐH+ (C14-18)") không match regex → điền tay: 5 cột liên tiếp NGAY SAU C13.
+  const b10ColCuaC = {};
+  { let j13 = -1;
+    B10_HEADER_CHI_TIET.forEach((lbl, j) => {
+      const m = String(lbl).match(/\(C(\d+)\)$/);
+      if (m) b10ColCuaC[+m[1]] = b10Col(j + 1);
+      if (/\(C13\)$/.test(String(lbl))) j13 = j;
+    });
+    if (j13 >= 0) for (let k = 1; k <= 5; k++) b10ColCuaC[13 + k] = b10Col(j13 + 1 + k);
+  }
+  // Cột "Tự kiểm tra" trên sheet B10: 40 quy tắc nội tại, mỗi Cn thay bằng ô <cột Cn><dòng r>.
+  const congThucKiemTraB10 = (r) => {
+    const parts = BIEU10_QUY_TAC_RAW.map(raw => {
+      const s = raw.replace(/\s+/g, "");
+      let op = null, i = -1;
+      for (const o of [">=", "<=", ">", "<", "="]) { const k = s.indexOf(o); if (k >= 0) { op = o; i = k; break; } }
+      const sub = (e) => e.replace(/C(\d+)/g, (_, n) => (b10ColCuaC[+n] || "IV") + r); // IV = cột rỗng xa nếu thiếu map
+      return { cond: `(${sub(s.slice(0, i))})${op}(${sub(s.slice(i + op.length))})`, raw };
+    });
+    let f = `"✓ khớp (${parts.length} quy tắc)"`;
+    for (let k = parts.length - 1; k >= 0; k--) f = `IF(NOT(${parts[k].cond}),"✗ ${parts[k].raw}",${f})`;
+    return { formula: "=" + f };
   };
   // B10_FORMULA: mọi cột có công thức, nhận r (số dòng Excel) → trả về chuỗi công thức
   // Helpers: mkSfVu = SUMIF VỤ (cột A×B); mkCfBc = COUNTIFS BC (cột V + extra); mkCfBcM = multi-sheet
@@ -12317,6 +12361,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       const fml = B10_FORMULA[k] ? B10_FORMULA[k](r) : null;
       cells.push(fml ? { formula: fml, result: row.vals[k] } : row.vals[k]);
     }
+    cells.push(congThucKiemTraB10(r)); // cột 92: "Tự kiểm tra" 40 quy tắc nội tại cho dòng này
     wsB10.addRow(cells);
   });
   // Dòng Tổng: SUM formula trên toàn bộ cột data (tự cập nhật khi Excel recalc)
@@ -12326,14 +12371,26 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const col = b10Col(k + 3); // k+3: bù 3 cột A/B/C header
     tongCells.push({ formula: `SUM(${col}${B10_R0}:${col}${b10LastR})`, result: b10Tong[k] });
   }
+  const b10TongR = b10LastR + 1;
+  tongCells.push(congThucKiemTraB10(b10TongR)); // "Tự kiểm tra" cho dòng TỔNG
   const tongRow = wsB10.addRow(tongCells);
   tongRow.font = { bold: true };
   tongRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } };
+  // CF: dòng nào ô "Tự kiểm tra" (cột 92) bắt đầu bằng "✗" → tô đỏ nhạt cả dòng (A..cột kiểm tra).
+  {
+    const cKT = b10Col(B10_COT_KIEMTRA - 1); // 0-based -> chữ cái
+    wsB10.addConditionalFormatting({
+      ref: `A${B10_R0}:${cKT}${b10TongR}`,
+      rules: [{ type: "expression", priority: 1, formulae: [`LEFT(TRIM($${cKT}${B10_R0}),1)="✗"`],
+        style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFFECACA" } } } }],
+    });
+  }
   // Style: wrap + độ rộng
   wsB10.getColumn(1).width = 26;  // Mã ĐL (narrow nhưng đủ hiện code đầy đủ)
   wsB10.getColumn(2).width = 12;  // Số điều
   wsB10.getColumn(3).width = 32;  // Tên tội danh
   for (let c = 4; c <= B10_HEADER_CHI_TIET.length + 1; c++) wsB10.getColumn(c).width = 8;
+  wsB10.getColumn(B10_COT_KIEMTRA).width = 48; // cột "Tự kiểm tra"
   wsB10.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
   // Cột Mã ĐL: chữ nhạt + nhỏ — chỉ dùng làm criteria key cho SUMIF, không phải số liệu
   wsB10.getColumn(1).eachCell((cell, ri) => {
@@ -12428,13 +12485,8 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const ttTraDi_TrucTiep = (baoCao.truy_to.ds.traDi || []).filter(vu => !_dtCDIds.has(vu.id) && _laTrucTiepVaoTT(vu));
     const xxTraDi_KhongLapKy = (baoCao.xet_xu.ds.traDi || []).filter(vu => !_ttCDIds.has(vu.id));
     // Cột "Kiểm tra" của Biểu 2/3: quy tắc liên biểu `Cn_10173=Dm` tự đối chiếu với ô TỔNG cột Cn
-    // trên sheet "Biểu B10" (cùng file). Map Cn → chữ cái cột từ nhãn "(Cn)" trong B10_HEADER_CHI_TIET
-    // (vals index = vị trí nhãn − 2; cột Excel 0-based = index + 3). Dòng TỔNG = B10_R0 + số điều luật.
-    const b10ColCuaC = {};
-    B10_HEADER_CHI_TIET.forEach((lbl, j) => {
-      const m = String(lbl).match(/\(C(\d+)\)$/);
-      if (m) b10ColCuaC[+m[1]] = b10Col(j + 1); // (j − 2) + 3 = j + 1
-    });
+    // trên sheet "Biểu B10". `b10ColCuaC` (map Cn → chữ cái cột) đã dựng 1 lần ở trên (gồm cả patch
+    // C14-C18). Dòng TỔNG = B10_R0 + số điều luật.
     const b10TongRowNum = B10_R0 + b10Rows.length;
     const b10RefCua = (n) => (b10ColCuaC[n] ? `'Biểu B10'!${b10ColCuaC[n]}${b10TongRowNum}` : null);
     themSheetBieu2Va3(
