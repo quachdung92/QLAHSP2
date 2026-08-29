@@ -27,20 +27,33 @@ Theo yêu cầu Dũng ("công thức chuẩn ngành đã add vào rồi, biểu 
 = 0 bản ghi ở MỌI kỳ thật. Sửa này chỉ "đúng lại nguyên tắc", không đổi con số nào đang có. An toàn
 merge, nhưng Dũng vẫn nên mở Excel B10 thật xác nhận C3/C4/C33/C34/C60/C61 không đổi + không #REF.
 
-**CHƯA làm (phần còn lại của "fix triệt để", scope riêng — rủi ro cao hơn, cần Dũng mở Excel thật
-kiểm chứng)**:
-1. **C6-C7/C25-C26/C36-C37/C58-C59/C71-C72 "đếm quá rộng"** — mẫu ngành muốn "khởi tố mới THẬT"
-   (nguồn `an_khoi_to_moi`/`tin_bao_khoi_to_len`) + "chuyển đến LẦN ĐẦU" (không tính vụ bị trả hồ
-   sơ rồi chuyển lại). Cần port `_laLanDauChuyenToi`/`_chuaTungTraVeDT`/`_laTrucTiepVaoTT` (đã có
-   sẵn trong khối Biểu 2/3, dùng cho `dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/...) vào `tinhBieu10`
-   (thêm tham số `lichSuChuyenTraMap`) + tạo sheet DS lọc mới + sửa `B10_FORMULA` idx 7/26/27/41/
-   42/63/71/72. ĐỔI SỐ THẬT (VD kỳ 07 ĐT −10 vụ traVe) → bắt buộc Dũng xác nhận.
-2. **Cột "Kiểm tra" Biểu 2/3 — công thức liên biểu**: hiện `congThucKiemTra` trả `"(tra tay — liên
-   biểu / kỳ trước)"` cho quy tắc `Cxx_10173`/`Dxx_10238`/`[b]`. Nâng thành công thức Excel thật
-   tham chiếu `'Biểu B10'!C{...}` (VD Biểu 2 D72 tự khớp B10 C7). Additive, không đụng B10.
-3. C33/C34 (TT) / C60/C61 (XX): quy tắc `D280−D262`/`D17=D1+D2+D3+D4+D9−D15` còn tham chiếu dòng
+**ĐÃ làm thêm (cùng đợt, commit `dabae4b`)** — **Cột "Kiểm tra" Biểu 2/3: quy tắc liên biểu
+`Cn_10173=Dm` tự đối chiếu với sheet "Biểu B10"**. 19 quy tắc (10 Biểu 2 + 9 Biểu 3, VD
+`C7_10173=D72`, `C60_10173=D17`, `D361=C58_10173`) trước chỉ ghi text `"(tra tay — liên biểu)"`;
+nay `congThucKiemTra` sinh CÔNG THỨC Excel thật `=IF(NOT((Dcell)=('Biểu B10'!<colCn><dòng TỔNG>)),
+"✗ <raw>",…)`. `phanTichQuyTacDong`: token `Cn_10173` → `{b10:n}`, cờ mới `lienBieu`.
+`themSheetBieu2Va3` nhận thêm `b10RefCua(n)` (từ `xuatBaoCaoThangExcel`: map `Cn` → chữ cái cột qua
+nhãn `(Cn)` trong `B10_HEADER_CHI_TIET`, vals idx = vị trí−2, cột Excel = +3; dòng TỔNG =
+`B10_R0 + b10Rows.length`). `[b]` (kỳ trước) vẫn tra tay. **Additive, KHÔNG đụng giá trị B10.**
+Test cô lập 13/13 (C3→H, C7→L…). → Cán bộ nhập tay dòng D tương ứng: lệch B10 → ô "Kiểm tra" báo "✗".
+
+**CHƯA làm / kết luận (phần còn lại của "fix triệt để")**:
+1. **C6-C7/C25-C26/C36-C37/C58-C59/C71-C72 "đếm quá rộng" — KẾT LUẬN: KHÔNG phải bug theo mẫu
+   ngành hiện có.** Rà lại: `bieu_B10_mo_ta.md` §3.1 ĐỊNH NGHĨA RÕ C6 = 4 nguồn (`an_khoi_to_moi`
+   + `tin_bao_khoi_to_len` + `phuc_hoi_dieu_tra` + `an_noi_khac_chuyen_den`) — code hiện đếm cả 4
+   là ĐÚNG §3.1. Ghi chú "đếm quá rộng" trước đây nhầm (từ nhánh `feature/tong-ke-dong` — ở đó lọc
+   riêng cho Biểu 2, KHÔNG phải yêu cầu B10). Quy tắc ngành ràng buộc C6/C7 chỉ là `D71_10238=C6`/
+   `D72_10238=C7` (định nghĩa qua dòng Biểu 2, thiếu tài liệu mô tả Biểu 2). Theo chỉ đạo Dũng
+   "dòng khó quá thì để lại hoặc ghi công thức để check" → ĐÃ ghi công thức: Biểu 2 D71/D72 tự khớp
+   B10 C6/C7 (mục trên); lệch sẽ tự lộ "✗". KHÔNG đổi số B10 khi chưa có căn cứ.
+2. C33/C34 (TT) / C60/C61 (XX): quy tắc `D280−D262`/`D17=D1+D2+D3+D4+D9−D15` còn tham chiếu dòng
    Biểu 2/3 (D262/D274/D278/D2/D3) CHƯA rõ nghĩa (thiếu tài liệu mô tả Biểu 2/3). Việc bỏ án huỷ
    ở trên là phần ĐÚNG CHẮC CHẮN theo mọi quy tắc; thành phần đầy đủ của C33/C60 cần Dũng/tài liệu.
+3. **Nghi vấn `quy_tac_bieu_10.md` dòng 20 `C37=C39+C40+C41+C42`**: code hiện thoả `C36=ΣC39..C42`
+   (C39-C42 đếm VỤ theo `vuPrimaryMucDoNT`, khớp `bieu_B10_mo_ta.md` + đã kiểm chứng nhiều lần —
+   xem mục "Biểu B10 C39-C42"). Rule file ghi `C37` (BC) thay vì `C36` (Vụ) — nhiều khả năng lỗi
+   chép của file quy tắc, HOẶC mẫu ngành thật muốn C39-C42 đếm BC. KHÔNG tự sửa — cần Dũng đối
+   chiếu mẫu B10 gốc xác nhận C39-C42 là "Vụ" hay "Bị can".
 
 ## Biểu 2 & Biểu 3 — port lại từ nhánh cũ `feature/tong-ke-dong`, đặt lên nền hệ thống hiện tại (2026-08-28, `qlahs-sup.html`, nhánh `bieu-2-3` = tách từ `ton-ky-thong-nhat`, CHƯA merge/deploy — chỉ compile-check + test cô lập)
 
