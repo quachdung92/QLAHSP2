@@ -11851,9 +11851,10 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     return { formula: "=" + f };
   };
   // Xây map "mỗi mã dòng md ĐƯỢC quy tắc nào (theo anchor) tham chiếu tới" — dùng cho tính năng
-  // "Soi lỗi": bật toggle → tự tô vàng mọi dòng là INPUT của 1 quy tắc đang báo ✗ (VD D1=D2+D3
-  // lỗi thì tô D1 + D2 + D3). refsOfAnchor(a) = mọi md xuất hiện trong lhs/rhs quy tắc neo tại a,
-  // cộng chính a. anchorsThamChieu[md] = danh sách anchor mà md nằm trong refsOf(anchor).
+  // "Soi lỗi": cán bộ TÍCH ✔ vào cột "Soi" ở dòng báo lỗi → mọi dòng là THÀNH PHẦN của quy tắc
+  // neo tại dòng đó hiện "◆" ở cột "Cần sửa" + tự tô vàng → lọc cột "Cần sửa" = "◆" (hoặc lọc
+  // theo màu) để xem/sửa nhanh. refsOfAnchor(a) = mọi md trong lhs/rhs quy tắc neo tại a, cộng
+  // chính a. anchorsThamChieu[md] = danh sách anchor mà md nằm trong refsOf(anchor).
   const buildAnchorsThamChieu = (quyTacList) => {
     const refsOf = new Map(); // anchor -> Set(md)
     for (const q of quyTacList) {
@@ -11871,17 +11872,12 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
   const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan, quyTacList) => {
     const ws = wb.addWorksheet(tenSheet);
     ws.views = [{ state: "frozen", ySplit: 1 }];
-    ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }, { width: 14 }, { width: 30 }, { width: 6 }];
-    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái", "Quy tắc kiểm tra", "Kiểm tra (Excel tự tính khi nhập tay)", "🔍 Soi lỗi", "TẮT", null]);
+    ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }, { width: 8 }, { width: 13 }];
+    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái", "Quy tắc kiểm tra", "Kiểm tra (Excel tự tính khi nhập tay)", "Soi 🔎", "Cần sửa"]);
     hRow.font = { bold: true };
-    for (let c = 1; c <= 6; c++) hRow.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-    // Ô toggle H1: chọn "BẬT — soi dòng liên quan lỗi" thì mọi dòng là input của 1 quy tắc đang ✗ tự tô vàng.
-    const oToggle = ws.getCell("H1");
-    oToggle.dataValidation = { type: "list", allowBlank: false, formulae: ['"TẮT,BẬT — soi dòng liên quan lỗi"'] };
-    oToggle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF9C3" } };
-    oToggle.font = { bold: true, color: { argb: "FF92400E" } };
-    oToggle.alignment = { horizontal: "center" };
-    ws.getCell("G1").alignment = { horizontal: "right" };
+    for (let c = 1; c <= 8; c++) hRow.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    hRow.getCell(7).alignment = { horizontal: "center", wrapText: true };
+    hRow.getCell(8).alignment = { horizontal: "center", wrapText: true };
 
     const qtTheoNeo = new Map();
     for (const q of quyTacList) {
@@ -11896,17 +11892,17 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
       const trangThai = co ? "✓ Tự động tính"
         : (canXN ? "❓ Cần xác nhận công thức (xem quy_tac_bieu_*.md)" : "⚠ Chưa có dữ liệu — nhập tay");
       const qtDong = qtTheoNeo.get(r.md) || [];
-      // Cột I (ẩn): 1 nếu md này là input của ≥1 quy tắc (theo anchor) đang báo ✗. Mã dòng md nằm
-      // ở hàng Excel md+1, ô "Kiểm tra" ở cột F → dò "✗" đầu chuỗi qua LEFT(TRIM(...)).
+      // Cột H "Cần sửa": "◆" nếu dòng md này là THÀNH PHẦN của ≥1 quy tắc mà cán bộ ĐÃ TÍCH ✔ vào
+      // cột G "Soi" ở đúng dòng neo (anchor). Dòng anchor a nằm ở hàng Excel a+1 → xét $G$<a+1>.
       const anchors = anchorsThamChieu.get(r.md) || [];
-      const oSoi = anchors.length
-        ? { formula: "MAX(" + anchors.map(a => `--(LEFT(TRIM($F$${a + 1}),1)="✗")`).join(",") + ")" }
-        : 0;
+      const oCanSua = anchors.length
+        ? { formula: `IF(OR(${anchors.map(a => `$G$${a + 1}<>""`).join(",")}),"◆","")` }
+        : null;
       const row = ws.addRow([
         r.tc, r.md, co ? giaTriMap.get(r.md) : null, trangThai,
         qtDong.length ? qtDong.map(q => q.raw).join("\n") : null,
         congThucKiemTra(qtDong),
-        null, null, oSoi,
+        null, oCanSua,
       ]);
       hangCuoiDuLieu = row.number;
       row.getCell(1).alignment = { wrapText: true, vertical: "top" };
@@ -11915,28 +11911,35 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
       for (let c = 1; c <= 4; c++) {
         row.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: co ? MAU.tuDong : (canXN ? MAU.canXacNhan : MAU.chuaCo) } };
       }
+      // Ô G: tích ✔ để "soi" quy tắc neo tại dòng này (Data Validation cho gõ/chọn ✔; ô rỗng = chưa soi)
+      const gCell = row.getCell(7);
+      gCell.dataValidation = { type: "list", allowBlank: true, formulae: ['"✔"'] };
+      gCell.alignment = { horizontal: "center" };
+      gCell.border = { top: { style: "hair" }, left: { style: "hair" }, bottom: { style: "hair" }, right: { style: "hair" } };
+      row.getCell(8).alignment = { horizontal: "center" };
+      row.getCell(8).font = { bold: true, color: { argb: "FF92400E" } };
     }
-    ws.getColumn(9).hidden = true; // cột phụ "đang bị lỗi tham chiếu"
-    // Conditional formatting: (1) dòng có ô Kiểm tra = "✗ ..." → tô đỏ nhạt (LUÔN bật);
-    // (2) khi H1 bắt đầu bằng "BẬT" VÀ cột I = 1 → tô vàng (dòng input của quy tắc đang lỗi).
+    // Conditional formatting trên A..H: (1) dòng có ô "Kiểm tra" = "✗ ..." → tô đỏ nhạt (LUÔN);
+    // (2) dòng có cột "Cần sửa" = "◆" (thành phần của quy tắc cán bộ đang soi) → tô vàng.
     if (hangCuoiDuLieu > 1) {
-      const vung = `A2:F${hangCuoiDuLieu}`;
+      const vung = `A2:H${hangCuoiDuLieu}`;
       ws.addConditionalFormatting({
         ref: vung,
         rules: [
           { type: "expression", priority: 1, formulae: [`LEFT(TRIM($F2),1)="✗"`],
             style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFFECACA" } } } },
-          { type: "expression", priority: 2, formulae: [`AND(LEFT($H$1,3)="BẬT",$I2=1)`],
+          { type: "expression", priority: 2, formulae: [`$H2="◆"`],
             style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFFEF08A" } } } },
         ],
       });
+      ws.autoFilter = `A1:H${hangCuoiDuLieu}`; // để lọc nhanh cột "Cần sửa" = "◆" / lọc theo màu
     }
     ws.addRow([]);
     [
       ["Ghi chú:"],
       ["• Cột 'Số liệu': ✓ Tự động tính (xanh) = hệ thống điền từ dữ liệu. ⚠ Chưa có dữ liệu (xám) = tự nhập tay. ❓ Cần xác nhận công thức (vàng) = có manh mối nhưng chưa chắc, tự nhập rồi đối chiếu."],
       ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗ [nội tại] ...' = lệch với dòng khác TRONG chính biểu này; '✗ [LIÊN BIỂU] ...' = lệch với ô TỔNG tương ứng bên sheet 'Biểu B10'."],
-      ["• Ô 'Soi lỗi' (H1, góc trên phải): dòng đang vi phạm tự tô ĐỎ NHẠT. Chọn 'BẬT — soi dòng liên quan lỗi' ở ô đó → mọi dòng là THÀNH PHẦN của 1 quy tắc đang lỗi tự tô VÀNG (VD D1=D2+D3 sai thì D1 đỏ, D2 & D3 vàng) — dễ dò xem sửa dòng nào."],
+      ["• Cột 'Soi 🔎' + 'Cần sửa': dòng đang vi phạm ('✗') tự tô ĐỎ NHẠT. Thấy dòng nào báo lỗi thì TÍCH ✔ vào ô 'Soi' của ĐÚNG dòng đó → mọi dòng là THÀNH PHẦN của quy tắc đó hiện '◆' ở cột 'Cần sửa' và tự tô VÀNG (VD D1=D2+D3 sai, tích ✔ ở D1 thì D1/D2/D3 đều vàng). Có thể tích nhiều dòng lỗi cùng lúc. Sau đó: Lọc (Filter) cột 'Cần sửa' = '◆' — hoặc Lọc theo màu — để xem/sửa nhanh. Bỏ tích ✔ để tắt."],
       ["• Dòng '✓ Tự động tính' dùng công thức RÚT GỌN (bỏ các số hạng chưa có tính năng theo dõi) — khi bạn nhập tay các dòng còn thiếu, ô 'Kiểm tra' của dòng tổng có thể báo '✗', lúc đó cập nhật lại dòng tổng cho khớp."],
       ["• Quy tắc 'C.._10173 = D..' (LIÊN BIỂU): cột 'Kiểm tra' đã tự đối chiếu với ô TỔNG tương ứng trên sheet 'Biểu B10' trong CHÍNH file này (báo '✗' nếu lệch)."],
       ["• Quy tắc có '[b]': dùng D154[b]/D156[b]/D344[b]/D346[b] (tồn cuối kỳ TRƯỚC = tồn đầu kỳ này) đã được thay bằng hằng số → tự kiểm tra được (nhãn '✗ [KỲ TRƯỚC]'). Các quy tắc dùng D151[b]/D153[b]/D342[b]/D343[b] (số cộng dồn) vẫn ghi '(tra tay)'."],
