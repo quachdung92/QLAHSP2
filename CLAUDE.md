@@ -2,7 +2,34 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Biểu 10 "Tổng thụ lý" (C3/C4/C33/C34/C60/C61) — BỎ trừ "án huỷ", đúng lại theo mẫu ngành (2026-08-29, `qlahs-sup.html`, nhánh `bieu-2-3`, CHƯA merge/deploy — compile-check sạch, chưa mở Excel thật)
+## Biểu 10 C39-C42 "Phân loại tội phạm" (Truy tố) — ĐẾM BỊ CAN, KHÔNG phải vụ (2026-08-29, `qlahs-sup.html`, nhánh `bieu-2-3`, CHƯA merge/deploy — ĐÃ kiểm chứng Excel thật)
+
+Dũng xác nhận trực tiếp: **C39-C42 đếm BỊ CAN** (mỗi bị can theo mức độ NT của tội danh chính CỦA
+CHÍNH họ), tổng = **C37** (bị can truy tố) — đúng quy tắc ngành `quy_tac_bieu_10.md` dòng 20
+`C37=C39+C40+C41+C42` (+ `C37>=C38`, `C37-C38=C43+..+C47`). Trước đây code đếm VỤ (`vuPrimaryMucDoNT`
+theo bị can đại diện), tổng khớp C36 (vụ) — SAI. `bieu_B10_mo_ta.md` cũ ghi "Vụ án" cũng SAI, đã sửa.
+
+**Đã sửa**:
+- JS `tinhBieu10`: bỏ `vuPrimaryMucDoNT`; thêm `bcMucDoNT(bc) = bc.mucDoNghiemTrong ||
+  mucDoNghiemTrongMacDinhTheoDieu(getDL(bc))`; `mdn(muc) = tt_truToBc.filter(bc => bcMucDoNT(bc)===muc).length`.
+- Excel: `B10_FORMULA[44..47]` đổi từ `SUMIFS($A[Đếm vụ],$B[Mã ĐL vụ],$AJ)` → `COUNTIFS($V[Mã ĐL
+  BC],$A{r},$AJ,"<nhãn>")` (đếm DÒNG bị can). Cột `$AJ` "Mức độ NT (BC)" ở "DS TT chuyển XX" nay
+  tính THEO TỪNG BỊ CAN qua cơ chế mới `bcExtraHeaders`/`bcExtraFn` của `addSheetVu`/`addSheetVuKy`
+  (cột phụ tính theo `bc`, nối SAU `extraHeaders`; vị trí cột GIỮ NGUYÊN AJ). Bỏ `vuPrimaryMucDoNT_xuat`.
+- `bieu_B10_mo_ta.md` dòng 136-139 sửa "Vụ án" → "Bị can" (file này giờ ĐÃ track trong git).
+
+**Kiểm chứng Excel THẬT** (đăng nhập `admin@qlva.local`, xuất kỳ 07/2026): ΣC39+C40+C41+C42 =
+**295 = C37** (`eq_C37: true`), trước = C36 = 31 (vụ). C39=0/C40=52/C41=2/C42=241 khớp đúng phân bố
+cột AJ "DS TT chuyển XX" ({Nghiêm trọng 52, Rất NT 2, ĐB NT 241}). Cột AJ giờ ĐỔI theo từng bị can
+(VD cùng 1 vụ: dòng Điều 123 = "ĐB NT", dòng Điều 318 = "Nghiêm trọng"). `DS ĐT chuyển TT` + `DS
+khởi tố ĐT` không lệch cột (36/36 ô). 0 lỗi `#REF`. C39 công thức row 3 =
+`COUNTIFS('DS TT chuyển XX'!$V:$V,$A3,'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")`.
+
+**⚠ ĐỔI SỐ THẬT** — C39-C42 ở khối Truy tố tăng mạnh (VD kỳ 07: ~31 → 295). Dũng phải mở Excel B10
+kỳ thật xác nhận đây là số mong muốn. (2 mục CLAUDE.md cũ "Biểu B10 C39-C42..." dựa trên tiền đề
+đếm VỤ — nay lỗi thời về mặt đó, cơ chế đọc `mucDoNghiemTrong` cấp bị can thì vẫn đúng.)
+
+## Biểu 10 "Tổng thụ lý" (C3/C4/C33/C34/C60/C61) — BỎ trừ "án huỷ", đúng lại theo mẫu ngành (2026-08-29, `qlahs-sup.html`, nhánh `bieu-2-3`, CHƯA merge/deploy — ĐÃ kiểm chứng Excel thật kỳ 07/2026)
 
 Theo yêu cầu Dũng ("công thức chuẩn ngành đã add vào rồi, biểu 10 lúc trước có vấn đề gì ko" →
 "ok fix triệt để đi"). Đối chiếu `quy_tac_bieu_10.md` (mới commit `6fcef9f`) + `bieu_B10_mo_ta.md`

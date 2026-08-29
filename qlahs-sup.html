@@ -10205,19 +10205,8 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     return getDL(bcChinh);
   };
   const vuCoD = (vuArr, D) => vuArr.filter(vu => vuPrimaryDL(vu) === D);
-  // Mức độ nghiêm trọng dùng cho C39-C42 (2026-08-09, theo yêu cầu Dũng: "mức độ nghiêm trọng tội
-  // danh của bị can là để điền vào cột C39-C42") — đọc đúng `mucDoNghiemTrong` của BỊ CAN ĐẠI DIỆN
-  // (cùng người dùng để suy `vuPrimaryDL` ở trên — tội danh chính của vụ CHÍNH LÀ tội danh của
-  // người này), tôn trọng cả lựa chọn tay nếu cán bộ đã tự sửa. TRƯỚC ĐÂY đọc nhầm `vu.mucDoNghiemTrong`
-  // (field cấp VỤ, vốn chỉ dùng tính hạn điều tra Điều 172/174 — hoàn toàn không liên quan tới phân
-  // loại tội phạm theo tội danh, đúng mẫu ngành ghi "tra danh mục tội danh" chứ không phải đọc field
-  // tự chọn tay của cán bộ khi tạo vụ). Vụ 0 bị can (hiếm) mới fallback sang công thức theo điều luật.
-  const vuPrimaryMucDoNT = (vu) => {
-    const bcs = biCanByVu[vu.id] || [];
-    if (!bcs.length) return mucDoNghiemTrongMacDinhTheoDieu(vuPrimaryDL(vu));
-    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
-    return bcChinh.mucDoNghiemTrong || "dac_biet_nghiem_trong";
-  };
+  // (2026-08-29) Bỏ `vuPrimaryMucDoNT` cấp vụ — C39-C42 giờ ĐẾM BỊ CAN theo mức độ NT của TỪNG bị
+  // can (xem `bcMucDoNT` ở khối Truy tố dưới), không đếm vụ theo bị can đại diện nữa.
 
   // BC trong vụ với getDL(bc)==D, kèm _namKTVA của vụ đó
   const bcCoD = (vuArr, D) => {
@@ -10510,7 +10499,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const C36 = tt_truToVu.length;
     const C37 = tt_truToBc.length;
     const C38 = tt_truToBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
-    const mdn = (muc) => tt_truToVu.filter(v => vuPrimaryMucDoNT(v) === muc).length;
+    // C39-C42 "Phân loại tội phạm" — ĐẾM BỊ CAN (mỗi bị can theo mức độ NT của tội danh chính CỦA
+    // CHÍNH họ: field bc.mucDoNghiemTrong, fallback suy theo điều luật). Tổng C39+C40+C41+C42 = C37
+    // (quy tắc ngành C37=C39+C40+C41+C42; Dũng xác nhận 2026-08-29 là ĐẾM BỊ CAN, KHÔNG phải vụ —
+    // bieu_B10_mo_ta.md cũ ghi "Vụ án" là SAI, đã sửa). mucDoNghiemTrongMacDinhTheoDieu luôn trả
+    // 1/4 giá trị ⇒ mọi bị can rơi ĐÚNG 1 bucket ⇒ tổng khớp C37 tuyệt đối.
+    const bcMucDoNT = (bc) => bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(getDL(bc));
+    const mdn = (muc) => tt_truToBc.filter(bc => bcMucDoNT(bc) === muc).length;
     const C39 = mdn("it_nghiem_trong");
     const C40 = mdn("nghiem_trong");
     const C41 = mdn("rat_nghiem_trong");
@@ -12195,12 +12190,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     82: r => mkSfVu("DS án huỷ ĐT",r),
     84: r => mkSfVu("DS án huỷ TT",r),
     86: r => mkSfVu("DS án huỷ XX",r),
-    // ── Mức độ NT CỦA BỊ CAN đại diện SUMIFS (cột AJ "Mức độ NT (BC)", 2026-08-10 — TRƯỚC ĐÂY đọc
-    // nhầm cột K "Mức độ NT" cấp VỤ, xem vuPrimaryMucDoNT_xuat) × cột B Mã ĐL vụ — chỉ DS TT chuyển XX ──
-    44: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")`,
-    45: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Nghiêm trọng")`,
-    46: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Rất nghiêm trọng")`,
-    47: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Đặc biệt nghiêm trọng")`,
+    // ── C39-C42 "Phân loại tội phạm" — ĐẾM BỊ CAN theo mức độ NT của TỪNG bị can (2026-08-29, Dũng
+    // xác nhận C39-C42 đếm BỊ CAN, tổng = C37; quy tắc ngành C37=C39+C40+C41+C42). COUNTIFS trên
+    // dòng BC: cột V = Mã ĐL BC (khớp $A{r}), cột AJ = "Mức độ NT (BC)" nay là mức độ của CHÍNH bị
+    // can dòng đó (bcExtraFn ở "DS TT chuyển XX", KHÔNG còn là mức độ bị can đại diện của vụ). ──
+    44: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")`,
+    45: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Nghiêm trọng")`,
+    46: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Rất nghiêm trọng")`,
+    47: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Đặc biệt nghiêm trọng")`,
     // ── BC-level COUNTIFS (cột V=Mã ĐL BC + criteria phụ) ──
     // Cột criteria BC: W=Loại KTBC, X=Pháp nhân, Y=Nhóm tuổi, Z=Trình độ,
     //   AA=Giới tính nữ, AB=Dân tộc KK, T=Đảng viên(x), AC=Giữ chức vụ, AD=Quốc tịch NN, AE=Tái phạm,
@@ -12699,26 +12696,24 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
     return _tkGetDL(bcChinh);
   };
-  // Mức độ nghiêm trọng CỦA BỊ CAN đại diện (2026-08-10, bản sao trong scope xuất Excel của
-  // tinhBieu10.vuPrimaryMucDoNT — closure khác nên không dùng chung được) — CHỈ dùng làm CỘT PHỤ
-  // ("Mức độ NT (BC)") để B10_FORMULA (SUMIFS C39-C42) tham chiếu ĐÚNG. KHÔNG đụng cột "Mức độ NT"
-  // hiện có (vẫn đọc vu.mucDoNghiemTrong cấp vụ, dùng cho mục đích hiển thị thông tin chung khác
-  // trên MỌI sheet DS — xem vuBaseRow, cố ý giữ nguyên, không phải phạm vi sửa lần này).
-  const vuPrimaryMucDoNT_xuat = (vu) => {
-    const bcs = biCanByVu[vu.id] || [];
-    if (!bcs.length) return mucDoNghiemTrongMacDinhTheoDieu(vuPrimaryDL_xuat(vu));
-    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
-    return bcChinh.mucDoNghiemTrong || "dac_biet_nghiem_trong";
-  };
+  // (2026-08-29) Bỏ `vuPrimaryMucDoNT_xuat` — cột "Mức độ NT (BC)" ở "DS TT chuyển XX" nay tính
+  // THEO TỪNG BỊ CAN (bcExtraFn dùng bc.mucDoNghiemTrong / mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc)))
+  // để C39-C42 đếm BỊ CAN (tổng = C37). KHÔNG đụng cột "Mức độ NT" cấp vụ ở vuBaseRow.
   // `gomBiCanPhu` (2026-07-31, theo yêu cầu người dùng, opt-in — CHỈ áp dụng ở "DS tồn" khi gọi,
   // các sheet khác dùng addSheetVu/addSheetVuKy giữ NGUYÊN hành vi cũ) — vụ nhiều bị can chỉ hiện
   // SẴN dòng bị can ĐẦU TIÊN (đã có đủ thông tin vụ), các dòng bị can còn lại của CÙNG vụ đó thu
   // gọn qua Excel Outline (giống khối "Nhập vụ" ở sheet "Giải quyết... trong kỳ") — bấm [+] cạnh
   // dòng đầu để mở xem hết bị can, dễ quan sát danh sách tồn dài mà không phải cuộn qua hàng chục
   // dòng cùng 1 vụ.
-  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn, gomBiCanPhu) {
+  // bcExtraHeaders/bcExtraFn (2026-08-29): cột phụ TÍNH THEO TỪNG BỊ CAN (bcExtraFn(bc, vu)),
+  // nối SAU extraHeaders (cột theo vụ). Dùng cho "Mức độ NT (BC)" ở "DS TT chuyển XX" (C39-C42 đếm
+  // bị can). Dòng vụ 0 bị can: điền rỗng đủ số cột để không lệch vị trí AJ.
+  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn, gomBiCanPhu, bcExtraHeaders, bcExtraFn) {
     extraHeaders = extraHeaders || [];
     extraFn = extraFn || (() => []);
+    bcExtraHeaders = bcExtraHeaders || [];
+    const bcExtra = (bc, vu) => (bcExtraFn ? bcExtraFn(bc, vu) : []);
+    const bcExtraRong = bcExtraHeaders.map(() => "");
     const rows = [];
     const rowsCanNhom = []; // song song rows[] — true = dòng bị can PHỤ (cần thu gọn khi gomBiCanPhu)
     const nhomKeys = []; // song song rows[] — khoá tô màu xen kẽ theo TỪNG VỤ, xem themSheetDanhSach
@@ -12735,13 +12730,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         ? (biCanByVu[vu.id] || []).filter(bc => vu._bcIdsTon.has(bc.id))
         : locBiCanTheoKy(biCanByVu[vu.id] || [], vu._bcKyGioiHan, bcKyKhoiToMap, kyRankMap);
       if (bcArr.length === 0) {
-        // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, AF+=extraHeaders (cố định BC để B10 COUNTIFS dùng đúng cột)
-        rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart]);
+        // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, extraHeaders(theo vụ), bcExtraHeaders(theo BC — rỗng ở đây)
+        rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart, ...bcExtraRong]);
         rowsCanNhom.push(false);
         nhomKeys.push(vu.id);
       } else {
         bcArr.forEach((bc, i) => {
-          rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]);
+          rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart, ...bcExtra(bc, vu)]);
           rowsCanNhom.push(gomBiCanPhu ? i > 0 : false);
           nhomKeys.push(vu.id);
         });
@@ -12750,9 +12745,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // Trả về worksheet (2026-07-31) — để nơi gọi thu thập lại sheet chi tiết, ẩn mặc định + tô màu
     // tab theo giai đoạn (xem khối "Sheets chi tiết ẩn mặc định" phía dưới cùng hàm).
     const sheet = themSheetDanhSach(wb, tenSheet,
-      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
+      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders, ...bcExtraHeaders],
       rows,
-      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12)], nhomKeys);
+      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12), ...bcExtraHeaders.map(() => 14)], nhomKeys);
     if (gomBiCanPhu) {
       // summaryBelow:false — dòng ĐẦU (đã có info vụ) nằm TRÊN, các dòng bị can phụ thu gọn NẰM
       // DƯỚI — đúng thứ tự đọc trên-xuống-dưới tự nhiên, cùng cách đã dùng cho khối "Nhập vụ".
@@ -12771,10 +12766,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const _ngaySoQD = v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""];
   // addSheetVuKy: giống addSheetVu nhưng tự prepend cột "Kỳ TK" — dùng cho mọi sheet VÀO/RA
   // (trừ DS tồn vì tồn là live, không gắn với 1 kỳ cụ thể)
-  function addSheetVuKy(tenSheet, vuArr, extraHeaders, extraFn) {
+  function addSheetVuKy(tenSheet, vuArr, extraHeaders, extraFn, bcExtraHeaders, bcExtraFn) {
     const h = ["Kỳ TK", ...(extraHeaders || [])];
     const f = v => [tenKyBaoCao(v), ...((extraFn || (() => []))(v))];
-    return addSheetVu(tenSheet, vuArr, h, f);
+    return addSheetVu(tenSheet, vuArr, h, f, false, bcExtraHeaders, bcExtraFn);
   }
 
   // "DS bổ sung BC {gs}" (2026-08-03) — sheet MỚI cho bị can THÊM SAU vào 1 vụ ĐÃ CÓ SẴN (sự kiện
@@ -13282,11 +13277,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // cần thiết để cân đối RA của giai đoạn này mà không phải tra cứu sheet giai đoạn khác.
     if (gd !== "xet_xu") {
       const gsNext = gd === "dieu_tra" ? "TT" : "XX";
-      // Cột phụ "Mức độ NT (BC)" (2026-08-10) — CHỈ "DS TT chuyển XX" được B10_FORMULA SUMIFS vào
-      // (C39-C42, xem vuPrimaryMucDoNT_xuat) — thêm cho cả "DS ĐT chuyển TT" để 2 sheet đối xứng,
-      // không dùng tới ở đó (Điều tra không có khối "Phân loại tội phạm" theo mẫu ngành).
-      add(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ", "Mức độ NT (BC)"],
-        v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || "", NHAN_MUC_DO_NT[vuPrimaryMucDoNT_xuat(v)] || ""]);
+      // Cột phụ "Mức độ NT (BC)" (2026-08-29) — nay là cột THEO TỪNG BỊ CAN (bcExtraFn): mức độ NT
+      // của tội danh chính CỦA CHÍNH bị can dòng đó (field bc.mucDoNghiemTrong, fallback suy theo
+      // điều luật BC). CHỈ "DS TT chuyển XX" được B10_FORMULA COUNTIFS vào (C39-C42, đếm BỊ CAN,
+      // tổng = C37) — thêm cho cả "DS ĐT chuyển TT" để 2 sheet đối xứng (ĐT không có khối này).
+      // Vị trí cột giữ nguyên AJ (Kỳ TK=AG, Ngày chuyển=AH, Số QĐ=AI, Mức độ NT (BC)=AJ).
+      add(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ"],
+        v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""],
+        ["Mức độ NT (BC)"],
+        (bc) => [NHAN_MUC_DO_NT[bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc))] || ""]);
     }
     // ── RA: trả hồ sơ (từ giai đoạn này về giai đoạn trước) ──
     // Lưu ý: cùng dữ liệu với "DS trả về {gsPrev}" nhưng từ góc nhìn giai đoạn nguồn.
