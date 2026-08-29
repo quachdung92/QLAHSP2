@@ -154,7 +154,7 @@ phải chuyện bỏ qua được.
 | BC | C55 | Giai đoạn truy tố / Đình chỉ | Tr.đó: Pháp nhân | Đình chỉ (TT) — Tr.đó Pháp nhân. `loaiBiCan=phap_nhan` trong tập C54 |
 | BD | C56 | Giai đoạn truy tố / Tạm đình chỉ | Vụ án | Tạm đình chỉ (TT) — Vụ án. `hoan_thanh`, `hinhThucHoanThanh=tam_dinh_chi`, `coQuanThuLy=truy_to`, `kyThongKe=K` |
 | BE | C57 | Giai đoạn truy tố / Tạm đình chỉ | Bị can | Tạm đình chỉ (TT) — Bị can. Bị can của các vụ ở C56 |
-| BF | C58 | Giai đoạn truy tố / VKS trả hồ sơ để ĐTBS (CQĐT chấp nhận) | Vụ án | VKS trả hồ sơ để ĐTBS — Vụ án. Vụ có `tra_ho_so`, `tuGiaiDoan=truy_to`, `denGiaiDoan=dieu_tra`, `kyThongKe=K` |
+| BF | C58 | Giai đoạn truy tố / VKS trả hồ sơ để ĐTBS (CQĐT chấp nhận) | Vụ án | VKS trả hồ sơ để ĐTBS — Vụ án. Vụ có `tra_ho_so`, `tuGiaiDoan=truy_to`, `denGiaiDoan=dieu_tra`, `kyThongKe=K` — **CHỈ TRẢ TRỰC TIẾP** (loại vụ bị Toà trả về TT rồi mới trả tiếp xuống ĐT — round-trip XX→TT→ĐT; loại vụ cũng nằm trong ĐT `chuyenDi` cùng kỳ). Quy tắc `D361_10238=C58` khớp `ttTraDi_TrucTiep` của Biểu 2. |
 | BG | C59 | Giai đoạn truy tố / VKS trả hồ sơ để ĐTBS (CQĐT chấp nhận) | Bị can | VKS trả hồ sơ để ĐTBS — Bị can. Bị can của các vụ ở C58 |
 | BH | C60 | Giai đoạn xét xử sơ thẩm / Tổng thụ lý | Vụ án | Tổng thụ lý Xét xử — Vụ án. Công thức mục 3.2, G=xet_xu |
 | BI | C61 | Giai đoạn xét xử sơ thẩm / Tổng thụ lý | Bị cáo | Tổng thụ lý Xét xử — Bị cáo. Bị can (gọi là "bị cáo" ở giai đoạn này) của các vụ ở C60 |
