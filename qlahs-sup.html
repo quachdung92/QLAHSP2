@@ -11793,7 +11793,10 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null)
     for (let i = auto.length - 1; i >= 0; i--) {
       const q = auto[i];
       const cond = `(${bieuThuc(q.lhs)})${q.op}(${bieuThuc(q.rhs)})`;
-      f = `IF(NOT(${cond}),"✗ ${q.raw.replace(/"/g, "'")}",${f})`;
+      // Nói rõ loại lệch: [LIÊN BIỂU] = lệch với ô TỔNG bên sheet "Biểu B10"; [nội tại] = lệch với
+      // dòng khác trong CHÍNH sheet này. Giúp cán bộ biết ngay phải rà B10 hay rà các dòng cùng biểu.
+      const nhan = q.lienBieu ? "✗ [LIÊN BIỂU] " : "✗ [nội tại] ";
+      f = `IF(NOT(${cond}),"${nhan}${q.raw.replace(/"/g, "'")}",${f})`;
     }
     return { formula: "=" + f };
   };
@@ -11831,7 +11834,7 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null)
     [
       ["Ghi chú:"],
       ["• Cột 'Số liệu': ✓ Tự động tính (xanh) = hệ thống điền từ dữ liệu. ⚠ Chưa có dữ liệu (xám) = tự nhập tay. ❓ Cần xác nhận công thức (vàng) = có manh mối nhưng chưa chắc, tự nhập rồi đối chiếu."],
-      ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗' = đang VI PHẠM quy tắc đó — kiểm tra lại các dòng liên quan."],
+      ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗ [nội tại] ...' = lệch với dòng khác TRONG chính biểu này; '✗ [LIÊN BIỂU] ...' = lệch với ô TỔNG tương ứng bên sheet 'Biểu B10'."],
       ["• Dòng '✓ Tự động tính' dùng công thức RÚT GỌN (bỏ các số hạng chưa có tính năng theo dõi) — khi bạn nhập tay các dòng còn thiếu, ô 'Kiểm tra' của dòng tổng có thể báo '✗', lúc đó cập nhật lại dòng tổng cho khớp."],
       ["• Quy tắc 'C.._10173 = D..' (LIÊN BIỂU): cột 'Kiểm tra' đã tự đối chiếu với ô TỔNG tương ứng trên sheet 'Biểu B10' trong CHÍNH file này (báo '✗' nếu lệch)."],
       ["• Quy tắc có '[b]' (giá trị kỳ TRƯỚC) không tự kiểm tra được — cột 'Kiểm tra' ghi '(tra tay)', đối chiếu thủ công với báo cáo kỳ trước."],

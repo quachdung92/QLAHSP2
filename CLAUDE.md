@@ -31,11 +31,17 @@ merge, nhưng Dũng vẫn nên mở Excel B10 thật xác nhận C3/C4/C33/C34/C
 `Cn_10173=Dm` tự đối chiếu với sheet "Biểu B10"**. 19 quy tắc (10 Biểu 2 + 9 Biểu 3, VD
 `C7_10173=D72`, `C60_10173=D17`, `D361=C58_10173`) trước chỉ ghi text `"(tra tay — liên biểu)"`;
 nay `congThucKiemTra` sinh CÔNG THỨC Excel thật `=IF(NOT((Dcell)=('Biểu B10'!<colCn><dòng TỔNG>)),
-"✗ <raw>",…)`. `phanTichQuyTacDong`: token `Cn_10173` → `{b10:n}`, cờ mới `lienBieu`.
+"✗ [LIÊN BIỂU] <raw>",…)`. Thông báo lỗi PHÂN BIỆT 2 loại: `✗ [nội tại] ...` = lệch với dòng khác
+TRONG chính biểu; `✗ [LIÊN BIỂU] ...` = lệch với ô TỔNG bên sheet "Biểu B10".
+`phanTichQuyTacDong`: token `Cn_10173` → `{b10:n}`, cờ mới `lienBieu`.
 `themSheetBieu2Va3` nhận thêm `b10RefCua(n)` (từ `xuatBaoCaoThangExcel`: map `Cn` → chữ cái cột qua
 nhãn `(Cn)` trong `B10_HEADER_CHI_TIET`, vals idx = vị trí−2, cột Excel = +3; dòng TỔNG =
 `B10_R0 + b10Rows.length`). `[b]` (kỳ trước) vẫn tra tay. **Additive, KHÔNG đụng giá trị B10.**
-Test cô lập 13/13 (C3→H, C7→L…). → Cán bộ nhập tay dòng D tương ứng: lệch B10 → ô "Kiểm tra" báo "✗".
+Test cô lập 13/13 + **kiểm chứng Excel THẬT** (đăng nhập `admin@qlva.local`, xuất kỳ 07/2026,
+`URL.createObjectURL` bắt Blob → `ExcelJS.xlsx.load` trong trình duyệt): B10 C3/C33/C60 công thức
+KHÔNG còn tham chiếu "DS án huỷ", 0 lỗi `#REF`, "DS án huỷ ĐT/TT/XX" = 0 dòng (⇒ bỏ án huỷ = 0
+tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đúng công thức
+`IF(NOT(...=('Biểu B10'!<col>47))...,"✗ [LIÊN BIỂU]/[nội tại] ...")` (dòng TỔNG B10 = 47 = 3+44 điều luật).
 
 **CHƯA làm / kết luận (phần còn lại của "fix triệt để")**:
 1. **C6-C7/C25-C26/C36-C37/C58-C59/C71-C72 "đếm quá rộng" — KẾT LUẬN: KHÔNG phải bug theo mẫu
