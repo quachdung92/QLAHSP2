@@ -2,6 +2,41 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Nhánh `bieu2-hoan-thien` — 4 cải tiến Excel báo cáo (2026-08-30, `qlahs-sup.html`, tách từ `main` sau khi `main` đã có toàn bộ Biểu 2/3/10 + fix ngành)
+
+Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 commit, ĐÃ kiểm chứng Excel thật (kỳ
+07-08/2026 qua `admin@qlva.local`):
+
+1. **`cb6f228` — Ô toggle "Soi lỗi" (Biểu 2/3).** Ô `H1` Data Validation ("TẮT" / "BẬT — soi
+   dòng liên quan lỗi"). Dòng vi phạm (`✗`) tự tô ĐỎ nhạt (luôn). Bật toggle → mọi dòng là THÀNH
+   PHẦN của quy tắc đang lỗi tự tô VÀNG (VD `D1=D2+D3` sai → D1 đỏ, D2 & D3 vàng). Excel thuần,
+   KHÔNG macro. Cột phụ ẩn `I` = `MAX(--(LEFT(TRIM($F$<anchor+1>),1)="✗"))` qua mọi anchor tham
+   chiếu tới dòng; 2 Conditional Formatting trên `A2:F<cuối>`. `buildAnchorsThamChieu` dựng map
+   ngược md → [anchor].
+2. **`e5c2ed5` — Cột "Tự kiểm tra" cho sheet Biểu B10.** Cột `CN` (92), mỗi dòng điều luật + dòng
+   TỔNG có 1 công thức IF lồng chạy 40 quy tắc NỘI TẠI `quy_tac_bieu_10.md` (`C7-C8=ΣC9..C13`,
+   `C37=ΣC39..C42`…). `BIEU10_QUY_TAC_RAW` (40 chuỗi). `b10ColCuaC` dời lên đầu (dựng 1 lần, dùng
+   chung với khối Biểu 2/3), gộp patch C14-C18 (nhãn gộp "ĐH+ (C14-18)" không match regex → điền
+   tay 5 cột sau C13). CF `A3:CN<TỔNG>`: `LEFT(TRIM($CN3),1)="✗"` → đỏ nhạt. 40/40 quy tắc đã
+   kiểm đúng trên MỌI dòng của file ngành thật.
+3. **`56d0e77` #2 — Điền Biểu 2 D3-D14** (Số người bị bắt / 5 loại bắt / VKS không phê chuẩn).
+   `xuatBaoCaoThangExcel` fetch `bican` có `ngayBat ∈ [ky.ngayBatDau, kỳ kế tiếp)` (query kỳ list
+   để tìm mốc cuối; báo cáo GỘP nhiều kỳ → bỏ qua vì `ky` là object giả). `tinhBieu2(...,
+   biCanBatTrongKy)`: D3 = bị can `!== "tai_ngoai"`; D4-D8 theo `loaiBat`; D9-D12 theo
+   `vksKhongPheChuan` + `suyLoaiLenhKhongPheChuan`; D14 = khẩn cấp đã phê chuẩn. D13 (gia hạn tạm
+   giữ không phê chuẩn) hệ thống chưa tách được → nhập tay. **CAVEAT (ghi trong sheet)**: bị can
+   nhập TRƯỚC 08/2026 chưa có field `ngayBat` → D3-D14 HỤT cho tới khi backfill; kỳ 08/2026 test
+   ra D3=1 (đúng, chỉ 1 bị can có ngayBat).
+4. **`56d0e77` #4 — Kiểm 4 quy tắc `[b]` (kỳ trước) ở Biểu 2.** `D154[b]/D156[b]/D344[b]/D346[b]`
+   (tồn cuối kỳ TRƯỚC ĐT/TT) = tồn ĐẦU kỳ này = `baoCao.{dieu_tra,truy_to}.{tonDauKy,tonDauBiCan}`
+   → truyền `giaTriKyTruoc` vào `themSheetBieu2Va3`, thay bằng HẰNG SỐ trong công thức. Quy tắc
+   D57/D64/D260/D265 từ "(tra tay)" → công thức, nhãn `✗ [KỲ TRƯỚC]`. 7 quy tắc dùng
+   `D151[b]/D153[b]/D342[b]/D343[b]` (số CỘNG DỒN — hệ thống không tính) vẫn "(tra tay)".
+   `phanTichQuyTacDong`: token `Dxx[b]` → `{prevMd}`, cờ `coPrev`. `dungDuoc` viết lại theo term.
+
+Compile-check sạch. **CHƯA mở Excel THẬT xem CF render / toggle chạy / IF lồng tính** (ExcelJS chỉ
+lưu công thức, không tính) — Dũng nên mở file bằng Excel 2016+ xác nhận.
+
 ## ✅ ĐÃ MERGE `bieu-2-3` (gồm cả `ton-ky-thong-nhat`) VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-08-29, theo yêu cầu Dũng "đã check mọi thứ chính xác, triển khai đi")
 
 `git merge --no-ff bieu-2-3` vào `main` (commit `6a072de`, không xung đột — `ton-ky-thong-nhat` là
