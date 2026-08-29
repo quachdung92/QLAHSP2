@@ -7,12 +7,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 commit, ĐÃ kiểm chứng Excel thật (kỳ
 07-08/2026 qua `admin@qlva.local`):
 
-1. **`cb6f228` — Ô toggle "Soi lỗi" (Biểu 2/3).** Ô `H1` Data Validation ("TẮT" / "BẬT — soi
-   dòng liên quan lỗi"). Dòng vi phạm (`✗`) tự tô ĐỎ nhạt (luôn). Bật toggle → mọi dòng là THÀNH
-   PHẦN của quy tắc đang lỗi tự tô VÀNG (VD `D1=D2+D3` sai → D1 đỏ, D2 & D3 vàng). Excel thuần,
-   KHÔNG macro. Cột phụ ẩn `I` = `MAX(--(LEFT(TRIM($F$<anchor+1>),1)="✗"))` qua mọi anchor tham
-   chiếu tới dòng; 2 Conditional Formatting trên `A2:F<cuối>`. `buildAnchorsThamChieu` dựng map
-   ngược md → [anchor].
+1. **`cb6f228` + `235b6cb` (sửa lại theo Dũng) — "Soi lỗi" Biểu 2/3: TÍCH ✔ theo TỪNG dòng lỗi.**
+   Bản đầu là 1 ô toggle chung; Dũng muốn "checkbox — thấy ô nào lỗi thì tick vào, dòng liên quan
+   tô cùng màu, rồi filter theo màu". BẢN HIỆN TẠI: cột **G "Soi 🔎"** mỗi dòng có Data Validation
+   `["✔"]` (allowBlank); cột **H "Cần sửa"** mỗi dòng = `IF(OR($G$<anchor+1><>"",...),"◆","")` —
+   "◆" nếu dòng này là THÀNH PHẦN của quy tắc mà cán bộ đã tích ✔ ở dòng NEO (anchor). CF `A2:H`:
+   (1) `LEFT(TRIM($F2),1)="✗"` → đỏ (dòng vi phạm, LUÔN); (2) `$H2="◆"` → vàng. `ws.autoFilter =
+   A1:H<cuối>` để lọc cột "Cần sửa" = "◆" / lọc theo màu 1 click. Tích nhiều dòng lỗi cùng lúc
+   được; xoá ô G = tắt. (KHÔNG dùng Form Control checkbox thật — ExcelJS không ghi được.)
+   `buildAnchorsThamChieu` dựng map ngược md → [anchor] (refsOf gồm cả chính anchor).
 2. **`e5c2ed5` — Cột "Tự kiểm tra" cho sheet Biểu B10.** Cột `CN` (92), mỗi dòng điều luật + dòng
    TỔNG có 1 công thức IF lồng chạy 40 quy tắc NỘI TẠI `quy_tac_bieu_10.md` (`C7-C8=ΣC9..C13`,
    `C37=ΣC39..C42`…). `BIEU10_QUY_TAC_RAW` (40 chuỗi). `b10ColCuaC` dời lên đầu (dựng 1 lần, dùng
