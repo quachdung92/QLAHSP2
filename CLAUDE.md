@@ -82,11 +82,28 @@ tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đú
 2. C33/C34 (TT) / C60/C61 (XX): quy tắc `D280−D262`/`D17=D1+D2+D3+D4+D9−D15` còn tham chiếu dòng
    Biểu 2/3 (D262/D274/D278/D2/D3) CHƯA rõ nghĩa (thiếu tài liệu mô tả Biểu 2/3). Việc bỏ án huỷ
    ở trên là phần ĐÚNG CHẮC CHẮN theo mọi quy tắc; thành phần đầy đủ của C33/C60 cần Dũng/tài liệu.
-3. **Nghi vấn `quy_tac_bieu_10.md` dòng 20 `C37=C39+C40+C41+C42`**: code hiện thoả `C36=ΣC39..C42`
-   (C39-C42 đếm VỤ theo `vuPrimaryMucDoNT`, khớp `bieu_B10_mo_ta.md` + đã kiểm chứng nhiều lần —
-   xem mục "Biểu B10 C39-C42"). Rule file ghi `C37` (BC) thay vì `C36` (Vụ) — nhiều khả năng lỗi
-   chép của file quy tắc, HOẶC mẫu ngành thật muốn C39-C42 đếm BC. KHÔNG tự sửa — cần Dũng đối
-   chiếu mẫu B10 gốc xác nhận C39-C42 là "Vụ" hay "Bị can".
+3. ~~Nghi vấn `quy_tac_bieu_10.md` dòng 20~~ — **ĐÃ GIẢI QUYẾT**: xem mục kiểm chứng file B10 thật
+   ngay dưới. `C37=C39+C40+C41+C42` là ĐÚNG (C39-C42 đếm BỊ CAN), đã sửa code + doc (commit `1713150`).
+
+## Kiểm chứng `quy_tac_bieu_10.md` với file B10 THẬT đã nhập lên hệ thống ngành (2026-08-29, Dũng cung cấp `10173.xlsx` 1 tháng thật)
+
+Dũng gửi 1 file Biểu 10 (72 cột C1–C72, 32 dòng điều luật + 1 dòng "Tổng") ĐÃ nhập lên hệ thống
+ngành, ngành KHÔNG báo lỗi (trừ các ô liên biểu). Chạy MỌI quy tắc trong `quy_tac_bieu_10.md` đối
+chiếu số liệu thật (script `xlsx` trong scratchpad, đã gỡ):
+- **40/40 quy tắc tự thân (không liên biểu) ĐỀU ĐÚNG** — cả ở dòng Tổng LẪN từng dòng điều luật.
+- **`C37=C39+C40+C41+C42` → `270 = 0+41+2+227` ✓** trên MỌI dòng → **XÁC NHẬN DỨT KHOÁT**: C39-C42
+  đếm BỊ CAN (tổng = C37 = 270 bị can), KHÔNG phải vụ (C36 = 29). Fix `1713150` đúng hướng ngành.
+- C-numbering của `B10_HEADER_CHI_TIET` (C1–C72) KHỚP CHÍNH XÁC layout ngành — cùng vị trí/ý nghĩa
+  cả 3 giai đoạn. (Kiểm tra chéo qua header 3 tầng của file thật.)
+- 29 quy tắc liên biểu (`Dxx_10238` → Biểu 2, `Dxx_10239` → Biểu 3) KHÔNG kiểm được ở đây (thiếu
+  Biểu 2/3 cùng kỳ) — đúng phần "trừ các ô liên biểu" Dũng nói; cấu trúc trong MD nhất quán, cần
+  Biểu 2/3 cùng tháng để đối chiếu (đã có cột "Kiểm tra" `[LIÊN BIỂU]` lo việc này).
+- Quan sát phụ (không phải lỗi công thức): file thật STT restart theo CHƯƠNG BLHS; có 1 dòng mã
+  điều lạ "101**" vẫn được ngành nhận (do các tổng nội tại cân). Bản xuất của hệ thống ta là danh
+  sách phẳng, không chia chương — ngành nhận cả 2 kiểu (validate theo tổng, không theo STT).
+
+→ **KẾT LUẬN: `quy_tac_bieu_10.md` chính xác.** Không cần sửa file quy tắc. Các mục "CHƯA làm" 1-2
+ở trên giữ nguyên (C6/C7 không phải bug; C33/C60 thành phần đầy đủ cần Biểu 2/3).
 
 ## Biểu 2 & Biểu 3 — port lại từ nhánh cũ `feature/tong-ke-dong`, đặt lên nền hệ thống hiện tại (2026-08-28, `qlahs-sup.html`, nhánh `bieu-2-3` = tách từ `ton-ky-thong-nhat`, CHƯA merge/deploy — chỉ compile-check + test cô lập)
 
