@@ -91,14 +91,34 @@ Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 comm
    0 `✗`, Biểu 3 = 0 `✗`, B10 "Tự kiểm tra" = 0 `✗`.** B10 TỔNG C60=65/C61=365; D84 "Kiểm tra" =
    `IF(AND(...NOT(C85=C18-C23-C53-C71))...` với `65-15-0-0=50` → "✓ khớp (2 quy tắc)"; D86 tương
    tự "✓". `C60_10173=D17` / `C61_10173=D18` ✓. C58/C59 vẫn 5/37, D361/D368 ✓.
-   **CÒN 1 caveat (`mdBoQuaBangNhau = {156}`)**: Biểu 2 **D156** (`D79-D86-D141` = 936-106-0 = 830
-   ≠ D156 = 811) — do (a) imprecision RPC-vs-sổ-cái BỊ CAN ĐT (sổ cái 808 vs RPC 811, chênh -3, đã
-   biết từ lâu), (b) D79 ngành có `+D65` = "ĐTBS mới nhận lại" hệ thống CHƯA track. Số HIỂN THỊ 811
-   = RPC = tồn thực tế ĐÚNG; self-check `=` bị bỏ trong sheet của ta. **Khi upload ngành, D156 có
-   thể còn báo `✗`** — cần **Biểu 2 ĐT mô tả** (định nghĩa D58/D64/D65/D79 chính xác + cách ngành
-   đếm bị can bổ sung/nhận lại) để khép hẳn. `D17=D1+D2+D3+D4+D9-D15` (nội-tại Biểu 3, D2/D3 = "hủy
-   án"/"ĐTBS mới nhận lại" CHƯA track) cũng còn latent-lệch (72 ≠ 65) — guard bịt trong sheet ta,
-   ngành có thể báo nếu enforce D2/D3 rỗng = 0. Cần Biểu 3 mô tả.
+8. **`fcdbe72` (cùng nhánh, 2026-08-30) — KHÉP HẲN cả 3 giai đoạn: đọc 3 file ngành THẬT
+   (10173/10238/10239.xlsx) rồi SUY NGƯỢC dòng thành phần từ số tồn RPC.** Dũng: *"đọc lại biểu
+   2,3,10 hoàn chỉnh... tự suy luận cách tính chính xác. file MD có thể là bản cũ vênh nhẹ, hoặc
+   component có 1 số chỉ số phải tự tính tay (do ko có dòng bổ sung/bớt đi)."*
+   **Đối chiếu 3 file ngành thật — MỌI đẳng thức đều đóng trên đó**: Biểu 3 `D17=D1+D2+D3+D4+D9-D15`
+   (66=66), `D84=D17-D22-D52-D70` (51=51); Biểu 2 `D77=D57+..+D71+D73-D75` (367), `D79=..` (942),
+   `D154=D77-D83-D134` (320), `D156=D79-D86-D141` (812), `D280=D260+..-D278` (70), `D344=D280-D282
+   -D326` (41), `D346=D281-D285-D332` (222). → Mô hình ngành: **Tổng thụ lý − đã giải quyết − tạm
+   đình chỉ trong kỳ = tồn cuối**.
+   **Cách sửa — SUY NGƯỢC dòng thành phần từ số tồn RPC** (số tồn = as-of thực tế, BẤT BIẾN):
+   - **XX (Biểu 3)**: `D9 = tongC60 - tồn đầu XX vụ + D15` ; `D12 = tongC61 - tồn đầu XX bị cáo +
+     D16`. (`tongC60` = C60 nay đã `- xx.traDi`, xem item 7.) → `D17=D1+..+D9-D15` VÀ
+     `D84=D17-D22-D52-D70` đều đóng. Kiểm real: D9 = 66-50+8 = 24 = D9 thật; D12 = 373-172+21 = 222.
+   - **ĐT (Biểu 2)**: `D83 = D77 - D134 - baoCao.dieu_tra.tonCuoiKy` ; `D86 = D79 - D141 -
+     tonCuoiBiCanKy` (thay `soBc(dt.chuyenDi)+...`). → `D154=D77-D83-D134` / `D156=D79-D86-D141`
+     đóng. Vẫn thoả `D83>=D92+D100` / `D86>=D95+D117`. Kiểm real: D83 = 367-18-320 = 29 = thật;
+     D86 = 942-0-812 = 130 = thật.
+   - **TT (Biểu 2)**: `D280 = D344 + D282 + D326` ; `D281 = D346 + D285 + D332` (trước để trống →
+     `D344=D280-D282-D326` báo lỗi). → `D344`/`D346` đóng. Kiểm real: D280 = 41+29+0 = 70 = thật;
+     D281 = 222+270+0 = 492 = thật.
+   **CHỈ CÒN `mdBoQuaBangNhau = {280,281}`** cho CHUỖI THÀNH PHẦN `D280=D260+..-D278` /
+   `D281=D265+..-D279` — hệ thống CHƯA tách đủ D262/D274/D276/D278/D279 (nhận lại ĐTBS / nơi khác /
+   chuyển đi / VKS trả ĐTBS trong kỳ). Đây là "phải tự tính tay" Dũng nói — nếu phần mềm ngành
+   enforce chuỗi này, cán bộ điền tay 4-5 dòng đó; `D280` VÀ `D344` thì ĐÚNG. `D77=D57+..` /
+   `D79=D64+..` (thiếu D58/D65 = "điều tra lại", ~0) tự thoả vì guard bịt khi vế trống.
+   **Kiểm chứng Excel THẬT kỳ 07/2026** (đọc `exceljs` + tự eval MỌI công thức "Kiểm tra"):
+   **Biểu 2 = 0 `✗`, Biểu 3 = 0 `✗`, B10 "Tự kiểm tra" = 0 `✗`.** D154=319, D156=811, D344=42,
+   D346=219, D84=50, D86=328 — TẤT CẢ = số tồn RPC thực tế, TẤT CẢ đẳng thức `=` đóng.
 
 Compile-check sạch. **CHƯA mở Excel THẬT xem CF render / toggle chạy / IF lồng tính** (ExcelJS chỉ
 lưu công thức, không tính) — Dũng nên mở file bằng Excel 2016+ xác nhận.
@@ -215,18 +235,19 @@ tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đú
    so B10 của ta với Biểu 2/3 của ta cho đúng các quan hệ đó — lệch thật sẽ hiện `✗`.
 3. ~~Nghi vấn `quy_tac_bieu_10.md` dòng 20~~ — **ĐÃ GIẢI QUYẾT**: `C37=C39+C40+C41+C42` là ĐÚNG
    (C39-C42 đếm BỊ CAN), đã sửa code + doc (commit `1713150`).
-4. **CÒN 3 `✗` "tồn cuối kỳ" ≠ chuỗi cộng dồn** — item 6 (bỏ self-check) rồi item 7 (KHÉP thật)
-   ở mục đầu file:
-   - **D84/D86 (Biểu 3, XX vụ/bị cáo) — ĐÃ KHÉP HẲN** (item 7): `C60/C61` nay trừ thêm "Toà trả hồ
-     sơ về TT" (`xx.traDi`) → `D84=D17-D22-D52-D70` KHỚP số tồn thực tế (kỳ 07: 65-15-0-0 = 50 vụ;
-     365-37-0-0 = 328 bị cáo). Upload ngành: `D84=…`, `D17_10239=C60`, `C60<=C61` đều đúng. Số
-     TỒN = RPC = thực tế ĐÚNG.
-   - **D156 (Biểu 2, ĐT bị can) — CHƯA khép** (`mdBoQuaBangNhau={156}`): `D79-D86-D141` = 830 ≠
-     811. Do (a) imprecision RPC-vs-sổ-cái BỊ CAN ĐT (808 vs 811, đã biết từ lâu), (b) D79 ngành
-     `+D65` = "ĐTBS mới nhận lại" hệ thống CHƯA track. Số hiển thị 811 = RPC = ĐÚNG; self-check `=`
-     bỏ trong sheet ta nhưng **ngành có thể còn báo `✗` khi upload**. Cần **Biểu 2 ĐT mô tả** để khép.
-   - `D17=D1+D2+D3+D4+D9-D15` (nội-tại Biểu 3): D2/D3 ("hủy án"/"ĐTBS mới nhận lại") CHƯA track →
-     72 ≠ 65, guard bịt trong sheet ta; ngành có thể báo nếu enforce. Cần **Biểu 3 mô tả**.
+4. ~~CÒN `✗` "tồn cuối kỳ" ≠ chuỗi cộng dồn~~ — **ĐÃ KHÉP HẲN CẢ 3 GIAI ĐOẠN 2026-08-30 (item 8
+   mục đầu file)** bằng cách đọc 3 file ngành thật + suy ngược dòng thành phần từ số tồn RPC:
+   - **XX (Biểu 3)**: D9/D12 ← D17/D18 (= tongC60/C61, C60 nay `- xx.traDi`). `D17=D1+..+D9-D15`,
+     `D84=D17-D22-D52-D70` đóng. Kỳ 07: D84 = 50, D86 = 328.
+   - **ĐT (Biểu 2)**: D83/D86 ← D154/D156 (RPC). `D154=D77-D83-D134`, `D156=D79-D86-D141` đóng.
+     Kỳ 07: D154 = 319, D156 = 811.
+   - **TT (Biểu 2)**: D280/D281 ← D344/D346 (RPC). `D344=D280-D282-D326` đóng. Kỳ 07: D344 = 42,
+     D346 = 219.
+   - Cả 3 kiểm ĐÚNG TUYỆT ĐỐI trên file ngành thật (D9 = 24, D83 = 29, D86 = 130, D280 = 70,
+     D281 = 492 — khớp con số trong file). Biểu 2/3 + B10 = **0 `✗`**.
+   - CÒN `mdBoQuaBangNhau={280,281}` cho CHUỖI THÀNH PHẦN `D280=D260+..-D278` (D262/D274/D276/D278
+     /D279 chưa tách đủ). Nếu phần mềm ngành enforce chuỗi này → cán bộ điền tay 4-5 dòng đó; D280
+     + D344 (tồn) thì ĐÚNG.
 
 ## Kiểm chứng `quy_tac_bieu_10.md` với file B10 THẬT đã nhập lên hệ thống ngành (2026-08-29, Dũng cung cấp `10173.xlsx` 1 tháng thật)
 

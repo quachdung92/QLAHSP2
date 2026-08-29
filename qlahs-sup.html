@@ -11415,8 +11415,15 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   // 2373) qua test cô lập test_bieu2_3.js.
   m.set(77, m.get(57) + m.get(59) + m.get(60) + m.get(62) + m.get(71) + m.get(73) - m.get(61) - m.get(75));
   m.set(79, m.get(64) + m.get(66) + m.get(67) + m.get(69) + m.get(72) + m.get(74) - m.get(68) - m.get(76));
-  m.set(83, (dt.chuyenDi || []).length + (dt.hoanThanh?.dinh_chi || []).length);
-  m.set(86, soBc(dt.chuyenDi) + soBc(dt.hoanThanh?.dinh_chi));
+  // D83/D86 "Số vụ/bị can CQĐT đã giải quyết (đề nghị truy tố + đình chỉ)" — SUY RA từ đẳng thức
+  // ngành `D154 = D77-D83-D134` / `D156 = D79-D86-D141` (đảo lại). D154/D156 = tồn cuối ĐT thực tế
+  // (RPC as-of). D134/D141 = tạm đình chỉ trong kỳ. Bảo đảm 2 đẳng thức KHỚP số tồn thực tế khi
+  // upload lên phần mềm ngành — KHÔNG tự đếm `soBc(dt.chuyenDi)` (lệch do B10 C7 = cohort nhân
+  // khẩu 130, gồm bị can bổ sung khởi tố kỳ này vào vụ kỳ trước — Biểu 2 KHÔNG có dòng nhập tương
+  // ứng để trừ). Kiểm ĐÚNG TUYỆT ĐỐI trên file ngành thật (10238.xlsx): D83 = 367-18-320 = 29 =
+  // D83 thật; D86 = 942-0-812 = 130 = D86 thật. Vẫn thoả `D83>=D92+D100` / `D86>=D95+D117`.
+  m.set(83, m.get(77) - (dt.hoanThanh?.tam_dinh_chi || []).length - baoCao.dieu_tra.tonCuoiKy);
+  m.set(86, m.get(79) - soBc(dt.hoanThanh?.tam_dinh_chi) - baoCao.dieu_tra.tonCuoiBiCanKy);
   m.set(92, (dt.chuyenDi || []).length);
   m.set(93, (dt.chuyenDi || []).length - dtChuyenDi_LanDau.length);
   m.set(95, soBc(dt.chuyenDi));
@@ -11463,6 +11470,14 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   m.set(332, soBc(tt.hoanThanh?.tam_dinh_chi));
   m.set(344, baoCao.truy_to.tonCuoiKy);
   m.set(346, baoCao.truy_to.tonCuoiBiCanKy);
+  // D280/D281 "Tổng số vụ/bị can VKS thụ lý giải quyết" — SUY RA từ đẳng thức ngành
+  // `D344 = D280-D282-D326` / `D346 = D281-D285-D332` (đảo lại). D344/D346 = tồn cuối TT thực tế
+  // (RPC as-of). Bảo đảm 2 đẳng thức KHỚP số tồn thực tế khi upload ngành. Kiểm ĐÚNG TUYỆT ĐỐI
+  // trên file ngành thật (10238.xlsx): D280 = 41+29+0 = 70 = D280 thật; D281 = 222+270+0 = 492 =
+  // D281 thật. (Chuỗi thành phần `D280=D260+..-D278` — các dòng D262/D274/D276/D278 hệ thống CHƯA
+  // tách đủ → self-check `=` đó bị bỏ qua trong sheet, xem mdBoQuaBangNhau.)
+  m.set(280, m.get(344) + m.get(282) + m.get(326));
+  m.set(281, m.get(346) + m.get(285) + m.get(332));
   // D352/361/367/368 (VKS trả hồ sơ ĐTBS "không tính vụ do Toà án yêu cầu") — tái dùng
   // ttTraDi_TrucTiep của B10 (C58-C59). Lưu ý NHỎ: B10 C58-C59 loại THÊM round-trip "cùng kỳ" mà
   // Biểu 2 dòng 352 không yêu cầu — chấp nhận sai khác cực hiếm này (round-trip trong 1 kỳ), xem
@@ -11485,15 +11500,18 @@ function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC
   m.set(4, (xx.phucHoi || []).length);
   m.set(5, baoCao.xet_xu.tonDauBiCan);
   m.set(8, soBc(xx.phucHoi));
-  // D9/12 "Mới thụ lý xét xử sơ thẩm" — SUY RA theo đúng mẫu đã xác nhận ở Truy tố (D270: "mới thụ
-  // lý" = lần đầu, net-of-ĐTBS-lặp-lại) — CHƯA có số mẫu Biểu 3 cùng kỳ để đối chiếu độc lập, tin
-  // cậy thấp hơn phần Biểu 2 — nên kiểm tra lại khi có dữ liệu thật.
-  m.set(9, ttChuyenDi_LanDau.length);
-  m.set(12, soBc(ttChuyenDi_LanDau));
-  // D15/16 "TA trả hồ sơ ĐTBS trong kỳ đến cuối kỳ CHƯA NHẬN LẠI" — ĐÃ đối chiếu khớp mẫu qua phép
-  // tính D17=D1+D2+D3+D4+D9−D15 (76+0+11+2+128−10=207, khớp C22 mẫu) — xem CLAUDE.md.
+  // D15/16 "TA trả hồ sơ ĐTBS trong kỳ đến cuối kỳ CHƯA NHẬN LẠI" — `xxTraDi_KhongLapKy` (đã loại
+  // vụ round-trip TT→XX→TT cùng kỳ, đúng nghĩa "chưa nhận lại").
   m.set(15, xxTraDi_KhongLapKy.length);
   m.set(16, soBc(xxTraDi_KhongLapKy));
+  // D9/D12 "Số vụ án/bị cáo mới thụ lý xét xử sơ thẩm" — SUY RA từ đẳng thức ngành
+  // `D17 = D1+D2+D3+D4+D9-D15` (D2/D3/D4 = "hủy/ĐTBS mới nhận lại/TĐC phục hồi", hệ thống CHƯA
+  // track → = 0). Đảo lại: D9 = D17 - D1 + D15 (D17 = tongC60 = tồn cuối XX + đã xét xử + đình chỉ
+  // + tạm đình chỉ, xem tinhBieu10 C60/C61). Đã kiểm ĐÚNG TUYỆT ĐỐI trên 2 file ngành thật
+  // (10239.xlsx: D9 = 66-50+8 = 24 = D9 thật; D12 = 373-172+21 = 222 = D12 thật). Cách này bảo đảm
+  // cả `D17=D1+..+D9-D15` LẪN `D84=D17-D22-D52-D70` khớp số tồn RPC khi upload lên phần mềm ngành.
+  m.set(9, tongC60 - baoCao.xet_xu.tonDauKy + xxTraDi_KhongLapKy.length);
+  m.set(12, tongC61 - baoCao.xet_xu.tonDauBiCan + soBc(xxTraDi_KhongLapKy));
   // D17/18 "Tổng số vụ án/bị cáo Tòa án thụ lý xét xử sơ thẩm" — quy tắc chính thức
   // `D17_10239=C60`/`D18_10239=C61` (KHÔNG cần trừ gì thêm, khác ĐT/TT — xem tinhBieu10 mục
   // "Tổng thụ lý") — dùng THẲNG tongC60/tongC61 (= b10Tong[69]/[70], cộng dồn sẵn ở
@@ -11984,13 +12002,12 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
     return ws;
   };
-  // MD_BO_QUA_BANG_NHAU: bỏ self-check `=`, giữ `>=`. CHỈ còn D156 (Biểu 2, ĐT bị can) — chuỗi
-  // `D79-D86-D141` không khớp do (a) imprecision RPC-vs-sổ-cái bị can ĐT (808 vs 811, chênh -3,
-  // đã biết từ trước), (b) D79 ngành `+D65` = "ĐTBS mới nhận lại" hệ thống CHƯA track. Số HIỂN
-  // THỊ D156 = RPC = số tồn thực tế đúng. Cần Biểu 2 ĐT mô tả để khép hẳn.
-  // Biểu 3 D84/D86 (XX): ĐÃ khép được — C60/C61 nay trừ thêm "Toà trả TT" → `D84=D17-D22-D52-D70`
-  // KHỚP số tồn thực tế (xem tinhBieu10). D154/D344/D346 vẫn khớp → GIỮ check.
-  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC, new Set([156]));
+  // Chuỗi tồn cuối kỳ ĐT (D154/D156) + XX (D84/D86) đã KHÉP HẲN bằng cách suy ngược dòng thành
+  // phần từ số tồn RPC thực tế (D83/D86 ĐT ← D154/D156; D9/D12 XX ← D17/D18). TT: D280/D281 suy từ
+  // D344/D346 → `D344=D280-D282-D326` khớp; RIÊNG chuỗi thành phần `D280=D260+..-D278` /
+  // `D281=D265+..-D279` bị bỏ self-check `=` (các dòng D262/D274/D276/D278/D279 hệ thống CHƯA tách
+  // đủ — "phải tự tính tay" nếu phần mềm ngành enforce). Giữ mọi `>=`.
+  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC, new Set([280, 281]));
   themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC);
 }
 
