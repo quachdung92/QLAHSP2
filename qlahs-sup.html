@@ -11332,7 +11332,7 @@ const BIEU23_CAN_XAC_NHAN = new Set([
   "B3:2","B3:3","B3:6","B3:7",                                      // XX: hủy mới nhận / ĐTBS mới nhận lại (D17/18 ĐÃ tự tính qua b10Tong)
 ]);
 
-function tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7) {
+function tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7, biCanBatTrongKy) {
   const m = new Map();
   const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds;
   const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
@@ -11343,6 +11343,29 @@ function tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuy
     }
     return n;
   };
+
+  // ── D3-D14: Số người bị bắt trong kỳ + loại bắt + VKS không phê chuẩn (2026-08-30).
+  // biCanBatTrongKy = bị can có `ngayBat` rơi trong khoảng KỲ (fetch ở xuatBaoCaoThangExcel).
+  // CHỈ đếm bị can đã bị áp dụng biện pháp ngăn chặn (không phải tại ngoại). `loaiBat` chỉ được
+  // nhập cho tạm giữ (Dũng: "tạm giam ko có loại bắt") nên D3 >= ΣD4..D8, không phải "=".
+  // LƯU Ý: bị can nhập TRƯỚC 08/2026 chưa có field `ngayBat` → D3-D14 sẽ hụt cho tới khi backfill.
+  if (biCanBatTrongKy) {
+    const bcBat = biCanBatTrongKy.filter(bc => bc.bienPhapNganChan && bc.bienPhapNganChan !== "tai_ngoai");
+    const dem = (f) => bcBat.filter(bc => bc.loaiBat === f).length;
+    m.set(3, bcBat.length);
+    m.set(4, dem("khan_cap"));
+    m.set(5, dem("qua_tang"));
+    m.set(6, dem("truy_na"));
+    m.set(7, dem("dau_thu"));
+    m.set(8, dem("tu_thu"));
+    const bcKPC = bcBat.filter(bc => bc.vksKhongPheChuan);
+    m.set(9, bcKPC.length);
+    m.set(10, bcKPC.filter(bc => suyLoaiLenhKhongPheChuan(bc) === "khan_cap").length);
+    m.set(11, bcKPC.filter(bc => suyLoaiLenhKhongPheChuan(bc) === "tam_giam").length);
+    m.set(12, bcKPC.filter(bc => suyLoaiLenhKhongPheChuan(bc) === "bat_tam_giam").length);
+    // D13 (gia hạn tạm giữ không phê chuẩn) — hệ thống chưa tách được, để nhập tay.
+    m.set(14, bcBat.filter(bc => bc.loaiBat === "khan_cap" && !bc.vksKhongPheChuan).length);
+  }
 
   // ── Điều tra (dòng 57-160) — đã đối chiếu khớp mẫu: D77=871, D79=2373, D83=254, D86=1619 ──
   m.set(57, baoCao.dieu_tra.tonDauKy);
@@ -11734,17 +11757,19 @@ function phanTichQuyTacDong(raw) {
   const s = raw.replace(/\s+/g, "");
   let op = "=", iOp = s.indexOf("=");
   for (const o of [">=", "<=", ">", "<"]) { const i = s.indexOf(o); if (i >= 0) { op = o; iOp = i; break; } }
-  let coKhac = false;   // token không kiểm tra được (VD Dxx[b] = kỳ trước)
+  let coKhac = false;   // token không kiểm tra được
   let coB10 = false;    // token Cxx_10173 = tham chiếu sang sheet "Biểu B10" (kiểm tra LIÊN BIỂU được)
+  let coPrev = false;   // token Dxx[b] = giá trị KỲ TRƯỚC (kiểm được nếu xuatBaoCao truyền giaTriKyTruoc)
   const parseVe = (str) => {
     const terms = []; let m;
     const re = /([+-]?)(D\d+\[b\]|C\d+_10173|D\d+_\d+|D\d+|C\d+(?:_\d+)?|\d+)/g;
     while ((m = re.exec(str))) {
       const dau = m[1] === "-" ? -1 : 1, tok = m[2];
-      const md = tok.match(/^D(\d+)$/), b10 = tok.match(/^C(\d+)_10173$/);
+      const md = tok.match(/^D(\d+)$/), b10 = tok.match(/^C(\d+)_10173$/), prev = tok.match(/^D(\d+)\[b\]$/);
       if (md) terms.push({ md: +md[1], dau });
       else if (/^\d+$/.test(tok)) terms.push({ num: +tok, dau });
       else if (b10) { coB10 = true; terms.push({ b10: +b10[1], dau }); }
+      else if (prev) { coPrev = true; terms.push({ prevMd: +prev[1], dau }); }
       else { coKhac = true; terms.push({ khac: tok, dau }); }
     }
     return terms;
@@ -11753,71 +11778,137 @@ function phanTichQuyTacDong(raw) {
   const anchor = lhs.find(t => t.md != null)?.md ?? rhs.find(t => t.md != null)?.md ?? null;
   if (anchor == null) return null;
   // tuKiemTra: kiểm tra ĐƯỢC hết trong CHÍNH sheet này (chỉ Dxx + số). lienBieu: cần tham chiếu
-  // sheet "Biểu B10" (Cxx_10173) nhưng vẫn ra công thức Excel check được (xem congThucKiemTra).
-  return { raw, op, lhs, rhs, anchor, tuKiemTra: !coKhac && !coB10, lienBieu: coB10 && !coKhac };
+  // sheet "Biểu B10" (Cxx_10173). coPrev: có token Dxx[b] (kỳ trước) — kiểm được nếu giaTriKyTruoc
+  // có đủ (xem dungDuoc trong congThucKiemTra); không có `khac`.
+  return { raw, op, lhs, rhs, anchor, coPrev,
+    tuKiemTra: !coKhac && !coB10 && !coPrev, lienBieu: coB10 && !coKhac && !coPrev };
 }
 const BIEU2_QUY_TAC = BIEU2_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
 const BIEU3_QUY_TAC = BIEU3_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
+
+// Quy tắc NỘI TẠI của Biểu 10 (từ quy_tac_bieu_10.md — CHỈ các dòng KHÔNG liên biểu, tức không có
+// _10238/_10239). 40 quy tắc, đã kiểm chứng đúng trên MỌI dòng điều luật + dòng TỔNG của file B10
+// ngành thật (10173.xlsx). Dùng cho cột "Tự kiểm tra" trên sheet "Biểu B10" — mỗi Cn thay bằng ô
+// <cột Cn><dòng hiện tại> (xem congThucKiemTraB10 trong xuatBaoCaoThangExcel).
+const BIEU10_QUY_TAC_RAW = [
+  "C3>=C25+C28+C31", "C4>=C26+C29+C32", "C4>=C5", "C7>=C8",
+  "C7-C8=C14+C15+C16+C17+C18", "C7-C8=C9+C10+C11+C12+C13",
+  "C7-C8>=C21", "C7-C8>=C20", "C7-C8>=C23", "C7-C8>=C24", "C7-C8>=C19",
+  "C21>=C22", "C26>=C27", "C29>=C30",
+  "C33>=C36+C53+C56", "C34>=C35", "C34>=C37+C54+C57",
+  "C37>=C38", "C37=C39+C40+C41+C42", "C37-C38=C43+C44+C45+C46+C47",
+  "C37-C38>=C48", "C37-C38>=C49", "C37-C38>=C50", "C37-C38>=C52",
+  "C50>=C51", "C54>=C55",
+  "C61>=C62", "C61>=C64+C67+C70", "C64>=C65", "C67>=C68",
+  "C53<=C54", "C36<=C37", "C56<=C57", "C60<=C61", "C63<=C64", "C66<=C67",
+  "C69<=C70", "C71<=C72", "C25<=C26", "C58<=C59",
+];
 
 
 // b10RefCua(n): trả chuỗi tham chiếu Excel tới ô TỔNG của cột Cn trên sheet "Biểu B10"
 // (VD "'Biểu B10'!K95"), hoặc null nếu không map được. Truyền từ xuatBaoCaoThangExcel (nơi biết
 // layout B10 + số dòng TỔNG động). Quy tắc `Cn_10173=Dm` → cột "Kiểm tra" tự đối chiếu liên biểu.
-function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null) {
+function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null, giaTriKyTruoc = {}) {
   const MAU = { tuDong: "FFD1FAE5", canXacNhan: "FFFEF3C7", chuaCo: "FFF1F5F9" };
   // Trong sheet: dòng mã K nằm ở HÀNG Excel K+1 (1 hàng tiêu đề trên cùng), giá trị ở CỘT C.
   // Term "Dk" trong quy tắc → ô Excel `C{k+1}`. Ô trống Excel = 0 nên dòng chưa nhập không báo giả.
   // Term "Cn_10173" (b10) → ô TỔNG cột Cn trên sheet "Biểu B10" qua b10RefCua(n).
+  // Term "Dn[b]" (prevMd) → HẰNG SỐ giá trị kỳ trước qua giaTriKyTruoc[n] (null nếu không có).
+  const prevOK = (n) => giaTriKyTruoc[n] != null;
   const oCua = (t) => {
     if (t.md != null) return `C${t.md + 1}`;
     if (t.b10 != null) return b10RefCua(t.b10) || "0";
+    if (t.prevMd != null) return prevOK(t.prevMd) ? String(giaTriKyTruoc[t.prevMd]) : "0";
     return String(t.num);
   };
   const bieuThuc = (ve) => {
-    const xs = ve.filter(t => t.md != null || t.num != null || t.b10 != null);
+    const xs = ve.filter(t => t.md != null || t.num != null || t.b10 != null || t.prevMd != null);
     return xs.length ? xs.map((t, i) => (t.dau < 0 ? "-" : (i === 0 ? "" : "+")) + oCua(t)).join("") : "0";
   };
-  // Rule kiểm tra được = tự kiểm tra (chỉ Dxx) HOẶC liên biểu mà MỌI term b10 đều map được sang B10.
-  const dungDuoc = (q) => q.tuKiemTra
-    || (q.lienBieu && [...q.lhs, ...q.rhs].every(t => t.b10 == null || b10RefCua(t.b10)));
+  // Rule kiểm tra được = tự kiểm tra (chỉ Dxx) HOẶC mọi term b10 map được sang B10 VÀ mọi term
+  // Dn[b] có giá trị kỳ trước.
+  const dungDuoc = (q) => {
+    const terms = [...q.lhs, ...q.rhs];
+    if (terms.some(t => t.khac != null)) return false;
+    if (terms.some(t => t.b10 != null && !b10RefCua(t.b10))) return false;
+    if (terms.some(t => t.prevMd != null && !prevOK(t.prevMd))) return false;
+    return true;
+  };
   const congThucKiemTra = (qtList) => {
     const auto = qtList.filter(dungDuoc);
-    if (!auto.length) return qtList.length ? "(tra tay — kỳ trước / nội bộ Biểu 2)" : null;
+    if (!auto.length) return qtList.length ? "(tra tay — số cộng dồn kỳ trước)" : null;
     const soLien = auto.filter(q => q.lienBieu).length;
-    let f = `"✓ khớp (${auto.length} quy tắc${soLien ? `, ${soLien} liên biểu` : ""})"`;
+    const soPrev = auto.filter(q => q.coPrev).length;
+    let f = `"✓ khớp (${auto.length} quy tắc${soLien ? `, ${soLien} liên biểu` : ""}${soPrev ? `, ${soPrev} có số kỳ trước` : ""})"`;
     for (let i = auto.length - 1; i >= 0; i--) {
       const q = auto[i];
       const cond = `(${bieuThuc(q.lhs)})${q.op}(${bieuThuc(q.rhs)})`;
-      // Nói rõ loại lệch: [LIÊN BIỂU] = lệch với ô TỔNG bên sheet "Biểu B10"; [nội tại] = lệch với
-      // dòng khác trong CHÍNH sheet này. Giúp cán bộ biết ngay phải rà B10 hay rà các dòng cùng biểu.
-      const nhan = q.lienBieu ? "✗ [LIÊN BIỂU] " : "✗ [nội tại] ";
+      // Nói rõ loại lệch: [LIÊN BIỂU] = lệch ô TỔNG bên "Biểu B10"; [KỲ TRƯỚC] = có dùng hằng số tồn
+      // đầu kỳ (= tồn cuối kỳ trước); [nội tại] = chỉ lệch với dòng khác trong CHÍNH sheet này.
+      const nhan = q.lienBieu ? "✗ [LIÊN BIỂU] " : (q.coPrev ? "✗ [KỲ TRƯỚC] " : "✗ [nội tại] ");
       f = `IF(NOT(${cond}),"${nhan}${q.raw.replace(/"/g, "'")}",${f})`;
     }
     return { formula: "=" + f };
   };
+  // Xây map "mỗi mã dòng md ĐƯỢC quy tắc nào (theo anchor) tham chiếu tới" — dùng cho tính năng
+  // "Soi lỗi": bật toggle → tự tô vàng mọi dòng là INPUT của 1 quy tắc đang báo ✗ (VD D1=D2+D3
+  // lỗi thì tô D1 + D2 + D3). refsOfAnchor(a) = mọi md xuất hiện trong lhs/rhs quy tắc neo tại a,
+  // cộng chính a. anchorsThamChieu[md] = danh sách anchor mà md nằm trong refsOf(anchor).
+  const buildAnchorsThamChieu = (quyTacList) => {
+    const refsOf = new Map(); // anchor -> Set(md)
+    for (const q of quyTacList) {
+      if (!refsOf.has(q.anchor)) refsOf.set(q.anchor, new Set([q.anchor]));
+      const s = refsOf.get(q.anchor);
+      for (const t of [...q.lhs, ...q.rhs]) if (t.md != null) s.add(t.md);
+    }
+    const inv = new Map(); // md -> [anchor,...]
+    for (const [a, set] of refsOf) for (const md of set) {
+      if (!inv.has(md)) inv.set(md, []);
+      inv.get(md).push(a);
+    }
+    return inv;
+  };
   const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan, quyTacList) => {
     const ws = wb.addWorksheet(tenSheet);
     ws.views = [{ state: "frozen", ySplit: 1 }];
-    ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }];
-    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái", "Quy tắc kiểm tra", "Kiểm tra (Excel tự tính khi nhập tay)"]);
+    ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }, { width: 14 }, { width: 30 }, { width: 6 }];
+    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái", "Quy tắc kiểm tra", "Kiểm tra (Excel tự tính khi nhập tay)", "🔍 Soi lỗi", "TẮT", null]);
     hRow.font = { bold: true };
-    hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    for (let c = 1; c <= 6; c++) hRow.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    // Ô toggle H1: chọn "BẬT — soi dòng liên quan lỗi" thì mọi dòng là input của 1 quy tắc đang ✗ tự tô vàng.
+    const oToggle = ws.getCell("H1");
+    oToggle.dataValidation = { type: "list", allowBlank: false, formulae: ['"TẮT,BẬT — soi dòng liên quan lỗi"'] };
+    oToggle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF9C3" } };
+    oToggle.font = { bold: true, color: { argb: "FF92400E" } };
+    oToggle.alignment = { horizontal: "center" };
+    ws.getCell("G1").alignment = { horizontal: "right" };
+
     const qtTheoNeo = new Map();
     for (const q of quyTacList) {
       if (!qtTheoNeo.has(q.anchor)) qtTheoNeo.set(q.anchor, []);
       qtTheoNeo.get(q.anchor).push(q);
     }
+    const anchorsThamChieu = buildAnchorsThamChieu(quyTacList);
+    let hangCuoiDuLieu = 1;
     for (const r of rows) {
       const co = giaTriMap.has(r.md);
       const canXN = !co && BIEU23_CAN_XAC_NHAN.has(`${tienToXacNhan}:${r.md}`);
       const trangThai = co ? "✓ Tự động tính"
         : (canXN ? "❓ Cần xác nhận công thức (xem quy_tac_bieu_*.md)" : "⚠ Chưa có dữ liệu — nhập tay");
       const qtDong = qtTheoNeo.get(r.md) || [];
+      // Cột I (ẩn): 1 nếu md này là input của ≥1 quy tắc (theo anchor) đang báo ✗. Mã dòng md nằm
+      // ở hàng Excel md+1, ô "Kiểm tra" ở cột F → dò "✗" đầu chuỗi qua LEFT(TRIM(...)).
+      const anchors = anchorsThamChieu.get(r.md) || [];
+      const oSoi = anchors.length
+        ? { formula: "MAX(" + anchors.map(a => `--(LEFT(TRIM($F$${a + 1}),1)="✗")`).join(",") + ")" }
+        : 0;
       const row = ws.addRow([
         r.tc, r.md, co ? giaTriMap.get(r.md) : null, trangThai,
         qtDong.length ? qtDong.map(q => q.raw).join("\n") : null,
         congThucKiemTra(qtDong),
+        null, null, oSoi,
       ]);
+      hangCuoiDuLieu = row.number;
       row.getCell(1).alignment = { wrapText: true, vertical: "top" };
       row.getCell(5).alignment = { wrapText: true, vertical: "top" };
       row.getCell(4).font = { color: { argb: co ? "FF065F46" : (canXN ? "FF92400E" : "FF64748B") } };
@@ -11825,14 +11916,31 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null)
         row.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: co ? MAU.tuDong : (canXN ? MAU.canXacNhan : MAU.chuaCo) } };
       }
     }
+    ws.getColumn(9).hidden = true; // cột phụ "đang bị lỗi tham chiếu"
+    // Conditional formatting: (1) dòng có ô Kiểm tra = "✗ ..." → tô đỏ nhạt (LUÔN bật);
+    // (2) khi H1 bắt đầu bằng "BẬT" VÀ cột I = 1 → tô vàng (dòng input của quy tắc đang lỗi).
+    if (hangCuoiDuLieu > 1) {
+      const vung = `A2:F${hangCuoiDuLieu}`;
+      ws.addConditionalFormatting({
+        ref: vung,
+        rules: [
+          { type: "expression", priority: 1, formulae: [`LEFT(TRIM($F2),1)="✗"`],
+            style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFFECACA" } } } },
+          { type: "expression", priority: 2, formulae: [`AND(LEFT($H$1,3)="BẬT",$I2=1)`],
+            style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFFEF08A" } } } },
+        ],
+      });
+    }
     ws.addRow([]);
     [
       ["Ghi chú:"],
       ["• Cột 'Số liệu': ✓ Tự động tính (xanh) = hệ thống điền từ dữ liệu. ⚠ Chưa có dữ liệu (xám) = tự nhập tay. ❓ Cần xác nhận công thức (vàng) = có manh mối nhưng chưa chắc, tự nhập rồi đối chiếu."],
       ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗ [nội tại] ...' = lệch với dòng khác TRONG chính biểu này; '✗ [LIÊN BIỂU] ...' = lệch với ô TỔNG tương ứng bên sheet 'Biểu B10'."],
+      ["• Ô 'Soi lỗi' (H1, góc trên phải): dòng đang vi phạm tự tô ĐỎ NHẠT. Chọn 'BẬT — soi dòng liên quan lỗi' ở ô đó → mọi dòng là THÀNH PHẦN của 1 quy tắc đang lỗi tự tô VÀNG (VD D1=D2+D3 sai thì D1 đỏ, D2 & D3 vàng) — dễ dò xem sửa dòng nào."],
       ["• Dòng '✓ Tự động tính' dùng công thức RÚT GỌN (bỏ các số hạng chưa có tính năng theo dõi) — khi bạn nhập tay các dòng còn thiếu, ô 'Kiểm tra' của dòng tổng có thể báo '✗', lúc đó cập nhật lại dòng tổng cho khớp."],
       ["• Quy tắc 'C.._10173 = D..' (LIÊN BIỂU): cột 'Kiểm tra' đã tự đối chiếu với ô TỔNG tương ứng trên sheet 'Biểu B10' trong CHÍNH file này (báo '✗' nếu lệch)."],
-      ["• Quy tắc có '[b]' (giá trị kỳ TRƯỚC) không tự kiểm tra được — cột 'Kiểm tra' ghi '(tra tay)', đối chiếu thủ công với báo cáo kỳ trước."],
+      ["• Quy tắc có '[b]': dùng D154[b]/D156[b]/D344[b]/D346[b] (tồn cuối kỳ TRƯỚC = tồn đầu kỳ này) đã được thay bằng hằng số → tự kiểm tra được (nhãn '✗ [KỲ TRƯỚC]'). Các quy tắc dùng D151[b]/D153[b]/D342[b]/D343[b] (số cộng dồn) vẫn ghi '(tra tay)'."],
+      ["• Dòng D3-D14 (Số người bị bắt / loại bắt / VKS không phê chuẩn): CHỈ đếm bị can đã nhập 'Ngày bắt' rơi trong kỳ. Bị can nhập TRƯỚC 08/2026 chưa có trường này → dòng có thể hụt, cần bổ sung tay hoặc backfill."],
       ["• Nguồn quy tắc: quy_tac_bieu_2.md / quy_tac_bieu_3.md trong mã nguồn hệ thống."],
     ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
     return ws;
@@ -12056,8 +12164,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   wsB10.views = [{ state: "frozen", xSplit: 3, ySplit: 2 }];
   // Cột A (mới): Mã ĐL — khóa tra cứu cho SUMIF ở các cột "Vụ", cùng chuẩn với cột "Mã ĐL vụ" của sheets danh sách
   // Cột B: Số điều (hiển thị), Cột C: Tên tội danh, Cột D+: giá trị B10 (vals[0..87])
-  wsB10.addRow(["Mã ĐL", ...B10_HEADER_NHOM]).font = { bold: true };
-  wsB10.addRow(["",       ...B10_HEADER_CHI_TIET]).font = { bold: true };
+  wsB10.addRow(["Mã ĐL", ...B10_HEADER_NHOM, "Tự kiểm tra"]).font = { bold: true };
+  wsB10.addRow(["",       ...B10_HEADER_CHI_TIET, "40 quy tắc nội tại (quy_tac_bieu_10.md)"]).font = { bold: true };
+  const B10_COT_KIEMTRA = 3 + 88 + 1; // A,B,C + 88 vals + 1 = cột 92 (1-based)
   // Helper: "Điều 173 BLHS 2025" → "173"
   const extractSoDieu = (d) => { const m = (d||"").match(/Điều\s+(\d+[a-zA-Z]*)/i); return m ? m[1] : (d||""); };
   // Helper: chỉ số cột 0-based → chữ cái Excel (A=0, Z=25, AA=26, ...)
@@ -12065,6 +12174,31 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     let s = ""; let n = i + 1;
     while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
     return s;
+  };
+  // Map Cn → chữ cái cột trên sheet "Biểu B10" (nhãn "(Cn)" trong B10_HEADER_CHI_TIET; entry j →
+  // cột b10Col(j+1) vì hàng CHI_TIET là ["", ...B10_HEADER_CHI_TIET]). C14-C18 (nhãn gộp
+  // "ĐH+ (C14-18)") không match regex → điền tay: 5 cột liên tiếp NGAY SAU C13.
+  const b10ColCuaC = {};
+  { let j13 = -1;
+    B10_HEADER_CHI_TIET.forEach((lbl, j) => {
+      const m = String(lbl).match(/\(C(\d+)\)$/);
+      if (m) b10ColCuaC[+m[1]] = b10Col(j + 1);
+      if (/\(C13\)$/.test(String(lbl))) j13 = j;
+    });
+    if (j13 >= 0) for (let k = 1; k <= 5; k++) b10ColCuaC[13 + k] = b10Col(j13 + 1 + k);
+  }
+  // Cột "Tự kiểm tra" trên sheet B10: 40 quy tắc nội tại, mỗi Cn thay bằng ô <cột Cn><dòng r>.
+  const congThucKiemTraB10 = (r) => {
+    const parts = BIEU10_QUY_TAC_RAW.map(raw => {
+      const s = raw.replace(/\s+/g, "");
+      let op = null, i = -1;
+      for (const o of [">=", "<=", ">", "<", "="]) { const k = s.indexOf(o); if (k >= 0) { op = o; i = k; break; } }
+      const sub = (e) => e.replace(/C(\d+)/g, (_, n) => (b10ColCuaC[+n] || "IV") + r); // IV = cột rỗng xa nếu thiếu map
+      return { cond: `(${sub(s.slice(0, i))})${op}(${sub(s.slice(i + op.length))})`, raw };
+    });
+    let f = `"✓ khớp (${parts.length} quy tắc)"`;
+    for (let k = parts.length - 1; k >= 0; k--) f = `IF(NOT(${parts[k].cond}),"✗ ${parts[k].raw}",${f})`;
+    return { formula: "=" + f };
   };
   // B10_FORMULA: mọi cột có công thức, nhận r (số dòng Excel) → trả về chuỗi công thức
   // Helpers: mkSfVu = SUMIF VỤ (cột A×B); mkCfBc = COUNTIFS BC (cột V + extra); mkCfBcM = multi-sheet
@@ -12265,6 +12399,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       const fml = B10_FORMULA[k] ? B10_FORMULA[k](r) : null;
       cells.push(fml ? { formula: fml, result: row.vals[k] } : row.vals[k]);
     }
+    cells.push(congThucKiemTraB10(r)); // cột 92: "Tự kiểm tra" 40 quy tắc nội tại cho dòng này
     wsB10.addRow(cells);
   });
   // Dòng Tổng: SUM formula trên toàn bộ cột data (tự cập nhật khi Excel recalc)
@@ -12274,14 +12409,26 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const col = b10Col(k + 3); // k+3: bù 3 cột A/B/C header
     tongCells.push({ formula: `SUM(${col}${B10_R0}:${col}${b10LastR})`, result: b10Tong[k] });
   }
+  const b10TongR = b10LastR + 1;
+  tongCells.push(congThucKiemTraB10(b10TongR)); // "Tự kiểm tra" cho dòng TỔNG
   const tongRow = wsB10.addRow(tongCells);
   tongRow.font = { bold: true };
   tongRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } };
+  // CF: dòng nào ô "Tự kiểm tra" (cột 92) bắt đầu bằng "✗" → tô đỏ nhạt cả dòng (A..cột kiểm tra).
+  {
+    const cKT = b10Col(B10_COT_KIEMTRA - 1); // 0-based -> chữ cái
+    wsB10.addConditionalFormatting({
+      ref: `A${B10_R0}:${cKT}${b10TongR}`,
+      rules: [{ type: "expression", priority: 1, formulae: [`LEFT(TRIM($${cKT}${B10_R0}),1)="✗"`],
+        style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFFECACA" } } } }],
+    });
+  }
   // Style: wrap + độ rộng
   wsB10.getColumn(1).width = 26;  // Mã ĐL (narrow nhưng đủ hiện code đầy đủ)
   wsB10.getColumn(2).width = 12;  // Số điều
   wsB10.getColumn(3).width = 32;  // Tên tội danh
   for (let c = 4; c <= B10_HEADER_CHI_TIET.length + 1; c++) wsB10.getColumn(c).width = 8;
+  wsB10.getColumn(B10_COT_KIEMTRA).width = 48; // cột "Tự kiểm tra"
   wsB10.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
   // Cột Mã ĐL: chữ nhạt + nhỏ — chỉ dùng làm criteria key cho SUMIF, không phải số liệu
   wsB10.getColumn(1).eachCell((cell, ri) => {
@@ -12375,21 +12522,43 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const ttChuyenDi_LanDau = (baoCao.truy_to.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "xet_xu") && _chuaTungTraVeDT(vu) && !vu.uyQuyenXetXu);
     const ttTraDi_TrucTiep = (baoCao.truy_to.ds.traDi || []).filter(vu => !_dtCDIds.has(vu.id) && _laTrucTiepVaoTT(vu));
     const xxTraDi_KhongLapKy = (baoCao.xet_xu.ds.traDi || []).filter(vu => !_ttCDIds.has(vu.id));
+
+    // D3-D14 Biểu 2 "Số người bị bắt trong kỳ" — bị can có `ngayBat` trong [kỳ.ngayBatDau, kỳ kế
+    // tiếp). Chỉ áp dụng cho báo cáo 1 KỲ THẬT (dsKyGop = báo cáo gộp nhiều kỳ, ky là object giả
+    // không có ngayBatDau → bỏ qua). Lỗi tải → coi như không có (D3-D14 để trống, nhập tay).
+    let biCanBatTrongKy = null;
+    if (!dsKyGop && ky?.ngayBatDau) {
+      try {
+        const ngayVe = (x) => (x?.toDate ? x.toDate() : (x instanceof Date ? x : new Date(x)));
+        const kySnap = await db.collection("kybaocao").orderBy("ngayBatDau").get();
+        const dsKy = kySnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(k => k.loai == null);
+        const iCur = dsKy.findIndex(k => k.id === ky.id);
+        const mocDau = ngayVe(ky.ngayBatDau);
+        const mocCuoi = (iCur >= 0 && dsKy[iCur + 1]) ? ngayVe(dsKy[iCur + 1].ngayBatDau) : new Date(3000, 0, 1);
+        const bSnap = await db.collection("bican")
+          .where("ngayBat", ">=", mocDau).where("ngayBat", "<", mocCuoi).get();
+        biCanBatTrongKy = bSnap.docs.map(d => d.data());
+      } catch (e) { console.warn("Biểu 2 D3-D14: không tải được bị can theo ngayBat —", e.message); }
+    }
+    // D..[b] (giá trị KỲ TRƯỚC) cho 4 quy tắc kiểm được: D154[b]/D156[b] (tồn cuối kỳ trước ĐT) =
+    // tồn ĐẦU kỳ này; D344[b]/D346[b] (TT) tương tự. 7 quy tắc còn lại dùng D151[b]/D153[b]/
+    // D342[b]/D343[b] (số cộng dồn kỳ trước — hệ thống không tính) vẫn "(tra tay)".
+    const giaTriKyTruoc = {
+      154: baoCao.dieu_tra.tonDauKy, 156: baoCao.dieu_tra.tonDauBiCan,
+      344: baoCao.truy_to.tonDauKy, 346: baoCao.truy_to.tonDauBiCan,
+    };
+
     // Cột "Kiểm tra" của Biểu 2/3: quy tắc liên biểu `Cn_10173=Dm` tự đối chiếu với ô TỔNG cột Cn
-    // trên sheet "Biểu B10" (cùng file). Map Cn → chữ cái cột từ nhãn "(Cn)" trong B10_HEADER_CHI_TIET
-    // (vals index = vị trí nhãn − 2; cột Excel 0-based = index + 3). Dòng TỔNG = B10_R0 + số điều luật.
-    const b10ColCuaC = {};
-    B10_HEADER_CHI_TIET.forEach((lbl, j) => {
-      const m = String(lbl).match(/\(C(\d+)\)$/);
-      if (m) b10ColCuaC[+m[1]] = b10Col(j + 1); // (j − 2) + 3 = j + 1
-    });
+    // trên sheet "Biểu B10". `b10ColCuaC` (map Cn → chữ cái cột) đã dựng 1 lần ở trên (gồm cả patch
+    // C14-C18). Dòng TỔNG = B10_R0 + số điều luật.
     const b10TongRowNum = B10_R0 + b10Rows.length;
     const b10RefCua = (n) => (b10ColCuaC[n] ? `'Biểu B10'!${b10ColCuaC[n]}${b10TongRowNum}` : null);
     themSheetBieu2Va3(
       wb,
-      tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8]),
+      tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8], biCanBatTrongKy),
       tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70]),
       b10RefCua,
+      giaTriKyTruoc,
     );
   }
 
