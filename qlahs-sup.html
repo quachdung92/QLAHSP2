@@ -10407,6 +10407,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   const danhMucMap = Object.fromEntries(danhMuc.map(d => [d.dieuLuat, d]));
   const rows = [];
 
+  // C6 "Khởi tố mới" (ĐT) — CHỈ 2 nguồn "mới thật" (an_khoi_to_moi + tin_bao_khoi_to_len). Đối
+  // chiếu file ngành thật 2026-08-30: D71_10238 = C6 = 48, TÁCH RIÊNG với D73 "nơi khác chuyển
+  // đến" = 28 và D62 "phục hồi" = 7 → C6 KHÔNG gồm 2 nguồn đó (bieu_B10_mo_ta.md §3.1 ghi 4 nguồn
+  // là SAI). Trước 2026-08-30 C6 = mọi khoiToTrucTiep (rộng quá → lệch D71 ở cột "Kiểm tra" Biểu 2).
+  const NGUON_MOI_THAT_B10 = new Set(["an_khoi_to_moi", "tin_bao_khoi_to_len"]);
+  const dtKhoiToMoiThat_b10 = (baoCao.dieu_tra.ds.khoiToTrucTiep || []).filter(v => NGUON_MOI_THAT_B10.has(v.nguon));
+
   for (const D of tatCaDieuLuatChuan) {
     if (!D) continue;
     const dm = danhMucMap[D];
@@ -10452,7 +10459,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       ...bcCoD(dt.khoiToTrucTiep || [], D).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id))),
       ...dt_boSungBcRaw.filter(bc => getDL(bc) === D),
     ];
-    const C6  = vuCoD(dt.khoiToTrucTiep || [], D).length;
+    const C6  = vuCoD(dtKhoiToMoiThat_b10, D).length;
     const C7  = dt_ktBcMoiKy.length;
     const C8  = dt_ktBcMoiKy.filter(bc => bc.loaiBiCan === "phap_nhan").length;
     const C9  = demTuoi(dt_ktBcMoiKy, "14_16");
@@ -11842,11 +11849,13 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     let f = `"✓ khớp (${auto.length} quy tắc${soLien ? `, ${soLien} liên biểu` : ""}${soPrev ? `, ${soPrev} có số kỳ trước` : ""})"`;
     for (let i = auto.length - 1; i >= 0; i--) {
       const q = auto[i];
-      const cond = `(${bieuThuc(q.lhs)})${q.op}(${bieuThuc(q.rhs)})`;
+      const L = bieuThuc(q.lhs), R = bieuThuc(q.rhs);
       // Nói rõ loại lệch: [LIÊN BIỂU] = lệch ô TỔNG bên "Biểu B10"; [KỲ TRƯỚC] = có dùng hằng số tồn
       // đầu kỳ (= tồn cuối kỳ trước); [nội tại] = chỉ lệch với dòng khác trong CHÍNH sheet này.
       const nhan = q.lienBieu ? "✗ [LIÊN BIỂU] " : (q.coPrev ? "✗ [KỲ TRƯỚC] " : "✗ [nội tại] ");
-      f = `IF(NOT(${cond}),"${nhan}${q.raw.replace(/"/g, "'")}",${f})`;
+      // Quy tắc "=" chỉ báo ✗ khi CẢ 2 vế có số ≠ 0 (vế trống = chưa nhập → bỏ qua).
+      const test = q.op === "=" ? `AND((${L})<>0,(${R})<>0,NOT((${L})=(${R})))` : `NOT((${L})${q.op}(${R}))`;
+      f = `IF(${test},"${nhan}${q.raw.replace(/"/g, "'")}",${f})`;
     }
     return { formula: "=" + f };
   };
@@ -11938,7 +11947,7 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     [
       ["Ghi chú:"],
       ["• Cột 'Số liệu': ✓ Tự động tính (xanh) = hệ thống điền từ dữ liệu. ⚠ Chưa có dữ liệu (xám) = tự nhập tay. ❓ Cần xác nhận công thức (vàng) = có manh mối nhưng chưa chắc, tự nhập rồi đối chiếu."],
-      ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗ [nội tại] ...' = lệch với dòng khác TRONG chính biểu này; '✗ [LIÊN BIỂU] ...' = lệch với ô TỔNG tương ứng bên sheet 'Biểu B10'."],
+      ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗ [nội tại] ...' = lệch với dòng khác TRONG chính biểu này; '✗ [LIÊN BIỂU] ...' = lệch với ô TỔNG tương ứng bên sheet 'Biểu B10'. Quy tắc dạng 'A = B+C+...' CHỈ báo '✗' khi cả 2 vế đã có số (≠ 0) — dòng breakdown còn TRỐNG (chưa nhập) thì bỏ qua, không tính là lỗi."],
       ["• Cột 'Soi 🔎' + 'Cần sửa': dòng đang vi phạm ('✗') tự tô ĐỎ NHẠT. Thấy dòng nào báo lỗi thì TÍCH ✔ vào ô 'Soi' của ĐÚNG dòng đó → mọi dòng là THÀNH PHẦN của quy tắc đó hiện '◆' ở cột 'Cần sửa' và tự tô VÀNG (VD D1=D2+D3 sai, tích ✔ ở D1 thì D1/D2/D3 đều vàng). Có thể tích nhiều dòng lỗi cùng lúc. Sau đó: Lọc (Filter) cột 'Cần sửa' = '◆' — hoặc Lọc theo màu — để xem/sửa nhanh. Bỏ tích ✔ để tắt."],
       ["• Dòng '✓ Tự động tính' dùng công thức RÚT GỌN (bỏ các số hạng chưa có tính năng theo dõi) — khi bạn nhập tay các dòng còn thiếu, ô 'Kiểm tra' của dòng tổng có thể báo '✗', lúc đó cập nhật lại dòng tổng cho khớp."],
       ["• Quy tắc 'C.._10173 = D..' (LIÊN BIỂU): cột 'Kiểm tra' đã tự đối chiếu với ô TỔNG tương ứng trên sheet 'Biểu B10' trong CHÍNH file này (báo '✗' nếu lệch)."],
@@ -12191,16 +12200,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     if (j13 >= 0) for (let k = 1; k <= 5; k++) b10ColCuaC[13 + k] = b10Col(j13 + 1 + k);
   }
   // Cột "Tự kiểm tra" trên sheet B10: 40 quy tắc nội tại, mỗi Cn thay bằng ô <cột Cn><dòng r>.
+  // Quy tắc "=" (VD C7-C8=ΣC14..C18): CHỈ báo ✗ khi CẢ 2 vế có số ≠ 0 — vế trống (cán bộ chưa
+  // nhập trình độ/tuổi...) → BỎ QUA, không tính là lỗi (theo yêu cầu Dũng "ko tính dòng chưa có
+  // dữ liệu"). Quy tắc ">=/<=" giữ nguyên (vế trống = 0 hầu như không báo giả).
   const congThucKiemTraB10 = (r) => {
     const parts = BIEU10_QUY_TAC_RAW.map(raw => {
       const s = raw.replace(/\s+/g, "");
       let op = null, i = -1;
       for (const o of [">=", "<=", ">", "<", "="]) { const k = s.indexOf(o); if (k >= 0) { op = o; i = k; break; } }
       const sub = (e) => e.replace(/C(\d+)/g, (_, n) => (b10ColCuaC[+n] || "IV") + r); // IV = cột rỗng xa nếu thiếu map
-      return { cond: `(${sub(s.slice(0, i))})${op}(${sub(s.slice(i + op.length))})`, raw };
+      const L = sub(s.slice(0, i)), R = sub(s.slice(i + op.length));
+      const test = op === "=" ? `AND((${L})<>0,(${R})<>0,NOT((${L})=(${R})))` : `NOT((${L})${op}(${R}))`;
+      return { test, raw };
     });
     let f = `"✓ khớp (${parts.length} quy tắc)"`;
-    for (let k = parts.length - 1; k >= 0; k--) f = `IF(NOT(${parts[k].cond}),"✗ ${parts[k].raw}",${f})`;
+    for (let k = parts.length - 1; k >= 0; k--) f = `IF(${parts[k].test},"✗ ${parts[k].raw}",${f})`;
     return { formula: "=" + f };
   };
   // B10_FORMULA: mọi cột có công thức, nhận r (số dòng Excel) → trả về chuỗi công thức
@@ -12312,7 +12326,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     69: r => mkThuLyVu("xet_xu", r),    // C60 Tổng thụ lý XX — Vụ
     70: r => mkThuLyBc("xet_xu", r),    // C61 Tổng thụ lý XX — Bị can
     // ── VỤ-level SUMIF (SUMIF cột A × cột B Mã ĐL vụ) ──
-    7:  r => `${mkSfVu("DS khởi tố ĐT",r)}+${mkSfVu("DS phục hồi ĐT",r)}`,  // C6 ĐT khởi tố vụ
+    7:  r => `SUMIFS('DS khởi tố ĐT'!$A:$A,'DS khởi tố ĐT'!$B:$B,$A${r},'DS khởi tố ĐT'!$AH:$AH,"Án khởi tố mới")+SUMIFS('DS khởi tố ĐT'!$A:$A,'DS khởi tố ĐT'!$B:$B,$A${r},'DS khởi tố ĐT'!$AH:$AH,"Tin báo khởi tố lên")`,  // C6 ĐT khởi tố mới (CHỈ 2 nguồn, khớp D71_10238)
     26: r => mkSfVu("DS chuyển đến TT",r),   // C25 ĐT → TT vụ
     29: r => mkSfVu("DS đình chỉ ĐT",r),     // C28 ĐT đình chỉ vụ
     32: r => mkSfVu("DS tạm đình chỉ ĐT",r), // C31 ĐT TĐC vụ

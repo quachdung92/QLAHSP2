@@ -37,6 +37,15 @@ Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 comm
    `D151[b]/D153[b]/D342[b]/D343[b]` (số CỘNG DỒN — hệ thống không tính) vẫn "(tra tay)".
    `phanTichQuyTacDong`: token `Dxx[b]` → `{prevMd}`, cờ `coPrev`. `dungDuoc` viết lại theo term.
 
+5. **`ee...` — Giảm nhiễu "✗" (theo Dũng "báo lỗi nhiều thế, ko tính dòng chưa có dữ liệu").**
+   (a) **Guard quy tắc `=`** ở CẢ cột "Tự kiểm tra" B10 lẫn "Kiểm tra" Biểu 2/3: `IF(NOT(L=R),…)`
+   → `IF(AND(L<>0,R<>0,NOT(L=R)),…)`. Vế breakdown còn TRỐNG (VD C14-C18 trình độ chưa nhập) → bỏ
+   qua, KHÔNG báo `✗ C7-C8=C14+…+C18`. Quy tắc `>=/<=` giữ nguyên.
+   (b) **Narrow B10 C6** từ MỌI `khoiToTrucTiep` → CHỈ 2 nguồn `an_khoi_to_moi` +
+   `tin_bao_khoi_to_len` (xem mục "CHƯA làm / kết luận" #1 dưới — file ngành thật chứng minh
+   `D71=C6`, tách riêng nơi khác/phục hồi). `tinhBieu10` `dtKhoiToMoiThat_b10`; `B10_FORMULA[7]` =
+   SUMIFS "DS khởi tố ĐT" lọc cột Nguồn (AH). Kỳ 07: C6 = D71 = 35 → hết `✗ [LIÊN BIỂU] C6_10173=D71`.
+
 Compile-check sạch. **CHƯA mở Excel THẬT xem CF render / toggle chạy / IF lồng tính** (ExcelJS chỉ
 lưu công thức, không tính) — Dũng nên mở file bằng Excel 2016+ xác nhận.
 
@@ -136,14 +145,14 @@ tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đú
 `IF(NOT(...=('Biểu B10'!<col>47))...,"✗ [LIÊN BIỂU]/[nội tại] ...")` (dòng TỔNG B10 = 47 = 3+44 điều luật).
 
 **CHƯA làm / kết luận (phần còn lại của "fix triệt để")**:
-1. **C6-C7/C25-C26/C36-C37/C58-C59/C71-C72 "đếm quá rộng" — KẾT LUẬN: KHÔNG phải bug theo mẫu
-   ngành hiện có.** Rà lại: `bieu_B10_mo_ta.md` §3.1 ĐỊNH NGHĨA RÕ C6 = 4 nguồn (`an_khoi_to_moi`
-   + `tin_bao_khoi_to_len` + `phuc_hoi_dieu_tra` + `an_noi_khac_chuyen_den`) — code hiện đếm cả 4
-   là ĐÚNG §3.1. Ghi chú "đếm quá rộng" trước đây nhầm (từ nhánh `feature/tong-ke-dong` — ở đó lọc
-   riêng cho Biểu 2, KHÔNG phải yêu cầu B10). Quy tắc ngành ràng buộc C6/C7 chỉ là `D71_10238=C6`/
-   `D72_10238=C7` (định nghĩa qua dòng Biểu 2, thiếu tài liệu mô tả Biểu 2). Theo chỉ đạo Dũng
-   "dòng khó quá thì để lại hoặc ghi công thức để check" → ĐÃ ghi công thức: Biểu 2 D71/D72 tự khớp
-   B10 C6/C7 (mục trên); lệch sẽ tự lộ "✗". KHÔNG đổi số B10 khi chưa có căn cứ.
+1. ~~C6-C7 "đếm quá rộng" — KHÔNG phải bug~~ → **SAI, ĐÃ SỬA 2026-08-30** (nhánh `bieu2-hoan-thien`):
+   file ngành thật (`10238.xlsx`: `D71=C6=48` TÁCH RIÊNG với `D73` nơi khác = 28, `D62` phục hồi =
+   7) chứng minh **C6 CHỈ gồm 2 nguồn** `an_khoi_to_moi` + `tin_bao_khoi_to_len` — `bieu_B10_mo_ta.md`
+   §3.1 ("4 nguồn") SAI, đã sửa. Code cũ `C6 = mọi khoiToTrucTiep` → lệch `D71` ở cột "Kiểm tra"
+   Biểu 2. ĐÃ narrow: `tinhBieu10` `dtKhoiToMoiThat_b10`; `B10_FORMULA[7]` = SUMIFS "DS khởi tố ĐT"
+   lọc cột Nguồn (AH) theo 2 nhãn "Án khởi tố mới" / "Tin báo khởi tố lên". Kiểm chứng kỳ 07: C6 =
+   D71 = 35 (khớp). C7 chưa đụng (D72 = tongC7 = C7 nên `C7_10173=D72` luôn khớp sẵn). C25/C36/C58/
+   C71 (các mục "quá rộng" khác) chưa rà — cần Biểu 2/3 mô tả.
 2. ~~C33/C34, C60/C61 thành phần đầy đủ~~ — **ĐÃ GIẢI QUYẾT** (kiểm chứng Biểu 2/3 thật, mục dưới):
    `D280_10238−D262_10238=C33` → 62=62; `D17_10239 (=D1+D2+D3+D4+D9−D15)=C60` → 66=66 trên dữ liệu
    ngành thật. Đó chính là cách ngành suy C33/C60 từ Biểu 2/3; cột "Kiểm tra" `[LIÊN BIỂU]` mới thêm

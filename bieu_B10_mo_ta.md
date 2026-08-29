@@ -43,17 +43,19 @@ Tồn (điều luật Đ, giai đoạn G) = COUNT(vuan WHERE coQuanThuLy=G AND t
 
 ## 3. Công thức tổng quát (theo đúng cách người dùng mô tả, áp dụng cho cả 3 giai đoạn)
 
-### 3.1. "Số khởi tố mới" (chỉ áp dụng cho giai đoạn Điều tra)
+### 3.1. "Số khởi tố mới" (C6 — chỉ áp dụng cho giai đoạn Điều tra)
+
+**SỬA 2026-08-30 (đối chiếu file ngành thật `10238.xlsx`/`10173.xlsx`): C6 CHỈ gồm 2 nguồn "mới
+thật".** File ngành: `D71_10238 = C6 = 48`, TÁCH RIÊNG với `D73` "nơi khác chuyển đến" = 28 và
+`D62` "phục hồi điều tra" = 7 (nếu C6 gồm 4 nguồn thì C6 ≠ D71). Bản mô tả cũ dưới đây ("4 nguồn")
+là SAI.
 
 ```
-Số khởi tố mới = Số VA khởi tố trực tiếp (nguồn "an_khoi_to_moi")
-               + Số VA từ tin báo chuyển lên (nguồn "tin_bao_khoi_to_len")
-               + Số VA phục hồi điều tra (nguồn "phuc_hoi_dieu_tra")
-               + Số VA nơi khác chuyển đến (nguồn "an_noi_khac_chuyen_den")
+C6 (Số khởi tố mới) = Số VA nguồn "an_khoi_to_moi" + Số VA nguồn "tin_bao_khoi_to_len"
 ```
-Bốn thành phần lấy từ field `nguon` của `vuan`, theo sự kiện `khoi_to_vu` có `kyThongKe=K`,
-`denGiaiDoan=dieu_tra` — khớp với biến `nguonDem` đã có sẵn trong `tinhBaoCaoKyTuLog`. Bốn thành phần
-**bắt buộc hiển thị tách riêng**, không gộp thành 1 số.
+`phuc_hoi_dieu_tra` và `an_noi_khac_chuyen_den` là các dòng RIÊNG của Biểu 2 (D62, D73) và được
+cộng vào "Tổng thụ lý" (C3 / D77) qua đường khác — KHÔNG nằm trong C6. Code: `tinhBieu10`
+`dtKhoiToMoiThat_b10`; `B10_FORMULA[7]` = SUMIFS "DS khởi tố ĐT" lọc cột Nguồn (AH) theo 2 nhãn.
 
 ### 3.2. "Tổng thụ lý" (áp dụng cho cả 3 giai đoạn, đổi thành phần "mới" theo từng giai đoạn)
 
