@@ -50,6 +50,35 @@ Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 comm
    hiện dù JS "result" = khớp). Nay D71 pin đúng bằng tổng C6 → `C6_10173=D71` chắc chắn ✓ (giống
    `C7_10173=D72` chưa bao giờ báo lỗi). Kỳ 07: C6 = D71 = 35.
 
+6. **`8f6bd76` (nhánh `bieu-audit-noi-tai-lien-bieu`, 2026-08-30) — Narrow B10 C58/C59 = "TT trả ĐT
+   TRỰC TIẾP" + mở rộng guard `=` cho ô nhập tay.** Audit toàn bộ 3 file quy tắc với output hệ
+   thống kỳ 07/2026 (script scratchpad) tìm ra: B10 C58/C59 đếm MỌI `tt.traDi` (10 vụ/64 BC) trong
+   khi Biểu 2 D361/D368 (đã có sẵn từ item 4) dùng `ttTraDi_TrucTiep` (loại round-trip XX→TT→ĐT +
+   vụ cũng nằm ĐT chuyenDi = 5 vụ/37 BC) → `✗ [LIÊN BIỂU] D361=C58_10173`/`D368=C59_10173`. CÙNG
+   LỚP với C6 ("số vụ sai làm sao được").
+   - **JS**: dời khối tính `lichSuCTMap`+helpers+`dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/
+     `ttTraDi_TrucTiep`/`xxTraDi_KhongLapKy` LÊN TRƯỚC lời gọi `tinhBieu10` (trước đây nằm TRONG
+     block Biểu 2/3 phía sau); `tinhBieu10` nhận thêm tham số `ttTraDi_TrucTiep` → `C58 =
+     vuCoD(_ttTDtt, D)`, `C59 = bcCoD(_ttTDtt, D)` (fallback `tt.traDi` nếu null).
+   - **Excel**: sheet "DS TT trả ĐT" thêm cột phụ **"Trực tiếp" (AJ)** = "x" nếu vụ ∈
+     `ttTraDi_TrucTiep` (extraFn theo vụ → áp lên MỌI dòng BC của vụ đó). `B10_FORMULA[63]` (C58) =
+     `SUMIFS('DS TT trả ĐT'!$A:$A,…,$AJ:$AJ,"x")`; `[64]` (C59) = `COUNTIFS(…$V:$V,…,$AJ:$AJ,"x")`.
+     Sheet vẫn chứa ĐỦ 64 dòng (RA_SHEETS_GD/Cân đối vẫn đếm toàn bộ); chỉ C58/C59 lọc AJ.
+   - **Guard `=` mở rộng**: `congThucKiemTra` nhận `coData(md)` (= `giaTriMap.has(md)`) — với quy tắc
+     `=`, vế nào tham chiếu ô md mà HỆ THỐNG KHÔNG tự tính (nhập tay, chưa có dữ liệu) thì thêm điều
+     kiện `C{md+1}<>0`. Trước đó chỉ guard khi 2 VẾ TỔNG = 0; nay còn bỏ qua khi 1 ô THÀNH PHẦN
+     nhập tay = 0 (VD `D344=D280-D282-D332` với D280/D282 chưa nhập, `D361=D362+…` breakdown trống,
+     Biểu 3 `D17=D1+D2+D3+D4+D9-D15` với D2/D3 chưa track).
+   - **Kiểm chứng Excel THẬT kỳ 07/2026** (`admin@qlva.local`, tải Blob → `ExcelJS.readFile` bằng
+     Node `exceljs` trong scratchpad — đọc CÔNG THỨC, không chỉ "result"): B10 TỔNG (dòng 47) C58
+     (BO47) = `SUM(BO3:BO46)` = 5, C59 (BP47) = 37; per-row đúng `SUMIFS/COUNTIFS …$AJ:$AJ,"x"`.
+     "DS TT trả ĐT" AJ="x" = 37 dòng BC / 5 vụ (A=1). Biểu 2 D361=5, D368=37 → `D361=C58_10173`
+     (`NOT('Biểu B10'!BO47=C362)` = `NOT(5=5)` = FALSE) ✓, `D368=C59_10173` ✓. Tự đánh giá từng
+     công thức "Kiểm tra" của Biểu 2/3 (thay số): guard bịt các `✗` nội-tại của D344/D346/D361 +
+     Biểu 3 D17/D18. **CÒN LẠI 3 `✗` THẬT** (tồn cuối kỳ RPC ≠ chuỗi cộng dồn — xem "CHƯA làm" #4):
+     Biểu 2 D156 (`D79-D86-D141` = 830 ≠ 811), Biểu 3 D84 (`D17-D22-D52-D70` = 60 ≠ 50), D86
+     (`D18-D35-D61-D76` = 358 ≠ 328).
+
 Compile-check sạch. **CHƯA mở Excel THẬT xem CF render / toggle chạy / IF lồng tính** (ExcelJS chỉ
 lưu công thức, không tính) — Dũng nên mở file bằng Excel 2016+ xác nhận.
 
@@ -155,14 +184,27 @@ tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đú
    §3.1 ("4 nguồn") SAI, đã sửa. Code cũ `C6 = mọi khoiToTrucTiep` → lệch `D71` ở cột "Kiểm tra"
    Biểu 2. ĐÃ narrow: `tinhBieu10` `dtKhoiToMoiThat_b10`; `B10_FORMULA[7]` = SUMIFS "DS khởi tố ĐT"
    lọc cột Nguồn (AH) theo 2 nhãn "Án khởi tố mới" / "Tin báo khởi tố lên". Kiểm chứng kỳ 07: C6 =
-   D71 = 35 (khớp). C7 chưa đụng (D72 = tongC7 = C7 nên `C7_10173=D72` luôn khớp sẵn). C25/C36/C58/
-   C71 (các mục "quá rộng" khác) chưa rà — cần Biểu 2/3 mô tả.
+   D71 = 35 (khớp). C7 chưa đụng (D72 = tongC7 = C7 nên `C7_10173=D72` luôn khớp sẵn).
+   **C58/C59 ĐÃ SỬA** (2026-08-30, nhánh `bieu-audit-noi-tai-lien-bieu`, xem item 6 mục
+   `bieu2-hoan-thien` ở đầu file) — narrow về `ttTraDi_TrucTiep` (khớp Biểu 2 D361/D368), kiểm
+   chứng Excel thật kỳ 07: C58 = D361 = 5, C59 = D368 = 37. **C25/C36/C71 chưa rà** — cần Biểu 2/3 mô tả.
 2. ~~C33/C34, C60/C61 thành phần đầy đủ~~ — **ĐÃ GIẢI QUYẾT** (kiểm chứng Biểu 2/3 thật, mục dưới):
    `D280_10238−D262_10238=C33` → 62=62; `D17_10239 (=D1+D2+D3+D4+D9−D15)=C60` → 66=66 trên dữ liệu
    ngành thật. Đó chính là cách ngành suy C33/C60 từ Biểu 2/3; cột "Kiểm tra" `[LIÊN BIỂU]` mới thêm
    so B10 của ta với Biểu 2/3 của ta cho đúng các quan hệ đó — lệch thật sẽ hiện `✗`.
 3. ~~Nghi vấn `quy_tac_bieu_10.md` dòng 20~~ — **ĐÃ GIẢI QUYẾT**: `C37=C39+C40+C41+C42` là ĐÚNG
    (C39-C42 đếm BỊ CAN), đã sửa code + doc (commit `1713150`).
+4. **CÒN 3 `✗` THẬT — "tồn cuối kỳ" (RPC ledger, số TIN CẬY) ≠ chuỗi cộng dồn tự đối chiếu** (phát
+   hiện khi audit kỳ 07/2026, nhánh `bieu-audit-noi-tai-lien-bieu`): Biểu 2 **D156** (`D79-D86-D141`
+   = 830 ≠ D156 = 811, lệch 19 — bị can ĐT); Biểu 3 **D84** (`D17-D22-D52-D70` = 60 ≠ D84 = 50,
+   lệch 10 — vụ XX); Biểu 3 **D86** (`D18-D35-D61-D76` = 358 ≠ D86 = 328, lệch 30 — bị cáo XX).
+   D156/D84/D86 = `baoCao.{dieu_tra,xet_xu}.{tonCuoiKy,tonCuoiBiCanKy}` (RPC, throw nếu lỗi — nguồn
+   DUY NHẤT, đúng). Chuỗi cộng dồn thiếu 1+ số hạng RA (nghi: XX trả TT / XX án huỷ / bị can kết
+   thúc ĐT chưa đủ). 3 quy tắc này ĐÃ validate 303/0 với file ngành thật ⇒ trên dữ liệu ngành CHÚNG
+   ĐÚNG ⇒ 1 dòng THÀNH PHẦN của HỆ THỐNG TA (D22/D52/D70/D86/D141…) đang thiếu/sai. **CHƯA sửa** —
+   cần Biểu 2/3 mô tả (Biểu 3 chưa có tài liệu) + Dũng xác nhận dòng RA nào feed D84/D86/D156. Số
+   HIỂN THỊ (tồn cuối = 811/50/328) VẪN ĐÚNG (lấy thẳng RPC) — `✗` chỉ là cờ self-check, "Cân đối
+   số liệu" cũng tô đỏ đúng chỗ này.
 
 ## Kiểm chứng `quy_tac_bieu_10.md` với file B10 THẬT đã nhập lên hệ thống ngành (2026-08-29, Dũng cung cấp `10173.xlsx` 1 tháng thật)
 
