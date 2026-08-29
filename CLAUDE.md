@@ -2,6 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ ĐÃ MERGE `bieu-2-3` (gồm cả `ton-ky-thong-nhat`) VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-08-29, theo yêu cầu Dũng "đã check mọi thứ chính xác, triển khai đi")
+
+`git merge --no-ff bieu-2-3` vào `main` (commit `6a072de`, không xung đột — `ton-ky-thong-nhat` là
+tổ tiên của `bieu-2-3` nên 1 merge gộp cả 2). Push `main` + `bieu-2-3` + `ton-ky-thong-nhat`.
+`./deploy.sh sup` rồi `./deploy.sh prod` — cả 2 URL HTTP 200, màn đăng nhập tải sạch, 0 lỗi console
+thật (chỉ cảnh báo Babel 500KB), `public-prod/index.html` == `qlahs-sup.html` (diff identical).
+`rpc_ton_ky_thong_nhat_2026-08-28.sql` ĐÃ `create or replace` lên Supabase từ trước (dùng chung
+cho cả 2 URL vì chung DB `eutatszoaseixchvjbtg`).
+
+**Gồm những gì** (mọi mục "CHƯA merge/deploy" bên dưới GIỜ ĐÃ LIVE — đọc dòng này làm nguồn sự thật):
+- **`ton-ky-thong-nhat`**: mọi công thức "tồn" base 100% `kyThongKe`, bỏ tàn dư snapshot Firebase;
+  RPC `layTrangThaiVuTaiKy`/`layTrangThaiBiCanTaiKy` là nguồn DUY NHẤT (RPC lỗi → THROW chặn báo
+  cáo); số đổi thật ĐT bị can kỳ 06 741→736 / kỳ 07 813→811; "Cân đối số liệu" nhãn (RPC)/(sổ cái),
+  tô đỏ khi |chênh| > 1.
+- **Biểu 2 & Biểu 3**: 2 sheet mới trong Xuất Excel báo cáo tháng + 3 file `quy_tac_bieu_{2,3,10}.md`
+  ở gốc repo + cột "Quy tắc kiểm tra"/"Kiểm tra" (công thức Excel tự đối chiếu, gồm liên biểu
+  `[LIÊN BIỂU]`/`[nội tại]`).
+- **Sửa Biểu 10 theo mẫu ngành**: Tổng thụ lý C3/C4/C33/C34/C60/C61 bỏ trừ "án huỷ" (0 tác động số
+  — án huỷ = 0 mọi kỳ); C39-C42 "Phân loại tội phạm" ĐẾM BỊ CAN (tổng = C37) — xác nhận với file
+  B10 thật đã nhập lên ngành (`10173.xlsx`, 40/40 quy tắc tự thân đúng).
+
+**Kiểm chứng đã làm** (phiên này): xuất Excel kỳ 07/2026 THẬT qua UI (`admin@qlva.local`) trên
+`qlahs-sup.html` local → B10 công thức không `#REF`, ΣC39..C42 = C37 = 295, Biểu 2/3 cột Kiểm tra
+ra công thức liên biểu đúng; RPC 736/811 đã kiểm chứng qua pooler từ trước. **Dũng nên tự mở 1 báo
+cáo kỳ thật trên `qlahsp2.web.app` sau khi đăng nhập** xác nhận: Kỳ báo cáo hiện đúng số, "Cân đối
+số liệu" chênh chấp nhận được, tải Excel B10/Biểu 2/Biểu 3 mở bằng Excel THẬT không vỡ công thức.
+
 ## Biểu 10 C39-C42 "Phân loại tội phạm" (Truy tố) — ĐẾM BỊ CAN, KHÔNG phải vụ (2026-08-29, `qlahs-sup.html`, nhánh `bieu-2-3`, CHƯA merge/deploy — ĐÃ kiểm chứng Excel thật)
 
 Dũng xác nhận trực tiếp: **C39-C42 đếm BỊ CAN** (mỗi bị can theo mức độ NT của tội danh chính CỦA
