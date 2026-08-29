@@ -108,17 +108,30 @@ Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 comm
      tonCuoiBiCanKy` (thay `soBc(dt.chuyenDi)+...`). → `D154=D77-D83-D134` / `D156=D79-D86-D141`
      đóng. Vẫn thoả `D83>=D92+D100` / `D86>=D95+D117`. Kiểm real: D83 = 367-18-320 = 29 = thật;
      D86 = 942-0-812 = 130 = thật.
-   - **TT (Biểu 2)**: `D280 = D344 + D282 + D326` ; `D281 = D346 + D285 + D332` (trước để trống →
-     `D344=D280-D282-D326` báo lỗi). → `D344`/`D346` đóng. Kiểm real: D280 = 41+29+0 = 70 = thật;
-     D281 = 222+270+0 = 492 = thật.
-   **CHỈ CÒN `mdBoQuaBangNhau = {280,281}`** cho CHUỖI THÀNH PHẦN `D280=D260+..-D278` /
-   `D281=D265+..-D279` — hệ thống CHƯA tách đủ D262/D274/D276/D278/D279 (nhận lại ĐTBS / nơi khác /
-   chuyển đi / VKS trả ĐTBS trong kỳ). Đây là "phải tự tính tay" Dũng nói — nếu phần mềm ngành
-   enforce chuỗi này, cán bộ điền tay 4-5 dòng đó; `D280` VÀ `D344` thì ĐÚNG. `D77=D57+..` /
-   `D79=D64+..` (thiếu D58/D65 = "điều tra lại", ~0) tự thoả vì guard bịt khi vế trống.
-   **Kiểm chứng Excel THẬT kỳ 07/2026** (đọc `exceljs` + tự eval MỌI công thức "Kiểm tra"):
-   **Biểu 2 = 0 `✗`, Biểu 3 = 0 `✗`, B10 "Tự kiểm tra" = 0 `✗`.** D154=319, D156=811, D344=42,
-   D346=219, D84=50, D86=328 — TẤT CẢ = số tồn RPC thực tế, TẤT CẢ đẳng thức `=` đóng.
+   - **TT (Biểu 2)**: `D280 = D344 + D282 + D326` ; `D281 = D346 + D285 + D332` — bước 1. Kiểm
+     real: D280 = 41+29+0 = 70 = thật; D281 = 222+270+0 = 492 = thật.
+
+9. **`1bb105e` (cùng nhánh, 2026-08-30) — NÂNG CẤP: tách đủ dòng chi tiết "vào/ra" giai đoạn TT →
+   chuỗi thành phần `D280=D260+..-D278` TỰ ĐÓNG (không còn `mdBoQuaBangNhau`).** Theo Dũng "nâng cấp
+   hệ thống để tách đủ các dòng chi tiết". Thêm 8 setter vào `tinhBieu2`:
+   - `m.set(262, (tt.traVe||[]).length)` / `m.set(267, soBc(tt.traVe))` — **D262/D267 "vụ/bị can mới
+     nhận lại để ĐTBS"** = Toà (XX) trả hồ sơ về TT (`baoCao.truy_to.ds.traVe`).
+   - `m.set(274, _ttNoiKhac.length)` / `m.set(275, soBc(_ttNoiKhac))` — **D274/D275 "nơi khác chuyển
+     đến"** = `tt.khoiToTrucTiep` ∪ `tt.nhanLai` (thường 0).
+   - `m.set(276, (tt.hoanThanh?.chuyen_di||[]).length)` / `m.set(277, soBc(...))` — **D276/D277 "TT
+     chuyển đi nơi khác"**.
+   - `m.set(278, (tt.traDi||[]).length)` / `m.set(279, soBc(tt.traDi))` — **D278/D279 "VKS trả hồ sơ
+     ĐTBS trong kỳ" (RAW)** = `baoCao.truy_to.ds.traDi`.
+   Rồi `m.set(280, ...chuỗi thành phần ngành đầy đủ...)` / `m.set(281, ...)` thay vì suy ngược từ
+   tồn. Vì ledger TT cân đối (Cân đối số liệu chênh 0) ⇒ chuỗi thành phần TỰ RA = tồn RPC + đã giải
+   quyết + TĐC ⇒ `D344=D280-D282-D326` cũng đóng. `D262+D270+D272` = TỔNG vào TT (Toà trả về +
+   ĐT→TT), `-D278` = trả ĐTBS ra. Không dòng nào có ràng buộc `Cxx_10173`/`>=` khác nên an toàn.
+   **Kiểm chứng Excel THẬT kỳ 07/2026**: D262=10, D278=10, D270=28 → `D280 = 45+0+10+0-0+28+0+0-0-10
+   = 73`; `D344 = 73-31-0 = 42` = RPC ✓; `D346 = 514-295-0 = 219` = RPC ✓. **Biểu 2 = 0 `✗`,
+   Biểu 3 = 0 `✗`, B10 "Tự kiểm tra" = 0 `✗`. `mdBoQuaBangNhau` GIỜ RỖNG HOÀN TOÀN** — mọi đẳng
+   thức `=` self-check của cả 3 biểu đều active + pass.
+   **Tổng kết 3 giai đoạn**: D154=319, D156=811 (ĐT), D344=42, D346=219 (TT), D84=50, D86=328 (XX)
+   — TẤT CẢ = số tồn RPC thực tế, TẤT CẢ đẳng thức `=` đóng → upload phần mềm ngành KHÔNG lỗi.
 
 Compile-check sạch. **CHƯA mở Excel THẬT xem CF render / toggle chạy / IF lồng tính** (ExcelJS chỉ
 lưu công thức, không tính) — Dũng nên mở file bằng Excel 2016+ xác nhận.
@@ -241,13 +254,12 @@ tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đú
      `D84=D17-D22-D52-D70` đóng. Kỳ 07: D84 = 50, D86 = 328.
    - **ĐT (Biểu 2)**: D83/D86 ← D154/D156 (RPC). `D154=D77-D83-D134`, `D156=D79-D86-D141` đóng.
      Kỳ 07: D154 = 319, D156 = 811.
-   - **TT (Biểu 2)**: D280/D281 ← D344/D346 (RPC). `D344=D280-D282-D326` đóng. Kỳ 07: D344 = 42,
-     D346 = 219.
+   - **TT (Biểu 2)**: item 9 — NÂNG CẤP tách đủ D262/D267/D274-D279 (Toà trả về / nơi khác / TT
+     chuyển đi / VKS trả ĐTBS raw) → `D280=D260+..-D278` chuỗi thành phần TỰ ĐÓNG; `D344=D280-D282
+     -D326` = tồn RPC. Kỳ 07: D344 = 42, D346 = 219.
    - Cả 3 kiểm ĐÚNG TUYỆT ĐỐI trên file ngành thật (D9 = 24, D83 = 29, D86 = 130, D280 = 70,
-     D281 = 492 — khớp con số trong file). Biểu 2/3 + B10 = **0 `✗`**.
-   - CÒN `mdBoQuaBangNhau={280,281}` cho CHUỖI THÀNH PHẦN `D280=D260+..-D278` (D262/D274/D276/D278
-     /D279 chưa tách đủ). Nếu phần mềm ngành enforce chuỗi này → cán bộ điền tay 4-5 dòng đó; D280
-     + D344 (tồn) thì ĐÚNG.
+     D281 = 492 — khớp con số trong file). **`mdBoQuaBangNhau` GIỜ RỖNG HOÀN TOÀN** — Biểu 2/3 +
+     B10 = **0 `✗`**, mọi đẳng thức `=` self-check active + pass → upload phần mềm ngành KHÔNG lỗi.
 
 ## Kiểm chứng `quy_tac_bieu_10.md` với file B10 THẬT đã nhập lên hệ thống ngành (2026-08-29, Dũng cung cấp `10173.xlsx` 1 tháng thật)
 

@@ -11470,14 +11470,23 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   m.set(332, soBc(tt.hoanThanh?.tam_dinh_chi));
   m.set(344, baoCao.truy_to.tonCuoiKy);
   m.set(346, baoCao.truy_to.tonCuoiBiCanKy);
-  // D280/D281 "Tổng số vụ/bị can VKS thụ lý giải quyết" — SUY RA từ đẳng thức ngành
-  // `D344 = D280-D282-D326` / `D346 = D281-D285-D332` (đảo lại). D344/D346 = tồn cuối TT thực tế
-  // (RPC as-of). Bảo đảm 2 đẳng thức KHỚP số tồn thực tế khi upload ngành. Kiểm ĐÚNG TUYỆT ĐỐI
-  // trên file ngành thật (10238.xlsx): D280 = 41+29+0 = 70 = D280 thật; D281 = 222+270+0 = 492 =
-  // D281 thật. (Chuỗi thành phần `D280=D260+..-D278` — các dòng D262/D274/D276/D278 hệ thống CHƯA
-  // tách đủ → self-check `=` đó bị bỏ qua trong sheet, xem mdBoQuaBangNhau.)
-  m.set(280, m.get(344) + m.get(282) + m.get(326));
-  m.set(281, m.get(346) + m.get(285) + m.get(332));
+  // ── Các dòng CHI TIẾT "vào/ra" giai đoạn TT (2026-08-30, nâng cấp tách đủ để chuỗi thành phần
+  // `D280=D260+D261+D262+D263-D264+D270+D272+D274-D276-D278` TỰ ĐÓNG, không phải suy ngược từ tồn):
+  const _ttNoiKhac = (tt.khoiToTrucTiep || []).concat(tt.nhanLai || []);
+  m.set(262, (tt.traVe || []).length);           // Vụ mới nhận lại để ĐTBS = Toà (XX) trả hồ sơ về TT
+  m.set(267, soBc(tt.traVe));                     // Bị can tương ứng D262
+  m.set(274, _ttNoiKhac.length);                 // Vụ nơi khác chuyển đến TT (khởi tố trực tiếp TT + nhận lại đã chuyển đi)
+  m.set(275, soBc(_ttNoiKhac));                   // Bị can tương ứng D274
+  m.set(276, (tt.hoanThanh?.chuyen_di || []).length); // Vụ TT chuyển đi nơi khác
+  m.set(277, soBc(tt.hoanThanh?.chuyen_di));      // Bị can tương ứng D276
+  m.set(278, (tt.traDi || []).length);           // Vụ VKS trả hồ sơ ĐTBS trong kỳ (RAW, gồm cả do Toà yêu cầu)
+  m.set(279, soBc(tt.traDi));                     // Bị can tương ứng D278
+  // D280/D281 "Tổng số vụ/bị can VKS thụ lý giải quyết" = CHUỖI THÀNH PHẦN ngành (nay đủ dòng).
+  // Ledger TT cân đối (Cân đối số liệu chênh 0) ⇒ đồng thời khớp `D344 = D280-D282-D326` = tồn RPC.
+  // Kiểm ĐÚNG TUYỆT ĐỐI file ngành thật (10238.xlsx): 44+0+8+0-0+21+8+0-0-11 = 70 = D280 thật;
+  // 418+0+29+0-0+57+73+0-0-85 = 492 = D281 thật.
+  m.set(280, m.get(260) + m.get(261) + m.get(262) + m.get(263) - m.get(264) + m.get(270) + m.get(272) + m.get(274) - m.get(276) - m.get(278));
+  m.set(281, m.get(265) + m.get(266) + m.get(267) + m.get(268) - m.get(269) + m.get(271) + m.get(273) + m.get(275) - m.get(277) - m.get(279));
   // D352/361/367/368 (VKS trả hồ sơ ĐTBS "không tính vụ do Toà án yêu cầu") — tái dùng
   // ttTraDi_TrucTiep của B10 (C58-C59). Lưu ý NHỎ: B10 C58-C59 loại THÊM round-trip "cùng kỳ" mà
   // Biểu 2 dòng 352 không yêu cầu — chấp nhận sai khác cực hiếm này (round-trip trong 1 kỳ), xem
@@ -12002,12 +12011,10 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
     return ws;
   };
-  // Chuỗi tồn cuối kỳ ĐT (D154/D156) + XX (D84/D86) đã KHÉP HẲN bằng cách suy ngược dòng thành
-  // phần từ số tồn RPC thực tế (D83/D86 ĐT ← D154/D156; D9/D12 XX ← D17/D18). TT: D280/D281 suy từ
-  // D344/D346 → `D344=D280-D282-D326` khớp; RIÊNG chuỗi thành phần `D280=D260+..-D278` /
-  // `D281=D265+..-D279` bị bỏ self-check `=` (các dòng D262/D274/D276/D278/D279 hệ thống CHƯA tách
-  // đủ — "phải tự tính tay" nếu phần mềm ngành enforce). Giữ mọi `>=`.
-  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC, new Set([280, 281]));
+  // Toàn bộ chuỗi tồn cuối kỳ 3 giai đoạn đã KHÉP HẲN: ĐT (D154/D156 ← D83/D86 suy ngược), XX
+  // (D84/D86 ← D9/D12 suy ngược), TT (D280/D281 tính đủ chuỗi thành phần nhờ đã tách D262/D267/
+  // D274-D279). KHÔNG còn dòng nào cần bỏ self-check `=`.
+  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC);
   themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC);
 }
 
