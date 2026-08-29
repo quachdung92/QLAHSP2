@@ -752,22 +752,41 @@ function chonBiCanChinh(bcList) {
   return bcList.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList[0];
 }
 
-// Lọc 1 danh sách bị can về đúng những người ĐÃ CÓ tại 1 thời điểm cụ thể (ngayKhoiTo <= cutoff) —
-// dùng THỐNG NHẤT cho mọi chỗ ghi "vào"/"ra" cấp VỤ (Tổng thụ lý/Cân đối số liệu, xem
-// vuAnTuLogDocs), để bị can THÊM SAU thời điểm 1 sự kiện chuyển giai đoạn/trả hồ sơ/khởi tố vụ...
-// không bị tính trùng vào đúng sự kiện đó (xem add_bo_sung_bican_2026-08-03.sql — bị can thêm sau
-// khi vụ đã "vào" 1 giai đoạn từ trước giờ có sự kiện "bo_sung_bican" riêng để ghi "vào" đúng chỗ).
-// `cutoff` rỗng (VD "Số tồn hiện tại"/"DS đã hoàn thành" không gắn với 1 sự kiện lịch sử cụ thể) →
-// KHÔNG lọc gì (giữ nguyên toàn bộ, đúng hành vi "luôn sống" từ trước). Bị can thiếu `ngayKhoiTo`
-// coi là "đã có từ trước" (an toàn, không loại bỏ oan dữ liệu cũ thiếu ngày).
-function locBiCanTheoCutoff(bcList, cutoff) {
-  if (!cutoff) return bcList;
-  const cutoffMs = cutoff.toMillis ? cutoff.toMillis() : new Date(cutoff).getTime();
-  if (isNaN(cutoffMs)) return bcList;
+// Bảng thứ tự các KỲ THẬT (loai IS NULL), theo ngayBatDau tăng dần → Map<kyId, rank 0,1,2...>.
+// KỲ LƯU TRỮ KHÔNG có trong bảng (rank = undefined) — sự kiện gán kỳ lưu trữ nằm NGOÀI mọi thống
+// kê tồn (theo chỉ đạo Dũng 2026-08-28). Dùng cho locBiCanTheoKy + tồn đầu/cuối kỳ. kybaocao rất
+// nhỏ (≈6 dòng) nên fetch thẳng mỗi lần, không cần cache.
+async function layKyRankMap() {
+  const snap = await db.collection("kybaocao").orderBy("ngayBatDau").get();
+  const m = new Map();
+  let rank = 0;
+  snap.docs.forEach(d => {
+    const k = d.data();
+    if (k.loai === "luu_tru") return;
+    m.set(d.id, rank++);
+  });
+  return m;
+}
+
+// Lọc 1 danh sách bị can về đúng những người ĐÃ ĐƯỢC KHỞI TỐ (sự kiện khoi_to_bican) ở 1 KỲ THẬT có
+// thứ tự <= kỳ của SỰ KIỆN đang xét — THAY HẲN locBiCanTheoCutoff cũ (lọc theo ngày khởi tố, tàn dư
+// hệ thống Firebase). Theo chỉ đạo Dũng 2026-08-28: mọi công thức tồn base 100% trên kyThongKe, KHÔNG
+// dựa ngày thật (xem rpc_ton_ky_thong_nhat_2026-08-28.sql — RPC "tồn chốt" cũng đã đổi y hệt).
+// Dùng THỐNG NHẤT cho mọi chỗ ghi "vào"/"ra" cấp VỤ (Tổng thụ lý/Cân đối số liệu, xem vuAnTuLogDocs)
+// — để bị can THÊM SAU (kỳ khởi tố bị can > kỳ sự kiện này) không bị tính trùng vào đúng sự kiện đó.
+//   bcKyKhoiToMap: Map<bcId, kyId>   (từ fetchKyKhoiToBiCan)
+//   kyRankMap:     Map<kyId, number> (từ layKyRankMap — CHỈ kỳ thật)
+//   kyThongKeSuKien: kyThongKe của CHÍNH sự kiện log đang xét.
+// `kyThongKeSuKien` rỗng / thuộc kỳ lưu trữ (không có rank) → KHÔNG lọc (giữ nguyên toàn bộ — sự kiện
+// kỳ lưu trữ không feed báo cáo kỳ thật nào nên vô hại). Bị can không có sự kiện khoi_to_bican ở kỳ
+// thật nào → BỊ LOẠI (strict — thiếu gán kỳ là việc vệ sinh dữ liệu, tự lộ ở "Cân đối số liệu").
+function locBiCanTheoKy(bcList, kyThongKeSuKien, bcKyKhoiToMap, kyRankMap) {
+  if (!kyThongKeSuKien || !bcKyKhoiToMap || !kyRankMap) return bcList;
+  const rankSuKien = kyRankMap.get(kyThongKeSuKien);
+  if (rankSuKien == null) return bcList; // sự kiện ở kỳ lưu trữ
   return bcList.filter(bc => {
-    if (!bc.ngayKhoiTo) return true;
-    const ms = bc.ngayKhoiTo.toMillis ? bc.ngayKhoiTo.toMillis() : new Date(bc.ngayKhoiTo).getTime();
-    return isNaN(ms) || ms <= cutoffMs;
+    const rankBc = kyRankMap.get(bcKyKhoiToMap.get(bc.id));
+    return rankBc != null && rankBc <= rankSuKien;
   });
 }
 
@@ -3520,174 +3539,6 @@ function BackfillHoanThanhConThieuTool() {
   );
 }
 
-// Sửa dữ liệu tonCuoiKyTheoTD/tonCuoiBiCan đã bị ghi sai bởi bug cũ (tinhLaiBaoCaoLuu từng chụp
-// ảnh LIVE hiện tại thay vì lịch sử — đã sửa code 2026-07-13 để không sai THÊM, nhưng dữ liệu đã
-// ghi sai trước đó không tự phục hồi). Chạy 1 lần để tính lại ĐÚNG từ log cho toàn bộ kỳ đã chốt,
-// theo thứ tự thời gian — xem tinhLaiBaoCaoLuu bên trên để hiểu bug gốc, xem
-// taiTaoTonCuoiKyTheoTDTatCa để hiểu cách tính lại đúng.
-function TaiTaoTonTheoTDTool() {
-  const [dangChay, setDangChay] = useState(false);
-  const [tienDo, setTienDo] = useState(null);
-  const [ketQua, setKetQua] = useState(null);
-  const [loi, setLoi] = useState("");
-
-  const chay = async () => {
-    setDangChay(true); setLoi(""); setKetQua(null); setTienDo(null);
-    try {
-      const kq = await taiTaoTonCuoiKyTheoTDTatCa((da, tong, tenKy) => setTienDo({ da, tong, tenKy }));
-      setKetQua(kq);
-    } catch (err) {
-      console.error(err);
-      setLoi("Lỗi: " + err.message);
-    } finally {
-      setDangChay(false);
-    }
-  };
-
-  const soKyCoCanhBao = ketQua?.ketQua.filter(k => k.canhBao.length > 0) || [];
-
-  return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
-      <h3 className="font-semibold text-slate-800 mb-1">Sửa lại tồn cuối kỳ theo tội danh (dự phòng khi RPC lỗi)</h3>
-      <p className="text-xs text-slate-500 mb-3">
-        <strong>Từ 2026-08-06, Biểu B10 đã đổi sang tính TRỰC TIẾP qua RPC as-of (không còn phụ
-        thuộc dữ liệu công cụ này làm nguồn chính nữa)</strong> — công cụ này giờ CHỈ còn tác dụng
-        dựng lại <code>tonCuoiKyTheoTD</code>/<code>tonCuoiBiCan</code> làm DỰ PHÒNG cho trường hợp
-        RPC không gọi được (mất mạng/PostgREST lỗi lúc xuất báo cáo) — B10 sẽ tự rơi về dữ liệu này
-        kèm cảnh báo rõ ràng. Sheet "DS tồn cuối kỳ" khi Xuất Excel cũng đã chuyển hẳn sang RPC,
-        không còn đọc dữ liệu công cụ này nữa. Tính lại theo thứ tự thời gian, từ log (số mới − đã
-        giải quyết mỗi kỳ), đối chiếu với <code>tonCuoiKy</code> (chưa bao giờ bị ghi sai) để đảm
-        bảo tổng luôn khớp. An toàn khi chạy lại nhiều lần (tính lại từ đầu mỗi lần chạy, không cộng
-        dồn chồng lên kết quả cũ).
-      </p>
-      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-3 mb-3">{loi}</div>}
-      {dangChay && tienDo && (
-        <div className="text-xs text-slate-500 mb-3">
-          Đang tính {tienDo.da}/{tienDo.tong} — kỳ "{tienDo.tenKy}"...
-        </div>
-      )}
-      {ketQua && (
-        <div className="bg-green-50 border border-green-200 text-green-700 text-xs rounded-lg p-3 mb-3">
-          Xong: đã tính lại {ketQua.tongSoKy} kỳ đã chốt.
-          {soKyCoCanhBao.length > 0 && (
-            <div className="mt-2 text-amber-700">
-              ⚠ {soKyCoCanhBao.length} kỳ có chênh lệch với dữ liệu cũ (đã tự gộp vào tội danh
-              "(chưa xác định — chênh lệch dữ liệu cũ)" để tổng vẫn khớp):
-              <ul className="list-disc list-inside mt-1">
-                {soKyCoCanhBao.map((k, i) => (
-                  <li key={i}>{k.ky}: {k.canhBao.join(" ")}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-      <button onClick={chay} disabled={dangChay}
-              className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
-        {dangChay ? "Đang tính lại..." : "Tính lại tồn theo tội danh cho mọi kỳ"}
-      </button>
-    </div>
-  );
-}
-
-// So sánh RPC động (layTrangThaiVuTaiKy/layTrangThaiBiCanTaiKy — xem CLAUDE.md mục "Chuyển hệ
-// thống thống kê 'tồn' từ snapshot-chốt-kỳ sang query động") với snapshot cũ (kybaocao.tonCuoiKy/
-// tonCuoiBiCan, ghi lúc chốt/lúc chạy TaiTaoTonTheoTDTool) trên MỌI kỳ đã chốt — CHỈ ĐỌC, không
-// ghi gì, an toàn chạy bất cứ lúc nào. RPC ĐÃ LÀ NGUỒN CHÍNH từ 2026-08-06 (tinhBaoCaoKy/tinhBieu10
-// đều ưu tiên RPC, snapshot chỉ còn là dự phòng khi RPC lỗi) — tool này giờ dùng để RÀ SOÁT SỨC KHOẺ
-// dữ liệu định kỳ (phát hiện kỳ nào snapshot dự phòng đã "trôi" so với RPC, dù không ảnh hưởng báo
-// cáo hiển thị nữa — chỉ ảnh hưởng khi RPC lỗi mạng), không còn ý nghĩa "trước khi thay thế" nữa.
-function SoSanhRPCTonKyTool() {
-  const [dangChay, setDangChay] = useState(false);
-  const [ketQua, setKetQua] = useState(null);
-  const [loi, setLoi] = useState("");
-
-  const chay = async () => {
-    setDangChay(true); setLoi(""); setKetQua(null);
-    try {
-      const snap = await db.collection("kybaocao").where("trangThai", "==", "da_chot").get();
-      const dsKy = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => new Date(a.ngayBatDau || 0) - new Date(b.ngayBatDau || 0));
-      const rows = [];
-      for (const ky of dsKy) {
-        const rpc = await layTonTheoKyRPC(ky.id);
-        if (!rpc) { rows.push({ ky, loi: true }); continue; }
-        const vu = {}, bc = {};
-        for (const gd of THU_TU_GIAI_DOAN) {
-          const ids = rpc.vuTheoGD[gd] || [];
-          vu[gd] = ids.length;
-          bc[gd] = ids.reduce((s, id) => s + (rpc.bcTonTheoVu.get(id)?.size || 0), 0);
-        }
-        const snapVu = ky.tonCuoiKy || {}, snapBc = ky.tonCuoiBiCan || {};
-        const lech = THU_TU_GIAI_DOAN.some(gd => vu[gd] !== (snapVu[gd] ?? 0) || bc[gd] !== (snapBc[gd] ?? 0));
-        rows.push({ ky, vu, bc, snapVu, snapBc, lech });
-      }
-      setKetQua(rows);
-    } catch (err) {
-      console.error(err);
-      setLoi("Lỗi: " + err.message);
-    } finally {
-      setDangChay(false);
-    }
-  };
-
-  const soLech = ketQua?.filter(r => r.lech || r.loi).length || 0;
-
-  return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6">
-      <h3 className="font-semibold text-slate-800 mb-1">So sánh RPC động vs snapshot dự phòng (rà soát sức khoẻ dữ liệu)</h3>
-      <p className="text-xs text-slate-500 mb-3">
-        CHỈ ĐỌC — chạy 2 RPC <code>layTrangThaiVuTaiKy</code>/<code>layTrangThaiBiCanTaiKy</code> cho
-        MỌI kỳ đã chốt, so với <code>tonCuoiKy</code>/<code>tonCuoiBiCan</code> đã lưu. Không ghi gì
-        vào dữ liệu, an toàn chạy bất cứ lúc nào. RPC đã là nguồn số liệu CHÍNH THỨC (B10/báo cáo kỳ
-        đều ưu tiên RPC) — kỳ nào lệch ở đây KHÔNG ảnh hưởng số liệu cán bộ đang xem, chỉ là dấu hiệu
-        snapshot DỰ PHÒNG (dùng khi RPC lỗi mạng) đã cũ, nên chạy lại "Sửa lại tồn cuối kỳ theo tội
-        danh" cho kỳ đó khi rảnh.
-      </p>
-      {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-3 mb-3">{loi}</div>}
-      <button onClick={chay} disabled={dangChay}
-              className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 mb-3">
-        {dangChay ? "Đang so sánh..." : "So sánh mọi kỳ đã chốt"}
-      </button>
-      {ketQua && (
-        <div className="text-xs">
-          <div className={`rounded-lg p-3 mb-3 ${soLech > 0 ? "bg-amber-50 border border-amber-200 text-amber-700" : "bg-green-50 border border-green-200 text-green-700"}`}>
-            {soLech > 0 ? `⚠ ${soLech}/${ketQua.length} kỳ LỆCH giữa RPC và snapshot cũ — xem chi tiết bên dưới.` : `✓ Khớp tuyệt đối cả ${ketQua.length} kỳ đã chốt.`}
-          </div>
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-slate-500">
-                <th className="py-1 pr-2">Kỳ</th>
-                <th className="py-1 pr-2">Vụ (RPC / snapshot)</th>
-                <th className="py-1 pr-2">Bị can (RPC / snapshot)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ketQua.map((r, i) => (
-                <tr key={i} className={`border-b border-slate-100 ${r.lech || r.loi ? "bg-amber-50" : ""}`}>
-                  <td className="py-1 pr-2">{r.ky.tenKy}</td>
-                  {r.loi ? (
-                    <td colSpan={2} className="py-1 pr-2 text-red-600">Lỗi gọi RPC</td>
-                  ) : (
-                    <>
-                      <td className="py-1 pr-2 font-mono">
-                        {THU_TU_GIAI_DOAN.map(gd => `${r.vu[gd]}/${r.snapVu[gd] ?? 0}`).join(" · ")}
-                      </td>
-                      <td className="py-1 pr-2 font-mono">
-                        {THU_TU_GIAI_DOAN.map(gd => `${r.bc[gd]}/${r.snapBc[gd] ?? 0}`).join(" · ")}
-                      </td>
-                    </>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
 const TEN_SHEET_DANH_SACH_AN = "Danh sách án";
 
 function timTuNhan(nhanMap, text) {
@@ -4332,8 +4183,6 @@ function ImportExcelModule() {
       <BackfillTomTatBiCanTool />
       <BackfillNgayQuyetDinhGiaoNhanTool />
       <BackfillHoanThanhConThieuTool />
-      <TaiTaoTonTheoTDTool />
-      <SoSanhRPCTonKyTool />
     </div>
   );
 }
@@ -4404,7 +4253,7 @@ function ModalXacNhanKy({ open, onXacNhan, onHuy }) {
               )}
               {kyChonObj?.trangThai === "da_chot" && kyChonObj?.loai !== "luu_tru" && (
                 <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2 mb-3">
-                  ⚠️ Kỳ này đã chốt — sau khi xác nhận, vào <b>Kỳ báo cáo</b> → bấm <b>"Tính lại số liệu"</b> cho kỳ này để báo cáo cập nhật đúng.
+                  ⚠️ Kỳ này đã chốt — số liệu báo cáo tự tính lại theo kỳ thống kê mỗi lần mở (không cần thao tác gì thêm sau khi xác nhận).
                 </div>
               )}
             </>
@@ -8502,9 +8351,8 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
 // vụ bình thường (Hoàn thành/Trả hồ sơ/Tách vụ đã có sẵn cho các trường hợp hợp lệ khác). Bắt gõ
 // lại đúng mã vụ để xác nhận (giống xoá branch/repo trên GitHub) vì không có cách hoàn tác. Chặn
 // hẳn nếu đã có vụ TÁCH RA từ vụ này còn tồn tại — xóa vụ gốc trong khi vụ con vẫn còn sẽ để lại
-// dữ liệu mồ côi khó truy vết nguồn gốc. Không tự động cập nhật `baoCaoLuu` của kỳ đã chốt (giống
-// mọi thao tác sửa dữ liệu thuộc kỳ đã chốt khác) — chỉ cảnh báo, người dùng tự chạy lại "Tính lại
-// số liệu" ở Kỳ báo cáo nếu cần.
+// dữ liệu mồ côi khó truy vết nguồn gốc. Số liệu báo cáo của kỳ liên quan (kể cả kỳ đã chốt) tự
+// tính lại từ log mỗi lần xem — chỉ cảnh báo để người dùng biết số kỳ đó sẽ đổi.
 // Bộ ký tự sinh mã xác nhận ngẫu nhiên cho "Đưa vào thùng rác" — loại bỏ ký tự dễ đọc/gõ nhầm
 // (0/O, 1/l/I) vì mục đích của mã là buộc người dùng đọc kỹ + gõ lại có chủ ý, không phải để kiểm
 // tra chính tả; gõ sai vì nhầm lẫn ký tự là ma sát vô ích, không phải an toàn thêm.
@@ -8665,9 +8513,8 @@ function XoaHinhThucGiaiQuyetModal({ vuAn, lichSu, onDong, onXong }) {
         ghi{fieldVuAn ? ` (${NHAN_SO_QUYET_DINH_HOAN_THANH[vuAn.trangThai] || "số quyết định"})` : ""}
         {suKienHoanThanh ? " và sự kiện \"Hoàn thành\" tương ứng trong lịch sử" : ""}. Dùng khi chọn
         NHẦM hình thức giải quyết (VD chọn "Đã xét xử" nhưng đúng ra là "Tạm đình chỉ") — sau khi
-        xoá, bấm lại "Hoàn thành vụ án" để nhập đúng hình thức. Nếu vụ đã được tính vào 1 kỳ báo cáo
-        đã chốt, số liệu đã lưu của kỳ đó sẽ KHÔNG tự cập nhật — vào "Kỳ báo cáo" bấm "Tính lại số
-        liệu" cho kỳ liên quan sau khi xoá. Không thể hoàn tác.
+        xoá, bấm lại "Hoàn thành vụ án" để nhập đúng hình thức. Số liệu kỳ liên quan (kể cả kỳ đã
+        chốt) tự tính lại từ log mỗi lần xem. Không thể hoàn tác.
       </div>
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
       <div className="flex justify-end gap-2">
@@ -8942,96 +8789,15 @@ function DanhSachVuAnModule({ currentUser }) {
 // ====================================================================
 // MODULE: KỲ BÁO CÁO
 // ====================================================================
-// Helper: snapshot tồn hiện tại theo điều luật × giai đoạn — dùng chung cho chotKyBaoCao
-// và tinhLaiBaoCaoLuu. Kết quả: { tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD }.
-// tonCuoiBiCan: tổng số bị can thực tế (0 cho vụ chưa có BC) theo giai đoạn.
-async function tinhSnapTonTheoTD() {
-  const [dems, dmSnap] = await Promise.all([
-    Promise.all(THU_TU_GIAI_DOAN.map(gd =>
-      db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get()
-    )),
-    db.collection("danhMucToiDanh").get(),
-  ]);
-  // Loại bỏ vụ đã "Đưa vào thùng rác" (daXoa) KHỎI snapshot tồn — lọc phía client ngay tại đây
-  // (không dùng where("daXoa","!=",true) vì bỏ qua cả document thiếu field đó, tức mọi dữ liệu cũ)
-  // để mọi chỗ dùng `dems` bên dưới (đếm .size lẫn duyệt .docs) đều tự động đúng, không cần sửa
-  // rải rác từng nơi.
-  const demsDocs = dems.map(snap => snap.docs.filter(d => !d.data().daXoa));
-  const tonCuoiKy = {};
-  const tonCuoiBiCan = {};
-  THU_TU_GIAI_DOAN.forEach((gd, i) => { tonCuoiKy[gd] = demsDocs[i].length; tonCuoiBiCan[gd] = 0; });
-
-  const dmByTenChot = taoDanhMucByTen(dmSnap.docs.map(d => d.data()));
-  const normDK = (bc) => layMaDieuLuatBiCan(bc, dmByTenChot) || "(chưa xác định)";
-
-  // Batch-load toàn bộ bị can 1 lần — thay thế sequential await trong vòng lặp lồng nhau
-  const allVuIds = demsDocs.flatMap(docs => docs.map(d => d.id));
-  const bicanByVuAn = await batchLayBiCanList(allVuIds);
-  const tonCuoiKyTheoTD = {};
-  for (let gi = 0; gi < THU_TU_GIAI_DOAN.length; gi++) {
-    const gd = THU_TU_GIAI_DOAN[gi];
-    for (const vuDoc of demsDocs[gi]) {
-      const vu = vuDoc.data();
-      const bcList = bicanByVuAn[vuDoc.id] || [];
-      tonCuoiBiCan[gd] += bcList.length;
-      if (bcList.length === 0) {
-        // Vụ 0 BC: tội danh chính = dieuLuat[0]
-        const dieuLuatKey = (vu.dieuLuat || "").split(";")[0].trim() || "(chưa xác định)";
-        if (!tonCuoiKyTheoTD[dieuLuatKey]) tonCuoiKyTheoTD[dieuLuatKey] = {};
-        if (!tonCuoiKyTheoTD[dieuLuatKey][gd]) tonCuoiKyTheoTD[dieuLuatKey][gd] = { vuAn: 0, biCan: 0 };
-        tonCuoiKyTheoTD[dieuLuatKey][gd].vuAn++;
-      } else {
-        // Vụ: vuAn chỉ đếm vào tội danh CHÍNH (BC ban_dau hoặc BC đầu tiên)
-        const bcChinh = bcList.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList[0];
-        const dkChinh = normDK(bcChinh);
-        if (!tonCuoiKyTheoTD[dkChinh]) tonCuoiKyTheoTD[dkChinh] = {};
-        if (!tonCuoiKyTheoTD[dkChinh][gd]) tonCuoiKyTheoTD[dkChinh][gd] = { vuAn: 0, biCan: 0 };
-        tonCuoiKyTheoTD[dkChinh][gd].vuAn++;
-        // BC: mỗi BC đếm dưới tội danh của chính nó
-        for (const bc of bcList) {
-          const dk = normDK(bc);
-          if (!tonCuoiKyTheoTD[dk]) tonCuoiKyTheoTD[dk] = {};
-          if (!tonCuoiKyTheoTD[dk][gd]) tonCuoiKyTheoTD[dk][gd] = { vuAn: 0, biCan: 0 };
-          tonCuoiKyTheoTD[dk][gd].biCan++;
-        }
-      }
-    }
-  }
-  return { tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD };
-}
-
-// tonCuoiKy/tonCuoiBiCan (theo giai đoạn, KHÔNG phải theo tội danh) tính bằng CÔNG THỨC LOG
-// (tồn đầu kỳ + mới − đã giải quyết, gộp theo đúng kyThongKe của từng sự kiện) THAY VÌ snapshot
-// sống trạng thái `vuan` hiện tại — sửa theo yêu cầu người dùng 2026-07-20 khi cho phép "mở kỳ
-// mới dù kỳ trước chưa chốt" (nhập bù dữ liệu). Lý do bắt buộc phải đổi: bản cũ giả định "chốt lúc
-// = lúc kỳ thực sự kết thúc" (live state tại thời điểm bấm chốt = đúng lịch sử), giả định này VỠ
-// khi chốt TRỄ — VD vụ đang tồn ở kỳ 06/2026 nhưng cán bộ chỉ nhập sự kiện giải quyết vào hệ thống
-// sau đó, gắn kyThongKe = kỳ 07/2026 (đúng bản chất nghiệp vụ: việc giải quyết XẢY RA/được ghi vào
-// kỳ sau) — nếu tới lúc chốt 06/2026 mới query LIVE trạng thái vuan, vụ đó đã KHÔNG CÒN
-// "dang_giai_quyet" nữa nên bị đếm THIẾU khỏi tồn cuối kỳ 06/2026, dù tại đúng thời điểm kết thúc
-// kỳ 06 nó vẫn đang tồn. Công thức log không phụ thuộc THỜI ĐIỂM tính (chỉ phụ thuộc kyThongKe đã
-// gắn trên từng sự kiện) nên đúng bất kể chốt sớm hay trễ bao lâu.
+// 2026-08-28 (thống nhất theo kỳ thống kê — loại tàn dư snapshot Firebase, chỉ đạo Dũng):
+// "Chốt kỳ" CHỈ đổi trạng thái + ghi ngày/người chốt. KHÔNG còn ghi bất kỳ ảnh chụp số liệu nào
+// (tonCuoiKy/tonCuoiBiCan/tonCuoiKyTheoTD/baoCaoLuu) — mọi số "tồn" đều tính trực tiếp từ log +
+// RPC động mỗi lần xem/xuất, tự lành khi sửa dữ liệu lịch sử. `ngayChot` vẫn ghi (dữ kiện hành
+// chính, hiển thị trên UI) nhưng KHÔNG còn là input của công thức nào — RPC xếp hạng kỳ theo
+// `ngayBatDau`, không dùng `ngayChot`. → Không cần "Tính lại số liệu" cho kỳ đã chốt nữa.
 async function chotKyBaoCao(ky, kyTruoc, ngayChot, nguoiChot) {
-  // Gọi tinhBaoCaoKyTuLog với trangThai "dang_mo" — nhánh "chưa chốt" của chính hàm đó ĐÃ tự tính
-  // tonCuoiKy/tonCuoiBiCanKy bằng công thức log (tồn đầu kỳ + mới − đã giải quyết, xem chú thích
-  // tại đó) nên không cần tính lại ở đây nữa — chỉ cần gom lại thành object tonCuoiKy/tonCuoiBiCan
-  // theo giai đoạn để lưu vào kybaocao (bảng "Cân đối số liệu"/kỳ sau dùng làm tồn đầu kỳ).
-  const baoCaoSoBo = await tinhBaoCaoKyTuLog({ ...ky, trangThai: "dang_mo" }, kyTruoc);
-  const tonCuoiKy = {};
-  const tonCuoiBiCan = {};
-  for (const gd of THU_TU_GIAI_DOAN) {
-    tonCuoiKy[gd] = baoCaoSoBo[gd].tonCuoiKy;
-    tonCuoiBiCan[gd] = baoCaoSoBo[gd].tonCuoiBiCanKy;
-  }
-  // tonCuoiKyTheoTD (theo tội danh, dùng cho Biểu B10) VẪN giữ snapshot sống như cũ trong lần
-  // chốt đầu — nếu chốt trễ như kịch bản trên, số này CÓ THỂ lệch tương tự; công cụ "Sửa lại tồn
-  // cuối kỳ theo tội danh (Biểu B10)" (Cài đặt → Import Excel) đã tính đúng theo log cho toàn bộ
-  // lịch sử, chạy lại công cụ đó sau khi bù dữ liệu xong để đồng bộ số theo tội danh.
-  const { tonCuoiKyTheoTD } = await tinhSnapTonTheoTD();
   await db.collection("kybaocao").doc(ky.id).update({
     trangThai: "da_chot", ngayChot, nguoiChot, thoiDiemChot: new Date(),
-    tonCuoiKy, tonCuoiBiCan, tonCuoiKyTheoTD,
-    baoCaoLuu: tachBaoCaoLuu(baoCaoSoBo),
   });
 }
 
@@ -9168,17 +8934,15 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
 // khi xuất Excel — cùng 1 nguồn dữ liệu nên số dòng danh sách LUÔN khớp đúng số trên báo cáo).
 // Tất cả query vuan + bican chạy song song (Promise.all); bị can dùng cache phiên
 //
-// _soBiCan TÍNH "TẠI THỜI ĐIỂM SỰ KIỆN" (2026-08-03, sửa gốc lỗ hổng "bị can bổ sung không được
-// ghi vào" — xem add_bo_sung_bican_2026-08-03.sql), KHÔNG PHẢI tổng bị can HIỆN TẠI (live) như
-// trước đây — dùng `locBiCanTheoCutoff` với cutoff = ngày CHÍNH sự kiện log này (ngaySuKien, hoặc
-// thoiDiemGhi nếu thiếu). Bị can thêm SAU thời điểm 1 sự kiện "vào"/"ra" giai đoạn không còn bị
-// tính trùng vào đúng sự kiện đó nữa — họ có sự kiện "bo_sung_bican" RIÊNG (ghi ở ThemBiCanForm)
-// để được cộng "vào" đúng giai đoạn/kỳ họ thực sự được thêm. Áp dụng THỐNG NHẤT cho MỌI lời gọi
-// hàm này (cả "vào" lẫn "ra") — kể cả phía "ra" (chuyển đi/trả đi) cũng cần lọc theo cutoff, vì
-// nếu không, tính lại 1 kỳ đã chốt SAU KHI vụ đó đã rời giai đoạn và được thêm bị can Ở GIAI ĐOẠN
-// MỚI sẽ vô tình gộp nhầm những bị can đó vào "ra" của giai đoạn CŨ. Field `_bcCutoff` cũng được
-// gắn lên kết quả để `addSheetVu` (Excel) lọc y hệt khi liệt kê dòng bị can, giữ formula/COUNTIFS
-// trên sheet khớp đúng với con số JS đã tính (không lệch giữa 2 nơi).
+// _soBiCan LỌC THEO KỲ THỐNG KÊ (2026-08-28, thống nhất theo chỉ đạo Dũng — thay hẳn lọc theo ngày
+// khởi tố, tàn dư Firebase; xem locBiCanTheoKy + rpc_ton_ky_thong_nhat_2026-08-28.sql): chỉ đếm bị
+// can có sự kiện khoi_to_bican ở KỲ THẬT thứ tự <= kỳ của CHÍNH sự kiện log này. Bị can thêm ở kỳ
+// SAU không bị tính trùng vào sự kiện này (họ được cộng "vào" đúng kỳ khởi tố của họ — xem
+// bcMoi/boSungTonBc ở tinhBaoCaoKyTuLog). Áp dụng THỐNG NHẤT cho cả "vào" lẫn "ra". Field
+// `_bcKyGioiHan` (= kyThongKe của sự kiện) gắn lên kết quả để `addSheetVu` (Excel) lọc y hệt khi
+// liệt kê dòng bị can, giữ formula/COUNTIFS trên sheet khớp đúng con số JS. Chỉ lọc khi nơi gọi
+// truyền `bcKyKhoiToMap` + `kyRankMap` (tinhBaoCaoKyTuLog/xuatBaoCaoThangExcel); nơi khác (tab "Kết
+// thúc điều tra" ở Án đã giải quyết) không truyền → `_soBiCan` = toàn bộ bị can hiện tại.
 // idVuThatCuaLog: vụ THẬT sự kiện log này đại diện — HẦU HẾT loaiSuKien ghi maVuAn = đúng vụ đang
 // nói tới, NHƯNG "tach_vu" là NGOẠI LỆ: ghi maVuAn = vụ GỐC (nơi lưu sự kiện, vì tách vụ là hành
 // động xảy ra TRÊN vụ gốc) còn vụ MỚI thật sự được tạo ra nằm ở field riêng `vuTachRa` (xem
@@ -9190,16 +8954,22 @@ function ChotKyForm({ ky, kyTruoc, onDong, onXong }) {
 // tách vụ trên 1 vụ nhiều bị can. Kiểm chứng trên Supabase thật: đúng 1 sự kiện tách vụ duy nhất
 // trong hệ thống (QLVA_E01.53_2510_0014 → tách ra QLVA_E01.53_2510_0014_1) khớp y hệt ví dụ.
 const idVuThatCuaLog = (l) => (l.loaiSuKien === "tach_vu" ? (l.vuTachRa || l.maVuAn) : l.maVuAn);
-async function vuAnTuLogDocs(logDocs) {
+// kyRankMap (2026-08-28): truyền vào → `_soBiCan` (dùng cho Tổng thụ lý/Cân đối số liệu) lọc bị can
+// theo KỲ THỐNG KÊ qua locBiCanTheoKy (thay ngày; hàm tự fetch kỳ khởi tố từng bị can). Không truyền
+// (VD tab "Kết thúc điều tra" ở Án đã giải quyết — chỉ cần _bcListGoc để tự tách cũ/mới) → `_soBiCan`
+// = toàn bộ bị can hiện tại của vụ.
+async function vuAnTuLogDocs(logDocs, kyRankMap = null) {
   if (!logDocs.length) return [];
   const maVuAnList = [...new Set(logDocs.map(d => idVuThatCuaLog(d.data())))];
   // Batch-read vuan + bican song song — chia lô qua chiaLoTruyVanIn (2026-07-21: "checklist Supabase
   // mục 5" từng bỏ hẳn chia lô với lý do "Postgres ANY() không giới hạn" — ĐÚNG cho Postgres nhưng
   // SAI thực tế vì PostgREST gửi .in() qua URL query string, dài quá sẽ bị 400 Bad Request. Đặc biệt
   // quan trọng ở ĐÂY vì hàm này nuôi Kỳ báo cáo/Biểu B10 — kỳ nhiều vụ án là kịch bản thật sẽ gặp).
-  const [vuanDocs, biCanByVu] = await Promise.all([
+  // kyRankMap truyền vào → tự fetch luôn kỳ khởi tố từng bị can để lọc _soBiCan theo kỳ (locBiCanTheoKy).
+  const [vuanDocs, biCanByVu, bcKyKhoiToMap] = await Promise.all([
     chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), maVuAnList),
     batchLayBiCanList(maVuAnList),
+    kyRankMap ? fetchKyKhoiToBiCan(maVuAnList) : Promise.resolve(null),
   ]);
   const vuanMap = {};
   vuanDocs.forEach(d => { vuanMap[d.id] = { id: d.id, ...d.data() }; });
@@ -9208,13 +8978,12 @@ async function vuAnTuLogDocs(logDocs) {
     const idThat = idVuThatCuaLog(l);
     const vu = vuanMap[idThat];
     if (!vu) return null;
-    const cutoff = l.ngaySuKien || l.thoiDiemGhi || null;
     const bcListGoc = biCanByVu[idThat] || [];
-    const bcListDung = locBiCanTheoCutoff(bcListGoc, cutoff);
+    const bcListDung = locBiCanTheoKy(bcListGoc, l.kyThongKe, bcKyKhoiToMap, kyRankMap);
     const bcChinh = bcListDung.length ? chonBiCanChinh(bcListDung) : null;
     const toiDanhChinh = bcChinh?.toiDanh?.[0] || "";
     return {
-      ...vu, _log: l, _bcCutoff: cutoff,
+      ...vu, _log: l, _bcKyGioiHan: l.kyThongKe,
       _soBiCan: bcListDung.length, _toiDanhChinh: toiDanhChinhCuaVu(vu, toiDanhChinh),
       // Tổng bị can HIỆN TẠI (live, không lọc cutoff) + chính danh sách gốc — dùng để hiển thị
       // "cũ (trả ĐTBS)/mới" ở tab "Kết thúc điều tra"/"Kết thúc truy tố" (Án đã giải quyết), nơi
@@ -9247,26 +9016,30 @@ async function vuBiCanTuLogDocs(logDocs) {
   }).filter(Boolean);
 }
 
-// Tính đầy đủ (luôn quét lichsuChuyenGiaiDoan) — TỐN NHIỀU query, chỉ nên gọi khi thật sự cần
-// (lúc chốt kỳ, hoặc bấm "Tính lại số liệu"). Xem tinhBaoCaoKy bên dưới — đó mới là hàm nên gọi
-// ở nơi hiển thị, vì nó dùng lại kết quả đã lưu (baoCaoLuu) cho kỳ đã chốt thay vì tính lại mỗi
-// lần bấm xem, như yêu cầu người dùng 2026-07-11.
+// Tính đầy đủ 1 kỳ từ log (luôn quét lichsuChuyenGiaiDoan + gọi RPC tồn) — 2026-08-28: MỌI kỳ (chốt
+// hay chưa) đều gọi hàm này mỗi lần xem, không còn cache baoCaoLuu. Tốn query nhưng tự lành khi sửa
+// dữ liệu lịch sử. `tinhBaoCaoKy` bên dưới chỉ là wrapper mỏng gọi thẳng hàm này.
 async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
   const baoCao = {};
-  // Tính THÊM (không thay) tồn cuối kỳ theo RPC động (2026-08-05, xem CLAUDE.md mục "Chuyển hệ
-  // thống thống kê 'tồn'...") — CHỈ ĐÍNH KÈM `tonCuoiKyRPC`/`tonCuoiBiCanKyRPC` để đối chiếu, KHÔNG
-  // đụng `tonCuoiKy`/`tonCuoiBiCanKy` (vẫn tính theo chuỗi snapshot như cũ, mọi nơi đang dùng 2
-  // field đó — Dashboard/B10/Danh sách vụ án — không bị ảnh hưởng). Lỗi RPC (network...) không làm
-  // hỏng luồng chính — `rpcTon` = null thì bỏ qua phần đính kèm, giữ nguyên hành vi cũ hoàn toàn.
-  const rpcTon = await layTonTheoKyRPC(ky.id).catch(() => null);
+  // 2026-08-28 (thống nhất theo kỳ thống kê, loại tàn dư snapshot Firebase — chỉ đạo Dũng):
+  //  - "Tồn cuối kỳ" (tonCuoiKy/tonCuoiBiCanKy) = LUÔN từ RPC động layTonTheoKyRPC (đã 100% base
+  //    kyThongKe, xem rpc_ton_ky_thong_nhat_2026-08-28.sql). KHÔNG còn đọc kybaocao.tonCuoiKy/
+  //    tonCuoiBiCan (snapshot chốt) hay tính chuỗi "tồn đầu + mới − giải quyết" nữa.
+  //  - "Tồn đầu kỳ" = RPC as-of kỳ TRƯỚC (không còn đọc kyTruoc.tonCuoiKy snapshot).
+  //  - RPC lỗi (mất mạng/Postgres) → THROW, chặn hẳn (Dũng: "cứ chặn đi") — không có dự phòng.
+  //  - `bcMoi`/`soMoi.tong`/`bcGiaiQuyet` (sổ cái, base kyThongKe qua locBiCanTheoKy) vẫn tính —
+  //    dùng cho dòng "Tổng số mới"/"Đã giải quyết" VÀ cột "Tồn cuối (tính)" ở "Cân đối số liệu"
+  //    (cross-check độc lập với RPC — 2 số phải khớp trên dữ liệu sạch).
+  const rpcTon = await layTonTheoKyRPC(ky.id);
+  if (!rpcTon) throw new Error("Không tính được tồn cuối kỳ: RPC không phản hồi (cần kết nối mạng ổn định). Vui lòng thử lại.");
+  const rpcTonTruoc = kyTruoc ? await layTonTheoKyRPC(kyTruoc.id) : null;
+  if (kyTruoc && !rpcTonTruoc) throw new Error("Không tính được tồn đầu kỳ (kỳ trước): RPC không phản hồi. Vui lòng thử lại.");
+  const kyRankMap = await layKyRankMap();
+  const soVuRpc = (rpc, gd) => (rpc.vuTheoGD[gd] || []).length;
+  const soBcRpc = (rpc, gd) => (rpc.vuTheoGD[gd] || []).reduce((s, id) => s + (rpc.bcTonTheoVu.get(id)?.size || 0), 0);
   for (const gd of THU_TU_GIAI_DOAN) {
-    // Guard backward compat: data cũ lưu tonCuoiKy[gd] = {soVu: N, soBiCan: M},
-    // data mới lưu tonCuoiKy[gd] = N (số nguyên), tonCuoiBiCan[gd] = M.
-    const rawTon = kyTruoc?.tonCuoiKy?.[gd];
-    const tonDauKy = typeof rawTon === "number" ? rawTon : (rawTon?.soVu ?? 0);
-    const rawBiCan = kyTruoc?.tonCuoiBiCan?.[gd];
-    const tonDauBiCan = typeof rawBiCan === "number" ? rawBiCan
-      : (rawBiCan?.soBiCan ?? rawTon?.soBiCan ?? 0);
+    const tonDauKy = rpcTonTruoc ? soVuRpc(rpcTonTruoc, gd) : 0;
+    const tonDauBiCan = rpcTonTruoc ? soBcRpc(rpcTonTruoc, gd) : 0;
 
     // "Mới" ở 1 giai đoạn gồm 4 nguồn, áp dụng THỐNG NHẤT cho cả 3 giai đoạn (trước đây cột Điều
     // tra được code riêng, thiếu hẳn "trả về từ giai đoạn sau" — tức viện trả hồ sơ điều tra bổ
@@ -9302,7 +9075,7 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     ]);
 
     const nguonDem = { an_khoi_to_moi: 0, tin_bao_khoi_to_len: 0, an_noi_khac_chuyen_den: 0, phuc_hoi_dieu_tra: 0 };
-    const dsKhoiToTrucTiep = await vuAnTuLogDocs(khoiToTrucTiepSnap.docs);
+    const dsKhoiToTrucTiep = await vuAnTuLogDocs(khoiToTrucTiepSnap.docs, kyRankMap);
     if (gd === "dieu_tra") {
       for (const v of dsKhoiToTrucTiep) { if (v.nguon in nguonDem) nguonDem[v.nguon]++; }
     }
@@ -9327,16 +9100,24 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "hoan_thanh").get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "nhap_vu").get(),
     ]);
+    // hoan_thanh (2026-08-28): _soBiCan cũng lọc theo KỲ THỐNG KÊ (locBiCanTheoKy, key = kyThongKe
+    // của chính sự kiện hoàn thành) để phía "ra" của sổ cái nhất quán tuyệt đối với phía RPC. Thực
+    // tế gần như luôn = tổng bị can hiện tại (vụ không thể hoàn thành trước khi bị can được thêm),
+    // lọc chỉ để chống dữ liệu backfill lệch kỳ. (nhap_vu giữ nguyên biCanSnapshot — điểm-thời-gian.)
+    const bcKyKhoiToRa = await fetchKyKhoiToBiCan(hoanThanhSnap.docs.map(d => d.data().maVuAn));
     const hoanThanhTheoGD = { da_xet_xu: 0, chuyen_di: 0, tam_dinh_chi: 0, dinh_chi: 0, an_huy: 0 };
     const dsHoanThanhTheoGD = { da_xet_xu: [], chuyen_di: [], tam_dinh_chi: [], dinh_chi: [], an_huy: [] };
     await Promise.all(hoanThanhSnap.docs.map(async d => {
       const l = d.data();
-      const [vuDoc, bcInfo] = await Promise.all([
+      const [vuDoc, bcByVu] = await Promise.all([
         db.collection("vuan").doc(l.maVuAn).get(),
-        layBiCanInfo(l.maVuAn),
+        batchLayBiCanList([l.maVuAn]),
       ]);
       if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
-      const entry = { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: toiDanhChinhCuaVu(vuDoc.data(), bcInfo.toiDanhChinh) };
+      const bcLoc = locBiCanTheoKy(bcByVu[l.maVuAn] || [], l.kyThongKe, bcKyKhoiToRa, kyRankMap);
+      const bcChinh = bcLoc.length ? chonBiCanChinh(bcLoc) : null;
+      const entry = { id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcLoc.length,
+        _toiDanhChinh: toiDanhChinhCuaVu(vuDoc.data(), bcChinh?.toiDanh?.[0] || "") };
       hoanThanhTheoGD[l.hinhThucHoanThanh] = (hoanThanhTheoGD[l.hinhThucHoanThanh] || 0) + 1;
       dsHoanThanhTheoGD[l.hinhThucHoanThanh].push(entry);
     }));
@@ -9365,89 +9146,29 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     // Hoist các mảng ds.* (kèm _soBiCan từng vụ) LÊN TRƯỚC bước tính tonCuoiKy — vừa để dùng
     // chung công thức log-based bên dưới (bcMoi/bcGiaiQuyet), vừa tránh gọi lại vuAnTuLogDocs
     // 2 LẦN cho cùng 1 snapshot khi dựng object baoCao[gd].ds ở cuối (đỡ tốn query kép).
-    const dsTachVuArr = await vuAnTuLogDocs(tachVuSnap.docs);
-    const dsChuyenDenArr = await vuAnTuLogDocs(chuyenDenSnap.docs);
-    const dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs);
-    const dsPhucHoiArr = await vuAnTuLogDocs(phucHoiSnap.docs);
-    const dsNhanLaiArr = await vuAnTuLogDocs(nhanLaiSnap.docs);
-    const dsChuyenDiArr = await vuAnTuLogDocs(chuyenDi.docs);
-    const dsTraDiArr = await vuAnTuLogDocs(traDi.docs);
+    const dsTachVuArr = await vuAnTuLogDocs(tachVuSnap.docs, kyRankMap);
+    const dsChuyenDenArr = await vuAnTuLogDocs(chuyenDenSnap.docs, kyRankMap);
+    const dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs, kyRankMap);
+    const dsPhucHoiArr = await vuAnTuLogDocs(phucHoiSnap.docs, kyRankMap);
+    const dsNhanLaiArr = await vuAnTuLogDocs(nhanLaiSnap.docs, kyRankMap);
+    const dsChuyenDiArr = await vuAnTuLogDocs(chuyenDi.docs, kyRankMap);
+    const dsTraDiArr = await vuAnTuLogDocs(traDi.docs, kyRankMap);
     // "bo_sung_bican" là sự kiện CẤP BỊ CAN (không phải cấp vụ) — dùng vuBiCanTuLogDocs riêng
     // (1 dòng/bị can, kèm vụ để hiển thị) thay vì vuAnTuLogDocs (1 dòng/vụ, gộp _soBiCan).
     const dsBoSungBiCanArr = await vuBiCanTuLogDocs(boSungBiCanSnap.docs);
 
     const { soVuTon, soBiCanTon, dsTon } = await tinhTonHienTaiTheoGD(gd);
 
-    let tonCuoiKy, tonCuoiBiCanKy;
-    if (ky.trangThai === "da_chot" && ky.tonCuoiKy) {
-      tonCuoiKy = ky.tonCuoiKy[gd] ?? 0;
-      tonCuoiBiCanKy = ky.tonCuoiBiCan?.[gd] ?? 0;
-    } else {
-      // Kỳ CHƯA CHỐT (đang xem trước) — tính bằng CÔNG THỨC LOG (tồn đầu kỳ + mới − đã giải
-      // quyết, theo đúng kyThongKe) giống hệt chotKyBaoCao, THAY VÌ snapshot sống trạng thái vuan
-      // hiện tại như trước đây. Bug đã sửa (2026-07-20, phát hiện qua báo cáo thật): xem trước kỳ
-      // 06/2026 còn mở, "Tổng số mới" Điều tra = 300 và "Đã giải quyết" = 0 (không có sự kiện nào
-      // gắn kyThongKe=06 cho việc chuyển đi) nhưng "Tồn cuối kỳ" lại hiện 299 — thiếu đúng 1 vụ đã
-      // ĐƯỢC CHUYỂN SANG TRUY TỐ THẬT NGOÀI ĐỜI nhưng sự kiện đó gắn kyThongKe=07 (đúng kịch bản
-      // "kỳ 06 không giải quyết, thực tế giải quyết vào kỳ 07") — snapshot sống lúc xem đã không
-      // còn thấy vụ đó "đang giải quyết ở Điều tra" nữa nên đếm thiếu, trong khi dòng "Đã giải
-      // quyết" (log-based, đúng theo kyThongKe=06) vẫn đúng là 0. Đổi sang công thức log để 2 khối
-      // này LUÔN khớp nhau (tồn cuối kỳ = tồn đầu kỳ + số mới − số đã giải quyết hiển thị ngay phía
-      // trên), đúng bản chất "tồn cuối kỳ 06" không phụ thuộc việc vụ đó sau này (kỳ 07) ra sao.
-      const tongBiCan = (arr) => arr.reduce((s, v) => s + (v._soBiCan || 0), 0);
-      const soGiaiQuyetVu = chuyenDi.size + traDi.size
-        + Object.values(hoanThanhTheoGD).reduce((s, n) => s + n, 0) + soNhapVu;
-
-      // Bug đã sửa (2026-08-04, Dũng phát hiện qua đối chiếu B10/"DS tồn ĐT" — yêu cầu "số liệu và
-      // biểu báo cáo phải trùng khớp... ko phải đơn thuần cộng trừ ước tính") — `boSungBiCanSnap`
-      // (sự kiện `bo_sung_bican`) quá thưa (chỉ mới có từ 2026-08-03, không backfill dữ liệu cũ,
-      // Import Excel/nhiều luồng thêm bị can khác không tạo ra sự kiện này — xem lịch sử "3 bản sửa"
-      // C7-C24 cùng ngày). Đổi sang so kỳ khởi tố CỦA CHÍNH bị can trực tiếp (không phụ thuộc sự
-      // kiện) — CÙNG PHẠM VI ĐÃ KIỂM CHỨNG AN TOÀN ở `tinhBieu10`'s `bcBoSungTonTheoGD` (chỉ vụ
-      // ĐANG TỒN — `dsTon`, loại cả vụ "mới" lẫn vụ "ra" NGAY TRONG kỳ này) — dùng CHUNG 1 định
-      // nghĩa "bổ sung" ở cả 2 nơi để B10 và "Kỳ báo cáo" LUÔN khớp nhau tuyệt đối, không lệch dù
-      // chỉ 1 người. ⚠ KHÔNG mở rộng sang cả vụ "ra" (dù có vẻ tự triệt tiêu qua vế trừ — bản nháp
-      // đầu tiên thử cách đó cho B10 sáng nay đã ra kết quả VƯỢT quá số live thật, chưa lý giải hết
-      // — không lặp lại rủi ro đó ở đây, giữ đúng phạm vi hẹp đã xác nhận đúng bằng dữ liệu thật).
-      const moiIds = new Set([
-        ...dsKhoiToTrucTiep, ...dsTachVuArr, ...dsChuyenDenArr, ...dsTraVeArr, ...dsPhucHoiArr, ...dsNhanLaiArr,
-      ].map(v => v.id));
-      const raIds = new Set([
-        ...dsChuyenDiArr, ...dsTraDiArr, ...Object.values(dsHoanThanhTheoGD).flat(), ...dsNhapVu,
-      ].map(v => v.id));
-      const vuTonConLai = dsTon.filter(v => !moiIds.has(v.id) && !raIds.has(v.id));
-      const [biCanTonConLai, bcKyKhoiToMapTon] = await Promise.all([
-        batchLayBiCanList(vuTonConLai.map(v => v.id)),
-        fetchKyKhoiToBiCan(vuTonConLai.map(v => v.id)),
-      ]);
-      let boSungTonBc = 0;
-      for (const vu of vuTonConLai) {
-        for (const bc of (biCanTonConLai[vu.id] || [])) {
-          if (bcKyKhoiToMapTon.get(bc.id) === ky.id) boSungTonBc++;
-        }
-      }
-
-      const bcMoi = tongBiCan(dsKhoiToTrucTiep) + tongBiCan(dsTachVuArr)
-        + tongBiCan(dsChuyenDenArr) + tongBiCan(dsTraVeArr)
-        + tongBiCan(dsPhucHoiArr) + tongBiCan(dsNhanLaiArr)
-        + boSungTonBc; // thay boSungBiCanSnap.size (event-sourced, quá thưa) — xem giải thích trên
-      const bcGiaiQuyet = tongBiCan(dsChuyenDiArr) + tongBiCan(dsTraDiArr)
-        + Object.values(dsHoanThanhTheoGD).reduce((s, arr) => s + tongBiCan(arr), 0)
-        + tongBiCan(dsNhapVu);
-      tonCuoiKy = tonDauKy + soMoi.tong - soGiaiQuyetVu;
-      tonCuoiBiCanKy = tonDauBiCan + bcMoi - bcGiaiQuyet;
-    }
-
-    const rpcIds = rpcTon?.vuTheoGD[gd] || null;
-    const tonCuoiKyRPC = rpcIds ? rpcIds.length : null;
-    const tonCuoiBiCanKyRPC = rpcIds
-      ? rpcIds.reduce((s, id) => s + (rpcTon.bcTonTheoVu.get(id)?.size || 0), 0)
-      : null;
+    // "Tồn cuối kỳ" = LUÔN từ RPC động (đã 100% base kyThongKe — xem đầu hàm). Không còn chuỗi
+    // "tồn đầu + mới − giải quyết" hay đọc snapshot chốt. Sổ cái "vào/ra" (soMoi + _soBiCan trong
+    // ds.*, đều đã lọc theo kỳ) chỉ còn dùng cho dòng hiển thị "Tổng số mới"/"Đã giải quyết" và cột
+    // "Tồn cuối (tính)" ở sheet "Cân đối số liệu" — nơi tự SUM độc lập để đối chiếu với RPC.
+    const tonCuoiKy = (rpcTon.vuTheoGD[gd] || []).length;
+    const tonCuoiBiCanKy = (rpcTon.vuTheoGD[gd] || []).reduce((s, id) => s + (rpcTon.bcTonTheoVu.get(id)?.size || 0), 0);
 
     baoCao[gd] = {
       tonDauKy, tonDauBiCan, soMoi, chuyenDi: chuyenDi.size, traDi: traDi.size,
       hoanThanhTheoGD, soNhapVu, tonCuoiKy, tonCuoiBiCanKy,
-      tonCuoiKyRPC, tonCuoiBiCanKyRPC,
       soVuTon, soBiCanTon,
       ds: {
         khoiToTrucTiep: dsKhoiToTrucTiep,
@@ -9468,11 +9189,11 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
   return baoCao;
 }
 
-// Chỉ tính "số tồn hiện tại" (soVuTon/soBiCanTon/dsTon) — phần LUÔN phải live dù kỳ đã chốt hay
-// chưa (nhãn UI ghi rõ "tại thời điểm xem"), tách riêng để tái dùng khi đọc từ baoCaoLuu.
+// "Số tồn hiện tại" (soVuTon/soBiCanTon/dsTon) — số LIVE tại thời điểm xem (khác "Tồn cuối kỳ" =
+// as-of kỳ qua RPC). Tách hàm riêng để tái dùng.
 async function tinhTonHienTaiTheoGD(gd) {
   const vuTonSnap = await db.collection("vuan").where("coQuanThuLy", "==", gd).where("trangThai", "==", "dang_giai_quyet").get();
-  // Loại vụ đã "Đưa vào thùng rác" khỏi số tồn (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
+  // Loại vụ đã "Đưa vào thùng rác" khỏi số tồn (lọc client — không dùng where("daXoa","!=") vì bỏ qua doc thiếu field).
   const docsTon = vuTonSnap.docs.filter(d => !d.data().daXoa);
   const dsTon = await Promise.all(docsTon.map(async d => {
     const bcInfo = await layBiCanInfo(d.id);
@@ -9582,106 +9303,12 @@ async function tinhDsTonTheoKy(gd, ky, rpcData) {
   return { list, live: false };
 }
 
-// Tách phần "đông cứng" (không đổi sau khi kỳ đã chốt, trừ khi bấm "Tính lại số liệu") ra khỏi
-// phần "tồn hiện tại" (luôn live) — dùng khi lưu baoCaoLuu lúc chốt/tính lại.
-function tachBaoCaoLuu(baoCaoTuLog) {
-  const baoCaoLuu = {};
-  for (const gd of THU_TU_GIAI_DOAN) {
-    const { soVuTon, soBiCanTon, ds, ...phanConLai } = baoCaoTuLog[gd];
-    const { tonHienTai, ...dsConLai } = ds;
-    baoCaoLuu[gd] = { ...phanConLai, ds: dsConLai };
-  }
-  return baoCaoLuu;
-}
-
-// Hàm nên gọi ở nơi hiển thị báo cáo (KyChiTietModal) — kỳ ĐÃ CHỐT và đã có baoCaoLuu thì dùng
-// lại luôn, không quét lại lichsuChuyenGiaiDoan mỗi lần bấm xem (tinhBaoCaoKyTuLog tốn hàng chục
-// query + đọc từng doc vuan một cho mỗi dòng danh sách, người dùng yêu cầu 2026-07-11 vì bấm vào
-// xem lại phải chờ tính toán lại từ đầu mỗi lần). Chỉ phần "tồn hiện tại" là luôn tính lại vì bản
-// chất nó biến động theo thời gian, không thuộc riêng về kỳ nào. Kỳ đang mở luôn tính trực tiếp
-// vì số liệu còn thay đổi. Kỳ đã chốt nhưng chưa có baoCaoLuu (chốt trước khi có tính năng này)
-// vẫn tự tính đầy đủ như cũ — không bắt buộc chạy backfill riêng.
+// Hàm gọi ở nơi hiển thị báo cáo (KyChiTietModal). 2026-08-28 (thống nhất theo kỳ thống kê, loại
+// tàn dư snapshot Firebase): KHÔNG còn nhánh "kỳ đã chốt đọc baoCaoLuu" — MỌI kỳ (chốt hay chưa)
+// đều tính trực tiếp từ log + RPC động mỗi lần xem → tự lành khi sửa dữ liệu lịch sử, không cần
+// bấm "Tính lại số liệu". `tinhBaoCaoKyTuLog` đã tự lo tồn đầu/cuối theo RPC + throw nếu RPC lỗi.
 async function tinhBaoCaoKy(ky, kyTruoc) {
-  // "Tồn đầu kỳ" (2026-08-06, ĐỔI ƯU TIÊN sang RPC, xem CLAUDE.md "Chuyển hệ thống thống kê 'tồn'
-  // ...") — "Tồn đầu kỳ" của ky = "Tồn cuối kỳ" của kyTruoc, tính TRỰC TIẾP as-of kyTruoc.id thay vì
-  // đọc field `tonCuoiKy`/`tonCuoiBiCan` đã lưu tĩnh trên doc kyTruoc (đúng field đã biết có thể
-  // "trôi" — sự cố thật 738/735). Không có kyTruoc (kỳ đầu tiên) → bỏ qua, giữ hành vi cũ (0/log).
-  const rpcTonTruoc = kyTruoc ? await layTonTheoKyRPC(kyTruoc.id).catch(() => null) : null;
-  const apDungRpcTonDau = (baoCao) => {
-    if (!rpcTonTruoc) return;
-    for (const gd of THU_TU_GIAI_DOAN) {
-      const idsTruoc = rpcTonTruoc.vuTheoGD[gd] || [];
-      baoCao[gd].tonDauKy = idsTruoc.length;
-      baoCao[gd].tonDauBiCan = idsTruoc.reduce((s, id) => s + (rpcTonTruoc.bcTonTheoVu.get(id)?.size || 0), 0);
-    }
-  };
-
-  if (ky.trangThai === "da_chot" && ky.baoCaoLuu) {
-    const baoCao = {};
-    // "Tồn cuối kỳ" (2026-08-06, ĐỔI ƯU TIÊN sang RPC) — gọi RPC MỚI ở đây (KHÔNG dùng
-    // `tonCuoiKyRPC` đông cứng trong `baoCaoLuu`, đó là ảnh chụp CŨ tại lúc chốt/"Tính lại số
-    // liệu" — có thể đã lệch nếu dữ liệu bị sửa retroactive sau đó, đúng kịch bản thật đã gặp:
-    // snapshot "trôi" 738→735). RPC tính LIVE mỗi lần xem nên tự lành nếu có sửa dữ liệu về sau,
-    // không cần bấm "Tính lại số liệu" thủ công nữa. RPC lỗi (mất mạng/PostgREST down) → giữ
-    // nguyên hành vi CŨ (đọc từ `baoCaoLuu`/`ky.tonCuoiBiCan`) làm dự phòng, không để trắng số.
-    const rpcTon = await layTonTheoKyRPC(ky.id).catch(() => null);
-    for (const gd of THU_TU_GIAI_DOAN) {
-      const { soVuTon, soBiCanTon, dsTon } = await tinhTonHienTaiTheoGD(gd);
-      const rpcIds = rpcTon?.vuTheoGD[gd] || null;
-      baoCao[gd] = {
-        ...ky.baoCaoLuu[gd],
-        soVuTon, soBiCanTon,
-        tonDauBiCan: (v => typeof v === "number" ? v : 0)(kyTruoc?.tonCuoiBiCan?.[gd]),
-        tonCuoiKy: rpcIds ? rpcIds.length : ky.baoCaoLuu[gd].tonCuoiKy,
-        tonCuoiBiCanKy: rpcIds
-          ? rpcIds.reduce((s, id) => s + (rpcTon.bcTonTheoVu.get(id)?.size || 0), 0)
-          : (v => typeof v === "number" ? v : soBiCanTon)(ky.tonCuoiBiCan?.[gd]),
-        _tonCuoiKyNguon: rpcIds ? "rpc" : "duphong",
-        ds: { ...ky.baoCaoLuu[gd].ds, tonHienTai: dsTon },
-      };
-    }
-    apDungRpcTonDau(baoCao);
-    return baoCao;
-  }
-  const baoCao = await tinhBaoCaoKyTuLog(ky, kyTruoc);
-  // Kỳ chưa chốt/chưa có baoCaoLuu: tinhBaoCaoKyTuLog ĐÃ tự gọi RPC bên trong (đính kèm
-  // tonCuoiKyRPC/tonCuoiBiCanKyRPC, xem đó) — ưu tiên dùng luôn, KHÔNG gọi RPC lần 2 cho cùng 1 kỳ.
-  for (const gd of THU_TU_GIAI_DOAN) {
-    if (baoCao[gd].tonCuoiKyRPC != null) {
-      baoCao[gd].tonCuoiKy = baoCao[gd].tonCuoiKyRPC;
-      baoCao[gd].tonCuoiBiCanKy = baoCao[gd].tonCuoiBiCanKyRPC;
-      baoCao[gd]._tonCuoiKyNguon = "rpc";
-    } else {
-      baoCao[gd]._tonCuoiKyNguon = "duphong";
-    }
-  }
-  apDungRpcTonDau(baoCao);
-  return baoCao;
-}
-
-// Tính lại & lưu baoCaoLuu cho 1 kỳ ĐÃ CHỐT — dùng khi sự kiện thuộc kỳ này bị "Sửa kỳ" sau khi
-// đã chốt, số liệu đã lưu cần đồng bộ lại (xem cảnh báo ở SuaKyModal). KHÔNG đụng tới tonCuoiKy/
-// tonCuoiBiCan/tonCuoiKyTheoTD (số "Còn" đã chốt là mốc cố định dùng làm tồn đầu kỳ cho kỳ sau —
-// đây là trạng thái vuan thật LÚC CHỐT, độc lập với việc gán kyThongKe của từng sự kiện nên
-// "Sửa kỳ" không làm sai số này, chỉ làm sai các dòng "số mới"/"đã giải quyết" đếm theo kyThongKe).
-// Bug đã sửa (2026-07-13): trước đây hàm này GHI ĐÈ tonCuoiKyTheoTD/tonCuoiBiCan bằng
-// tinhSnapTonTheoTD() — hàm đó luôn query LIVE trạng thái vuan HIỆN TẠI (đúng lúc gọi), không
-// biết gì về thời điểm chốt LỊCH SỬ của kỳ đang tính lại. Chốt lần đầu qua chotKyBaoCao() gọi hàm
-// này ĐÚNG (thời điểm chốt = thời điểm gọi, live = lịch sử). Nhưng "Tính lại số liệu" có thể chạy
-// rất lâu sau khi kỳ đã đóng (khi có Sửa kỳ tác động tới kỳ cũ) — lúc đó live vuan đã trôi xa so
-// với lúc kỳ đó thực sự chốt, nên ghi đè làm tonCuoiKyTheoTD của kỳ CŨ biến thành ảnh chụp HIỆN
-// TẠI. Hậu quả: Biểu B10 (tinhBieu10) đọc "tồn kỳ trước" từ kyTruoc.tonCuoiKyTheoTD — nếu kyTruoc
-// vừa bị "Tính lại" gần đây, cột "tồn kỳ trước" trên B10 trùng y hệt "tồn kỳ này" (đều phản ánh
-// live hiện tại) dù 2 kỳ cách nhau cả tháng. Không có cách nào tái tạo ĐÚNG ảnh chụp lịch sử tại
-// đây (muốn đúng phải replay log tới đúng thời điểm chốt của kỳ đó — chưa làm, xem ghi chú ở
-// CLAUDE.md nếu cần bổ sung) — nên đơn giản là ĐỪNG ĐỤNG vào các field ảnh chụp này nữa, để trống
-// (0 tồn trước ở B10) còn an toàn hơn hiện số sai mà trông như đúng.
-async function tinhLaiBaoCaoLuu(ky, kyTruoc) {
-  const baoCaoTuLog = await tinhBaoCaoKyTuLog(ky, kyTruoc);
-  await db.collection("kybaocao").doc(ky.id).update({
-    baoCaoLuu: tachBaoCaoLuu(baoCaoTuLog),
-    thoiDiemTinhLai: new Date(),
-  });
+  return await tinhBaoCaoKyTuLog(ky, kyTruoc);
 }
 
 const SO_MOI_TRUONG_TONG = [
@@ -9691,8 +9318,7 @@ const SO_MOI_TRUONG_TONG = [
 const HOAN_THANH_TRUONG_TONG = ["da_xet_xu", "chuyen_di", "tam_dinh_chi", "dinh_chi", "an_huy"];
 
 // Gộp báo cáo nhiều kỳ liên tiếp thành 1 báo cáo tổng hợp (VD tích đủ 12 tháng ra báo cáo năm) —
-// gọi lại tinhBaoCaoKy cho TỪNG kỳ nên kỳ nào đã chốt (có baoCaoLuu) sẽ dùng lại số đã lưu, không
-// phải quét lại log — nhờ vậy tổng hợp cả năm cũng nhanh. "Tồn đầu kỳ" lấy từ kỳ SỚM NHẤT được
+// gọi lại tinhBaoCaoKy cho TỪNG kỳ (mỗi kỳ tính trực tiếp từ log + RPC). "Tồn đầu kỳ" lấy từ kỳ SỚM NHẤT được
 // chọn, "Tồn cuối kỳ" lấy từ kỳ MUỘN NHẤT — chỉ đúng nghĩa "tổng hợp theo khoảng thời gian" nếu
 // các kỳ chọn liên tiếp nhau, không bị hở kỳ nào ở giữa (không ép buộc bằng code, để UI tự nhắc).
 // dsKyChonThoDai: mảng { ky, kyTruoc } đã sắp xếp XƯA -> MỚI.
@@ -9728,7 +9354,7 @@ async function tinhBaoCaoTongHopNhieuKy(dsKyChonThoDai) {
       // tonCuoiBiCanKy (2026-08-06) — thiếu sót trước đây, chỉ gộp tonCuoiKy (vụ) mà bỏ sót bị can,
       // khiến "Tồn cuối kỳ" của báo cáo TỔNG HỢP NHIỀU KỲ hiện rỗng/0 ở cột bị can. Lấy từ kỳ MUỘN
       // NHẤT giống hệt tonCuoiKy (đã tự đúng theo RPC nhờ cuoiKy đến từ tinhBaoCaoKy, xem đó).
-      tonCuoiBiCanKy: cuoiKy.tonCuoiBiCanKy, _tonCuoiKyNguon: cuoiKy._tonCuoiKyNguon,
+      tonCuoiBiCanKy: cuoiKy.tonCuoiBiCanKy,
       soMoi, chuyenDi, traDi, hoanThanhTheoGD, soNhapVu,
       soVuTon: cuoiKy.soVuTon, soBiCanTon: cuoiKy.soBiCanTon,
       ds: { ...ds, tonHienTai: cuoiKy.ds.tonHienTai },
@@ -9861,18 +9487,8 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
         nguoiThucHien: auth.currentUser?.email || "",
         lichSuSuaKy: [], soQuyetDinh: "",
       });
-      // Tính lại baoCaoLuu nếu kỳ đã chốt (nguon ảnh hưởng phân loại soMoi)
-      try {
-        const kyDoc = await db.collection("kybaocao").doc(kyId).get();
-        if (kyDoc.exists && kyDoc.data().trangThai === "da_chot") {
-          const ky = { id: kyDoc.id, ...kyDoc.data() };
-          const allSnap = await db.collection("kybaocao").orderBy("ngayBatDau").get();
-          const sorted = allSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-          const idx = sorted.findIndex(k => k.id === kyId);
-          const kyTruoc = idx > 0 ? sorted[idx - 1] : null;
-          await tinhLaiBaoCaoLuu(ky, kyTruoc);
-        }
-      } catch (e) { console.warn("Không tính lại được baoCaoLuu:", e); }
+      // 2026-08-28: không còn baoCaoLuu để tính lại — mọi số liệu kỳ (kể cả kỳ đã chốt) tính trực
+      // tiếp từ log + RPC mỗi lần xem, tự cập nhật khi `nguon` đổi.
       addToast("Đã lưu thay đổi");
       setEditMode(false);
       setEd({});
@@ -10344,17 +9960,6 @@ function BangBaoCaoChiTiet({ baoCao }) {
           </tbody>
         </table>
       </div>
-      {/* Nguồn số "Tồn cuối kỳ" (2026-08-06, sau khi ĐỔI ƯU TIÊN sang RPC — xem CLAUDE.md "Chuyển
-          hệ thống thống kê 'tồn'..."). "Tồn cuối kỳ" ở bảng trên GIỜ CHÍNH LÀ số RPC khi có sẵn
-          (không còn 2 số riêng để "đối chiếu" như bản trước) — chỉ còn cần báo khi RPC KHÔNG gọi
-          được (rơi về snapshot/log dự phòng, có thể kém chính xác hơn, xem sự cố 738/735 đã biết). */}
-      {THU_TU_GIAI_DOAN.some(gd => baoCao[gd]._tonCuoiKyNguon === "duphong") && (
-        <div className="mt-2 text-xs text-amber-600 font-medium">
-          ⚠ RPC không khả dụng lúc tính báo cáo này — "Tồn cuối kỳ" của{" "}
-          {THU_TU_GIAI_DOAN.filter(gd => baoCao[gd]._tonCuoiKyNguon === "duphong").map(gd => NHAN_GIAI_DOAN[gd]).join(", ")}{" "}
-          đang dùng số dự phòng (snapshot/log), có thể kém chính xác hơn. Thử tải lại khi có kết nối ổn định.
-        </div>
-      )}
       {chiTiet && (
         <ChiTietSoLieuModal nhan={chiTiet.nhan} dsList={chiTiet.ds} onDong={() => setChiTiet(null)} />
       )}
@@ -10575,24 +10180,11 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // "tồn đầu kỳ", mọi giá trị về 0, bị lọc khỏi B10 bởi `vals.every(v=>!v)` mà KHÔNG cảnh báo gì
   // (điều luật vẫn "xác định được", chỉ bị gộp sai dòng — khác hẳn cảnh báo "vuChuaDL" chỉ bắt được
   // trường hợp điều luật rỗng hoàn toàn). Xem taoDanhMucDayDu/trichDieuLuatTuChuoi.
-  const tonTD_truocRaw = kyTruoc?.tonCuoiKyTheoTD || {};
-  const tonTD_truoc = {};
-  for (const [k, v] of Object.entries(tonTD_truocRaw)) {
-    const normKey = trichDieuLuatTuChuoi(k, dmByTen, dmByDieu, dmByMa).dieuLuat || chuanHoaMaDieuLuat(k);
-    tonTD_truoc[normKey] = tonTD_truoc[normKey] ? gopTonTheoTD(tonTD_truoc[normKey], v) : v;
-  }
-
-  // tonCuoiKyTheoTD của kỳ hiện tại — dùng cho "Tồn kỳ này" khi kỳ đã chốt (snapshot đúng thời điểm
-  // chốt). Nếu chưa có (kỳ đang mở hoặc chưa chạy tinhLaiBaoCaoLuu) thì dùng live tonHienTai.
-  // Cùng bug/cách sửa như tonTD_truoc ngay trên (gộp thay vì ghi đè khi trùng khoá sau chuẩn hoá).
-  const kyTonTD_raw = ky.tonCuoiKyTheoTD || null;
-  const kyTonTD = kyTonTD_raw ? {} : null;
-  if (kyTonTD_raw) {
-    for (const [k, v] of Object.entries(kyTonTD_raw)) {
-      const normKey = trichDieuLuatTuChuoi(k, dmByTen, dmByDieu, dmByMa).dieuLuat || chuanHoaMaDieuLuat(k);
-      kyTonTD[normKey] = kyTonTD[normKey] ? gopTonTheoTD(kyTonTD[normKey], v) : v;
-    }
-  }
+  // 2026-08-28: "Tồn kỳ trước"/"Tồn kỳ này" theo TỪNG tội danh của Biểu B10 GIỜ CHỈ LẤY TỪ RPC
+  // động (rpcTonTruocList/rpcTonList — as-of kỳ, 100% base kyThongKe). Bỏ hẳn snapshot
+  // kyTruoc.tonCuoiKyTheoTD / ky.tonCuoiKyTheoTD (tàn dư Firebase) và nhánh tonTheoLogD (cộng dồn sổ
+  // cái). Caller (xuatBaoCaoThangExcel) THROW nếu RPC lỗi nên 2 list này luôn có (rpcTonTruocList
+  // = null chỉ khi KHÔNG có kỳ trước — kỳ đầu tiên → tồn kỳ trước = 0, hợp lệ).
 
   // Lấy key điều luật của bị can — xem layMaDieuLuatBiCan (dùng chung).
   const getDL = (bc) => layMaDieuLuatBiCan(bc, danhMucByTen);
@@ -10613,19 +10205,8 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     return getDL(bcChinh);
   };
   const vuCoD = (vuArr, D) => vuArr.filter(vu => vuPrimaryDL(vu) === D);
-  // Mức độ nghiêm trọng dùng cho C39-C42 (2026-08-09, theo yêu cầu Dũng: "mức độ nghiêm trọng tội
-  // danh của bị can là để điền vào cột C39-C42") — đọc đúng `mucDoNghiemTrong` của BỊ CAN ĐẠI DIỆN
-  // (cùng người dùng để suy `vuPrimaryDL` ở trên — tội danh chính của vụ CHÍNH LÀ tội danh của
-  // người này), tôn trọng cả lựa chọn tay nếu cán bộ đã tự sửa. TRƯỚC ĐÂY đọc nhầm `vu.mucDoNghiemTrong`
-  // (field cấp VỤ, vốn chỉ dùng tính hạn điều tra Điều 172/174 — hoàn toàn không liên quan tới phân
-  // loại tội phạm theo tội danh, đúng mẫu ngành ghi "tra danh mục tội danh" chứ không phải đọc field
-  // tự chọn tay của cán bộ khi tạo vụ). Vụ 0 bị can (hiếm) mới fallback sang công thức theo điều luật.
-  const vuPrimaryMucDoNT = (vu) => {
-    const bcs = biCanByVu[vu.id] || [];
-    if (!bcs.length) return mucDoNghiemTrongMacDinhTheoDieu(vuPrimaryDL(vu));
-    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
-    return bcChinh.mucDoNghiemTrong || "dac_biet_nghiem_trong";
-  };
+  // (2026-08-29) Bỏ `vuPrimaryMucDoNT` cấp vụ — C39-C42 giờ ĐẾM BỊ CAN theo mức độ NT của TỪNG bị
+  // can (xem `bcMucDoNT` ở khối Truy tố dưới), không đếm vụ theo bị can đại diện nữa.
 
   // BC trong vụ với getDL(bc)==D, kèm _namKTVA của vụ đó
   const bcCoD = (vuArr, D) => {
@@ -10671,10 +10252,44 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     ? new Date(vu.ngayQdKtva.seconds ? vu.ngayQdKtva.seconds * 1000 : vu.ngayQdKtva).getFullYear()
     : namKy;
 
+  // RPC-based "Tồn theo điều luật" — dùng CHUNG cho "Tồn kỳ này" (rpcTonList, as-of kỳ ĐANG XUẤT) và
+  // "Tồn kỳ TRƯỚC" (rpcTonTruocList, as-of kỳ TRƯỚC). 2026-08-28: đây là NGUỒN DUY NHẤT cho 2 cột
+  // đó — không còn snapshot kyTruoc.tonCuoiKyTheoTD hay cộng dồn sổ cái. `list[gd]` mỗi phần tử đã
+  // có sẵn `_bcIdsTon` (từ dsTonCuoiKyTheoGD/dsTonTruocTheoGD ở xuatBaoCaoThangExcel — KHÔNG gọi RPC
+  // lần nữa). Gộp theo điều luật giống hệt vuPrimaryDL/getDL. rpcTonTruocList=null ⇒ kỳ đầu tiên
+  // (tồn kỳ trước = 0 mọi tội danh).
+  const gomRpcTheoTD = (list) => {
+    const ket = { dieu_tra: {}, truy_to: {}, xet_xu: {} };
+    if (!list) return ket;
+    for (const gd of THU_TU_GIAI_DOAN) {
+      for (const vu of (list[gd] || [])) {
+        const bcIdsTon = vu._bcIdsTon || new Set();
+        const bcTon = (biCanByVu[vu.id] || []).filter(bc => bcIdsTon.has(bc.id));
+        const bcChinh = bcTon.length ? (bcTon.find(bc => bc.loaiKhoiTo === "ban_dau") || bcTon[0]) : null;
+        const vuDL = bcChinh ? getDL(bcChinh) : (normTen((vu.dieuLuat || "").split(";")[0].trim()) || "");
+        if (vuDL) {
+          if (!ket[gd][vuDL]) ket[gd][vuDL] = { vu: 0, bc: 0 };
+          ket[gd][vuDL].vu++;
+        }
+        for (const bc of bcTon) {
+          const bcDL = getDL(bc);
+          if (!bcDL) continue;
+          if (!ket[gd][bcDL]) ket[gd][bcDL] = { vu: 0, bc: 0 };
+          ket[gd][bcDL].bc++;
+        }
+      }
+    }
+    return ket;
+  };
+  const rpcTonTheoTD = gomRpcTheoTD(rpcTonList);
+  const rpcTonTruocTheoTD = gomRpcTheoTD(rpcTonTruocList);
+
   // Gom tất cả điều luật xuất hiện
   const tatCaDieuLuat = new Set(danhMuc.map(d => d.dieuLuat));
-  Object.keys(tonTD_truoc).forEach(d => { if (d) tatCaDieuLuat.add(d); });
-  if (kyTonTD) Object.keys(kyTonTD).forEach(d => { if (d) tatCaDieuLuat.add(d); });
+  ["dieu_tra", "truy_to", "xet_xu"].forEach(gd => {
+    Object.keys(rpcTonTruocTheoTD[gd] || {}).forEach(d => { if (d) tatCaDieuLuat.add(d); });
+    Object.keys(rpcTonTheoTD[gd] || {}).forEach(d => { if (d) tatCaDieuLuat.add(d); });
+  });
   let allVuDT = []; // giữ lại riêng cho Điều tra — dùng để dựng dt_bcMoiKyToanBo bên dưới (C7-C24)
   // bcBoSungTonTheoGD (2026-08-04, sau khi merge nhánh ds-ton-cuoi-ky — xem CLAUDE.md "Gap #2") —
   // bị can bổ sung vào 1 vụ ĐANG TỒN (không phải vụ mới, không phải vụ đã ra NGAY TRONG kỳ này) —
@@ -10784,7 +10399,6 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   }
   const dt_boSungBcRaw = dt_boSungBc.map(v => ({ ...v._bican, _namKTVA: namKTVACuaVu(v) }));
 
-  // Cũng normalize các key từ tonTD_truoc — cũ có thể lưu tên thay vì code
   const tatCaDieuLuatChuan = new Set();
   for (const k of tatCaDieuLuat) {
     tatCaDieuLuatChuan.add(danhMucByTen.get(chuanHoaTenToiDanh(k)) || k);
@@ -10792,38 +10406,6 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
 
   const danhMucMap = Object.fromEntries(danhMuc.map(d => [d.dieuLuat, d]));
   const rows = [];
-
-  // RPC-based "Tồn theo điều luật" — dùng CHUNG cho cả "Tồn kỳ này" (rpcTonList, as-of kỳ ĐANG
-  // XUẤT) và "Tồn kỳ TRƯỚC" (rpcTonTruocList, as-of kỳ TRƯỚC — mới thêm 2026-08-06, thay hẳn
-  // `kyTruoc.tonCuoiKyTheoTD` snapshot cũ, xem CLAUDE.md "nối RPC vào Biểu B10"). `list[gd]` mỗi
-  // phần tử đã có sẵn `_bcIdsTon` (Set maBiCan đang tồn TÍNH TỚI ĐÚNG kỳ tương ứng theo RPC) —
-  // chính là `dsTonCuoiKyTheoGD`/`dsTonTruocTheoGD` đã tính SẴN ở xuatBaoCaoThangExcel (KHÔNG gọi
-  // RPC lần nữa ở đây). Gộp theo điều luật giống hệt cách vuPrimaryDL/getDL làm ở nhánh JS-log.
-  const gomRpcTheoTD = (list) => {
-    const ket = { dieu_tra: {}, truy_to: {}, xet_xu: {} };
-    if (!list) return ket;
-    for (const gd of THU_TU_GIAI_DOAN) {
-      for (const vu of (list[gd] || [])) {
-        const bcIdsTon = vu._bcIdsTon || new Set();
-        const bcTon = (biCanByVu[vu.id] || []).filter(bc => bcIdsTon.has(bc.id));
-        const bcChinh = bcTon.length ? (bcTon.find(bc => bc.loaiKhoiTo === "ban_dau") || bcTon[0]) : null;
-        const vuDL = bcChinh ? getDL(bcChinh) : (normTen((vu.dieuLuat || "").split(";")[0].trim()) || "");
-        if (vuDL) {
-          if (!ket[gd][vuDL]) ket[gd][vuDL] = { vu: 0, bc: 0 };
-          ket[gd][vuDL].vu++;
-        }
-        for (const bc of bcTon) {
-          const bcDL = getDL(bc);
-          if (!bcDL) continue;
-          if (!ket[gd][bcDL]) ket[gd][bcDL] = { vu: 0, bc: 0 };
-          ket[gd][bcDL].bc++;
-        }
-      }
-    }
-    return ket;
-  };
-  const rpcTonTheoTD = gomRpcTheoTD(rpcTonList);
-  const rpcTonTruocTheoTD = gomRpcTheoTD(rpcTonTruocList);
 
   for (const D of tatCaDieuLuatChuan) {
     if (!D) continue;
@@ -10839,89 +10421,28 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...(tt.chuyenDen||[]),...(tt.traVe||[]),...(tt.phucHoi||[]),...(tt.nhanLai||[])];
     const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...(xx.chuyenDen||[]),...(xx.traVe||[]),...(xx.phucHoi||[]),...(xx.nhanLai||[])];
 
-    // ── Tồn kỳ trước / kỳ này ──
-    // Tồn kỳ này: dùng snapshot kyTonTD khi đã chốt (đúng thời điểm). Kỳ CHƯA CHỐT (đang xem
-    // trước) tính bằng CÔNG THỨC LOG (tồn đầu kỳ theo D + mới theo D − ra theo D, chỉ đếm sự
-    // kiện có kyThongKe khớp ĐÚNG kỳ đang xem) — ÁP DỤNG THEO ĐÚNG NGUYÊN LÝ đã sửa ở
-    // tinhBaoCaoKyTuLog (2026-07-20 "Bug tiếp theo"), nhưng tính riêng cho từng tội danh D thay vì
-    // gộp cả giai đoạn. Bug đã sửa (2026-07-21, người dùng phát hiện qua Biểu B10 tải về): trước
-    // đây nhánh chưa chốt dùng THẲNG d.tonHienTai (LIVE tại thời điểm bấm xem/tải) — khi đang nhập
-    // bổ sung dữ liệu với 2 kỳ cùng mở (VD tháng 6 và tháng 7), 1 vụ tồn ở kỳ 6 nhưng được ghi
-    // NHẬN GIẢI QUYẾT vào kỳ 7 (kyThongKe=07) sẽ bị trừ khỏi "tồn kỳ này" của B10 kỳ 6 NGAY LẬP
-    // TỨC dù đúng ra chỉ nên ảnh hưởng tồn của kỳ 7 — vi phạm đúng nguyên tắc "log là nguồn sự
-    // thật duy nhất" (số liệu của 1 kỳ chỉ phụ thuộc kyThongKe gắn trên sự kiện, không phụ thuộc
-    // thời điểm xem báo cáo).
-    // Bug đã sửa (2026-08-04, người dùng phát hiện: "Tồn cuối kỳ" ngoài Kỳ báo cáo (318 vụ/812 BC
-    // Điều tra) không khớp tổng B10 (chỉ ra 810 BC, thiếu đúng 2)) — nguyên nhân: bị can BỔ SUNG
-    // vào 1 vụ ĐÃ CÓ (sự kiện `bo_sung_bican`, `d.boSungBiCan`) được `tinhBaoCaoKyTuLog` cộng riêng
-    // vào "vào" của kỳ qua `soMoi.boSungBiCan` (CHỈ bị can, không cộng vụ — xem tinhBaoCaoKyTuLog),
-    // nhưng `tonTheoLogD` ở đây KHÔNG hề biết tới nguồn "vào" này — nếu vụ đó SAU ĐÓ rời giai đoạn
-    // ngay trong kỳ (`raArr`), `bcCoD(raArr, D)` vẫn trừ ĐỦ cả bị can bổ sung (đọc số liệu SỐNG,
-    // đúng) nhưng KHÔNG có gì cộng bù ở vế "vào" tương ứng → tồn kỳ này bị hụt đúng bằng số bị can
-    // bổ sung của những vụ rời giai đoạn ngay trong kỳ.
-    // Bug đã sửa TIẾP (2026-08-04, người dùng phát hiện qua filter tay "DS tồn ĐT": 818 bị can live
-    // vẫn không khớp 812 — sau khi merge nhánh `ds-ton-cuoi-ky`, tương tự "Gap #2" họ đã ghi nhận ở
-    // `taiTaoTonCuoiKyTheoTDTatCa`) — bản sửa TRƯỚC (`bcCoDBoSung(d.boSungBiCan, D)`) chỉ cộng bù
-    // đúng NGUỒN sự kiện `bo_sung_bican` — quá thưa (không backfill dữ liệu cũ, không phủ hết mọi
-    // luồng thêm bị can, xem lịch sử "3 bản sửa" C7-C24 cùng ngày) nên VẪN bỏ sót phần lớn bị can
-    // bổ sung KHÔNG có sự kiện đó (thực tế đo được: 30/32 người ở kỳ 07/2026 Điều tra không có sự
-    // kiện `bo_sung_bican`). Đổi sang `bcBoSungTonTheoGD[gd]` (dựng ở vòng lặp phía trên, so kỳ
-    // khởi tố CỦA CHÍNH bị can trực tiếp — không phụ thuộc sự kiện — đã LOẠI SẴN vụ "ra" để không
-    // đếm đúp với `bcCoD(raArr, D)` bên dưới) — cùng cách tiếp cận đã dùng cho C7-C24 (`dt_boSungBc`),
-    // chỉ khác phạm vi (ở đây CHỈ vụ còn đang tồn, C7-C24 gồm cả vụ đã ra vì mục đích khác nhau).
-    const tonTheoLogD = (d, moiArr, D, tpVu, tpBc, boSungTonArr) => {
-      const raArr = [
-        ...(d.chuyenDi || []), ...(d.traDi || []),
-        ...Object.values(d.hoanThanh || {}).flat(),
-        ...(d.nhapVu || []),
-      ];
-      const boSungBc = (boSungTonArr || []).filter(bc => getDL(bc) === D).length;
-      return {
-        vu: tpVu + vuCoD(moiArr, D).length - vuCoD(raArr, D).length,
-        bc: tpBc + bcCoD(moiArr, D).length + boSungBc - bcCoD(raArr, D).length,
-      };
-    };
-    // "Tồn kỳ TRƯỚC" (2026-08-06, ĐỔI ƯU TIÊN sang RPC as-of kỳ trước — cùng lý do/cùng cách với
-    // "Tồn kỳ này" ngay dưới, xem CLAUDE.md "nối RPC vào Biểu B10") — thay `tonTD_truoc[D]` (đọc
-    // `kyTruoc.tonCuoiKyTheoTD`, snapshot đã biết có thể "trôi") bằng `rpcTonTruocTheoTD[D]` khi có
-    // `rpcTonTruocList` (RPC gọi thành công cho kỳ trước). Không có kỳ trước/RPC lỗi → giữ nguyên
-    // `tonTD_truoc` cũ làm dự phòng.
-    const dt_tpRpc = rpcTonTruocList ? (rpcTonTruocTheoTD.dieu_tra[D] || { vu: 0, bc: 0 }) : null;
-    const dt_tp_vu = dt_tpRpc ? dt_tpRpc.vu : (tonTD_truoc[D]?.dieu_tra?.vuAn ?? 0);
-    const dt_tp_bc = dt_tpRpc ? dt_tpRpc.bc : (tonTD_truoc[D]?.dieu_tra?.biCan ?? 0);
-    // "Tồn kỳ này" (2026-08-05, ĐỔI ƯU TIÊN sang RPC — xem CLAUDE.md "nối RPC vào Biểu B10") — RPC
-    // (rpcTonTheoTD, tính as-of-kỳ TRỰC TIẾP từ log mỗi lần) giờ là NGUỒN CHÍNH, thay cho chuỗi
-    // kyTonTD (snapshot chốt kỳ, có thể "trôi" nếu 1 lượt chạy lại công cụ backfill trên code cũ —
-    // đã xảy ra thật, xem sự cố 738 vs 735 kiểm chứng qua UI thật cùng ngày) hoặc tonTheoLogD (công
-    // thức cộng dồn đã vá tay nhiều lần). `dt_tnRpc` phân biệt "RPC nói 0" (rpcTonList có nhưng D
-    // này không có entry — hợp lệ, dùng {vu:0,bc:0}) với "RPC không khả dụng" (rpcTonList=null, ví
-    // dụ mất mạng/PostgREST lỗi lúc xuất — rơi về công thức CŨ làm dự phòng, xem cảnh báo bên dưới).
-    const dt_tnLog = kyTonTD ? null : tonTheoLogD(dt, dt_moi, D, dt_tp_vu, dt_tp_bc, bcBoSungTonTheoGD.dieu_tra);
-    const dt_tnRpc = rpcTonList ? (rpcTonTheoTD.dieu_tra[D] || { vu: 0, bc: 0 }) : null;
-    const dt_tn_vu = dt_tnRpc ? dt_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.dieu_tra?.vuAn ?? 0) : dt_tnLog.vu);
-    const dt_tn_bc = dt_tnRpc ? dt_tnRpc.bc : (kyTonTD ? (kyTonTD[D]?.dieu_tra?.biCan ?? 0) : dt_tnLog.bc);
-    const tt_tpRpc = rpcTonTruocList ? (rpcTonTruocTheoTD.truy_to[D] || { vu: 0, bc: 0 }) : null;
-    const tt_tp_vu = tt_tpRpc ? tt_tpRpc.vu : (tonTD_truoc[D]?.truy_to?.vuAn ?? 0);
-    const tt_tp_bc = tt_tpRpc ? tt_tpRpc.bc : (tonTD_truoc[D]?.truy_to?.biCan ?? 0);
-    const tt_tnLog = kyTonTD ? null : tonTheoLogD(tt, tt_moi, D, tt_tp_vu, tt_tp_bc, bcBoSungTonTheoGD.truy_to);
-    const tt_tnRpc = rpcTonList ? (rpcTonTheoTD.truy_to[D] || { vu: 0, bc: 0 }) : null;
-    const tt_tn_vu = tt_tnRpc ? tt_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.truy_to?.vuAn ?? 0) : tt_tnLog.vu);
-    const tt_tn_bc = tt_tnRpc ? tt_tnRpc.bc : (kyTonTD ? (kyTonTD[D]?.truy_to?.biCan ?? 0) : tt_tnLog.bc);
-    const xx_tpRpc = rpcTonTruocList ? (rpcTonTruocTheoTD.xet_xu[D] || { vu: 0, bc: 0 }) : null;
-    const xx_tp_vu = xx_tpRpc ? xx_tpRpc.vu : (tonTD_truoc[D]?.xet_xu?.vuAn ?? 0);
-    const xx_tp_bc = xx_tpRpc ? xx_tpRpc.bc : (tonTD_truoc[D]?.xet_xu?.biCan ?? 0);
-    const xx_tnLog = kyTonTD ? null : tonTheoLogD(xx, xx_moi, D, xx_tp_vu, xx_tp_bc, bcBoSungTonTheoGD.xet_xu);
-    const xx_tnRpc = rpcTonList ? (rpcTonTheoTD.xet_xu[D] || { vu: 0, bc: 0 }) : null;
-    const xx_tn_vu = xx_tnRpc ? xx_tnRpc.vu : (kyTonTD ? (kyTonTD[D]?.xet_xu?.vuAn ?? 0) : xx_tnLog.vu);
-    const xx_tn_bc = xx_tnRpc ? xx_tnRpc.bc : (kyTonTD ? (kyTonTD[D]?.xet_xu?.biCan ?? 0) : xx_tnLog.bc);
+    // ── Tồn kỳ trước / kỳ này (2026-08-28) — CHỈ từ RPC as-of, base 100% kyThongKe (xem đầu hàm).
+    // rpcTonList luôn có (caller throw nếu RPC lỗi); rpcTonTruocList = null ⇒ kỳ đầu tiên → tồn kỳ
+    // trước = 0. "D không có entry trong RPC" = 0 thật (không phải thiếu dữ liệu). ──
+    const tp = (gd) => (rpcTonTruocList ? rpcTonTruocTheoTD[gd][D] : null) || { vu: 0, bc: 0 };
+    const tn = (gd) => rpcTonTheoTD[gd][D] || { vu: 0, bc: 0 };
+    const dt_tp_vu = tp("dieu_tra").vu, dt_tp_bc = tp("dieu_tra").bc;
+    const dt_tn_vu = tn("dieu_tra").vu, dt_tn_bc = tn("dieu_tra").bc;
+    const tt_tp_vu = tp("truy_to").vu, tt_tp_bc = tp("truy_to").bc;
+    const tt_tn_vu = tn("truy_to").vu, tt_tn_bc = tn("truy_to").bc;
+    const xx_tp_vu = tp("xet_xu").vu, xx_tp_bc = tp("xet_xu").bc;
+    const xx_tn_vu = tn("xet_xu").vu, xx_tn_bc = tn("xet_xu").bc;
 
     // ── Điều tra ──
     const dt_moiBc = bcCoD(dt_moi, D);
     const dt_nhapBc = bcCoD(dt.nhapVu || [], D);
     const dt_cdNoiBc = bcCoD(dt.hoanThanh?.chuyen_di || [], D);
-    const dt_ahBc = bcCoD(dt.hoanThanh?.an_huy || [], D);
-    const C3  = dt_tp_vu + vuCoD(dt_moi, D).length - vuCoD(dt.nhapVu || [], D).length - vuCoD(dt.hoanThanh?.chuyen_di || [], D).length - vuCoD(dt.hoanThanh?.an_huy || [], D).length;
-    const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length - dt_ahBc.length;
+    const dt_ahBc = bcCoD(dt.hoanThanh?.an_huy || [], D); // chỉ dùng cho cột "Án huỷ" riêng (vals), KHÔNG trừ khỏi Tổng thụ lý
+    // C3/C4 Tổng thụ lý ĐT — theo bieu_B10_mo_ta.md §3.2 + quy tắc ngành (D77_10238−D59_10238=C3):
+    // tồn kỳ trước + [mới đến ĐT] + tách ra − nhập vụ − chuyển đi. KHÔNG trừ "án huỷ" (án huỷ là 1
+    // hình thức giải quyết, không rời khỏi "đã thụ lý"; không quy tắc nào trừ nó khỏi Tổng thụ lý).
+    const C3  = dt_tp_vu + vuCoD(dt_moi, D).length - vuCoD(dt.nhapVu || [], D).length - vuCoD(dt.hoanThanh?.chuyen_di || [], D).length;
+    const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length;
     const C5  = dt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     // C7-C24 = 2 phần: "mới" (bị can của vụ MỞ đúng kỳ này, lọc theo kỳ khởi tố RIÊNG của từng bị
@@ -10967,9 +10488,10 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const tt_moiBc = bcCoD(tt_moi, D);
     const tt_nhapBc = bcCoD(tt.nhapVu || [], D);
     const tt_cdNoiBc = bcCoD(tt.hoanThanh?.chuyen_di || [], D);
-    const tt_ahBc = bcCoD(tt.hoanThanh?.an_huy || [], D);
-    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.hoanThanh?.chuyen_di || [], D).length - vuCoD(tt.hoanThanh?.an_huy || [], D).length;
-    const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length - tt_cdNoiBc.length - tt_ahBc.length;
+    const tt_ahBc = bcCoD(tt.hoanThanh?.an_huy || [], D); // chỉ dùng cho cột "Án huỷ" riêng (vals)
+    // C33/C34 Tổng thụ lý TT — như C3/C4: KHÔNG trừ "án huỷ" (quy tắc D280_10238−D262_10238=C33).
+    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.hoanThanh?.chuyen_di || [], D).length;
+    const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length - tt_cdNoiBc.length;
     const C35 = tt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     const tt_truToBc = bcCoD(tt.chuyenDi || [], D);
@@ -10977,7 +10499,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const C36 = tt_truToVu.length;
     const C37 = tt_truToBc.length;
     const C38 = tt_truToBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
-    const mdn = (muc) => tt_truToVu.filter(v => vuPrimaryMucDoNT(v) === muc).length;
+    // C39-C42 "Phân loại tội phạm" — ĐẾM BỊ CAN (mỗi bị can theo mức độ NT của tội danh chính CỦA
+    // CHÍNH họ: field bc.mucDoNghiemTrong, fallback suy theo điều luật). Tổng C39+C40+C41+C42 = C37
+    // (quy tắc ngành C37=C39+C40+C41+C42; Dũng xác nhận 2026-08-29 là ĐẾM BỊ CAN, KHÔNG phải vụ —
+    // bieu_B10_mo_ta.md cũ ghi "Vụ án" là SAI, đã sửa). mucDoNghiemTrongMacDinhTheoDieu luôn trả
+    // 1/4 giá trị ⇒ mọi bị can rơi ĐÚNG 1 bucket ⇒ tổng khớp C37 tuyệt đối.
+    const bcMucDoNT = (bc) => bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(getDL(bc));
+    const mdn = (muc) => tt_truToBc.filter(bc => bcMucDoNT(bc) === muc).length;
     const C39 = mdn("it_nghiem_trong");
     const C40 = mdn("nghiem_trong");
     const C41 = mdn("rat_nghiem_trong");
@@ -11008,9 +10536,10 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const xx_moiBc = bcCoD(xx_moi, D);
     const xx_nhapBc = bcCoD(xx.nhapVu || [], D);
     const xx_cdNoiBc = bcCoD(xx.hoanThanh?.chuyen_di || [], D);
-    const xx_ahBc = bcCoD(xx.hoanThanh?.an_huy || [], D);
-    const C60 = xx_tp_vu + vuCoD(xx_moi, D).length - vuCoD(xx.nhapVu || [], D).length - vuCoD(xx.hoanThanh?.chuyen_di || [], D).length - vuCoD(xx.hoanThanh?.an_huy || [], D).length;
-    const C61 = xx_tp_bc + xx_moiBc.length - xx_nhapBc.length - xx_cdNoiBc.length - xx_ahBc.length;
+    const xx_ahBc = bcCoD(xx.hoanThanh?.an_huy || [], D); // chỉ dùng cho cột "Án huỷ" riêng (vals)
+    // C60/C61 Tổng thụ lý XX — như C3/C4: KHÔNG trừ "án huỷ" (quy tắc D17_10239=C60 = D1+D2+D3+D4+D9−D15).
+    const C60 = xx_tp_vu + vuCoD(xx_moi, D).length - vuCoD(xx.nhapVu || [], D).length - vuCoD(xx.hoanThanh?.chuyen_di || [], D).length;
+    const C61 = xx_tp_bc + xx_moiBc.length - xx_nhapBc.length - xx_cdNoiBc.length;
     const C62 = xx_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     const xx_xxBc = bcCoD(xx.hoanThanh?.da_xet_xu || [], D);
@@ -11079,17 +10608,9 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   for (const gd of THU_TU_GIAI_DOAN) {
     const idx = IDX_TON_NAY_VU[gd];
     const tongTheoTD = rows.reduce((s, r) => s + (r.vals[idx] || 0), 0);
-    // "thực tế" để so với tongTheoTD (2026-08-06, ƯU TIÊN RPC — cùng nguồn với tongTheoTD phía
-    // trên sau khi B10 đổi ưu tiên RPC, xem CLAUDE.md) — dùng thẳng độ dài `rpcTonList[gd]` (chính
-    // là danh sách vụ RPC nói đang tồn) khi có sẵn, KHÔNG còn đọc `ky.tonCuoiKy`/`baoCao[gd].tonCuoiKy`
-    // (có thể là snapshot/chuỗi cũ, đã biết có thể "trôi" — xem sự cố 738/735). Không có rpcTonList
-    // (RPC lỗi) mới rơi về hành vi CŨ để không mất khả năng cảnh báo hoàn toàn khi RPC không gọi
-    // được — KHÔNG dùng soVuTon (số tồn LIVE tại thời điểm xem, khác khái niệm "tồn cuối kỳ").
-    const tonThucTe = rpcTonList
-      ? (rpcTonList[gd] || []).length
-      : (kyTonTD
-          ? (ky.tonCuoiKy?.[gd] ?? baoCao[gd].soVuTon ?? 0)
-          : (baoCao[gd].tonCuoiKy ?? baoCao[gd].soVuTon ?? 0));
+    // "thực tế" = độ dài danh sách vụ RPC nói đang tồn (as-of kỳ này, base kyThongKe) — CÙNG NGUỒN
+    // với tongTheoTD (vals[] cũng lấy từ RPC). rpcTonList luôn có (caller throw nếu RPC lỗi).
+    const tonThucTe = (rpcTonList[gd] || []).length;
     const soChuaDL = vuChuaDL[gd].length;
     if (soChuaDL > 0) {
       const dsMa = vuChuaDL[gd]
@@ -11101,16 +10622,6 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       canhBao.push(`${NHAN_GIAI_DOAN[gd]}: B10 tổng tồn=${tongTheoTD} < thực tế=${tonThucTe} — kiểm tra lại dữ liệu`);
     }
     // Lệch dương (tongTheoTD > tonThucTe): đúng thiết kế, không cảnh báo
-
-    // Cảnh báo dùng công thức dự phòng (2026-08-06, sau khi "Tồn kỳ này" ĐỔI ƯU TIÊN sang RPC —
-    // xem CLAUDE.md "nối RPC vào Biểu B10"). Trước đây khối này SO SÁNH log vs RPC để phát hiện
-    // lệch (đã bắt đúng sự cố thật 738 vs 735 qua kiểm chứng UI thật, xác nhận RPC đáng tin hơn) —
-    // giờ `vals` CHÍNH LÀ số RPC khi có sẵn nên so sánh cũ luôn khớp 1 cách vô nghĩa (tự so nó với
-    // chính nó). Đổi sang cảnh báo khi RPC KHÔNG gọi được (mất mạng/PostgREST lỗi lúc xuất) — lúc
-    // đó "Tồn kỳ này" rơi về công thức cũ (kyTonTD/tonTheoLogD), có thể kém chính xác hơn.
-    if (!rpcTonList) {
-      canhBao.push(`${NHAN_GIAI_DOAN[gd]}: RPC không khả dụng lúc xuất báo cáo này — "Tồn kỳ này" đang dùng công thức dự phòng (snapshot/log), có thể kém chính xác hơn RPC (xem CLAUDE.md). Nên xuất lại khi có kết nối ổn định.`);
-    }
   }
 
   // ── Kiểm tra tổng các khối "Phân tích bị can là cá nhân..." (Điều tra C7-C24 VÀ Truy tố C43-C52)
@@ -11175,203 +10686,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     kiemTraHoanChinhNhomBc("Phân tích bị can đã truy tố (Truy tố)", ttTruyToCaNhan, "C43-C47", false);
   }
 
-  // tonTD_truoc/kyTonTD (đã chuẩn hoá key ở trên) trả kèm ra ngoài để xuatBaoCaoThangExcel dựng
-  // sheet "Tồn theo ĐL (snapshot)" bằng ĐÚNG cùng 1 nguồn dữ liệu đã dùng để tính vals[] — tránh
-  // viết lại logic chuẩn hoá 1 lần nữa ở nơi khác rồi lệch nhau.
-  return { rows, canhBao, vuChuaDL, tonTD_truoc, kyTonTD, dt_boSungBc, boSungTonTheoGD, rpcTonTheoTD };
-}
-
-// Tính lại ĐÚNG tonCuoiKyTheoTD/tonCuoiBiCan cho TẤT CẢ kỳ đã chốt, theo thứ tự thời gian, từ
-// log — dùng để SỬA DỮ LIỆU đã bị ghi sai bởi bug cũ của tinhLaiBaoCaoLuu (từng ghi đè
-// tonCuoiKyTheoTD bằng ảnh chụp LIVE hiện tại thay vì lịch sử — đã sửa code, nhưng dữ liệu ghi
-// sai từ trước không tự phục hồi, xem ghi chú ở tinhLaiBaoCaoLuu). KHÔNG dùng lại kiểu "chụp ảnh
-// live" nữa — nguyên lý đúng: tonCuoiKyTheoTD[K] = tonCuoiKyTheoTD[K-1] (đã tính đúng ở bước
-// trước, kỳ đầu tiên coi như 0) + số mới theo tội danh trong kỳ K − số đã giải quyết theo tội
-// danh trong kỳ K. Cả 2 vế lấy từ tinhBaoCaoKyTuLog(K, ...).ds — hàm đó lọc đúng theo
-// kyThongKe==K.id, không đụng gì tới tonCuoiKyTheoTD nên tái dùng an toàn, không lặp lại lỗi cũ.
-// Đối chiếu tổng theo giai đoạn với tonCuoiKy (field KHÔNG BAO GIỜ bị ghi đè, dùng làm neo tin
-// cậy tuyệt đối) sau mỗi kỳ — lệch (do vụ có kyThongKe=null từ "Dựng lại lịch sử", hoặc dữ liệu
-// cũ khác) thì gom phần chênh vào tội danh "(chưa xác định — chênh lệch dữ liệu cũ)" để TỔNG luôn
-// khớp con số tin cậy, thay vì âm thầm sai lệch không dấu vết.
-async function taiTaoTonCuoiKyTheoTDTatCa(onTienDo) {
-  const snap = await db.collection("kybaocao").orderBy("ngayBatDau", "asc").get();
-  const dsKyChot = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .filter(k => k.loai !== "luu_tru" && k.trangThai === "da_chot");
-
-  const danhMucSnap = await db.collection("danhMucToiDanh").get();
-  const danhMuc = danhMucSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  const danhMucByTen = taoDanhMucByTen(danhMuc);
-  const { dmByTen, dmByDieu, dmByMa } = taoDanhMucDayDu(danhMuc);
-  const getDL = (bc) => layMaDieuLuatBiCan(bc, danhMucByTen);
-  // trichDieuLuatTuChuoi (2026-07-20, "form thống nhất") — xem giải thích ở tinhBieu10, cùng lý do.
-  // dmByMa (2026-08-04) — xem bug đã sửa ở tinhBieu10 (gộp nhầm Điều N BLHS 1999 vào Điều N BLHS
-  // 2025 trùng số điều khác tội danh) — hàm này dựng lại TOÀN BỘ lịch sử tonCuoiKyTheoTD nên PHẢI
-  // dùng đúng bản đã sửa, nếu không sẽ ghi lại y hệt lỗi cũ vào từng kỳ đã chốt.
-  const normTen = (nm) => trichDieuLuatTuChuoi(nm, dmByTen, dmByDieu, dmByMa).dieuLuat || chuanHoaMaDieuLuat(nm);
-  const KEY_CHUA_XD = "(chưa xác định — chênh lệch dữ liệu cũ)";
-
-  const themVao = (map, D, gd, vuId, soBiCan) => {
-    if (!map[D]) map[D] = {};
-    if (!map[D][gd]) map[D][gd] = { vuSet: new Set(), biCan: 0 };
-    map[D][gd].vuSet.add(vuId);
-    map[D][gd].biCan += soBiCan;
-  };
-  // Gom 1 danh sách vụ (mới hoặc giải quyết trong kỳ) vào map theo tội danh CHÍNH:
-  // - Vụ 0 BC: dùng dieuLuat[0] (tội danh chính của vụ)
-  // - Vụ có BC: vụ đếm vào tội danh của BC ban_dau (hoặc BC đầu tiên), mỗi BC đếm biCan riêng
-  // Mỗi vụ chỉ xuất hiện 1 lần trong map → tổng khớp đúng với số vụ trong danh sách
-  //
-  // Bug đã sửa (2026-08-04, phát hiện qua cross-check với tonCuoiKyIds mới thêm): TRƯỚC ĐÂY dùng
-  // THẲNG `biCanByVu[vu.id]` (uncut, LIVE) dù `moiList`/`raList` (nguồn dsVu) đều dựng từ
-  // `vuAnTuLogDocs` — hàm ĐÃ gắn sẵn `_bcCutoff` đúng ngày sự kiện lên từng vụ (xem
-  // add_bo_sung_bican_2026-08-03.sql) nhưng `gomTheoTD` bỏ qua field này, khiến bị can "Thêm sau"
-  // (bo_sung_bican) VẪN bị tính vào tội danh/tồn của kỳ CŨ mỗi khi công cụ "Sửa lại tồn cuối kỳ
-  // theo tội danh..." chạy lại — phát hiện thật: kỳ 06/2026 Điều tra bị đếm 768 BC (dùng
-  // `tonCuoiBiCanMoi`, hàm này nuôi) thay vì đúng 738 (30 BC thêm SAU ngày chốt 29/06). Sửa bằng
-  // `locBiCanTheoCutoff` — vụ không có `_bcCutoff` (hoàn thành/nhập vụ, xem hoanThanhSnap/
-  // nhapVuSnap trong tinhBaoCaoKyTuLog — CHƯA áp dụng cutoff, ngoài phạm vi sửa lần này) giữ nguyên
-  // hành vi cũ, không ảnh hưởng gì thêm.
-  // cutoffOverride (2026-08-04, "Gap #2" — tìm ra CHÍNH XÁC qua đối chiếu 2 cách tính độc lập trên
-  // dữ liệu thật: kỳ 06/2026 Điều tra ra 735 thay vì 738, đúng 3 bị can — Bùi Khánh Thương/Trần
-  // Hùng/Nguyễn Đức Huy) — CHỈ áp dụng cho `moiList` (vụ MỚI VÀO đúng kỳ này): `vu._bcCutoff` là
-  // ngày CHÍNH vụ đó phát sinh sự kiện "vào" (VD ngày khởi tố vụ) — nếu vụ được BỔ SUNG thêm bị can
-  // SAU thời điểm đó nhưng VẪN TRONG CÙNG KỲ (trước ngày kỳ chốt), cutoff riêng của vụ loại nhầm
-  // những người này dù họ hợp lệ thuộc "vào" của kỳ. Dùng `ky.ngayChot` (ngày kỳ NÀY đóng — luôn có
-  // vì hàm chỉ chạy cho `dsKyChot`) thay `vu._bcCutoff` CHỈ khi xử lý `moiList` — `raList` GIỮ
-  // NGUYÊN cutoff riêng từng vụ (đúng ngày vụ đó THẬT SỰ rời đi, không đổi).
-  // ⚠ Bản sửa ĐẦU (đã revert) thử áp dụng luôn cho CẢ vụ "carry-over" (không mới/không ra kỳ này,
-  // scan qua d.tonHienTai) — gây lỗi thật (735→788, lệch +53 thay vì +3) vì gom nhầm cả vụ mà sự
-  // kiện "vào" gốc trỏ về 1 kỳ lưu trữ (bị loại khỏi dsKyChot, không bao giờ "mới" ở kỳ nào) — đã
-  // revert, CHỈ giữ đúng phạm vi hẹp `moiList` đã kiểm chứng khớp chính xác 738 trên dữ liệu thật.
-  const gomTheoTD = (map, dsVu, gd, biCanByVu, cutoffOverride) => {
-    for (const vu of dsVu) {
-      const bcs = locBiCanTheoCutoff(biCanByVu[vu.id] || [], cutoffOverride || vu._bcCutoff);
-      if (bcs.length === 0) {
-        // Vụ 0 BC: chỉ dùng dieuLuat[0] (tội danh chính)
-        const tenChinh = (vu.dieuLuat || "").split(";")[0].trim();
-        themVao(map, normTen(tenChinh) || KEY_CHUA_XD, gd, vu.id, 0);
-      } else {
-        // Vụ: chỉ đếm vào tội danh CHÍNH (BC ban_dau hoặc BC đầu tiên)
-        const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
-        const dChinh = getDL(bcChinh) || KEY_CHUA_XD;
-        themVao(map, dChinh, gd, vu.id, 0); // vuSet.add vu.id, biCan += 0
-        // BC: mỗi BC đếm biCan dưới tội danh của chính nó
-        for (const bc of bcs) {
-          const D = getDL(bc) || KEY_CHUA_XD;
-          if (!map[D]) map[D] = {};
-          if (!map[D][gd]) map[D][gd] = { vuSet: new Set(), biCan: 0 };
-          map[D][gd].biCan += 1;
-        }
-      }
-    }
-  };
-  const layDem = (map, D, gd) => {
-    const o = map[D]?.[gd];
-    return o ? { vuAn: o.vuSet.size, biCan: o.biCan } : { vuAn: 0, biCan: 0 };
-  };
-
-  let tonTruoc = {}; // { [D]: { [gd]: { vuAn, biCan } } } — đã tính đúng của kỳ liền trước
-  // tonTruocIds (2026-08-04) — CÙNG 1 vòng lặp, thêm theo dõi TẬP HỢP ID VỤ tồn mỗi giai đoạn
-  // (không phân theo tội danh) — dùng để dựng sheet Excel "DS tồn cuối kỳ {gđ}" khớp đúng
-  // tonCuoiKy/tonCuoiBiCan đã chốt, KHÁC "DS tồn {gđ}" (live) — xem tinhDsTonTheoKy +
-  // add_ton_cuoi_ky_ids_2026-08-04.sql. moiList/raList tái dùng NGUYÊN của gomTheoTD ngay dưới,
-  // không tính lại/query thêm gì.
-  let tonTruocIds = { dieu_tra: new Set(), truy_to: new Set(), xet_xu: new Set() };
-  const ketQua = [];
-
-  for (let i = 0; i < dsKyChot.length; i++) {
-    const ky = dsKyChot[i];
-    const baoCao = await tinhBaoCaoKyTuLog(ky, dsKyChot[i - 1] || null);
-    const vuIds = collectVuIdsFromBaoCao(baoCao);
-    const biCanByVu = await fetchBiCanTheoVuIds(vuIds);
-
-    const tonMoiMap = {}, tonRaMap = {};
-    const tonMoiIds = {};
-    for (const gd of THU_TU_GIAI_DOAN) {
-      const d = baoCao[gd].ds;
-      const moiList = [...(d.khoiToTrucTiep||[]), ...(d.tachVu||[]), ...(d.chuyenDen||[]), ...(d.traVe||[]), ...(d.phucHoi||[]), ...(d.nhanLai||[])];
-      const raList = [
-        ...(d.chuyenDi||[]), ...(d.traDi||[]), ...(d.nhapVu||[]),
-        ...HOAN_THANH_TRUONG_TONG.flatMap(ht => d.hoanThanh?.[ht] || []),
-      ];
-      gomTheoTD(tonMoiMap, moiList, gd, biCanByVu, ky.ngayChot || null);
-      gomTheoTD(tonRaMap, raList, gd, biCanByVu);
-
-      // apDungThayDoiVuTheoThoiGian (không phải add-rồi-remove vô điều kiện) — xem chú thích tại
-      // định nghĩa hàm: cần thiết cho vụ có CẢ 2 sự kiện vào/ra trong CÙNG kỳ này (VD chuyển giai
-      // đoạn rồi bị trả hồ sơ về lại, cùng kỳ).
-      tonMoiIds[gd] = apDungThayDoiVuTheoThoiGian(tonTruocIds[gd], moiList, raList);
-    }
-
-    const tonMoiNay = {};
-    const canhBaoKy = [];
-    const tatCaD = new Set([...Object.keys(tonTruoc), ...Object.keys(tonMoiMap), ...Object.keys(tonRaMap)]);
-    for (const D of tatCaD) {
-      const hang = {};
-      for (const gd of THU_TU_GIAI_DOAN) {
-        const truoc = tonTruoc[D]?.[gd] || { vuAn: 0, biCan: 0 };
-        const moi = layDem(tonMoiMap, D, gd);
-        const ra = layDem(tonRaMap, D, gd);
-        let vuAn = truoc.vuAn + moi.vuAn - ra.vuAn;
-        let biCan = truoc.biCan + moi.biCan - ra.biCan;
-        if (vuAn < 0 || biCan < 0) {
-          canhBaoKy.push(`"${D}" (${NHAN_GIAI_DOAN[gd]}) tính ra âm (vụ=${vuAn}, BC=${biCan}) — đã chặn về 0, kiểm tra lại dữ liệu cũ nếu cần.`);
-          vuAn = Math.max(0, vuAn); biCan = Math.max(0, biCan);
-        }
-        if (vuAn > 0 || biCan > 0) hang[gd] = { vuAn, biCan };
-      }
-      if (Object.keys(hang).length > 0) tonMoiNay[D] = hang;
-    }
-
-    // Đối chiếu với tonCuoiKy (neo tin cậy, chưa từng bị ghi sai) — lệch thì gom vào tội danh
-    // "(chưa xác định)" cho từng giai đoạn để tổng luôn khớp con số tin cậy này.
-    for (const gd of THU_TU_GIAI_DOAN) {
-      const tongTheoTD = Object.values(tonMoiNay).reduce((s, hang) => s + (hang[gd]?.vuAn || 0), 0);
-      const thatSu = ky.tonCuoiKy?.[gd] ?? 0;
-      const lech = thatSu - tongTheoTD;
-      if (lech !== 0) {
-        if (!tonMoiNay[KEY_CHUA_XD]) tonMoiNay[KEY_CHUA_XD] = {};
-        const hienCo = tonMoiNay[KEY_CHUA_XD][gd] || { vuAn: 0, biCan: 0 };
-        tonMoiNay[KEY_CHUA_XD][gd] = { vuAn: Math.max(0, hienCo.vuAn + lech), biCan: hienCo.biCan };
-        canhBaoKy.push(`${NHAN_GIAI_DOAN[gd]}: lệch ${lech} vụ so với tonCuoiKy đã chốt (đáng tin) — đã gộp vào "${KEY_CHUA_XD}".`);
-      }
-    }
-
-    const tonCuoiBiCanMoi = {};
-    THU_TU_GIAI_DOAN.forEach(gd => {
-      tonCuoiBiCanMoi[gd] = Object.values(tonMoiNay).reduce((s, hang) => s + (hang[gd]?.biCan || 0), 0);
-    });
-
-    // Đối chiếu tonMoiIds (Set ID vụ) với tonCuoiKy — KHÔNG có tội danh "(chưa xác định)" để gộp
-    // (không thể bịa ra 1 ID vụ), nên chỉ CẢNH BÁO khi lệch, không tự sửa. Cũng đối chiếu số bị
-    // can (lọc theo ngayChot làm cutoff — bị can bổ sung SAU khi kỳ này đã chốt không được tính)
-    // với tonCuoiBiCanMoi (đáng tin, vừa tính ở trên) để phát hiện sớm nếu cutoff làm lệch số.
-    for (const gd of THU_TU_GIAI_DOAN) {
-      const idArr = [...tonMoiIds[gd]];
-      const soVuThat = ky.tonCuoiKy?.[gd] ?? 0;
-      if (idArr.length !== soVuThat) {
-        canhBaoKy.push(`${NHAN_GIAI_DOAN[gd]}: dựng lại được ${idArr.length} vụ tồn, khác tonCuoiKy đã chốt (${soVuThat} vụ) — chênh ${soVuThat - idArr.length}, có sự kiện log kyThongKe=null (dữ liệu cũ) chưa được tính vào bất kỳ kỳ nào.`);
-      }
-      const soBcCutoff = idArr.reduce((s, id) => s + locBiCanTheoCutoff(biCanByVu[id] || [], ky.ngayChot || null).length, 0);
-      if (soBcCutoff !== tonCuoiBiCanMoi[gd]) {
-        canhBaoKy.push(`${NHAN_GIAI_DOAN[gd]}: bị can tồn tính theo cutoff ngày chốt = ${soBcCutoff}, khác tonCuoiBiCan (${tonCuoiBiCanMoi[gd]}) — kiểm tra lại ngày chốt/bị can bổ sung của kỳ này.`);
-      }
-    }
-
-    // KHÔNG còn ghi "tonCuoiKyIds" (2026-08-06, dọn tàn dư — xem CLAUDE.md "Chuyển hệ thống thống
-    // kê 'tồn'...") — field này TỪNG được `tinhDsTonTheoKy` đọc để dựng sheet "DS tồn cuối kỳ"
-    // trước khi có RPC; giờ hàm đó thuần RPC (`layTonTheoKyRPC`), không còn đọc field này nữa —
-    // grep toàn bộ file xác nhận không còn nơi nào ĐỌC "tonCuoiKyIds" (cột `kybaocao.tonCuoiKyIds`
-    // vẫn còn trên schema Postgres, chỉ không ghi thêm dữ liệu mới vào đó nữa, không xoá cột).
-    await db.collection("kybaocao").doc(ky.id).update({
-      tonCuoiKyTheoTD: tonMoiNay, tonCuoiBiCan: tonCuoiBiCanMoi,
-    });
-    ketQua.push({ ky: ky.tenKy, canhBao: canhBaoKy });
-    tonTruoc = tonMoiNay;
-    tonTruocIds = tonMoiIds;
-    onTienDo?.(i + 1, dsKyChot.length, ky.tenKy);
-  }
-  return { tongSoKy: dsKyChot.length, ketQua };
+  return { rows, canhBao, vuChuaDL, dt_boSungBc, boSungTonTheoGD, rpcTonTheoTD };
 }
 
 // Header 2 dòng cho sheet Biểu B10 — dòng 1: nhóm, dòng 2: chi tiết (88 cột + 2 đầu)
@@ -11436,6 +10751,1097 @@ const B10_HEADER_CHI_TIET = [
   "Vụ (XX-AH)","BC (XX-AH)",
 ];
 
+const BIEU2_ROWS = [
+  {md:1, tc:"1. Thực hành quyền công tố và kiểm sát việc áp dụng, thay đổi, huỷ bỏ các biện pháp ngăn chặn, biện pháp cưỡng chế"},
+  {md:2, tc:"1.1. Thực hành quyền công tố và kiểm sát việc áp dụng, thay đổi, huỷ bỏ các biện pháp ngăn chặn"},
+  {md:3, tc:"Số người bị bắt trong kỳ thống kê"},
+  {md:4, tc:"Trong đó: -  Bắt người bị giữ trong trường hợp khẩn cấp"},
+  {md:5, tc:"- Bắt người phạm tội quả tang"},
+  {md:6, tc:"- Bắt người đang bị truy nã"},
+  {md:7, tc:"- Do người phạm tội đầu thú"},
+  {md:8, tc:"- Do người phạm tội tự thú"},
+  {md:9, tc:"Số trường hợp VKS không phê chuẩn các biện pháp ngăn chặn."},
+  {md:10, tc:"Trong đó: - Lệnh bắt người bị giữ trong trường hợp khẩn cấp"},
+  {md:11, tc:"- Lệnh tạm giam"},
+  {md:12, tc:"- Lệnh bắt tạm giam"},
+  {md:13, tc:"-  Quyết định gia hạn tạm giữ (lần thứ nhất, thứ hai)"},
+  {md:14, tc:"Số người VKS phê chuẩn lệnh bắt người bị giữ trong trường hợp khẩn cấp"},
+  {md:15, tc:"Trong đó: - Số người VKS tham gia hoặc trực tiếp  lấy lời khai, gặp hỏi người bị giữ trong trường hợp khẩn cấp trước khi xem xét phê chuẩn."},
+  {md:16, tc:"Số bị can VKS không phê chuẩn lệnh tạm giam phạm tội mới"},
+  {md:17, tc:"Số bị can VKS không phê chuẩn lệnh tạm giam bỏ trốn"},
+  {md:18, tc:"Số người VKS quyết định phê chuẩn lệnh bắt người bị giữ trong trường hợp khẩn cấp sau đó trả tự do do không có hành vi  phạm tội"},
+  {md:19, tc:"Trong đó: - Số người xử lý hành chính"},
+  {md:20, tc:"Số người bị bắt giữ được trả tự do do không có hành vi phạm tội"},
+  {md:21, tc:"Trong đó: - Số người xử lý hành chính"},
+  {md:22, tc:"Số người VKS phê chuẩn Quyết định gia hạn tạm giữ (mỗi bị can chỉ thống kê 1 lần) đã giải quyết, xử lý trong kỳ"},
+  {md:23, tc:"Trong đó: - Số đã khởi tố bị can"},
+  {md:24, tc:"- Số người bắt người bị giữ trong trường hợp khẩn cấp"},
+  {md:25, tc:"Tr.đó: + + Số đã khởi tố bị can"},
+  {md:26, tc:"Số người bắt người bị giữ trong trường hợp khẩn cấp và VKS phê chuẩn gia hạn tạm giữ đã xử lý, giải quyết trong kỳ"},
+  {md:27, tc:"Trong đó: - Số đã khởi tố bị can"},
+  {md:28, tc:"Số người bị bắt, tạm giữ đã khởi tố bị can"},
+  {md:29, tc:"Số người bị bắt, tạm giữ trả tự do không xử lý hình sự có trách nhiệm của VKS (đã phê chuẩn lệnh gia hạn tạm giữ; phê chuẩn lệnh bắt giữ người trong trường hợp khẩn cấp…)"},
+  {md:30, tc:"Số bị can VKS phê chuẩn lệnh bắt tạm giam"},
+  {md:31, tc:"Số bị can VKS không phê chuẩn gia hạn tạm giam"},
+  {md:32, tc:"Số bị can VKS yêu cầu CQĐT bắt tạm giam"},
+  {md:33, tc:"Số bị can CQĐT đã bắt tạm giam theo yêu cầu của VKS"},
+  {md:34, tc:"Số bị can VKS yêu cầu CQĐT truy nã"},
+  {md:35, tc:"Số bị can CQĐT đã truy nã theo yêu cầu của VKS"},
+  {md:36, tc:"Số trường hợp Viện kiểm sát hủy bỏ các biện pháp ngăn chặn."},
+  {md:37, tc:"Trong đó:   - Số người VKS huỷ bỏ quyết định tạm giữ"},
+  {md:38, tc:"- Số bị can VKS quyết định huỷ bỏ biện pháp tạm giam, thay thế bằng biện pháp ngăn chặn khác"},
+  {md:39, tc:"Tr.đó:   + Số bị can áp dụng biện pháp bảo lĩnh"},
+  {md:40, tc:"+ Số bị can áp dụng biện pháp đặt tiền để bảo đảm"},
+  {md:41, tc:"Số bị can VKS quyết định huỷ bỏ biện pháp tạm giam, thay thế bằng biện pháp ngăn chặn khác, sau đó bị can phạm tội mới"},
+  {md:42, tc:"Số bị can VKS quyết định huỷ bỏ biện pháp tạm giam, thay thế bằng biện pháp ngăn chặn khác, sau đó bị can bỏ trốn"},
+  {md:43, tc:"Số người bị tạm giữ có người bào chữa"},
+  {md:44, tc:"Trong đó:  - Luật sư"},
+  {md:45, tc:"- Bào chữa viên nhân dân"},
+  {md:46, tc:"- Trợ giúp viên pháp lý"},
+  {md:47, tc:"Số bị can bị tạm giam có người bào chữa"},
+  {md:48, tc:"Trong đó:  - Luật sư"},
+  {md:49, tc:"- Bào chữa viên nhân dân"},
+  {md:50, tc:"- Trợ giúp viên pháp lý"},
+  {md:51, tc:"1.2. Thực hành quyền công tố và kiểm sát việc áp dụng, thay đổi, huỷ bỏ các biện pháp cưỡng chế"},
+  {md:52, tc:"Số người, bị can, bị cáo bị áp dụng biện pháp cưỡng chế"},
+  {md:53, tc:"Trong đó:  - Số bị can, bị cáo bị áp dụng biện pháp kê biên tài sản"},
+  {md:54, tc:"- Số bị can, bị cáo bị áp dụng biện pháp phong toả tài khoản"},
+  {md:55, tc:"II. Thực hành quyền công tố và kiểm sát việc khởi tố, điều tra vụ án hình sự"},
+  {md:56, tc:"2.1. Thực hành quyền công tố và kiểm sát các hoạt động điều tra"},
+  {md:57, tc:"Số vụ án còn lại của kỳ trước"},
+  {md:58, tc:"Số vụ án mới nhận để điều tra lại"},
+  {md:59, tc:"Số vụ án mới nhận lại để điều tra bổ sung (tính cả những vụ VKS trả theo yêu cầu của Tòa án)"},
+  {md:60, tc:"Số vụ án được tách từ vụ án khác"},
+  {md:61, tc:"Số vụ án nhập vào vụ án khác"},
+  {md:62, tc:"Số vụ án tạm đình chỉ phục hồi điều tra trong kỳ"},
+  {md:63, tc:"Trong đó: - Số vụ án phục hồi theo yêu cầu của VKS"},
+  {md:64, tc:"Số bị can còn lại của kỳ trước"},
+  {md:65, tc:"Số bị can mới nhận để điều tra lại"},
+  {md:66, tc:"Số bị can mới nhận để điều tra bổ sung (tính cả những vụ VKS trả theo yêu cầu của Tòa án)"},
+  {md:67, tc:"Số bị can được tách từ vụ án khác"},
+  {md:68, tc:"Số bị can nhập vào vụ án khác"},
+  {md:69, tc:"Số bị can tạm đình chỉ phục hồi điều tra trong kỳ"},
+  {md:70, tc:"Trong đó: - Số bị can phục hồi theo yêu cầu của VKS"},
+  {md:71, tc:"Số vụ án mới khởi tố"},
+  {md:72, tc:"Số bị can mới khởi tố"},
+  {md:73, tc:"Số vụ án nơi khác chuyển đến"},
+  {md:74, tc:"Số bị can nơi khác chuyển đến"},
+  {md:75, tc:"Số vụ án chuyển đi nơi khác"},
+  {md:76, tc:"Số bị can chuyển đi nơi khác"},
+  {md:77, tc:"Tổng số vụ án CQĐT thụ lý điều tra"},
+  {md:78, tc:"Trong đó: - Số vụ án xác định trọng điểm"},
+  {md:79, tc:"Tổng số bị can CQĐT thụ lý điều tra"},
+  {md:80, tc:"Số vụ án xác định án trọng điểm trong kỳ thống kê"},
+  {md:81, tc:"Số vụ án đủ điều kiện áp dụng thủ tục rút gọn theo quy định của pháp luật"},
+  {md:82, tc:"Trong đó: Số vụ áp dụng thủ tục rút gọn"},
+  {md:83, tc:"Số vụ án CQĐT đã giải quyết (đề nghị truy tố + đình chỉ )"},
+  {md:84, tc:"Trong đó: -  Số vụ án áp dụng thủ tục rút gọn"},
+  {md:85, tc:"- Số vụ xác định án trọng điểm"},
+  {md:86, tc:"Số bị can CQĐT đã giải quyết (đề nghị truy tố + đình chỉ )"},
+  {md:87, tc:"Trong đó: - Số bị can có người bào chữa"},
+  {md:88, tc:"Tr.đó:   + Luật sư"},
+  {md:89, tc:"+ Bào chữa viên nhân dân"},
+  {md:90, tc:"+ Trợ giúp viên pháp lý"},
+  {md:91, tc:"- Số  bị can VKS đã trực tiếp hoặc tham gia hỏi cung bị can"},
+  {md:92, tc:"Số vụ án đề nghị truy tố"},
+  {md:93, tc:"Trong đó: - Số vụ án đã đề nghị truy tố ở kỳ thống kê trước (do trả hồ sơ điều tra bổ sung)"},
+  {md:94, tc:"- Số vụ án quá thời hạn điều tra"},
+  {md:95, tc:"Số bị can đề nghị truy tố"},
+  {md:96, tc:"Trong đó:  - Số đã đề nghị truy tố ở kỳ thống kê trước (do trả hồ sơ điều tra bổ sung)"},
+  {md:97, tc:"- Số bị can khi phạm tội là đảng viên"},
+  {md:98, tc:"Tr. đó:+ Số bị can là đảng viên giữ chức vụ quản lý"},
+  {md:99, tc:"- Số bị can quá thời hạn điều tra"},
+  {md:100, tc:"Số vụ án CQĐT đình chỉ điều tra"},
+  {md:101, tc:"Trong đó:  - Số vụ án VKS trả hồ sơ cho CQĐT để điều tra bổ sung nhưng sau đó đình chỉ điều tra"},
+  {md:102, tc:"- Do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu (K2 Đ155 BLTTHS)"},
+  {md:103, tc:"- Không có sự việc phạm tội hoặc hành vi không cấu thành tội phạm (theo K1,2 Đ157 BLTTHS) không tính trường hợp đình chỉ do bị can bị tâm thần hoặc bị can phạm nhiều tội nhưng chỉ đình chỉ 01 tội."},
+  {md:104, tc:"- Số vụ án đình chỉ điều tra do người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu TNHS (theo K3 Đ157 BLTTHS)"},
+  {md:105, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:106, tc:"- Số vụ án đình chỉ điều tra do bị can chết (theo K7 Đ157 BLTTHS)"},
+  {md:107, tc:"- Số vụ án đình chỉ điều tra do bị can bị mắc bệnh tâm thần"},
+  {md:108, tc:"- Số vụ án đình chỉ vì hết thời hạn điều tra mà không chứng minh được tội phạm (điểm b, khoản 1 Điều 230)"},
+  {md:109, tc:"- Số vụ án đình chỉ điều tra do  bị can được miễn TNHS theo K 2 Đ91 BLHS"},
+  {md:110, tc:"- Số vụ án đình chỉ điều tra do bị can được miễn trách nhiệm hình sự theo K1 Đ29 BLHS"},
+  {md:111, tc:"Tr. đó: + Số vụ án tham nhũng, chức vụ"},
+  {md:112, tc:"- Số vụ án đình chỉ điều tra do bị can được miễn trách nhiệm hình sự theo K2 Đ29 BLHS"},
+  {md:113, tc:"Tr. đó: + Số vụ án tham nhũng, chức vụ"},
+  {md:114, tc:"- Số vụ án đình chỉ điều tra do bị can được miễn TNHS theo K3 Đ29 BLHS"},
+  {md:115, tc:"Số vụ án đình chỉ điều tra do trước đó đã ra quyết định tạm đình chỉ điều tra, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS, nhưng không có quyết định phục hồi"},
+  {md:116, tc:"Trong đó:- Số đã hết thời hiệu truy cứu trách nhiệm hình sự"},
+  {md:117, tc:"Số bị can CQĐT đình chỉ điều tra"},
+  {md:118, tc:"Trong đó: - Số bị can VKS trả hồ sơ cho CQĐT để điều tra bổ sung nhưng sau đó đình chỉ điều tra"},
+  {md:119, tc:"- Do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu (K2 Đ155 BLTTHS)"},
+  {md:120, tc:"-Số bị can đình chỉ điều tra do không có sự việc phạm tội hoặc hành vi không cấu thành tội phạm (theo K1,2 Đ157 BLTTHS),(không tính trường hợp đình chỉ do bị can bị tâm thần hoặc bị can phạm nhiều tội nhưng chỉ đình chỉ 1 tội)"},
+  {md:121, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu TNHS (theo K3 Đ157 BLTTHS)"},
+  {md:122, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:123, tc:"- Số bị can đình chỉ điều tra do bị can chết (theo K7 Đ157 BLTTHS)"},
+  {md:124, tc:"- Số bị can đình chỉ vì hết thời hạn điều tra mà không chứng minh được bị can đã thực hiện tội phạm (theo điểm b K1 Đ230 BLTTHS)"},
+  {md:125, tc:"- Bị can bị mắc bệnh tâm thần"},
+  {md:126, tc:"- Số bị can đình chỉ điều tra theo K 2 Đ91 BLHS"},
+  {md:127, tc:"- Số bị can đình chỉ do được miễn trách nhiệm hình sự theo K1 Đ29 BLHS"},
+  {md:128, tc:"Tr. đó: + Số bị can phạm tội tham nhũng, chức vụ"},
+  {md:129, tc:"- Số bị can đình chỉ do được miễn trách nhiệm hình sự theo K2 Đ29 BLHS"},
+  {md:130, tc:"Tr. đó: + Số bị can phạm tội tham nhũng, chức vụ"},
+  {md:131, tc:"- Số bị can đình chỉ điều tra do được miễn TNHS theo K3 Đ29 BLHS"},
+  {md:132, tc:"Số bị can đình chỉ điều tra do trước đó đã ra quyết định tạm đình chỉ điều tra, nay xác định bị can chết hoặc hết thời hiệu truy cứu trách nhiệm hình sự nhưng không có quyết định phục hồi"},
+  {md:133, tc:"Trong đó: - Số đã hết thời hiệu truy cứu trách nhiệm hình sự"},
+  {md:134, tc:"Số vụ án CQĐT tạm đình chỉ điều tra trong kỳ thống kê"},
+  {md:135, tc:"Trong đó:  - Chưa xác định được bị can"},
+  {md:136, tc:"- Không biết rõ bị can đang ở đâu nhưng đã hết thời hạn điều tra vụ án (điểm a K1 Đ229 BLTTHS)"},
+  {md:137, tc:"- Khi có kết luận giám định tư pháp xác định bị can bị bệnh tâm thần hoặc bệnh hiểm nghèo theo điểm b K1 Đ229 BLTTHS"},
+  {md:138, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp chưa có kết quả nhưng đã hết thời hạn điều tra (theo điểm c K1 Đ229 BLTTHS)"},
+  {md:139, tc:"- Do không thể kết thúc điều tra vì lý do bất khả kháng do thiên tai, dịch bệnh nhưng đã hết thời hạn điều tra"},
+  {md:140, tc:"- Vì các lý do khác"},
+  {md:141, tc:"Số bị can CQĐT tạm đình chỉ điều tra trong kỳ thống kê"},
+  {md:142, tc:"Trong đó: - Khi không biết rõ bị can đang ở đâu nhưng đã hết thời hạn điều tra (điểm a K1 Đ229 BLTTHS)"},
+  {md:143, tc:"- Khi có kết luận giám định tư pháp xác định bị can bị bệnh tâm thần hoặc bệnh hiểm nghèo theo điểm b K1 Đ229 BLTTHS (có thể tạm đình chỉ trước khi hết thời hạn điều tra)"},
+  {md:144, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp chưa có kết quả nhưng đã hết thời hạn điều tra (điểm c K1 Đ229 BLTTHS)"},
+  {md:145, tc:"- Do không thể kết thúc điều tra vì lý do bất khả kháng do thiên tai, dịch bệnh nhưng đã hết thời hạn điều tra"},
+  {md:146, tc:"- Vì các lý do khác"},
+  {md:147, tc:"- Số bị can có người bào chữa"},
+  {md:148, tc:"Tr.đó:   + Luật sư"},
+  {md:149, tc:"+ Bào chữa viên nhân dân"},
+  {md:150, tc:"+ Trợ giúp viên pháp lý"},
+  {md:151, tc:"Tổng số vụ án CQĐT ra quyết định tạm đình chỉ điều tra tính đến cuối kỳ thống kê"},
+  {md:152, tc:"Trong đó: - Số vụ tạm đình chỉ đã hết thời hiệu truy cứu trách nhiệm hình sự chưa được đình chỉ."},
+  {md:153, tc:"Tổng số bị can CQĐT ra quyết định tạm đình chỉ điều tra tính đến cuối kỳ thống kê"},
+  {md:154, tc:"Số vụ án còn lại chưa kết thúc điều tra"},
+  {md:155, tc:"Trong đó:   - Số vụ án chưa kết thúc điều tra đã quá thời hạn luật định"},
+  {md:156, tc:"Số bị can còn lại chưa kết thúc điều tra"},
+  {md:157, tc:"Trong đó: -Số bị can có người bào chữa"},
+  {md:158, tc:"Trong đó: + Luật sư"},
+  {md:159, tc:"+ Bào chữa viên nhân dân"},
+  {md:160, tc:"+ Trợ giúp viên pháp lý"},
+  {md:161, tc:"2.2 Các hoạt động khác"},
+  {md:162, tc:"Số vụ án VKS đã ban hành yêu cầu điều tra (Trong số vụ án khởi tố mới; phục hồi điều tra; trả hồ sơ điều tra lại)"},
+  {md:163, tc:"Số bản yêu cầu điều tra của VKS đã ban hành trong kỳ thống kê"},
+  {md:164, tc:"Số bản yêu cầu điều tra không được cơ quan điều tra thực hiện (toàn bộ)"},
+  {md:165, tc:"Số vụ án về tham nhũng, kinh tế, chức vụ có đủ căn cứ để áp dụng biện pháp cưỡng chế kê biên tài sản, phong tỏa tài khoản nhưng CQĐT chưa áp dụng"},
+  {md:166, tc:"Trong đó -  Số vụ VKS đã ban hành văn bản yêu cầu CQĐT áp dụng biện pháp cưỡng chế kê biên tài sản, phong tỏa tài khoản"},
+  {md:167, tc:"Số lần CQĐT thực hiện các hoạt động điều tra mà Kiểm sát viên trực tiếp kiểm sát theo Điều 42 Khoản d BLTTHS"},
+  {md:168, tc:"Trong đó -  Hoạt động khám nghiệm hiện trường"},
+  {md:169, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:170, tc:"- Hoạt động khám nghiệm tử thi"},
+  {md:171, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:172, tc:"- Hoạt động đối chất"},
+  {md:173, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:174, tc:"-  Hoạt động nhận dạng"},
+  {md:175, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:176, tc:"- Hoạt động động nhận biết giọng nói"},
+  {md:177, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:178, tc:"- Hoạt động khám xét"},
+  {md:179, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:180, tc:"- Hoạt động thực nghiệm điều tra"},
+  {md:181, tc:"Tr.đó: + Só lần không tham gia"},
+  {md:182, tc:"Số lần VKS trực tiếp tiến hành một số hoạt động điều tra trong giai đoạn điều tra"},
+  {md:183, tc:"Trong đó:   - Số lần VKS trực tiếp hỏi cung bị can"},
+  {md:184, tc:"Số lần VKS tham gia hỏi cung bị can"},
+  {md:185, tc:"Số vụ, việc VKS yêu cầu CQĐT, cơ quan được giao nhiệm vụ tiến hành một số hoạt động điều tra cung cấp tài liệu, chứng cứ để kiểm sát việc khởi tố"},
+  {md:186, tc:"Số người VKS có văn bản yêu cầu CQĐT, cơ quan được giao nhiệm vụ tiến hành một số hoạt động điều tra tiếp tục cung cấp tài liệu, chứng cứ để xét phê chuẩn quyết định khởi tố bị can"},
+  {md:187, tc:"Số vụ án VKS yêu cầu CQĐT huỷ bỏ quyết định khởi tố"},
+  {md:188, tc:"Số người VKS yêu cầu CQĐT hủy bỏ QĐ khởi tố bị can"},
+  {md:189, tc:"Số vụ án CQĐT đã huỷ bỏ quyết định khởi tố theo yêu cầu của VKS"},
+  {md:190, tc:"Số người CQĐT hủy bỏ Quyết định khởi tố bị can theo yêu cầu của VKS"},
+  {md:191, tc:"Số vụ án VKS yêu cầu CQĐT hủy bỏ quyết định thay đổi, bổ sung quyết định khởi tố vụ án hình sự"},
+  {md:192, tc:"Số vụ án CQĐT hủy bỏ quyết định thay đổi, bổ sung quyết định khởi tố vụ án hình sự theo yêu cầu của VKS"},
+  {md:193, tc:"Số vụ án VKS yêu cầu CQĐT thay đổi, bổ sung quyết định khởi tố"},
+  {md:194, tc:"Số bị can VKS yêu cầu CQĐT thay đổi, bổ sung quyết định khởi tố"},
+  {md:195, tc:"Số vụ án CQĐT đã thay đổi, bổ sung quyết định khởi tố theo yêu cầu của VKS"},
+  {md:196, tc:"Số bị can CQĐT đã thay đổi, bổ sung quyết định khởi tố theo yêu cầu của VKS"},
+  {md:197, tc:"Số vụ, việc VKS yêu cầu hủy bỏ quyết định không khởi tố"},
+  {md:198, tc:"Số vụ, việc CQĐT chấp nhận và ban hành quyết định khởi tố vụ án theo yêu cầu của VKS"},
+  {md:199, tc:"Số vụ án đủ căn cứ khởi tố nhưng cơ quan điều tra không khởi tố"},
+  {md:200, tc:"Số bị can có đủ căn cứ khởi tố nhưng cơ quan điều tra không khởi tố"},
+  {md:201, tc:"Số vụ án VKS yêu cầu CQĐT khởi tố"},
+  {md:202, tc:"Số người VKS yêu cầu CQĐT khởi tố"},
+  {md:203, tc:"Số vụ án CQĐT đã khởi tố theo yêu cầu của VKS"},
+  {md:204, tc:"Số bị can CQĐT đã khởi tố theo yêu cầu của VKS"},
+  {md:205, tc:"Số vụ án VKS khởi tố, yêu cầu CQĐT điều tra"},
+  {md:206, tc:"Số bị can VKS khởi tố, yêu cầu CQĐT điều tra"},
+  {md:207, tc:"Số vụ án VKS thay đổi, bổ sung quyết định khởi tố"},
+  {md:208, tc:"Số bị can VKS thay đổi, bổ sung quyết định khởi tố"},
+  {md:209, tc:"Số vụ án CQĐT huỷ bỏ quyết định đình chỉ điều tra đối với vụ án"},
+  {md:210, tc:"Trong đó:Số vụ án hủy theo yêu cầu của VKS"},
+  {md:211, tc:"Số bị can CQĐT huỷ bỏ quyết định đình chỉ điều tra đối với bị can"},
+  {md:212, tc:"Trong đó: - Số bị can hủy theo yêu cầu của VKS"},
+  {md:213, tc:"Số vụ án CQĐT huỷ bỏ quyết định tạm đình chỉ điều tra vụ án"},
+  {md:214, tc:"Trong đó: - Số vụ án hủy theo yêu cầu của VKS"},
+  {md:215, tc:"Số bị can CQĐT huỷ bỏ quyết định tạm đình chỉ điều tra đối với bị can"},
+  {md:216, tc:"Trong đó: - Số bị can hủy theo yêu cầu của VKS"},
+  {md:217, tc:"Số lần VKS yêu cầu CQĐT trưng cầu giám định, giám định pháp y"},
+  {md:218, tc:"Số vụ án CQĐT ra quyết định trưng cầu giám định, giám định pháp y theo yêu cầu của VKS"},
+  {md:219, tc:"Số lần VKS không phê chuẩn lệnh khám xét"},
+  {md:220, tc:"Số lần VKS không phê chuẩn lệnh thu giữ thư tín, điện tín, bưu kiện, bưu phẩm tại cơ quan, tổ chức bưu chính, viễn thông"},
+  {md:221, tc:"Số vụ án áp dụng biện pháp điều tra tố tụng đặc biệt"},
+  {md:222, tc:"Trong đó:  - Ghi âm, ghi hình bí mật"},
+  {md:223, tc:"- Nghe điện thoại bí mật"},
+  {md:224, tc:"- Thu thập bí mật dữ liệu điện tử"},
+  {md:225, tc:"Số vụ án VKS không phê chuẩn áp dụng biện pháp điều tra tố tụng đặc biệt"},
+  {md:226, tc:"Trong đó:  - Ghi âm, ghi hình bí mật"},
+  {md:227, tc:"- Nghe điện thoại bí mật"},
+  {md:228, tc:"- Thu thập bí mật dữ liệu điện tử"},
+  {md:229, tc:"Số trường hợp VKS hủy bỏ các Quyết định không có căn cứ  của CQĐT."},
+  {md:230, tc:"Trong đó:  - Quyết định khởi tố vụ án"},
+  {md:231, tc:"- Quyết định khởi tố bị can"},
+  {md:232, tc:"- Quyết định thay đổi, bổ sung quyết định khởi tố vụ án"},
+  {md:233, tc:"- Quyết định thay đổi, bổ sung quyết định khởi tố bị can"},
+  {md:234, tc:"-  Quyết định không khởi tố vụ án"},
+  {md:235, tc:"Tr.đó : VKS cấp trên hủy bỏ"},
+  {md:236, tc:"- Quyết định đình chỉ điều tra vụ án"},
+  {md:237, tc:"Tr.đó : VKS yêu cầu điều tra, giải quyết đúng quy định"},
+  {md:238, tc:"- Quyết định đình chỉ điều tra bị can"},
+  {md:239, tc:"Tr.đó : VKS yêu cầu điều tra, giải quyết đúng quy định"},
+  {md:240, tc:"- Quyết định tạm đình chỉ điều tra vụ án"},
+  {md:241, tc:"Tr.đó : VKS yêu cầu điều tra, giải quyết đúng quy định"},
+  {md:242, tc:"- Quyết định tạm đình chỉ điều tra đối với bị can"},
+  {md:243, tc:"Tr.đó : VKS yêu cầu điều tra, giải quyết đúng quy định"},
+  {md:244, tc:"- Quyết định áp dụng thủ tục rút gọn"},
+  {md:245, tc:"Số vụ án CQĐT đình chỉ do không phạm tội hoặc miễn TNHS không có căn cứ bị hủy bỏ (bao gồm CQĐT tự hủy bỏ và VKS hủy bỏ)"},
+  {md:246, tc:"Số bị can CQĐT đình chỉ do không phạm tội hoặc miễn TNHS không có căn cứ bị hủy bỏ (bao gồm CQĐT tự hủy bỏ và VKS hủy bỏ)"},
+  {md:247, tc:"Số vụ án TĐC đủ căn cứ để ban hành quyết định xử lý theo quy định của pháp luật nhưng CQĐT chưa ra quyết định xử lý"},
+  {md:248, tc:"Trong đó:  - Số vụ án VKS  tự ban hành hoặc có văn bản yêu cầu CQĐT ra quyết định xử lý"},
+  {md:249, tc:"Số vụ án VKS gia hạn thời hạn điều tra"},
+  {md:250, tc:"Trong đó: - Số vụ án gia hạn lần 1"},
+  {md:251, tc:"- Số vụ án gia hạn lần 2"},
+  {md:252, tc:"- Số vụ án gia hạn lần 3"},
+  {md:253, tc:"Số bị can không áp dụng biện pháp tạm giam nhưng bỏ trốn phải ra Lệnh truy nã"},
+  {md:254, tc:"Số trường hợp CQĐT không kịp thời khởi tố bị can, để người phạm tội bỏ trốn sau đó mới ra quyết định khởi tố bị can và ra lệnh truy nã bị can"},
+  {md:255, tc:"Số bị can được VKS ra quyết định áp dụng biện pháp tư pháp bắt buộc chữa bệnh trong giai đoạn điều tra"},
+  {md:256, tc:"Số báo cáo thỉnh thị VKS đã tiếp nhận"},
+  {md:257, tc:"Số trả lời thỉnh thị đúng hạn"},
+  {md:258, tc:"Số thông báo rút kinh nghiệm"},
+  {md:259, tc:"II. Thực hành quyền công tố và kiểm sát hoạt động tư pháp trong giai đoạn truy tố"},
+  {md:260, tc:"Số vụ án còn lại của kỳ trước"},
+  {md:261, tc:"Số vụ án tạm đình chỉ được phục hồi để truy tố trong kỳ"},
+  {md:262, tc:"Số vụ án mới nhận lại để điều tra bổ sung"},
+  {md:263, tc:"Số vụ án được tách từ vụ án khác"},
+  {md:264, tc:"Số vụ án nhập vào vụ án khác"},
+  {md:265, tc:"Số bị can còn lại của kỳ trước"},
+  {md:266, tc:"Số bị can tạm đình chỉ được phục hồi để truy tố trong kỳ"},
+  {md:267, tc:"Số bị can mới nhận để điều tra bổ sung"},
+  {md:268, tc:"Số bị can được tách từ vụ án khác"},
+  {md:269, tc:"Số bị can nhập vào vụ án khác"},
+  {md:270, tc:"Số vụ án mới thụ lý"},
+  {md:271, tc:"Số bị can mới thụ lý"},
+  {md:272, tc:"Số vụ án nhận lại do CQĐT hoàn lại sau khi ĐTBS"},
+  {md:273, tc:"Số bị can nhận lại do CQĐT hoàn lại sau khi ĐTBS"},
+  {md:274, tc:"Số vụ án nơi khác chuyển đến"},
+  {md:275, tc:"Số bị can nơi khác chuyển đến"},
+  {md:276, tc:"Số vụ án chuyển đi nơi khác"},
+  {md:277, tc:"Số bị can chuyển đi nơi khác"},
+  {md:278, tc:"Số vụ án VKS  trả hồ sơ điều tra bổ sung trong kỳ (cả những vụ án do VKS trả hồ sơ để điều tra bổ sung theo yêu cầu của Tòa án) đến cuối kỳ chưa nhận lại"},
+  {md:279, tc:"Số bị can VKS trả hồ sơ điều tra bổ sung trong kỳ (cả những bị can do VKS trả hồ sơ để điều tra bổ sung theo yêu cầu của Tòa án) đến cuối kỳ chưa nhận lại"},
+  {md:280, tc:"Tổng số vụ án VKS thụ lý giải quyết"},
+  {md:281, tc:"Tổng số bị can VKS thụ lý giải quyết"},
+  {md:282, tc:"Số vụ án VKS đã giải quyết (truy tố + đình chỉ )"},
+  {md:283, tc:"Trong đó:  - Số vụ án áp dụng theo thủ tục rút gọn"},
+  {md:284, tc:"- Số vụ án xác định trọng điểm"},
+  {md:285, tc:"Số bị can VKS đã giải quyết (truy tố + đình chỉ )"},
+  {md:286, tc:"Trong đó:  - Số bị can có người bào chữa"},
+  {md:287, tc:"Tr.đó: + Luật sư"},
+  {md:288, tc:"+ Bào chữa viên nhân dân"},
+  {md:289, tc:"+ Trợ giúp viên pháp lý"},
+  {md:290, tc:"- Số bị can VKS đã trực tiếp hỏi cung bị can"},
+  {md:291, tc:"Tr.đó: + Số bị can VKS đã trực tiếp hỏi cung trước khi ra Quyết định truy tố."},
+  {md:292, tc:"Số vụ án truy tố"},
+  {md:293, tc:"Trong đó:  - Số vụ án đã truy tố ở kỳ thống kê trước (do trả hồ sơ điều tra bổ sung)"},
+  {md:294, tc:"- Số vụ án VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ thẩm"},
+  {md:295, tc:"- Số vụ án quá thời hạn đã quyết định truy tố"},
+  {md:296, tc:"Số bị can truy tố"},
+  {md:297, tc:"Trong đó:  - Số bị can đã truy tố ở kỳ thống kê trước (do trả điều tra bổ sung)"},
+  {md:298, tc:"- Số bị can VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ thẩm"},
+  {md:299, tc:"- Số bị can quá thời hạn đã quyết định truy tố"},
+  {md:300, tc:"Số vụ án VKS quyết định không truy tố và ra quyết định đình chỉ"},
+  {md:301, tc:"Tr.đó: -  Số vụ án Toà án trả hồ sơ cho VKS để điều tra bổ sung nhưng sau đó đình chỉ"},
+  {md:302, tc:"- Do bị hại rút yêu cầu khởi tố hoặc người đại diện của bị hại rút đơn yêu cầu (theo K2 Đ155 BLTTHS)"},
+  {md:303, tc:"- Số vụ án đình chỉ do không có sự việc phạm tội hoặc hành vi không cấu thành tội phạm theo K1,2 Đ157 BLTTHS, (không tính trường hợp đình chỉ do bị can bị tâm thần hoặc bị can phạm nhiều tội nhưng chỉ đình chỉ 1 tội)."},
+  {md:304, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu TNHS (theo K3 Đ157 BLTTHS)"},
+  {md:305, tc:"- Số vụ án đình chỉ do được miễn trách nhiệm hình sự theo K1 Đ29 BLHS"},
+  {md:306, tc:"- Số vụ án đình chỉ do được miễn trách nhiệm hình sự theo K2Đ29BLHS"},
+  {md:307, tc:"- Số vụ án đình chỉ do được miễn TNHS theo K3Đ29 BLHS"},
+  {md:308, tc:"Số vụ án VKS đình chỉ do trước đó đã ra quyết định tạm đình chỉ, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS nhưng không có quyết định phục hồi"},
+  {md:309, tc:"Trong đó: - Số đã hết thời hiệu truy cứu trách nhiệm hình sự"},
+  {md:310, tc:"Số bị can VKS quyết định không truy tố và ra quyết định đình chỉ vụ án đối với bị can"},
+  {md:311, tc:"Trong đó:  - Số bị can Toà án trả hồ sơ cho VKS để điều tra bổ sung nhưng sau đó đình chỉ"},
+  {md:312, tc:"- Do bị hại rút yêu cầu khởi tố hoặc người đại diện của bị hại rút đơn yêu cầu (theo K2 Đ155 BLTTHS)"},
+  {md:313, tc:"- Số bị can đình chỉ do không có sự việc phạm tội hoặc hành vi không cấu thành tội phạm theo K1,2 Đ157 BLTTHS, (không tính trường hợp đình chỉ do bị can bị tâm thần hoặc bị can phạm nhiều tội nhưng chỉ đình chỉ 1 tội)."},
+  {md:314, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu TNHS (theo K3 Đ157 BLTTHS)"},
+  {md:315, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:316, tc:"- Số bị can đình chỉ do bị can chết (theo K7 Đ157 BLTTHS)"},
+  {md:317, tc:"- Bị can bị mắc bệnh tâm thần"},
+  {md:318, tc:"- Số bị can đình chỉ theo K2 Đ91BLHS"},
+  {md:319, tc:"- Số bị can đình chỉ do được miễn trách nhiệm hình sự theo K1 Đ29 BLHS"},
+  {md:320, tc:"- Số bị can đình chỉ do được miễn trách nhiệm hình sự theo K2Đ29BLHS"},
+  {md:321, tc:"- Số bị can đình chỉ do được miễn TNHS theo K3Đ29 BLHS"},
+  {md:322, tc:"- Vì lý do khác"},
+  {md:323, tc:"- Số bị can tham phạm tội nhũng, chức vụ  được miễn TNHS theo Điều 29 BLHS"},
+  {md:324, tc:"Số bị can VKS đình chỉ do trước đó đã ra quyết định tạm đình chỉ, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS nhưng không có quyết định phục hổi"},
+  {md:325, tc:"Trong đó: - Số đã hết thời hiệu truy cứu trách nhiệm hình sự"},
+  {md:326, tc:"Số vụ án VKS tạm đình chỉ trong kỳ thống kê"},
+  {md:327, tc:"Trong đó:  - Khi bị can bỏ trốn mà không biết rõ bị can đang ở đâu nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:328, tc:"- Khi có kết luận giám định tư pháp xác định bị can bị bệnh tâm thần hoặc bệnh hiểm nghèo"},
+  {md:329, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp mà chưa có kết quả nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:330, tc:"- Vì lý do bất khả kháng do thiên tai, dịch bệnh nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:331, tc:"- Vì lý do khác"},
+  {md:332, tc:"Số bị can VKS tạm đình chỉ trong kỳ thống kê"},
+  {md:333, tc:"Trong đó:  - Khi bị can bỏ trốn mà không biết rõ bị can đang ở đâu nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:334, tc:"- Khi có kết luận giám định tư pháp xác định bị can bị bệnh tâm thần hoặc bệnh hiểm nghèo"},
+  {md:335, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp mà chưa có kết quả nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:336, tc:"- Vì  lý do bất khả kháng do thiên tai, dịch bệnh nhưng đã hết thời hạn quyết định việc truy tố"},
+  {md:337, tc:"- Vì các lý do khác"},
+  {md:338, tc:"- Số bị can có người bào chữa"},
+  {md:339, tc:"Tr.đó: + Luật sư"},
+  {md:340, tc:"+ Bào chữa viên nhân dân"},
+  {md:341, tc:"+ Trợ giúp viên pháp lý"},
+  {md:342, tc:"Tổng số vụ án VKS tạm đình chỉ tính đến cuối kỳ thống kê"},
+  {md:343, tc:"Tổng số bị can VKS tạm đình chỉ tính đến cuối kỳ thống kê"},
+  {md:344, tc:"Số vụ án còn lại cuối kỳ chưa giải quyết"},
+  {md:345, tc:"Trong đó: - Số chưa giải quyết đã quá thời hạn luật định"},
+  {md:346, tc:"Số bị can còn lại cuối kỳ chưa giải quyết"},
+  {md:347, tc:"Trong đó: -  Số bị can có người bào chữa"},
+  {md:348, tc:"Tr.đó: + Luật sư"},
+  {md:349, tc:"+ Bào chữa viên nhân dân"},
+  {md:350, tc:"+ Trợ giúp viên pháp lý"},
+  {md:351, tc:"Số vụ án VKS gia hạn thời hạn quyết định việc truy tố"},
+  {md:352, tc:"Số vụ án VKS trả hồ sơ cho CQĐT để điều tra bổ sung (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:353, tc:"Trong đó:  - Số vụ án tham nhũng, chức vụ"},
+  {md:354, tc:"- Còn thiếu chứng cứ"},
+  {md:355, tc:"- Có căn cứ khởi tố bị can về một hay nhiều tội phạm khác"},
+  {md:356, tc:"- Có đồng phạm hoặc người phạm tội khác nhưng chưa được khởi tố"},
+  {md:357, tc:"- Có vi phạm nghiêm trọng thủ tục tố tụng"},
+  {md:358, tc:"- Do phát sinh tình tiết mới hoặc lý do khác"},
+  {md:359, tc:"- Số vụ án CQĐT không thực hiện, hoặc không thực hiện đầy đủ yêu cầu điều tra sau đó phải trả hồ sơ để điều tra bổ sung với chính lý do mà VKS đã yêu cầu"},
+  {md:360, tc:"- Số vụ án VKS trả hồ sơ cho CQĐT yêu cầu điều tra bổ sung có trách nhiệm của VKS"},
+  {md:361, tc:"Số vụ án CQĐT chấp nhận VKS trả hồ điều tra bổ sung (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:362, tc:"Trong đó:  - Còn thiếu chứng cứ"},
+  {md:363, tc:"- Có căn cứ khởi tố bị can về một hay nhiều tội phạm khác"},
+  {md:364, tc:"- Có đồng phạm hoặc người phạm tội khác nhưng chưa được khởi tố"},
+  {md:365, tc:"- Có vi phạm nghiêm trọng thủ tục tố tụng"},
+  {md:366, tc:"- Do phát sinh tình tiết mới hoặc lý do khác"},
+  {md:367, tc:"Số bị can VKS trả hồ sơ cho cơ quan điều tra để điều tra bổ sung (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:368, tc:"Số bị can CQĐT chấp nhận VKS trả hồ sơ cho cơ quan điều tra để điều tra bổ sung  (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:369, tc:"Số vụ án CQĐT không chấp nhận VKS trả hồ sơ điều tra bổ sung và có văn bản trả lời giữ nguyên quan điểm đề nghị truy tố (không tính những vụ do Toà án trả hồ sơ cho VKS để điều tra bổ sung)"},
+  {md:370, tc:"Số vụ án VKS phải trả hồ sơ để điều tra bổ sung 2 lần"},
+  {md:371, tc:"Số vụ án VKS phải trả hồ sơ để điều tra bổ sung trên 2 lần"},
+  {md:372, tc:"Số lần VKS trực tiếp tiến hành một số hoạt động điều tra để quyết định việc truy tố"},
+  {md:373, tc:"Trong đó: - Số lần VKS trực tiếp tiến hành hỏi cung bị can"},
+  {md:374, tc:"Số Quyết định tố tụng của VKS cấp dưới không có căn cứ bị  VKS cấp trên ra  Quyết định hủy bỏ (QĐ ĐC,TĐC…............)"},
+  {md:375, tc:"Trong đó:  -  Quyết định đình chỉ vụ án"},
+  {md:376, tc:"Tr.đó: +Đình chỉ do không phạm tội hoặc Miễn TNHS"},
+  {md:377, tc:"-  Quyết định đình chỉ bị can"},
+  {md:378, tc:"Tr.đó: +Đình chỉ do không phạm tội hoặc Miễn TNHS"},
+  {md:379, tc:"-  Quyết định tạm đình chỉ vụ án"},
+  {md:380, tc:"-  Quyết định tạm đình chỉ bị can"},
+  {md:381, tc:"Số bị can được VKS ra QĐ áp dụng biện pháp tư pháp bắt buộc chữa bệnh trong giai đoạn truy tố"},
+  {md:382, tc:"Số báo cáo thỉnh thị VKS đã tiếp nhận"},
+  {md:383, tc:"Số trả lời thỉnh thị đúng hạn"},
+  {md:384, tc:"Số thông báo rút kinh nghiệm"},
+  {md:385, tc:"Số bản kiến nghị của VKS yêu cầu khắc phục vi phạm trong hoạt động điều tra"},
+  {md:386, tc:"Trong đó: Số bản kiến nghị yêu cầu CQĐT khắc phục vi phạm trong việc đình chỉ điều tra vụ án, bị can do không phạm tội và đình chỉ miễn trách nhiệm hình sự"},
+  {md:387, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:388, tc:"Số bản kiến nghị không được chấp nhận"},
+  {md:389, tc:"Số bản VKS yêu cầu, kiến nghị cơ quan, tổ chức, cá nhân có thẩm quyền xử lý người tham gia tố tụng vi phạm pháp luật"},
+  {md:390, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:391, tc:"Số bản yêu cầu, kiến nghị không được chấp nhận"},
+  {md:392, tc:"Số bản kiến nghị của VKS với cơ quan, tổ chức hữu quan áp dụng biện pháp phòng ngừa tội phạm và vi phạm pháp luật"},
+  {md:393, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:394, tc:"Số bản kiến nghị không được chấp nhận"},
+  {md:395, tc:"Số vụ án VKS  Quyết định hủy bỏ quyết định đình chỉ điều tra (có thể trước và trong kỳ thống kê) sau đó CQĐT ra QĐ đình chỉ hoặc VKS ra quyết định giải quyết  (truy tố, đình chỉ hoặc tạm đình chỉ) trong kỳ thống kê"},
+  {md:396, tc:"Trong đó:  -Số vụ án VKS ra quyết định truy tố"},
+];
+const BIEU3_ROWS = [
+  {md:1, tc:"Số vụ án còn lại của kỳ thống kê trước"},
+  {md:2, tc:"Số vụ án hủy mới nhận để xét xử lại"},
+  {md:3, tc:"Số vụ án điều tra bổ sung mới nhận lại"},
+  {md:4, tc:"Số vụ án tạm đình chỉ đã phục hồi xét xử trong kỳ thống kê"},
+  {md:5, tc:"Số bị cáo còn lại của kỳ thống kê trước"},
+  {md:6, tc:"Số bị cáo hủy mới nhận để xét xử lại"},
+  {md:7, tc:"Số bị can, bị cáo điều tra bổ sung mới nhận lại"},
+  {md:8, tc:"Số bị cáo tạm đình chỉ đã phục hồi xét xử trong kỳ thống kê"},
+  {md:9, tc:"Số vụ án mới thụ lý xét xử sơ thẩm"},
+  {md:10, tc:"Trong đó: - Số vụ án VKS cấp trên phân công THQCT, KSXX"},
+  {md:11, tc:"Tr.đó: + Do VKSND tối cao phân công"},
+  {md:12, tc:"Số bị cáo mới thụ lý xét xử sơ thẩm"},
+  {md:13, tc:"Trong đó: - Số bị cáo của vụ án VKS cấp trên phân công THQCT, KSXX"},
+  {md:14, tc:"Tr. đó: + Do VKSND tối cao phân công"},
+  {md:15, tc:"Số vụ TA trả hồ sơ điều tra bổ sung trong kỳ thống kê đến cuối kỳ chưa nhận lại"},
+  {md:16, tc:"Số bị can trả hồ sơ điều tra bổ sung trong kỳ thống kê đến cuối kỳ chưa nhận lại"},
+  {md:17, tc:"Tổng số vụ án Tòa án thụ lý xét xử sơ thẩm"},
+  {md:18, tc:"Tổng số bị cáo Tòa án thụ lý xét xử sơ thẩm"},
+  {md:19, tc:"Số vụ án tạm ngừng phiên toà (theo Đ251 BLTTHS)"},
+  {md:20, tc:"Trong đó: - Cần phải xác minh, thu thập, bổ sung chứng cứ, tài liệu… (theo điểm a K1 Đ251 BLTTHS)"},
+  {md:21, tc:"Số vụ án Tòa án hoãn phiên tòa (theo Đ297 BLTTHS)"},
+  {md:22, tc:"Số vụ án đã xét xử sơ thẩm"},
+  {md:23, tc:"Trong đó - Số vụ án có người bào chữa"},
+  {md:24, tc:"Tr.đó: + Luật sư"},
+  {md:25, tc:"- Số vụ án VKS cấp trên phân công THQCT, KSXX"},
+  {md:26, tc:"Tr.đó: + Do VKSND tối cao phân công"},
+  {md:27, tc:"- Số vụ án lãnh đạo VKS trực tiếp thực hành quyền công tố, kiểm sát xét xử sơ thẩm."},
+  {md:28, tc:"- Số vụ án xét xử theo thủ tục rút gọn"},
+  {md:29, tc:"- Số vụ án xác định trọng điểm"},
+  {md:30, tc:"- Số vụ án xét xử trực tuyến (Theo NQ 33/2021/QH15 của Quốc hội)"},
+  {md:31, tc:"- Số phiên tòa phối hợp với Tòa án “số hóa hồ sơ” và công bố tài liệu, chứng cứ bằng hình ảnh tại phiên tòa"},
+  {md:32, tc:"- Số phiên tòa VKS rút kinh nghiệm"},
+  {md:33, tc:"Tr.đó: + Số phiên tòa VKS rút kinh nghiệm bằng hình thức trực tuyến"},
+  {md:34, tc:"- Số vụ án VKS chuyển lại sau khi điều tra bổ sung"},
+  {md:35, tc:"Số bị cáo đã xét xử sơ thẩm"},
+  {md:36, tc:"Trong đó:  - Số bị cáo có người bào chữa"},
+  {md:37, tc:"Tr.đó: + Luật sư"},
+  {md:38, tc:"+ Bào chữa viên nhân dân"},
+  {md:39, tc:"+ Trợ giúp viên pháp lý"},
+  {md:40, tc:"- Số bị cáo Toà án sơ thẩm tuyên không phạm tội"},
+  {md:41, tc:"Tr.đó: + Số bị cáo mà trước đó VKS đã ra QĐ hủy bỏ QĐ đình chỉ điều tra của CQĐT"},
+  {md:42, tc:"- Số bị cáo Tòa án xét xử tội danh khác với tội danh mà VKS đã truy tố"},
+  {md:43, tc:"Tr.đó:  +  Tòa án xét xử về một tội danh khác nặng hơn tội danh VKS truy tố"},
+  {md:44, tc:"+ Tòa án xét xử về một tội danh khác bằng tội danh VKS truy tố"},
+  {md:45, tc:"+ Tòa án xét xử về một tội danh khác nhẹ hơn tội danh VKS truy tố"},
+  {md:46, tc:"- Số bị cáo Tòa án xét xử theo khoản khác trong cùng điều luật mà VKS đã truy tố"},
+  {md:47, tc:"Tr.đó: + Tòa án xét xử theo khoản khác nhẹ hơn trong cùng điều luật"},
+  {md:48, tc:"+ Tòa án xét xử theo khoản khác nặng hơn trong cùng điều luật"},
+  {md:49, tc:"- Số bị cáo Tòa án tuyên phạt hình phạt khác với đề nghị của Kiểm sát viên tại phiên tòa"},
+  {md:50, tc:"Tr.đó: + Tòa án tuyên phạt hình phạt nặng hơn"},
+  {md:51, tc:"+ Tòa án tuyên phạt hình phạt nhẹ hơn"},
+  {md:52, tc:"Số vụ án Toà án đình chỉ"},
+  {md:53, tc:"Trong đó: - Do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu (theo K2 Đ155 BLTTHS)"},
+  {md:54, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu trách nhiệm hình sự (theo K3 Đ157 BLTTHS)"},
+  {md:55, tc:"- Người mà hành vi phạm tội của họ đã có bản án hoặc quyết định đình chỉ vụ án có hiệu lực pháp luật (theo K4 Đ157 BLTTHS)"},
+  {md:56, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:57, tc:"- Tội phạm đã được đại xá (theo K6 Đ157 BLTTHS)"},
+  {md:58, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội đã chết (theo K7 Đ157 BLTTHS)"},
+  {md:59, tc:"- Vì lý do khác"},
+  {md:60, tc:"Số vụ án đình chỉ do trước đó đã ra quyết định tạm đình chỉ điều tra, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS, nhưng không có quyết định phục hồi"},
+  {md:61, tc:"Số bị cáo Toà án đình chỉ"},
+  {md:62, tc:"Trong đó:  - Do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu (theo K2 Đ155 BLTTHS)"},
+  {md:63, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội chưa đến tuổi chịu trách nhiệm hình sự (theo K3 Đ157 BLTTHS)"},
+  {md:64, tc:"- Người mà hành vi phạm tội của họ đã có bản án hoặc quyết định đình chỉ vụ án có hiệu lực pháp luật (theo K4 Đ157 BLTTHS)"},
+  {md:65, tc:"- Đã hết thời hiệu truy cứu trách nhiệm hình sự (theo K5 Đ157 BLTTHS)"},
+  {md:66, tc:"- Tội phạm đã được đặc xá (theo K6 Đ157 BLTTHS)"},
+  {md:67, tc:"- Người thực hiện hành vi nguy hiểm cho xã hội đã chết (theo K7 Đ157 BLTTHS)"},
+  {md:68, tc:"- Vì lý do khác"},
+  {md:69, tc:"Số bị cáo đình chỉ do trước đó đã ra quyết định tạm đình chỉ điều tra, nay xác định bị can đã chết hoặc hết thời hiệu truy cứu TNHS, nhưng không có quyết định phục hồi"},
+  {md:70, tc:"Số vụ án Tòa án tạm đình chỉ trong kỳ thống kê"},
+  {md:71, tc:"Trong đó: - Do không biết rõ bị cáo đang ở đâu mà hết thời hạn chuẩn bị xét xử"},
+  {md:72, tc:"- Khi có kết luận giám định tư pháp bị cáo bị tâm thần hoặc mắc bệnh hiểm nghèo (theo điểm b K1 Đ229 BLTTHS)"},
+  {md:73, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp chưa có kết quả (theo điểm c K1 Đ229 BLTTHS)"},
+  {md:74, tc:"- Chờ kết quả xử lý văn bản pháp luật mà Toà án kiến nghị (theo điểm c K1 Đ281 BLTTHS)"},
+  {md:75, tc:"- Vì lý do khác"},
+  {md:76, tc:"Số bị cáo Tòa án tạm đình chỉ trong kỳ thống kê"},
+  {md:77, tc:"Trong đó - Do không biết rõ bị cáo đang ở đâu mà hết thời hạn chuẩn bị xét xử (theo điểm b K1 Đ281 BLTTHS)"},
+  {md:78, tc:"- Khi có kết luận giám định tư pháp bị cáo bị tâm thần hoặc mắc bệnh hiểm nghèo (theo điểm b K1 Đ229 BLTTHS)"},
+  {md:79, tc:"- Khi trưng cầu giám định, yêu cầu định giá tài sản, yêu cầu nước ngoài tương trợ tư pháp chưa có kết quả (theo điểm c K1 Đ229 BLTTHS)"},
+  {md:80, tc:"- Chờ kết quả xử lý văn bản pháp luật mà Toà án kiến nghị (theo điểm c K1 Đ281 BLTTHS)"},
+  {md:81, tc:"- Vì lý do khác"},
+  {md:82, tc:"Tổng số vụ án Toà án tạm đình chỉ tính đến cuối kỳ thống kê"},
+  {md:83, tc:"Tổng số bị cáo Toà án tạm đình chỉ tính đến cuối kỳ thống kê"},
+  {md:84, tc:"Số vụ án còn lại chưa giải quyết"},
+  {md:85, tc:"Trong đó: - Số vụ án còn lại chưa giải quyết đã quá hạn luật định"},
+  {md:86, tc:"Số bị cáo còn lại chưa giải quyết"},
+  {md:87, tc:"Trong đó: -Số bị cáo đã quá hạn tạm giam"},
+  {md:88, tc:"Số vụ án Tòa án trả hồ sơ cho VKS để điều tra bổ sung"},
+  {md:89, tc:"Trong đó: - Thiếu chứng cứ mà không thể bổ sung tại phiên tòa được (theo điểm a K1 Đ280 BLTTHS)"},
+  {md:90, tc:"- Có căn cứ cho rằng ngoài hành vi mà VKS đã truy tố, bị can còn thực hiện hành vi khác mà BLHS quy định là tội phạm (theo điểm b K1 Đ280 BLTTHS)"},
+  {md:91, tc:"- Có căn cứ cho rằng còn có đồng phạm khác hoặc có người khác thực hiện hành vi mà BLHS quy định là tội phạm liên quan đến vụ án nhưng chưa được khởi tố vụ án, khởi tố bị can (theo điểm c K1 Đ280 BLTTHS)"},
+  {md:92, tc:"- Việc khởi tố, điều tra, truy tố vi phạm nghiêm trọng về thủ tục tố tụng (theo điểm d K1 Đ280 BLTTHS)"},
+  {md:93, tc:"- Khi có căn cứ cho rằng bị can hoặc bị cáo phạm tội khác nặng hơn tội danh mà VKS đã truy tố (theo K3 Đ298 BLTTHS)"},
+  {md:94, tc:"- Do phát sinh tình tiết mới hoặc lý do khác"},
+  {md:95, tc:"- Số vụ án Tòa án trả hồ sơ để điều tra bổ sung do CQĐT không thực hiện hoặc thực hiện không đầy đủ yêu cầu điều tra của VKS"},
+  {md:96, tc:"- Số vụ án VKSND tối cao phân công Viện kiểm sát cấp dưới thực hành quyền công tố và kiểm sát xét xử sơ thẩm"},
+  {md:97, tc:"- Số vụ án Tòa án trả hồ sơ để điều tra bổ sung có trách nhiệm của Viện kiểm sát"},
+  {md:98, tc:"Số vụ án VKS chấp nhận Tòa án trả hồ sơ VKS điều tra bổ sung"},
+  {md:99, tc:"Trong đó:  - Thiếu chứng cứ mà không thể bổ sung tại phiên tòa được (theo điểm a K1 Đ280 BLTTHS)"},
+  {md:100, tc:"- Có căn cứ cho rằng ngoài hành vi mà VKS đã truy tố, bị can còn thực hiện hành vi khác mà BLHS quy định là tội phạm (theo điểm b K1 Đ280 BLTTHS)"},
+  {md:101, tc:"- Có căn cứ cho rằng còn có đồng phạm khác hoặc có người khác thực hiện hành vi mà BLHS quy định là tội phạm liên quan đến vụ án nhưng chưa được khởi tố vụ án, khởi tố bị can (theo điểm c K1 Đ280 BLTTHS)"},
+  {md:102, tc:"- Việc khởi tố, điều tra, truy tố vi phạm nghiêm trọng về thủ tục tố tụng (theo điểm d K1 Đ280 BLTTHS)"},
+  {md:103, tc:"- Khi có căn cứ cho rằng bị can hoặc bị cáo phạm tội khác nặng hơn tội danh mà VKS đã truy tố (theo K3 Đ298 BLTTHS)"},
+  {md:104, tc:"- Do phát sinh tình tiết mới hoặc lý do khác"},
+  {md:105, tc:"- Số vụ do VKS đề nghị trả hồ sơ để điều tra bổ sung"},
+  {md:106, tc:"Số vụ án VKS chấp nhận Tòa án trả hồ sơ ĐTBS, sau đó VKS thay đổi quan điểm truy tố"},
+  {md:107, tc:"Số vụ án VKS chấp nhận Tòa án trả hồ sơ ĐTBS, sau đó có văn bản trả lời giữ nguyên quan điểm truy tố"},
+  {md:108, tc:"Trong đó: - Số vụ án VKS tự tiến hành điều tra bổ sung, sau đó có văn bản trả lời giữ nguyên quan điểm truy tố"},
+  {md:109, tc:"Số vụ án VKS không chấp nhận Tòa án trả hồ sơ ĐTBS và có văn bản trả lời giữ nguyên quan điểm truy tố"},
+  {md:110, tc:"Trong đó: - Số vụ do VKSND tối cao phân công"},
+  {md:111, tc:"Số bị cáo Toà án trả hồ sơ cho VKS để điều tra bổ sung"},
+  {md:112, tc:"Trong đó: Số bị cáo phạm tội tham nhũng, chức vụ"},
+  {md:113, tc:"Số bị cáo VKS chấp nhận Toà án trả hồ sơ để điều tra bổ sung"},
+  {md:114, tc:"Số vụ án Tòa án trả bổ sung 2 lần"},
+  {md:115, tc:"Số vụ án Tòa án trả bổ sung trên 2 lần"},
+  {md:116, tc:"Số vụ án VKS rút toàn bộ quyết định truy tố"},
+  {md:117, tc:"Trong đó:  - Số vụ án VKS rút truy tố của VKS cấp dưới"},
+  {md:118, tc:"- Số vụ án VKS rút truy tố trước khi mở phiên tòa"},
+  {md:119, tc:"Tr. đó: + Số vụ đề nghị tòa đình chỉ vụ án"},
+  {md:120, tc:"Số bị can, bị cáo VKS rút toàn bộ quyết định truy tố"},
+  {md:121, tc:"Trong đó: - Số bị can, bị cáo VKS cấp trên rút truy tố của VKS cấp dưới"},
+  {md:122, tc:"- Số bị can VKS rút truy tố trước khi mở phiên tòa"},
+  {md:123, tc:"Số vụ án VKS rút một phần quyết định truy tố"},
+  {md:124, tc:"Trong đó:  - VKS cấp trên rút truy tố của VKS cấp dưới"},
+  {md:125, tc:"- Số vụ án VKS rút một phần quyết định truy tố trước khi mở phiên tòa"},
+  {md:126, tc:"Số bị can, bị cáo VKS rút một phần quyết định truy tố"},
+  {md:127, tc:"Trong đó:  -  VKS cấp trên rút truy tố của VKS cấp dưới"},
+  {md:128, tc:"- Số bị can, bị cáo VKS rút một phần quyết định truy tố trước khi mở phiên tòa"},
+  {md:129, tc:"Số vụ án VKS huỷ quyết định rút quyết định truy tố"},
+  {md:130, tc:"Số bị can, bị cáo VKS Huỷ quyết định rút quyết định truy tố"},
+  {md:131, tc:"Số biên bản phiên tòa không được Kiểm sát viên kiểm sát theo quy định (không lập phiếu kiểm sát)"},
+  {md:132, tc:"Số biên bản phiên tòa phải sửa đổi bổ sung theo yêu cầu của Viện kiểm sát"},
+  {md:133, tc:"Số bản án, Quyết định sơ thẩm VKS không kiểm sát theo quy định của pháp luật (không lập phiếu kiểm sát)"},
+  {md:134, tc:"Số bị can, bị cáo tòa xét xử theo tội danh khác với tội danh VKS đã truy tố (truy tố sai tội danh, bản án đã có hiệu lực pháp luât trong kỳ thống kê)"},
+  {md:135, tc:"Số bị cáo tòa tuyên không phạm tội và không có kháng nghị kháng cáo (thời hạn hết KN, KC trong kỳ thông kê); hoặc có KN, KC nhưng HĐXX không chấp nhận"},
+  {md:136, tc:"Số Quyết định kháng nghị phúc thẩm đối với BA, QĐ của Toà án cùng cấp"},
+  {md:137, tc:"Trong đó:  - Số kháng nghị do bị cáo phạm tội tham nhũng được hưởng án treo"},
+  {md:138, tc:"Số Báo cáo đề nghị VKS cấp trên kháng nghị phúc thẩm"},
+  {md:139, tc:"Số Báo cáo đề nghị VKS có thẩm quyền kháng nghị giám đốc thẩm, tái thẩm"},
+  {md:140, tc:"Số vụ án về tham nhũng, kinh tế, chức vụ có đủ căn cứ để áp dụng biện pháp cưỡng chế kê biên tài sản, phong tỏa tài khoản nhưng Tòa án không ra lệnh áp dụng biện pháp cưỡng chế kê biên tài sản hoặc phong tỏa tài khoản."},
+  {md:141, tc:"Trong đó: Số vụ án VKS đã ban hành văn bản yêu cầu tòa án áp dụng biện pháp cưỡng chế kê biên tài sản, phong tỏa tài khoản"},
+  {md:142, tc:"Số báo cáo thỉnh thị VKS đã tiếp nhận trong kỳ thống kê"},
+  {md:143, tc:"Số công văn trả lời báo cáo thỉnh thị đúng hạn"},
+  {md:144, tc:"Số thông báo rút kinh nghiệm"},
+  {md:145, tc:"Số bản kiến nghị của VKS với Toà án yêu cầu khắc phục vi phạm trong hoạt động xét xử sơ thẩm"},
+  {md:146, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:147, tc:"Số bản kiến nghị không được chấp nhận"},
+  {md:148, tc:"Số bản kiến nghị của VKS với cơ quan, tổ chức hữu quan áp dụng biện pháp phòng ngừa tội phạm và vi phạm pháp luật trong hoạt động quản lý"},
+  {md:149, tc:"Số bản kiến nghị được chấp nhận"},
+  {md:150, tc:"Số bản kiến nghị không được chấp nhận"},
+];
+
+// tinhBieu2/tinhBieu3: trả Map<maDong, number> — CHỈ chứa đúng những dòng đã xác nhận tính được từ
+// dữ liệu hệ thống hiện có (log-based, DÙNG LẠI `baoCao` mà tinhBaoCaoKyTuLog/tinhBieu10 đã tính —
+// không tính lại, không query thêm; `dtKhoiToMoiThat`/`dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/
+// `ttTraDi_TrucTiep`/`xxTraDi_KhongLapKy` DÙNG CHUNG với B10 — xem tinhBieu10, cùng đúng phạm vi
+// "lần đầu"/"trực tiếp" đã chỉnh theo yêu cầu Dũng 2026-08-06). Mọi công thức dưới đây đã ĐỐI CHIẾU
+// KHỚP CHÍNH XÁC với số liệu mẫu trong "Công cụ tính Biểu 10.xlsx" của Dũng (VD D77=871, D79=2373,
+// D83=254, D86=1619 — xem CLAUDE.md "Breakdown Biểu 2/3" để biết đầy đủ phép đối chiếu).
+//
+// Phần LỚN Biểu 2/3 (bắt giữ, biện pháp ngăn chặn/cưỡng chế, luật sư bào chữa, lý do đình chỉ/tạm
+// đình chỉ chi tiết theo từng khoản luật, hoạt động điều tra/kiểm sát cụ thể — khám nghiệm/giám
+// định/đối chất/khám xét..., kháng nghị, kiến nghị, thỉnh thị, thủ tục rút gọn, án trọng điểm, quá
+// thời hạn luật định...) CHƯA có BẤT KỲ tính năng theo dõi nào trong hệ thống (không có field/sự
+// kiện log tương ứng) — các dòng đó KHÔNG có trong Map, Excel tự hiện "⚠ Chưa có dữ liệu — cần bổ
+// sung tính năng" (xem themSheetBieu2Va3) để Dũng biết rõ cần nhập tay + cần làm gì tiếp, thay vì
+// lặng lẽ bỏ trống không rõ lý do — đúng yêu cầu "note vào để cập nhật tính năng dần dần".
+//
+// BIEU23_CAN_XAC_NHAN: các dòng ĐÃ CÓ manh mối công thức (qua "Công cụ tính Biểu 10.xlsx") nhưng
+// CHƯA CHẮC CHẮN khớp đúng 100% định nghĩa chính thức — VD "Tổng số VKS/Toà án thụ lý" (D77/79 ĐT
+// đã xác nhận khớp, nhưng D280/281 TT và D17/18 XX có 1 thành phần "trả hồ sơ ĐTBS mới nhận lại"
+// (D262/267 TT, D2/3 XX) mà ý nghĩa nghiệp vụ CHƯA rõ ràng — số mẫu không tự khớp phép cộng trừ đơn
+// giản khi thử). Cố ý KHÔNG tự tính các dòng này (tránh đưa ra số SAI trông như đã tính đúng) —
+// đánh dấu riêng "❓ Cần xác nhận công thức" để phân biệt với "chưa có tính năng" (2 lý do khác
+// nhau: 1 bên thiếu tính năng theo dõi, 1 bên có đủ dữ liệu nhưng công thức tổng hợp còn mơ hồ).
+const BIEU23_CAN_XAC_NHAN = new Set([
+  "B2:78","B2:80","B2:81","B2:82","B2:84","B2:85",  // ĐT: trọng điểm/rút gọn (D77/79 ĐÃ tự tính, xem tinhBieu2)
+  "B2:262","B2:267","B2:280","B2:281",                              // TT: dòng "mới nhận lại ĐTBS" mơ hồ + Tổng thụ lý TT
+  "B2:294","B2:298","B2:299","B2:303","B2:304",                     // TT: cấp trên phân công / quá hạn
+  "B3:2","B3:3","B3:6","B3:7",                                      // XX: hủy mới nhận / ĐTBS mới nhận lại (D17/18 ĐÃ tự tính qua b10Tong)
+]);
+
+function tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7) {
+  const m = new Map();
+  const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds;
+  const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
+  const demBcTruong = (vuArr, truong, giaTri) => {
+    let n = 0;
+    for (const vu of (vuArr || [])) {
+      for (const bc of (biCanByVu[vu.id] || [])) { if (bc[truong] === giaTri) n++; }
+    }
+    return n;
+  };
+
+  // ── Điều tra (dòng 57-160) — đã đối chiếu khớp mẫu: D77=871, D79=2373, D83=254, D86=1619 ──
+  m.set(57, baoCao.dieu_tra.tonDauKy);
+  m.set(59, (dt.traVe || []).length);
+  m.set(60, (dt.tachVu || []).length);
+  m.set(61, baoCao.dieu_tra.soNhapVu);
+  m.set(62, (dt.phucHoi || []).length);
+  m.set(64, baoCao.dieu_tra.tonDauBiCan);
+  m.set(66, soBc(dt.traVe));
+  m.set(67, soBc(dt.tachVu));
+  m.set(68, soBc(dt.nhapVu));
+  m.set(69, soBc(dt.phucHoi));
+  const dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
+  m.set(71, dtKhoiToMoiThat.length);
+  // D72 "Số bị can mới khởi tố" — quy tắc chính thức `D72_10238=C7` (bằng ĐÚNG tổng cột C7 của
+  // B10, cộng dồn qua mọi tội danh — KHÔNG PHẢI chỉ soBc(dtKhoiToMoiThat) như bản đầu tiên, vì C7
+  // = dt_ktBcMoiKy = "mới" (kỳ khớp riêng theo bị can) + "bổ sung" (bị can thêm vào vụ đã có) —
+  // dùng THẲNG `tongC7` (đã cộng dồn sẵn ở xuatBaoCaoThangExcel qua b10Tong) để chắc chắn khớp
+  // tuyệt đối với B10, không tính lại logic "kỳ khởi tố riêng từng BC"/"bổ sung" một lần nữa ở đây.
+  m.set(72, tongC7);
+  m.set(73, dtNoiKhac.length);
+  m.set(74, soBc(dtNoiKhac));
+  m.set(75, (dt.hoanThanh?.chuyen_di || []).length);
+  m.set(76, soBc(dt.hoanThanh?.chuyen_di));
+  // D77/D79 "Tổng số CQĐT thụ lý điều tra" — CÔNG THỨC RIÊNG của Biểu 2 (KHÁC B10's "Tổng thụ lý"
+  // C3/C4, xem BIEU23_CAN_XAC_NHAN — đó là câu hỏi riêng "B10 có nên khớp D77 hay D77-D59", KHÔNG
+  // liên quan tới việc D77 tự nó tính đúng hay không) — đã đối chiếu khớp CHÍNH XÁC số mẫu (871,
+  // 2373) qua test cô lập test_bieu2_3.js.
+  m.set(77, m.get(57) + m.get(59) + m.get(60) + m.get(62) + m.get(71) + m.get(73) - m.get(61) - m.get(75));
+  m.set(79, m.get(64) + m.get(66) + m.get(67) + m.get(69) + m.get(72) + m.get(74) - m.get(68) - m.get(76));
+  m.set(83, (dt.chuyenDi || []).length + (dt.hoanThanh?.dinh_chi || []).length);
+  m.set(86, soBc(dt.chuyenDi) + soBc(dt.hoanThanh?.dinh_chi));
+  m.set(92, (dt.chuyenDi || []).length);
+  m.set(93, (dt.chuyenDi || []).length - dtChuyenDi_LanDau.length);
+  m.set(95, soBc(dt.chuyenDi));
+  m.set(96, soBc(dt.chuyenDi) - soBc(dtChuyenDi_LanDau));
+  m.set(97, demBcTruong(dt.chuyenDi, "dangVien", "co"));
+  m.set(98, demBcTruong(dt.chuyenDi, "dangVienGiuChucVu", true));
+  m.set(100, (dt.hoanThanh?.dinh_chi || []).length);
+  m.set(117, soBc(dt.hoanThanh?.dinh_chi));
+  m.set(134, (dt.hoanThanh?.tam_dinh_chi || []).length);
+  m.set(141, soBc(dt.hoanThanh?.tam_dinh_chi));
+  m.set(154, baoCao.dieu_tra.tonCuoiKy);
+  m.set(156, baoCao.dieu_tra.tonCuoiBiCanKy);
+
+  // ── Truy tố (dòng 260-401) — đã đối chiếu khớp mẫu: D270+D272=D92 (158+89=247), D293=8 ──
+  m.set(260, baoCao.truy_to.tonDauKy);
+  m.set(261, (tt.phucHoi || []).length);
+  m.set(263, (tt.tachVu || []).length);
+  m.set(264, baoCao.truy_to.soNhapVu);
+  m.set(265, baoCao.truy_to.tonDauBiCan);
+  m.set(266, soBc(tt.phucHoi));
+  m.set(268, soBc(tt.tachVu));
+  m.set(269, soBc(tt.nhapVu));
+  // Bug đã sửa (2026-08-06, phát hiện qua đối chiếu "Danh sách quy tắc biểu 2.md" chính thức —
+  // quy tắc `D93=D272`/`D96=D273` bắt buộc): D270-273 ("mới thụ lý"/"nhận lại do CQĐT hoàn lại sau
+  // ĐTBS", giai đoạn TT) mô tả dòng chảy ĐT→TT (TT NHẬN từ ĐT) — PHẢI dùng `dt.chuyenDi`/
+  // `dtChuyenDi_LanDau` (phía ĐT, sự kiện chuyen_giai_doan denGiaiDoan=truy_to). Bản đầu tiên dùng
+  // NHẦM `ttChuyenDi_LanDau` (phía TT, dòng chảy TT→XX HOÀN TOÀN KHÁC, dùng cho D292-293 ngay
+  // dưới) — cùng tên biến "ChuyenDi" ở 2 giai đoạn dễ nhầm nếu không đọc kỹ chiều đi/đến.
+  m.set(270, dtChuyenDi_LanDau.length);
+  m.set(271, soBc(dtChuyenDi_LanDau));
+  // D272=D93, D273=D96 (quy tắc chính thức, cùng 1 tập bị can "chưa lần đầu" của dt.chuyenDi —
+  // alias TRỰC TIẾP qua m.get() thay vì tính lại, đảm bảo khớp tuyệt đối theo đúng quy tắc).
+  m.set(272, m.get(93));
+  m.set(273, m.get(96));
+  m.set(282, (tt.chuyenDi || []).length + (tt.hoanThanh?.dinh_chi || []).length);
+  m.set(285, soBc(tt.chuyenDi) + soBc(tt.hoanThanh?.dinh_chi));
+  m.set(292, (tt.chuyenDi || []).length);
+  m.set(293, (tt.chuyenDi || []).length - ttChuyenDi_LanDau.length);
+  m.set(296, soBc(tt.chuyenDi));
+  m.set(297, soBc(tt.chuyenDi) - soBc(ttChuyenDi_LanDau));
+  m.set(300, (tt.hoanThanh?.dinh_chi || []).length);
+  m.set(310, soBc(tt.hoanThanh?.dinh_chi));
+  m.set(326, (tt.hoanThanh?.tam_dinh_chi || []).length);
+  m.set(332, soBc(tt.hoanThanh?.tam_dinh_chi));
+  m.set(344, baoCao.truy_to.tonCuoiKy);
+  m.set(346, baoCao.truy_to.tonCuoiBiCanKy);
+  // D352/361/367/368 (VKS trả hồ sơ ĐTBS "không tính vụ do Toà án yêu cầu") — tái dùng
+  // ttTraDi_TrucTiep của B10 (C58-C59). Lưu ý NHỎ: B10 C58-C59 loại THÊM round-trip "cùng kỳ" mà
+  // Biểu 2 dòng 352 không yêu cầu — chấp nhận sai khác cực hiếm này (round-trip trong 1 kỳ), xem
+  // CLAUDE.md. "CQĐT chấp nhận" (D361/368) dùng CHUNG giá trị với "VKS trả hồ sơ" (D352/367) vì hệ
+  // thống không theo dõi riêng trường hợp CQĐT từ chối/không chấp nhận.
+  m.set(352, ttTraDi_TrucTiep.length);
+  m.set(361, ttTraDi_TrucTiep.length);
+  m.set(367, soBc(ttTraDi_TrucTiep));
+  m.set(368, soBc(ttTraDi_TrucTiep));
+
+  return m;
+}
+
+function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC61) {
+  const m = new Map();
+  const xx = baoCao.xet_xu.ds;
+  const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
+
+  m.set(1, baoCao.xet_xu.tonDauKy);
+  m.set(4, (xx.phucHoi || []).length);
+  m.set(5, baoCao.xet_xu.tonDauBiCan);
+  m.set(8, soBc(xx.phucHoi));
+  // D9/12 "Mới thụ lý xét xử sơ thẩm" — SUY RA theo đúng mẫu đã xác nhận ở Truy tố (D270: "mới thụ
+  // lý" = lần đầu, net-of-ĐTBS-lặp-lại) — CHƯA có số mẫu Biểu 3 cùng kỳ để đối chiếu độc lập, tin
+  // cậy thấp hơn phần Biểu 2 — nên kiểm tra lại khi có dữ liệu thật.
+  m.set(9, ttChuyenDi_LanDau.length);
+  m.set(12, soBc(ttChuyenDi_LanDau));
+  // D15/16 "TA trả hồ sơ ĐTBS trong kỳ đến cuối kỳ CHƯA NHẬN LẠI" — ĐÃ đối chiếu khớp mẫu qua phép
+  // tính D17=D1+D2+D3+D4+D9−D15 (76+0+11+2+128−10=207, khớp C22 mẫu) — xem CLAUDE.md.
+  m.set(15, xxTraDi_KhongLapKy.length);
+  m.set(16, soBc(xxTraDi_KhongLapKy));
+  // D17/18 "Tổng số vụ án/bị cáo Tòa án thụ lý xét xử sơ thẩm" — quy tắc chính thức
+  // `D17_10239=C60`/`D18_10239=C61` (KHÔNG cần trừ gì thêm, khác ĐT/TT — xem tinhBieu10 mục
+  // "Tổng thụ lý") — dùng THẲNG tongC60/tongC61 (= b10Tong[69]/[70], cộng dồn sẵn ở
+  // xuatBaoCaoThangExcel) thay vì tự dựng lại D1+D2+D3+D4+D9-D15 (D2/D3 "hủy/ĐTBS mới nhận lại"
+  // CHƯA tracked) — tránh sai sót do thiếu 2 thành phần đó.
+  m.set(17, tongC60);
+  m.set(18, tongC61);
+  m.set(22, (xx.hoanThanh?.da_xet_xu || []).length);
+  m.set(35, soBc(xx.hoanThanh?.da_xet_xu));
+  m.set(52, (xx.hoanThanh?.dinh_chi || []).length);
+  m.set(61, soBc(xx.hoanThanh?.dinh_chi));
+  m.set(70, (xx.hoanThanh?.tam_dinh_chi || []).length);
+  m.set(76, soBc(xx.hoanThanh?.tam_dinh_chi));
+  m.set(84, baoCao.xet_xu.tonCuoiKy);
+  m.set(86, baoCao.xet_xu.tonCuoiBiCanKy);
+
+  return m;
+}
+
+// Dựng 2 sheet "Biểu 2"/"Biểu 3" — 4 cột: Tiêu chí | Mã dòng | Số liệu | Trạng thái. Mỗi dòng lấy
+// giá trị từ tinhBieu2/tinhBieu3 nếu có; không có mà nằm trong BIEU23_CAN_XAC_NHAN thì hiện
+// "❓ Cần xác nhận công thức" (vàng cam); còn lại hiện "⚠ Chưa có dữ liệu" (xám, chờ nhập tay).
+// ── Quy tắc kiểm tra chéo Biểu 2 / Biểu 3
+// NGUỒN SỰ THẬT: quy_tac_bieu_2.md / quy_tac_bieu_3.md ở gốc repo (Dũng cung cấp — GIỮ LẠI, sửa thì cập nhật CẢ 2 nơi).
+// Dạng "D26=D25-D27" / "D165>=D166" / "D77=D57+D58-...". Neo vào DÒNG VẾ TRÁI. Cột "Quy tắc" + "Kiểm tra"
+// bên phải sheet: khi cán bộ NHẬP TAY 1 dòng, công thức Excel tự đối chiếu — vi phạm hiện "✗ ...".
+// Quy tắc có [b] (KỲ TRƯỚC) hoặc liên biểu (Cxx_10173 / Dxx_10238) → CHỈ hiện text, không tự kiểm tra.
+const BIEU2_QUY_TAC_RAW = [
+  "D165>=D166",
+  "D167=D168+D170+D172+D174+D176+D178+D180",
+  "D168>=D169",
+  "D170>=D171",
+  "D172>=D173",
+  "D174>=D175",
+  "D176>=D177",
+  "D178>=D179",
+  "D180>=D181",
+  "D182>=D183",
+  "D209>=D210",
+  "D211>=D212",
+  "D213>=D214",
+  "D215>=D216",
+  "D221=D222+D223+D224",
+  "D225=D226+D227+D228",
+  "D229>=D230+D231+D232+D233+D234+D236+D238+D240+D242+D244",
+  "D234>=D235",
+  "D236>=D237",
+  "D237<=D236",
+  "D238>=D239",
+  "D240>=D241",
+  "D242>=D243",
+  "D245<=D209+D236",
+  "D246<=D211+D238",
+  "D247>=D248",
+  "D249>=D250+D251+D252",
+  "D249<=D77",
+  "D270=D92-D93+D396",
+  "D280=D260+D261+D262+D263-D264+D270+D272+D274-D276-D278",
+  "D281=D265+D266+D267+D268-D269+D271+D273+D275-D277-D279",
+  "D282=D292+D300",
+  "D282>=D283",
+  "D282>=D284",
+  "D285=D296+D310",
+  "D285>=D286",
+  "D285>=D290",
+  "D286<=D287+D288+D289",
+  "D290>=D291",
+  "D292>=D293",
+  "D292>=D294",
+  "D292>=D295",
+  "D297>=D293",
+  "D298>=D294",
+  "D299>=D295",
+  "D300>=D301",
+  "D300>=D302+D303+D304+D305+D306+D307",
+  "D308>=D309",
+  "D310>=D311",
+  "D310>=D300",
+  "D310=D312+D313+D314+D315+D316+D317+D318+D319+D320+D321+D322",
+  "D312>=D302",
+  "D313>=D303",
+  "D314>=D304",
+  "D319>=D305",
+  "D320>=D306",
+  "D321>=D307",
+  "D323<=D319+D320+D321",
+  "D324>=D325",
+  "D326=D327+D328+D329+D330+D331",
+  "D332=D333+D334+D335+D336+D337",
+  "D338<=D339+D340+D341",
+  "D344>=D345",
+  "D344=D280-D282-D326",
+  "D346=D281-D285-D332",
+  "D347<=D348+D349+D350",
+  "D352>=D353",
+  "D352=D354+D355+D356+D357+D358",
+  "D352>=D359",
+  "D352>=D360",
+  "D361=D362+D363+D364+D365+D366",
+  "D367>=D352",
+  "D368>=D361",
+  "D372>=D373",
+  "D374>=D375+D377+D379+D380",
+  "D381>=D317",
+  "D395>=D396",
+  "D57=D154[b]+D209+D213+D236+D240",
+  "D64=D156[b]+D211+D215+D238+D242",
+  "D62<D151[b]",
+  "D69<=D153[b]",
+  "D151=D151[b]-D62-D115+D134-D213-D240",
+  "D153=D153[b]-D69-D132+D141-D215-D242",
+  "D260=D344[b]+D375+D379",
+  "D261<=D342[b]",
+  "D265=D346[b]+D377+D380",
+  "D342=D342[b]-D261+D326-D308",
+  "D343=D343[b]-D266+D332-D324",
+  "D271=D95-D96",
+  "D93=D272",
+  "D96=D273",
+  "C29_10173=D117",
+  "C31_10173=D134",
+  "C32_10173=D141",
+  "C53_10173=D300",
+  "C56_10173=D326",
+  "C57_10173=D332",
+  "C6_10173=D71",
+  "C7_10173=D72",
+  "D361=C58_10173",
+  "D368=C59_10173",
+  "D3>=D4+D5+D6+D7+D8",
+  "D4=D10+D14",
+  "D9>=D10+D11+D12+D13",
+  "D14>=D15",
+  "D18>=D19",
+  "D20>=D21",
+  "D22>=D23",
+  "D22>=D24",
+  "D24>=D25",
+  "D26>=D27",
+  "D36>=D37+D38",
+  "D38>=D39+D40",
+  "D43<=D44+D45+D46",
+  "D47<=D48+D49+D50",
+  "D52>=D53+D54",
+  "D62>=D63",
+  "D69>=D70",
+  "D77=D57+D58+D59+D60-D61+D62+D71+D73-D75",
+  "D77>=D78",
+  "D79=D64+D65+D66+D67-D68+D69+D72+D74-D76",
+  "D80<=D78",
+  "D81>=D82",
+  "D81<=D77",
+  "D83>=D84",
+  "D83>=D85",
+  "D83>=D92+D100",
+  "D85<=D78",
+  "D86>=D87",
+  "D86>=D91",
+  "D86>=D95+D117",
+  "D87<=D88+D89+D90",
+  "D92>=D93",
+  "D92>=D94",
+  "D95>=D96",
+  "D95>=D97",
+  "D95>=D99",
+  "D96>=D93",
+  "D98<=D97",
+  "D100>=D101",
+  "D100>=D102+D103+D104+D105+D106+D107+D108+D109+D110+D112+D114",
+  "D110>=D111",
+  "D112>=D113",
+  "D115>=D116",
+  "D117>=D118",
+  "D117>=D119+D120+D121+D122+D123+D124+D125+D126+D127+D129+D131",
+  "D127>=D128",
+  "D129>=D130",
+  "D132>=D133",
+  "D134=D135+D136+D137+D138+D139+D140",
+  "D141=D142+D143+D144+D146",
+  "D147<=D141",
+  "D147<=D148+D149+D150",
+  "D151>=D152",
+  "D154=D77-D83-D134",
+  "D154>=D155",
+  "D156=D79-D86-D141",
+  "D156>=D157",
+  "D157<=D158+D159+D160",
+  "D162<=D71+D58+D62+D209+D213+D236+D240",
+  "D163>=D162",
+];
+
+const BIEU3_QUY_TAC_RAW = [
+  "D10<=D9",
+  "D11<=D10",
+  "D13<=D12",
+  "D14<=D13",
+  "D17=D1+D2+D3+D4+D9-D15",
+  "D18=D5+D6+D7+D8+D12-D16",
+  "D22>=D23",
+  "D22>=D25",
+  "D22>=D27",
+  "D22>=D28",
+  "D22>=D29",
+  "D22>=D30",
+  "D22>=D31",
+  "D22>=D32",
+  "D22>=D34",
+  "D23>=D24",
+  "D25>=D26",
+  "D32>=D33",
+  "D35>=D36",
+  "D35>=D40",
+  "D35>=D42",
+  "D35>=D46",
+  "D35>=D49",
+  "D40>=D41",
+  "D42=D43+D44+D45",
+  "D46=D47+D48",
+  "D49=D50+D51",
+  "D52>=D53+D54+D55+D56+D57+D58+D59",
+  "D61>=D62+D63+D64+D65+D66+D67+D68",
+  "D70=D71+D72+D73+D74+D75",
+  "D76=D77+D78+D79+D80+D81",
+  "D84=D17-D22-D52-D70",
+  "D84>=D85",
+  "D86=D18-D35-D61-D76",
+  "D86>=D87",
+  "D88=D89+D90+D91+D92+D93+D94",
+  "D88>=D95",
+  "D88>=D96",
+  "D88>=D97",
+  "D98=D99+D100+D101+D102+D103+D104",
+  "D98>=D105",
+  "D107>=D108",
+  "D109>=D110",
+  "D111>=D112",
+  "D116>=D117",
+  "D116>=D118",
+  "D118>=D119",
+  "D120>=D121",
+  "D120>=D122",
+  "D123>=D124",
+  "D123>=D125",
+  "D126>=D127",
+  "D126>=D128",
+  "D136>=D137",
+  "D20<=D19",
+  "D36>=D37",
+  "D36>=D38",
+  "D36>=D39",
+  "D62>=D53",
+  "D63>=D54",
+  "D64>=D55",
+  "D65>=D56",
+  "D66>=D57",
+  "D67>=D58",
+  "D68>=D59",
+  "D77>=D71",
+  "D78>=D72",
+  "D79>=D73",
+  "D80>=D74",
+  "D81>=D75",
+  "D111>=D88",
+  "D113>=D98",
+  "D120>=D116",
+  "D126>=D123",
+  "D130>=D129",
+  "C60_10173=D17",
+  "C61_10173=D18",
+  "C70_10173=D76",
+  "C67_10173=D61",
+  "C66_10173=D52",
+  "C64_10173=D35",
+  "C63_10173=D22",
+  "C71_10173=D98",
+  "C72_10173=D113",
+];
+
+function phanTichQuyTacDong(raw) {
+  const s = raw.replace(/\s+/g, "");
+  let op = "=", iOp = s.indexOf("=");
+  for (const o of [">=", "<=", ">", "<"]) { const i = s.indexOf(o); if (i >= 0) { op = o; iOp = i; break; } }
+  let coKhac = false;   // token không kiểm tra được (VD Dxx[b] = kỳ trước)
+  let coB10 = false;    // token Cxx_10173 = tham chiếu sang sheet "Biểu B10" (kiểm tra LIÊN BIỂU được)
+  const parseVe = (str) => {
+    const terms = []; let m;
+    const re = /([+-]?)(D\d+\[b\]|C\d+_10173|D\d+_\d+|D\d+|C\d+(?:_\d+)?|\d+)/g;
+    while ((m = re.exec(str))) {
+      const dau = m[1] === "-" ? -1 : 1, tok = m[2];
+      const md = tok.match(/^D(\d+)$/), b10 = tok.match(/^C(\d+)_10173$/);
+      if (md) terms.push({ md: +md[1], dau });
+      else if (/^\d+$/.test(tok)) terms.push({ num: +tok, dau });
+      else if (b10) { coB10 = true; terms.push({ b10: +b10[1], dau }); }
+      else { coKhac = true; terms.push({ khac: tok, dau }); }
+    }
+    return terms;
+  };
+  const lhs = parseVe(s.slice(0, iOp)), rhs = parseVe(s.slice(iOp + op.length));
+  const anchor = lhs.find(t => t.md != null)?.md ?? rhs.find(t => t.md != null)?.md ?? null;
+  if (anchor == null) return null;
+  // tuKiemTra: kiểm tra ĐƯỢC hết trong CHÍNH sheet này (chỉ Dxx + số). lienBieu: cần tham chiếu
+  // sheet "Biểu B10" (Cxx_10173) nhưng vẫn ra công thức Excel check được (xem congThucKiemTra).
+  return { raw, op, lhs, rhs, anchor, tuKiemTra: !coKhac && !coB10, lienBieu: coB10 && !coKhac };
+}
+const BIEU2_QUY_TAC = BIEU2_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
+const BIEU3_QUY_TAC = BIEU3_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
+
+
+// b10RefCua(n): trả chuỗi tham chiếu Excel tới ô TỔNG của cột Cn trên sheet "Biểu B10"
+// (VD "'Biểu B10'!K95"), hoặc null nếu không map được. Truyền từ xuatBaoCaoThangExcel (nơi biết
+// layout B10 + số dòng TỔNG động). Quy tắc `Cn_10173=Dm` → cột "Kiểm tra" tự đối chiếu liên biểu.
+function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null) {
+  const MAU = { tuDong: "FFD1FAE5", canXacNhan: "FFFEF3C7", chuaCo: "FFF1F5F9" };
+  // Trong sheet: dòng mã K nằm ở HÀNG Excel K+1 (1 hàng tiêu đề trên cùng), giá trị ở CỘT C.
+  // Term "Dk" trong quy tắc → ô Excel `C{k+1}`. Ô trống Excel = 0 nên dòng chưa nhập không báo giả.
+  // Term "Cn_10173" (b10) → ô TỔNG cột Cn trên sheet "Biểu B10" qua b10RefCua(n).
+  const oCua = (t) => {
+    if (t.md != null) return `C${t.md + 1}`;
+    if (t.b10 != null) return b10RefCua(t.b10) || "0";
+    return String(t.num);
+  };
+  const bieuThuc = (ve) => {
+    const xs = ve.filter(t => t.md != null || t.num != null || t.b10 != null);
+    return xs.length ? xs.map((t, i) => (t.dau < 0 ? "-" : (i === 0 ? "" : "+")) + oCua(t)).join("") : "0";
+  };
+  // Rule kiểm tra được = tự kiểm tra (chỉ Dxx) HOẶC liên biểu mà MỌI term b10 đều map được sang B10.
+  const dungDuoc = (q) => q.tuKiemTra
+    || (q.lienBieu && [...q.lhs, ...q.rhs].every(t => t.b10 == null || b10RefCua(t.b10)));
+  const congThucKiemTra = (qtList) => {
+    const auto = qtList.filter(dungDuoc);
+    if (!auto.length) return qtList.length ? "(tra tay — kỳ trước / nội bộ Biểu 2)" : null;
+    const soLien = auto.filter(q => q.lienBieu).length;
+    let f = `"✓ khớp (${auto.length} quy tắc${soLien ? `, ${soLien} liên biểu` : ""})"`;
+    for (let i = auto.length - 1; i >= 0; i--) {
+      const q = auto[i];
+      const cond = `(${bieuThuc(q.lhs)})${q.op}(${bieuThuc(q.rhs)})`;
+      // Nói rõ loại lệch: [LIÊN BIỂU] = lệch với ô TỔNG bên sheet "Biểu B10"; [nội tại] = lệch với
+      // dòng khác trong CHÍNH sheet này. Giúp cán bộ biết ngay phải rà B10 hay rà các dòng cùng biểu.
+      const nhan = q.lienBieu ? "✗ [LIÊN BIỂU] " : "✗ [nội tại] ";
+      f = `IF(NOT(${cond}),"${nhan}${q.raw.replace(/"/g, "'")}",${f})`;
+    }
+    return { formula: "=" + f };
+  };
+  const themSheet = (tenSheet, rows, giaTriMap, tienToXacNhan, quyTacList) => {
+    const ws = wb.addWorksheet(tenSheet);
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    ws.columns = [{ width: 62 }, { width: 9 }, { width: 12 }, { width: 30 }, { width: 40 }, { width: 32 }];
+    const hRow = ws.addRow(["Tiêu chí", "Mã dòng", "Số liệu", "Trạng thái", "Quy tắc kiểm tra", "Kiểm tra (Excel tự tính khi nhập tay)"]);
+    hRow.font = { bold: true };
+    hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    const qtTheoNeo = new Map();
+    for (const q of quyTacList) {
+      if (!qtTheoNeo.has(q.anchor)) qtTheoNeo.set(q.anchor, []);
+      qtTheoNeo.get(q.anchor).push(q);
+    }
+    for (const r of rows) {
+      const co = giaTriMap.has(r.md);
+      const canXN = !co && BIEU23_CAN_XAC_NHAN.has(`${tienToXacNhan}:${r.md}`);
+      const trangThai = co ? "✓ Tự động tính"
+        : (canXN ? "❓ Cần xác nhận công thức (xem quy_tac_bieu_*.md)" : "⚠ Chưa có dữ liệu — nhập tay");
+      const qtDong = qtTheoNeo.get(r.md) || [];
+      const row = ws.addRow([
+        r.tc, r.md, co ? giaTriMap.get(r.md) : null, trangThai,
+        qtDong.length ? qtDong.map(q => q.raw).join("\n") : null,
+        congThucKiemTra(qtDong),
+      ]);
+      row.getCell(1).alignment = { wrapText: true, vertical: "top" };
+      row.getCell(5).alignment = { wrapText: true, vertical: "top" };
+      row.getCell(4).font = { color: { argb: co ? "FF065F46" : (canXN ? "FF92400E" : "FF64748B") } };
+      for (let c = 1; c <= 4; c++) {
+        row.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: co ? MAU.tuDong : (canXN ? MAU.canXacNhan : MAU.chuaCo) } };
+      }
+    }
+    ws.addRow([]);
+    [
+      ["Ghi chú:"],
+      ["• Cột 'Số liệu': ✓ Tự động tính (xanh) = hệ thống điền từ dữ liệu. ⚠ Chưa có dữ liệu (xám) = tự nhập tay. ❓ Cần xác nhận công thức (vàng) = có manh mối nhưng chưa chắc, tự nhập rồi đối chiếu."],
+      ["• Cột 'Kiểm tra': công thức Excel tự đối chiếu quy tắc (cột 'Quy tắc kiểm tra') mỗi khi bạn sửa cột 'Số liệu'. '✗ [nội tại] ...' = lệch với dòng khác TRONG chính biểu này; '✗ [LIÊN BIỂU] ...' = lệch với ô TỔNG tương ứng bên sheet 'Biểu B10'."],
+      ["• Dòng '✓ Tự động tính' dùng công thức RÚT GỌN (bỏ các số hạng chưa có tính năng theo dõi) — khi bạn nhập tay các dòng còn thiếu, ô 'Kiểm tra' của dòng tổng có thể báo '✗', lúc đó cập nhật lại dòng tổng cho khớp."],
+      ["• Quy tắc 'C.._10173 = D..' (LIÊN BIỂU): cột 'Kiểm tra' đã tự đối chiếu với ô TỔNG tương ứng trên sheet 'Biểu B10' trong CHÍNH file này (báo '✗' nếu lệch)."],
+      ["• Quy tắc có '[b]' (giá trị kỳ TRƯỚC) không tự kiểm tra được — cột 'Kiểm tra' ghi '(tra tay)', đối chiếu thủ công với báo cáo kỳ trước."],
+      ["• Nguồn quy tắc: quy_tac_bieu_2.md / quy_tac_bieu_3.md trong mã nguồn hệ thống."],
+    ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
+    return ws;
+  };
+  themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC);
+  themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC);
+}
+
+
 // Xuất Excel báo cáo tháng nhiều sheet, dựng thẳng từ đúng object `baoCao` đã hiển thị trên màn
 // hình (cùng 1 lần tính tinhBaoCaoKy, không tính lại) — đảm bảo số dòng từng sheet danh sách
 // luôn khớp đúng số trên sheet "Tổng hợp báo cáo" và trên báo cáo đang xem. Mọi sheet đều bật
@@ -11455,24 +11861,23 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // liệu của CHÍNH kỳ đang xuất), nên phải gộp ID của chúng vào TRƯỚC khi fetch biCanByVu chung
   // của cả file, nếu không addSheetVu sẽ không có bị can để vẽ (biCanByVu[vu.id] rỗng) dù
   // _bcIdsTon/_soBiCan đã tính đúng ở tinhDsTonTheoKy.
+  // 2026-08-28: RPC là NGUỒN DUY NHẤT cho mọi số "tồn" — RPC lỗi thì THROW, chặn xuất báo cáo
+  // (Dũng: "cứ chặn đi"). Không còn snapshot dự phòng.
   const rpcTonKyNay = await layTonTheoKyRPC(ky.id);
+  if (!rpcTonKyNay) throw new Error("Không xuất được báo cáo: RPC tính tồn không phản hồi (cần kết nối mạng ổn định). Vui lòng thử lại.");
   const dsTonCuoiKyTheoGD = {};
   for (const gd of THU_TU_GIAI_DOAN) {
     dsTonCuoiKyTheoGD[gd] = await tinhDsTonTheoKy(gd, ky, rpcTonKyNay);
   }
 
-  // "DS tồn cuối kỳ TRƯỚC {gđ}" (2026-08-06, thay hẳn sheet "Tồn theo ĐL (snapshot)" cũ — theo yêu
-  // cầu Dũng "dọn dẹp tàn dư hệ thống cũ") — cùng cơ chế RPC as-of, chỉ khác tính tới HẾT kỳ TRƯỚC
-  // thay vì kỳ đang xuất. Đây chính là gap lớn nhất còn lại đã ghi trong CLAUDE.md ("B10 'Tồn kỳ
-  // TRƯỚC' vẫn đọc kyTruoc.tonCuoiKyTheoTD — chính field đã biết 'trôi' 738→735") — dùng KẾT QUẢ
-  // NÀY để: (1) dựng 3 sheet ẩn "DS tồn cuối kỳ trước {gđ}" làm nguồn SUMIF/COUNTIFS cho B10 (thay
-  // VLOOKUP snapshot cũ); (2) truyền vào tinhBieu10 để tính lại dt_tp_vu/dt_tp_bc... (Tồn kỳ trước,
-  // dùng cho canhBao/Tổng) theo RPC thay vì snapshot. Không có kyTruoc (kỳ đầu tiên) → giữ null,
-  // mọi nơi tự fallback về hành vi cũ (0/snapshot rỗng).
-  const rpcTonKyTruoc = kyTruoc ? await layTonTheoKyRPC(kyTruoc.id).catch(() => null) : null;
+  // "DS tồn cuối kỳ TRƯỚC {gđ}" — RPC as-of tính tới HẾT kỳ TRƯỚC. Dùng để: (1) dựng 3 sheet ẩn
+  // làm nguồn SUMIF/COUNTIFS cho B10 "Tồn kỳ trước"; (2) truyền vào tinhBieu10 (dt_tp_vu/dt_tp_bc).
+  // Không có kyTruoc (kỳ đầu tiên) → null, B10 "Tồn kỳ trước" = 0.
+  const rpcTonKyTruoc = kyTruoc ? await layTonTheoKyRPC(kyTruoc.id) : null;
+  if (kyTruoc && !rpcTonKyTruoc) throw new Error("Không xuất được báo cáo: RPC tính tồn kỳ trước không phản hồi. Vui lòng thử lại.");
   const dsTonTruocTheoGD = {};
   for (const gd of THU_TU_GIAI_DOAN) {
-    dsTonTruocTheoGD[gd] = kyTruoc ? await tinhDsTonTheoKy(gd, kyTruoc, rpcTonKyTruoc) : { list: [], live: true };
+    dsTonTruocTheoGD[gd] = kyTruoc ? await tinhDsTonTheoKy(gd, kyTruoc, rpcTonKyTruoc) : { list: [], live: false };
   }
 
   // ---- Fetch bị can + danh mục tội danh + kỳ báo cáo + kỳ khởi tố riêng từng bị can song song ----
@@ -11488,13 +11893,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const _dichIdsNhapVu = [...new Set(
     THU_TU_GIAI_DOAN.flatMap(gd => (baoCao[gd].ds.nhapVu || []).map(v => v._log?.vuNhapVao).filter(Boolean))
   )];
-  const [biCanByVu, danhMucSnap, kySnap, bcKyKhoiToMap, dichVuDocs, vuKyKhoiToMap] = await Promise.all([
+  const [biCanByVu, danhMucSnap, kySnap, bcKyKhoiToMap, dichVuDocs, vuKyKhoiToMap, kyRankMap] = await Promise.all([
     fetchBiCanTheoVuIds(_vuIdsChoBaoCao),
     db.collection("danhMucToiDanh").orderBy("thuTuHienThi", "asc").get(),
     db.collection("kybaocao").get(),
     fetchKyKhoiToBiCan(_vuIdsChoBaoCao),
     chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), _dichIdsNhapVu),
     fetchKyKhoiToVu(_vuIdsChoBaoCao),
+    layKyRankMap(),
   ]);
   const danhMuc = danhMucSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const kyById = new Map(kySnap.docs.map(d => [d.id, d.data().tenKy || d.id]));
@@ -11627,16 +12033,12 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     .sort((a,b) => (b[1].bcM+b[1].bcT) - (a[1].bcM+a[1].bcT))
     .map(([td,s]) => [td, s.vuM, s.bcM, s.tgM, s.bcM-s.tgM, s.vuT, s.bcT, s.tgT, s.bcT-s.tgT, s.vuG, s.bcG]);
 
-  // ---- Sheet 1: Biểu B10 (72 cột + phụ, động theo điều luật thực tế trong kỳ) ----
-  // rpcTonKyNay null = RPC lỗi (mất mạng/PostgREST down) — KHÔNG truyền rpcTonList trong trường
-  // hợp đó (khác "RPC chạy đúng nhưng ra 0 vụ", trường hợp đó vẫn hợp lệ để đối chiếu) để tránh
-  // cảnh báo giả "lệch RPC" hàng loạt do bản thân RPC không gọi được, không phải do sai công thức.
-  const b10RpcTonList = rpcTonKyNay ? {
+  // ---- Sheet 1: Biểu B10 ----
+  // RPC luôn có (đã throw ở trên nếu lỗi). b10RpcTonTruocList = null CHỈ khi không có kỳ trước.
+  const b10RpcTonList = {
     dieu_tra: dsTonCuoiKyTheoGD.dieu_tra.list, truy_to: dsTonCuoiKyTheoGD.truy_to.list, xet_xu: dsTonCuoiKyTheoGD.xet_xu.list,
-  } : null;
-  // rpcTonKyTruoc null = không có kỳ trước HOẶC RPC lỗi — cùng lý do như trên, không truyền để
-  // tinhBieu10 tự fallback về tonTD_truoc (snapshot) cho "Tồn kỳ trước".
-  const b10RpcTonTruocList = rpcTonKyTruoc ? {
+  };
+  const b10RpcTonTruocList = kyTruoc ? {
     dieu_tra: dsTonTruocTheoGD.dieu_tra.list, truy_to: dsTonTruocTheoGD.truy_to.list, xet_xu: dsTonTruocTheoGD.xet_xu.list,
   } : null;
   const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList);
@@ -11707,14 +12109,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // theo yêu cầu Dũng "cột tính toán phải chạy công thức như cột trọng số, tránh trích xuất tĩnh dễ
   // sai sót"). KHÔNG đổi GIÁ TRỊ (result vẫn = đúng số JS đã tính/kiểm chứng từ trước) — chỉ thêm
   // formula để có thể click-trace + tự khớp lại nếu dữ liệu DS sheet đổi.
-  // Đối chiếu ĐÚNG công thức JS gốc (C3/C33/C60 ở tinhBieu10) — trừ CẢ "nhập vụ" + "chuyển đi
-  // (hoàn thành)" + "án huỷ" — bieu_B10_mo_ta.md mục 3.2 chỉ nêu 2 vế đầu (mô tả rút gọn), nhưng
-  // code thật (đã audit/kiểm chứng nhiều lần trước đây) LUÔN trừ thêm án huỷ — giữ đúng theo code,
-  // không theo mô tả rút gọn, để không đổi giá trị đã có.
+  // Đối chiếu ĐÚNG công thức JS mới (C3/C33/C60 ở tinhBieu10, 2026-08-29): tồn kỳ trước + Σ(VAO_GD)
+  // − nhập vụ − chuyển đi (hoàn thành). KHÔNG trừ "án huỷ" — theo bieu_B10_mo_ta.md §3.2 + quy tắc
+  // ngành (D77_10238−D59_10238=C3, D280_10238−D262_10238=C33, D17_10239=C60): án huỷ là 1 hình thức
+  // giải quyết, KHÔNG rời khỏi "đã thụ lý". (Trước 2026-08-29 code trừ nhầm án huỷ; án huỷ = 0 trên
+  // mọi kỳ thật nên giá trị không đổi, chỉ đúng lại về nguyên tắc.)
   const RA_THULY_GD = {
-    dieu_tra: ["DS nhập vụ ĐT", "DS chuyển đi ĐT", "DS án huỷ ĐT"],
-    truy_to:  ["DS nhập vụ TT", "DS chuyển đi TT", "DS án huỷ TT"],
-    xet_xu:   ["DS nhập vụ XX", "DS chuyển đi XX", "DS án huỷ XX"],
+    dieu_tra: ["DS nhập vụ ĐT", "DS chuyển đi ĐT"],
+    truy_to:  ["DS nhập vụ TT", "DS chuyển đi TT"],
+    xet_xu:   ["DS nhập vụ XX", "DS chuyển đi XX"],
   };
   const VAO_GD = { dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO };
   // Vị trí (0-based, trong vals[]) của "Tồn kỳ trước — Vụ" mỗi giai đoạn — cột "BC" luôn ngay cột
@@ -11787,12 +12190,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     82: r => mkSfVu("DS án huỷ ĐT",r),
     84: r => mkSfVu("DS án huỷ TT",r),
     86: r => mkSfVu("DS án huỷ XX",r),
-    // ── Mức độ NT CỦA BỊ CAN đại diện SUMIFS (cột AJ "Mức độ NT (BC)", 2026-08-10 — TRƯỚC ĐÂY đọc
-    // nhầm cột K "Mức độ NT" cấp VỤ, xem vuPrimaryMucDoNT_xuat) × cột B Mã ĐL vụ — chỉ DS TT chuyển XX ──
-    44: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")`,
-    45: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Nghiêm trọng")`,
-    46: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Rất nghiêm trọng")`,
-    47: r => `SUMIFS('DS TT chuyển XX'!$A:$A,'DS TT chuyển XX'!$B:$B,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Đặc biệt nghiêm trọng")`,
+    // ── C39-C42 "Phân loại tội phạm" — ĐẾM BỊ CAN theo mức độ NT của TỪNG bị can (2026-08-29, Dũng
+    // xác nhận C39-C42 đếm BỊ CAN, tổng = C37; quy tắc ngành C37=C39+C40+C41+C42). COUNTIFS trên
+    // dòng BC: cột V = Mã ĐL BC (khớp $A{r}), cột AJ = "Mức độ NT (BC)" nay là mức độ của CHÍNH bị
+    // can dòng đó (bcExtraFn ở "DS TT chuyển XX", KHÔNG còn là mức độ bị can đại diện của vụ). ──
+    44: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")`,
+    45: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Nghiêm trọng")`,
+    46: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Rất nghiêm trọng")`,
+    47: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Đặc biệt nghiêm trọng")`,
     // ── BC-level COUNTIFS (cột V=Mã ĐL BC + criteria phụ) ──
     // Cột criteria BC: W=Loại KTBC, X=Pháp nhân, Y=Nhóm tuổi, Z=Trình độ,
     //   AA=Giới tính nữ, AB=Dân tộc KK, T=Đảng viên(x), AC=Giữ chức vụ, AD=Quốc tịch NN, AE=Tái phạm,
@@ -11934,6 +12339,58 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         r.font = { color: { argb: "FFDC2626" } };
       });
     }
+  }
+
+  // ---- Sheet: Biểu 2 & Biểu 3 (mẫu thống kê ngành, đặt cạnh Biểu 10) ----
+  // Port từ nhánh feature/tong-ke-dong (2026-08-06), thích ứng kiến trúc "tồn theo kỳ thống kê"
+  // hiện tại. 396 dòng Biểu 2 + 150 dòng Biểu 3 — dòng nào tính được từ `baoCao` thì tự tính
+  // (xanh, "✓ Tự động tính"); dòng "❓ Cần xác nhận công thức" (vàng — có manh mối nhưng chưa chắc);
+  // còn lại "⚠ Chưa có dữ liệu — cần bổ sung tính năng" (xám — chờ nhập tay / làm tính năng sau).
+  {
+    const NGUON_MOI_THAT = new Set(["an_khoi_to_moi", "tin_bao_khoi_to_len"]);
+    const dtKhoiToMoiThat = (baoCao.dieu_tra.ds.khoiToTrucTiep || []).filter(v => NGUON_MOI_THAT.has(v.nguon));
+    // Lịch sử chuyển/trả giai đoạn của các vụ trong báo cáo — để lọc "lần đầu"/round-trip cho vài
+    // dòng "trong đó ..." (D93/96/272/273/293/297/352... Biểu 2; D9/12/15/16 Biểu 3). Lỗi tải →
+    // các bộ lọc trả về NGUYÊN mảng (coi mọi vụ là "lần đầu") — số "trong đó" có thể hơi cao, chấp
+    // nhận thay vì hỏng cả 2 sheet.
+    const lichSuCTMap = new Map();
+    try {
+      const ctSnap = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", _vuIdsChoBaoCao,
+        q => q.where("loaiSuKien", "in", ["chuyen_giai_doan", "tra_ho_so"]));
+      ctSnap.forEach(d => {
+        const l = d.data();
+        const raw = l.thoiDiemGhi;
+        const t = raw?.toMillis ? raw.toMillis() : (raw ? new Date(raw).getTime() : 0);
+        if (!lichSuCTMap.has(l.maVuAn)) lichSuCTMap.set(l.maVuAn, []);
+        lichSuCTMap.get(l.maVuAn).push({ loaiSuKien: l.loaiSuKien, denGiaiDoan: l.denGiaiDoan, _t: isNaN(t) ? 0 : t });
+      });
+    } catch (e) { console.warn("Biểu 2/3: không tải được lịch sử chuyển/trả giai đoạn —", e.message); }
+    const _tLog = (vu) => { const t = vu._log?.thoiDiemGhi; if (!t) return 0; const ms = t.toMillis ? t.toMillis() : new Date(t).getTime(); return isNaN(ms) ? 0 : ms; };
+    const _laLanDauChuyenToi = (vu, denGD) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); return !ls.some(e => e.loaiSuKien === "chuyen_giai_doan" && e.denGiaiDoan === denGD && e._t < t); };
+    const _chuaTungTraVeDT = (vu) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); return !ls.some(e => e.loaiSuKien === "tra_ho_so" && e.denGiaiDoan === "dieu_tra" && e._t < t); };
+    const _laTrucTiepVaoTT = (vu) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); let g = null; for (const e of ls) { if (e._t < t && (!g || e._t > g._t)) g = e; } if (!g) return true; return !(g.loaiSuKien === "tra_ho_so" && g.denGiaiDoan === "truy_to"); };
+    const _dtCDIds = new Set((baoCao.dieu_tra.ds.chuyenDi || []).map(v => v.id));
+    const _ttCDIds = new Set((baoCao.truy_to.ds.chuyenDi || []).map(v => v.id));
+    const dtChuyenDi_LanDau = (baoCao.dieu_tra.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "truy_to"));
+    const ttChuyenDi_LanDau = (baoCao.truy_to.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "xet_xu") && _chuaTungTraVeDT(vu) && !vu.uyQuyenXetXu);
+    const ttTraDi_TrucTiep = (baoCao.truy_to.ds.traDi || []).filter(vu => !_dtCDIds.has(vu.id) && _laTrucTiepVaoTT(vu));
+    const xxTraDi_KhongLapKy = (baoCao.xet_xu.ds.traDi || []).filter(vu => !_ttCDIds.has(vu.id));
+    // Cột "Kiểm tra" của Biểu 2/3: quy tắc liên biểu `Cn_10173=Dm` tự đối chiếu với ô TỔNG cột Cn
+    // trên sheet "Biểu B10" (cùng file). Map Cn → chữ cái cột từ nhãn "(Cn)" trong B10_HEADER_CHI_TIET
+    // (vals index = vị trí nhãn − 2; cột Excel 0-based = index + 3). Dòng TỔNG = B10_R0 + số điều luật.
+    const b10ColCuaC = {};
+    B10_HEADER_CHI_TIET.forEach((lbl, j) => {
+      const m = String(lbl).match(/\(C(\d+)\)$/);
+      if (m) b10ColCuaC[+m[1]] = b10Col(j + 1); // (j − 2) + 3 = j + 1
+    });
+    const b10TongRowNum = B10_R0 + b10Rows.length;
+    const b10RefCua = (n) => (b10ColCuaC[n] ? `'Biểu B10'!${b10ColCuaC[n]}${b10TongRowNum}` : null);
+    themSheetBieu2Va3(
+      wb,
+      tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8]),
+      tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70]),
+      b10RefCua,
+    );
   }
 
   // ---- Sheet 2: Thống kê tội danh (pivot tổng hợp, công thức từ DS sheets) ----
@@ -12239,26 +12696,24 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
     return _tkGetDL(bcChinh);
   };
-  // Mức độ nghiêm trọng CỦA BỊ CAN đại diện (2026-08-10, bản sao trong scope xuất Excel của
-  // tinhBieu10.vuPrimaryMucDoNT — closure khác nên không dùng chung được) — CHỈ dùng làm CỘT PHỤ
-  // ("Mức độ NT (BC)") để B10_FORMULA (SUMIFS C39-C42) tham chiếu ĐÚNG. KHÔNG đụng cột "Mức độ NT"
-  // hiện có (vẫn đọc vu.mucDoNghiemTrong cấp vụ, dùng cho mục đích hiển thị thông tin chung khác
-  // trên MỌI sheet DS — xem vuBaseRow, cố ý giữ nguyên, không phải phạm vi sửa lần này).
-  const vuPrimaryMucDoNT_xuat = (vu) => {
-    const bcs = biCanByVu[vu.id] || [];
-    if (!bcs.length) return mucDoNghiemTrongMacDinhTheoDieu(vuPrimaryDL_xuat(vu));
-    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
-    return bcChinh.mucDoNghiemTrong || "dac_biet_nghiem_trong";
-  };
+  // (2026-08-29) Bỏ `vuPrimaryMucDoNT_xuat` — cột "Mức độ NT (BC)" ở "DS TT chuyển XX" nay tính
+  // THEO TỪNG BỊ CAN (bcExtraFn dùng bc.mucDoNghiemTrong / mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc)))
+  // để C39-C42 đếm BỊ CAN (tổng = C37). KHÔNG đụng cột "Mức độ NT" cấp vụ ở vuBaseRow.
   // `gomBiCanPhu` (2026-07-31, theo yêu cầu người dùng, opt-in — CHỈ áp dụng ở "DS tồn" khi gọi,
   // các sheet khác dùng addSheetVu/addSheetVuKy giữ NGUYÊN hành vi cũ) — vụ nhiều bị can chỉ hiện
   // SẴN dòng bị can ĐẦU TIÊN (đã có đủ thông tin vụ), các dòng bị can còn lại của CÙNG vụ đó thu
   // gọn qua Excel Outline (giống khối "Nhập vụ" ở sheet "Giải quyết... trong kỳ") — bấm [+] cạnh
   // dòng đầu để mở xem hết bị can, dễ quan sát danh sách tồn dài mà không phải cuộn qua hàng chục
   // dòng cùng 1 vụ.
-  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn, gomBiCanPhu) {
+  // bcExtraHeaders/bcExtraFn (2026-08-29): cột phụ TÍNH THEO TỪNG BỊ CAN (bcExtraFn(bc, vu)),
+  // nối SAU extraHeaders (cột theo vụ). Dùng cho "Mức độ NT (BC)" ở "DS TT chuyển XX" (C39-C42 đếm
+  // bị can). Dòng vụ 0 bị can: điền rỗng đủ số cột để không lệch vị trí AJ.
+  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn, gomBiCanPhu, bcExtraHeaders, bcExtraFn) {
     extraHeaders = extraHeaders || [];
     extraFn = extraFn || (() => []);
+    bcExtraHeaders = bcExtraHeaders || [];
+    const bcExtra = (bc, vu) => (bcExtraFn ? bcExtraFn(bc, vu) : []);
+    const bcExtraRong = bcExtraHeaders.map(() => "");
     const rows = [];
     const rowsCanNhom = []; // song song rows[] — true = dòng bị can PHỤ (cần thu gọn khi gomBiCanPhu)
     const nhomKeys = []; // song song rows[] — khoá tô màu xen kẽ theo TỪNG VỤ, xem themSheetDanhSach
@@ -12266,24 +12721,22 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       const vuPart = vuBaseRow(vu);
       const extraPart = extraFn(vu);
       const maDLVu = vuPrimaryDL_xuat(vu);  // criteria key cho SUMIF trong Biểu B10
-      // Lọc bị can theo 1 trong 2 cơ chế: `_bcIdsTon` (Set mã bị can — gắn bởi nguồn RPC
-      // `layTrangThaiBiCanTaiKy`, xem tinhDsTonTheoKy, ƯU TIÊN vì đây là câu trả lời TRỰC TIẾP,
-      // không cần suy qua ngày) nếu có, ngược lại `_bcCutoff` (cutoff ngày, gắn bởi vuAnTuLogDocs —
-      // các sheet "vào"/"ra" giai đoạn) — để dòng bị can trên Excel khớp ĐÚNG con số JS đã tính
-      // (_soBiCan), không đếm nhầm bị can THÊM SAU thời điểm sự kiện này (xem
-      // locBiCanTheoCutoff/add_bo_sung_bican_2026-08-03.sql). Vụ KHÔNG có cả 2 field này (VD "DS
+      // Lọc bị can: `_bcIdsTon` (Set mã bị can từ RPC layTrangThaiBiCanTaiKy — as-of kỳ, base
+      // kyThongKe) nếu có; ngược lại `_bcKyGioiHan` (kyThongKe của sự kiện, gắn bởi vuAnTuLogDocs —
+      // các sheet "vào"/"ra") lọc qua locBiCanTheoKy để dòng bị can trên Excel khớp ĐÚNG _soBiCan JS
+      // đã tính (2026-08-28, thống nhất theo kỳ — thay lọc theo ngày). Vụ không có cả 2 field (VD "DS
       // tồn hiện tại"/"DS đã hoàn thành") giữ nguyên toàn bộ bị can.
       const bcArr = vu._bcIdsTon
         ? (biCanByVu[vu.id] || []).filter(bc => vu._bcIdsTon.has(bc.id))
-        : locBiCanTheoCutoff(biCanByVu[vu.id] || [], vu._bcCutoff);
+        : locBiCanTheoKy(biCanByVu[vu.id] || [], vu._bcKyGioiHan, bcKyKhoiToMap, kyRankMap);
       if (bcArr.length === 0) {
-        // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, AF+=extraHeaders (cố định BC để B10 COUNTIFS dùng đúng cột)
-        rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart]);
+        // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, extraHeaders(theo vụ), bcExtraHeaders(theo BC — rỗng ở đây)
+        rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart, ...bcExtraRong]);
         rowsCanNhom.push(false);
         nhomKeys.push(vu.id);
       } else {
         bcArr.forEach((bc, i) => {
-          rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart]);
+          rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart, ...bcExtra(bc, vu)]);
           rowsCanNhom.push(gomBiCanPhu ? i > 0 : false);
           nhomKeys.push(vu.id);
         });
@@ -12292,9 +12745,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // Trả về worksheet (2026-07-31) — để nơi gọi thu thập lại sheet chi tiết, ẩn mặc định + tô màu
     // tab theo giai đoạn (xem khối "Sheets chi tiết ẩn mặc định" phía dưới cùng hàm).
     const sheet = themSheetDanhSach(wb, tenSheet,
-      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders],
+      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders, ...bcExtraHeaders],
       rows,
-      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12)], nhomKeys);
+      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12), ...bcExtraHeaders.map(() => 14)], nhomKeys);
     if (gomBiCanPhu) {
       // summaryBelow:false — dòng ĐẦU (đã có info vụ) nằm TRÊN, các dòng bị can phụ thu gọn NẰM
       // DƯỚI — đúng thứ tự đọc trên-xuống-dưới tự nhiên, cùng cách đã dùng cho khối "Nhập vụ".
@@ -12313,10 +12766,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const _ngaySoQD = v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""];
   // addSheetVuKy: giống addSheetVu nhưng tự prepend cột "Kỳ TK" — dùng cho mọi sheet VÀO/RA
   // (trừ DS tồn vì tồn là live, không gắn với 1 kỳ cụ thể)
-  function addSheetVuKy(tenSheet, vuArr, extraHeaders, extraFn) {
+  function addSheetVuKy(tenSheet, vuArr, extraHeaders, extraFn, bcExtraHeaders, bcExtraFn) {
     const h = ["Kỳ TK", ...(extraHeaders || [])];
     const f = v => [tenKyBaoCao(v), ...((extraFn || (() => []))(v))];
-    return addSheetVu(tenSheet, vuArr, h, f);
+    return addSheetVu(tenSheet, vuArr, h, f, false, bcExtraHeaders, bcExtraFn);
   }
 
   // "DS bổ sung BC {gs}" (2026-08-03) — sheet MỚI cho bị can THÊM SAU vào 1 vụ ĐÃ CÓ SẴN (sự kiện
@@ -12480,10 +12933,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     };
     const wsCd = wb.addWorksheet("Cân đối số liệu");
     wsCd.views = [{ state: "frozen", xSplit: 2, ySplit: 2 }];
-    const cdH1 = wsCd.addRow(["Giai đoạn","Loại","Tồn đầu kỳ","Vào kỳ","Ra kỳ","Tồn cuối (tính)","Tồn cuối (chốt)","Chênh lệch"]);
+    const cdH1 = wsCd.addRow(["Giai đoạn","Loại","Tồn đầu kỳ","Vào kỳ","Ra kỳ","Tồn cuối (sổ cái)","Tồn cuối (RPC)","Chênh lệch"]);
     cdH1.font = { bold: true };
     cdH1.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-    const cdH2 = wsCd.addRow(["","","Snapshot kỳ trước","=Σ SUM/COUNTIF(DS vào...)","=Σ SUM/COUNTIF(DS ra...)","=Đầu+Vào−Ra","Snapshot lúc chốt","=Tính−Chốt (nên=0)"]);
+    const cdH2 = wsCd.addRow(["","","RPC as-of kỳ trước","=Σ SUM/COUNTIF(DS vào...)","=Σ SUM/COUNTIF(DS ra...)","=Đầu+Vào−Ra (đếm sự kiện)","RPC as-of kỳ này (đếm trạng thái)","=Sổ cái−RPC (±1 vô hại)"]);
     cdH2.font = { size: 9, color: { argb: "FF6B7280" } };
     // 2026-07-19: thêm hàng "Bị can" song song hàng "Vụ" cho mỗi giai đoạn (trước chỉ có 1 trọng số
     // vụ án — audit theo yêu cầu Dũng "mọi phần thống kê phải có đủ 2 trọng số vụ án + bị can").
@@ -12532,10 +12985,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
           r.tonChot,
           { formula: `F${r.rowNum}-G${r.rowNum}`, result: r.chenhLech },
         ]);
+        // Chỉ tô ĐỎ khi chênh lệch > 1 (2026-08-28) — chênh ±1 là imprecision vô hại giữa sổ cái
+        // (đếm sự kiện) và RPC (đếm trạng thái cuối distinct) khi 1 vụ có ≥2 lần "vào" cùng kỳ.
+        // Chênh > 1 mới là dấu hiệu lỗi dữ liệu thật (sự kiện thiếu gán kỳ / bị can thiếu khởi tố).
+        const lechDangKe = Math.abs(r.chenhLech) > 1;
         cdRow.getCell(8).fill = { type: "pattern", pattern: "solid",
-          fgColor: { argb: r.chenhLech !== 0 ? "FFFECACA" : "FFD1FAE5" } };
-        cdRow.getCell(8).font = { bold: r.chenhLech !== 0,
-          color: { argb: r.chenhLech !== 0 ? "FFB91C1C" : "FF065F46" } };
+          fgColor: { argb: lechDangKe ? "FFFECACA" : (r.chenhLech === 0 ? "FFD1FAE5" : "FFFEF9C3") } };
+        cdRow.getCell(8).font = { bold: lechDangKe,
+          color: { argb: lechDangKe ? "FFB91C1C" : (r.chenhLech === 0 ? "FF065F46" : "FF854D0E") } };
         for (let c = 3; c <= 8; c++) cdRow.getCell(c).alignment = { horizontal: "center" };
       });
     });
@@ -12543,11 +13000,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     wsCd.addRow([]);
     [
       ["Ghi chú:"],
-      ["• Chênh lệch ≠ 0 → có sự kiện log chưa gán kỳ (kyThongKe=null). Xem Nhật ký thao tác → lọc 'Chưa gán kỳ'."],
+      ["• Sheet này là LƯỚI AN TOÀN đối chiếu 2 cách đếm độc lập: 'Tồn cuối (sổ cái)' = Tồn đầu + Σ sự kiện vào − Σ sự kiện ra; 'Tồn cuối (RPC)' = đếm trạng thái cuối cùng của từng vụ/bị can tính tới hết kỳ. Cả 2 đều 100% theo KỲ THỐNG KÊ."],
+      ["• Chênh lệch = 0 (xanh): khớp tuyệt đối. Chênh ±1 (vàng): bình thường — khi 1 vụ có ≥2 lần 'vào' trong cùng kỳ, sổ cái đếm 2 còn RPC đếm 1 trạng thái cuối. Chênh > 1 (đỏ): DẤU HIỆU LỖI DỮ LIỆU — có sự kiện thiếu gán kỳ, hoặc bị can thiếu sự kiện khởi tố ở kỳ thật. Xem Nhật ký thao tác để rà."],
       ["• 'DS ĐT chuyển TT' = cùng dữ liệu 'DS chuyển đến TT', từ góc nhìn giai đoạn nguồn (để tính đủ RA của ĐT)."],
-      ["• 'Tồn cuối (chốt)' = snapshot lúc chốt kỳ; 'Tồn cuối (tính)' = tính từ log kỳ này — hai cột nên bằng nhau."],
       ["• Hàng 'Bị can' đếm số BỊ CAN (cột 'Họ tên BC' của các sheet DS, loại bỏ dòng giả '(Chưa có BC)' của vụ 0 bị can) — song song hàng 'Vụ' phía trên."],
-      ["• 'DS tồn {gđ}' = số LIVE tại thời điểm bấm xuất báo cáo này; 'DS tồn cuối kỳ {gđ}' = danh sách khớp ĐÚNG 'Tồn cuối (chốt)' của kỳ đang xem — mở lại báo cáo cũ lâu sau vẫn ra đúng số đã chốt, dùng sheet này để đối chiếu nếu 2 số lệch nhau."],
+      ["• 'DS tồn {gđ}' = số LIVE lúc bấm xuất; 'DS tồn cuối kỳ {gđ}' = danh sách khớp ĐÚNG 'Tồn cuối (RPC)' của kỳ đang xem — mở lại báo cáo cũ lâu sau vẫn ra đúng số."],
     ].forEach(r => { const nr = wsCd.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; });
   }
 
@@ -12820,11 +13277,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // cần thiết để cân đối RA của giai đoạn này mà không phải tra cứu sheet giai đoạn khác.
     if (gd !== "xet_xu") {
       const gsNext = gd === "dieu_tra" ? "TT" : "XX";
-      // Cột phụ "Mức độ NT (BC)" (2026-08-10) — CHỈ "DS TT chuyển XX" được B10_FORMULA SUMIFS vào
-      // (C39-C42, xem vuPrimaryMucDoNT_xuat) — thêm cho cả "DS ĐT chuyển TT" để 2 sheet đối xứng,
-      // không dùng tới ở đó (Điều tra không có khối "Phân loại tội phạm" theo mẫu ngành).
-      add(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ", "Mức độ NT (BC)"],
-        v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || "", NHAN_MUC_DO_NT[vuPrimaryMucDoNT_xuat(v)] || ""]);
+      // Cột phụ "Mức độ NT (BC)" (2026-08-29) — nay là cột THEO TỪNG BỊ CAN (bcExtraFn): mức độ NT
+      // của tội danh chính CỦA CHÍNH bị can dòng đó (field bc.mucDoNghiemTrong, fallback suy theo
+      // điều luật BC). CHỈ "DS TT chuyển XX" được B10_FORMULA COUNTIFS vào (C39-C42, đếm BỊ CAN,
+      // tổng = C37) — thêm cho cả "DS ĐT chuyển TT" để 2 sheet đối xứng (ĐT không có khối này).
+      // Vị trí cột giữ nguyên AJ (Kỳ TK=AG, Ngày chuyển=AH, Số QĐ=AI, Mức độ NT (BC)=AJ).
+      add(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ"],
+        v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""],
+        ["Mức độ NT (BC)"],
+        (bc) => [NHAN_MUC_DO_NT[bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc))] || ""]);
     }
     // ── RA: trả hồ sơ (từ giai đoạn này về giai đoạn trước) ──
     // Lưu ý: cùng dữ liệu với "DS trả về {gsPrev}" nhưng từ góc nhìn giai đoạn nguồn.
@@ -12931,15 +13392,12 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
             tham chiếu cho kỳ sau.
           </div>
         )}
-        {!dangTai && ky.trangThai === "da_chot" && ky.baoCaoLuu && (
+        {!dangTai && ky.trangThai === "da_chot" && (
           <div className="text-xs text-slate-400 mt-3">
-            Kỳ đã chốt — các dòng "số mới"/"đã giải quyết" (trừ "Số tồn hiện tại") lấy từ báo cáo đã
-            lưu lúc chốt{ky.thoiDiemTinhLai ? `, tính lại gần nhất lúc ${fmtNgayGio(ky.thoiDiemTinhLai)}` : ""},
-            không quét lại log mỗi lần xem. <b>"Tồn đầu kỳ"/"Tồn cuối kỳ" (2026-08-06) tính LẠI mỗi
-            lần xem qua RPC (as-of đúng thời điểm kỳ trước/kỳ này kết thúc)</b> — không còn là con số
-            cố định đông cứng từ lúc chốt nữa, tự phản ánh đúng nếu dữ liệu được sửa retroactive về
-            sau (không cần bấm "Tính lại số liệu"). RPC không gọi được (mất mạng) mới rơi về số dự
-            phòng đã lưu lúc chốt — có cảnh báo riêng khi đó.
+            Kỳ đã chốt — MỌI số liệu (số mới / đã giải quyết / tồn đầu kỳ / tồn cuối kỳ) đều tính
+            TRỰC TIẾP từ log + RPC động mỗi lần xem, 100% theo kỳ thống kê. Tự phản ánh đúng nếu dữ
+            liệu lịch sử được sửa về sau — không có bước "chốt lại"/"tính lại". Chỉ "Số tồn hiện tại"
+            là số LIVE tại thời điểm xem.
           </div>
         )}
       </div>
@@ -13041,8 +13499,6 @@ function KyBaoCaoModule() {
   const [hienMoKy, setHienMoKy] = useState(false);
   const [kyDangChot, setKyDangChot] = useState(null);
   const [kyDangXem, setKyDangXem] = useState(null);
-  const [dangTinhLai, setDangTinhLai] = useState(null);
-  const [thongBaoTinhLai, setThongBaoTinhLai] = useState(null);
   const [kyChonTongHop, setKyChonTongHop] = useState(new Set());
   const [hienTongHop, setHienTongHop] = useState(false);
   const [sapXepDesc, setSapXepDesc] = useState(
@@ -13070,20 +13526,6 @@ function KyBaoCaoModule() {
     moi.has(id) ? moi.delete(id) : moi.add(id);
     return moi;
   });
-
-  const bamTinhLai = async (ky, kyTruoc) => {
-    setDangTinhLai(ky.id);
-    setThongBaoTinhLai(null);
-    try {
-      await tinhLaiBaoCaoLuu(ky, kyTruoc);
-      setThongBaoTinhLai({ id: ky.id, loai: "ok", text: "Đã tính lại." });
-    } catch (err) {
-      console.error(err);
-      setThongBaoTinhLai({ id: ky.id, loai: "loi", text: "Lỗi: " + err.message });
-    } finally {
-      setDangTinhLai(null);
-    }
-  };
 
   return (
     <div>
@@ -13134,18 +13576,6 @@ function KyBaoCaoModule() {
                   <th className="text-left p-3">Ngày bắt đầu</th>
                   {!isLuuTru && <th className="text-left p-3">Ngày chốt</th>}
                   {!isLuuTru && <th className="text-left p-3">Trạng thái</th>}
-                  {!isLuuTru && (
-                    <th className="text-left p-3">
-                      Tồn cuối kỳ (ĐT / TT / XX)
-                      {/* 2026-08-06 — cột xem nhanh này đọc số đã lưu tĩnh lúc chốt (chưa gọi RPC
-                          cho từng dòng, tránh N lượt gọi khi bảng dài) — có thể chưa cập nhật nếu dữ
-                          liệu vụ/bị can bị sửa SAU thời điểm chốt. Bấm vào 1 kỳ để xem báo cáo chi
-                          tiết — số ở đó LUÔN tính lại qua RPC, đáng tin hơn cột này. */}
-                      <span className="ml-1 text-slate-400 cursor-help" title="Số xem nhanh, có thể chưa cập nhật nếu dữ liệu bị sửa sau khi chốt — bấm vào 1 kỳ để xem số chính xác (tính lại qua RPC).">ⓘ</span>
-                      {!sapXepDesc && <span className="ml-1 text-amber-500" title="Thứ tự cũ nhất trên: tồn cuối kỳ mỗi dòng = tồn đầu kỳ của dòng PHÍA TRÊN">↑</span>}
-                      {sapXepDesc  && <span className="ml-1 text-slate-400" title="Thứ tự mới nhất trên: tồn cuối kỳ mỗi dòng = tồn đầu kỳ của dòng PHÍA TRÊN">↓</span>}
-                    </th>
-                  )}
                   <th className="text-left p-3"></th>
                 </tr>
               </thead>
@@ -13168,27 +13598,11 @@ function KyBaoCaoModule() {
                         </span>
                       </td>
                     )}
-                    {!isLuuTru && (
-                      <td className="p-3 text-xs text-slate-500">
-                        {ky.tonCuoiKy ? `${ky.tonCuoiKy.dieu_tra ?? 0} / ${ky.tonCuoiKy.truy_to ?? 0} / ${ky.tonCuoiKy.xet_xu ?? 0}` : "—"}
-                      </td>
-                    )}
                     <td className="p-3">
                       <div className="flex items-center gap-2 justify-end">
-                        {thongBaoTinhLai?.id === ky.id && (
-                          <span className={`text-xs ${thongBaoTinhLai.loai === "ok" ? "text-green-600" : "text-red-600"}`}>{thongBaoTinhLai.text}</span>
-                        )}
                         {!isLuuTru && ky.trangThai === "dang_mo" && (
                           <button onClick={e => { e.stopPropagation(); setKyDangChot(ky); }}
                                   className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Chốt kỳ</button>
-                        )}
-                        {!isLuuTru && ky.trangThai === "da_chot" && (
-                          <button onClick={e => { e.stopPropagation(); bamTinhLai(ky, timKyTruoc(ky, listBaoCao)); }}
-                                  disabled={dangTinhLai === ky.id}
-                                  title="Tính lại các dòng số mới/đã giải quyết theo log — dùng sau khi có sửa kỳ. Không cần bấm để cập nhật Tồn đầu/cuối kỳ — 2 dòng đó đã tự tính lại qua RPC mỗi lần xem."
-                                  className="text-xs text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50">
-                            {dangTinhLai === ky.id ? "Đang tính..." : "Tính lại số liệu"}
-                          </button>
                         )}
                       </div>
                     </td>
@@ -13750,7 +14164,7 @@ function AnDaGiaiQuyetModule() {
       .where("loaiSuKien", "==", tabCgdDangChon.loaiSuKien).where("denGiaiDoan", "==", tabCgdDangChon.denGiaiDoan);
     if (locKy && locKy !== "tat_ca") q = q.where("kyThongKe", "==", locKy);
     q.get()
-      .then(snap => vuAnTuLogDocs(snap.docs))
+      .then(async snap => vuAnTuLogDocs(snap.docs, await layKyRankMap()))
       .then(async rows => {
         rows = rows.filter(v => !v.daXoa);
         // Tách "bị can trả ĐTBS" (cũ)/"bị can mới" — CHỈ áp dụng cho 2 tab chuyen_giai_doan (Kết
@@ -13764,8 +14178,12 @@ function AnDaGiaiQuyetModule() {
         if (tabCgdDangChon.loaiSuKien === "chuyen_giai_doan" && rows.length) {
           const gdNguon = giaiDoanTruoc(tabCgdDangChon.denGiaiDoan);
           const maVuAnList = [...new Set(rows.map(v => v.id))];
-          const traHoSoSnap = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", maVuAnList,
-            q2 => q2.where("loaiSuKien", "==", "tra_ho_so").where("denGiaiDoan", "==", gdNguon));
+          const [traHoSoSnap, bcKyKhoiToMapCgd, kyRankMapCgd] = await Promise.all([
+            chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", maVuAnList,
+              q2 => q2.where("loaiSuKien", "==", "tra_ho_so").where("denGiaiDoan", "==", gdNguon)),
+            fetchKyKhoiToBiCan(maVuAnList),
+            layKyRankMap(),
+          ]);
           const traHoSoTheoVu = new Map(); // maVuAn -> mảng sự kiện trả hồ sơ (có thể nhiều lần)
           traHoSoSnap.forEach(d => {
             const l = d.data();
@@ -13784,8 +14202,9 @@ function AnDaGiaiQuyetModule() {
               if (ms != null && (ngaySuKienNay == null || ms <= ngaySuKienNay) && ms > ganNhatMs) { ganNhat = l; ganNhatMs = ms; }
             }
             if (!ganNhat) return v; // vụ chưa từng trả hồ sơ tương ứng — không có gì để tách
-            const cutoffTraHoSo = ganNhat.ngaySuKien || ganNhat.thoiDiemGhi || null;
-            const bcCu = locBiCanTheoCutoff(v._bcListGoc || [], cutoffTraHoSo).length;
+            // "Cũ (trả ĐTBS)" = bị can có sự kiện khởi tố ở kỳ thật <= kỳ của lần trả hồ sơ đó (2026-
+            // 08-28, thống nhất theo kỳ thống kê — thay lọc theo ngày).
+            const bcCu = locBiCanTheoKy(v._bcListGoc || [], ganNhat.kyThongKe, bcKyKhoiToMapCgd, kyRankMapCgd).length;
             return { ...v, _bcCuTraHoSo: bcCu, _bcMoiSauTraHoSo: (v._soBiCanHienTai ?? 0) - bcCu };
           });
         }
@@ -17468,18 +17887,14 @@ function DashboardModule() {
       }, err => console.error(err));
   }, []);
 
-  // Toggle "Theo vụ / Theo bị can" — trước đây biểu đồ chỉ vẽ theo vụ (tonCuoiKy), thiếu hẳn trọng
-  // số bị can dù dữ liệu (tonCuoiBiCan, cùng hình dạng, đã snapshot sẵn lúc chốt kỳ) đã có sẵn
-  // (2026-07-19, audit "mọi phần thống kê phải có đủ 2 trọng số vụ án + bị can").
+  // Toggle "Theo vụ / Theo bị can" cho biểu đồ xu hướng (2026-07-19, audit "mọi phần thống kê phải
+  // có đủ 2 trọng số vụ án + bị can"). Cả 2 lấy từ RPC as-of (xem rpcTonTheoKy bên dưới).
   const [xuHuongTheoBiCan, setXuHuongTheoBiCan] = useState(false);
 
-  // RPC as-of cho TỪNG kỳ trên biểu đồ (2026-08-06, dọn tàn dư hệ thống cũ — xem CLAUDE.md "Chuyển
-  // hệ thống thống kê 'tồn'...") — trước đây đọc thẳng `k.tonCuoiKy`/`k.tonCuoiBiCan` (snapshot tĩnh
-  // đã biết có thể "trôi", VD 738→735) cho MỌI kỳ trên trục thời gian. Gọi `layTonTheoKyRPC` song
-  // song cho từng kỳ trong `kyList` (mỗi kỳ 1 lượt, RPC tự phân trang — đa số kỳ <1000 dòng nên chỉ
-  // 1 round-trip) — kết quả cache theo `kyId` trong state, KHÔNG tính lại nếu `kyList` không đổi.
-  // RPC lỗi cho 1 kỳ cụ thể (mất mạng giữa chừng, hiếm) → kỳ đó rơi về fallback CŨ (snapshot/dem
-  // live cho kỳ đang mở), không làm hỏng cả biểu đồ.
+  // Tồn theo kỳ cho biểu đồ xu hướng = RPC as-of cho TỪNG kỳ (2026-08-28: nguồn DUY NHẤT, không còn
+  // snapshot k.tonCuoiKy/k.tonCuoiBiCan). Gọi `layTonTheoKyRPC` song song cho từng kỳ trong `kyList`
+  // — cache theo `kyId` trong state. RPC lỗi cho 1 kỳ (hiếm) → kỳ đó để trống trên biểu đồ (gap),
+  // không làm hỏng cả chart.
   const [rpcTonTheoKy, setRpcTonTheoKy] = useState({});
   useEffect(() => {
     let huy = false;
@@ -17503,9 +17918,7 @@ function DashboardModule() {
     data: kyList.map(k => {
       const rpcK = rpcTonTheoKy[k.id];
       if (rpcK) return xuHuongTheoBiCan ? rpcK[gd].bc : rpcK[gd].vu;
-      const snap = xuHuongTheoBiCan ? k.tonCuoiBiCan : k.tonCuoiKy;
-      const song = xuHuongTheoBiCan ? demBiCan : dem;
-      return snap ? (snap[gd] ?? 0) : (song ? song[gd] : 0);
+      return null; // RPC chưa có / lỗi cho kỳ này → gap trên biểu đồ
     }),
     backgroundColor: ["#6366f1", "#0ea5e9", "#f59e0b"][i],
   }));
@@ -17620,9 +18033,8 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
 
   const kyCuObj = danhSachKy.find(k => k.id === (suKien.kyThongKe || null)) || null;
   const kyMoiObj = danhSachKy.find(k => k.id === kyChon) || null;
-  // Kỳ đã CHỐT có báo cáo đã lưu (baoCaoLuu) không tự cập nhật theo thay đổi kyThongKe của sự
-  // kiện — sửa vào/ra 1 kỳ đã chốt sẽ làm số liệu đã lưu của kỳ đó (và cả kỳ kia) không còn khớp
-  // log thật cho tới khi ai đó vào Kỳ báo cáo bấm "Tính lại số liệu" cho kỳ liên quan.
+  // Sửa kyThongKe của 1 sự kiện thuộc kỳ ĐÃ CHỐT sẽ làm ĐỔI số liệu chính thức của kỳ đó (báo cáo
+  // tự tính lại theo log mỗi lần xem) — cảnh báo để người dùng biết mình đang tác động 1 kỳ đã đóng.
   const anhHuongKyDaChot = (kyCuObj && kyCuObj.trangThai === "da_chot") || (kyMoiObj && kyMoiObj.trangThai === "da_chot");
 
   const luu = async () => {
@@ -17671,9 +18083,8 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
               : kyCuObj?.trangThai === "da_chot"
                 ? `Kỳ "${kyCuObj.tenKy}" (kỳ cũ) đã chốt.`
                 : `Kỳ "${kyMoiObj.tenKy}" (kỳ mới) đã chốt.`}
-            {" "}Báo cáo đã lưu cho kỳ đã chốt sẽ KHÔNG tự cập nhật theo thay đổi này — sau khi sửa,
-            vào module <b>Kỳ báo cáo</b> bấm <b>"Tính lại số liệu"</b> cho (các) kỳ liên quan để số
-            liệu báo cáo khớp lại với log thật.
+            {" "}Số liệu chính thức của kỳ đã chốt SẼ ĐỔI theo thay đổi này (báo cáo tự tính lại từ
+            log mỗi lần mở). Chỉ sửa nếu bạn chắc chắn cần điều chỉnh lại kỳ đã đóng đó.
           </p>
           <label className="flex items-center gap-2 text-red-800">
             <input type="checkbox" checked={daHieuAnhHuongChot} onChange={e => setDaHieuAnhHuongChot(e.target.checked)} />
@@ -19222,8 +19633,7 @@ function XoaVinhVienModal({ vuAn, onDong, onXong }) {
       <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">
         Thao tác này xóa VĨNH VIỄN, KHÔNG THỂ HOÀN TÁC: vụ án <b>{maHienThi}</b>
         {!dangTai && <> cùng <b>{soBiCan} bị can</b> và <b>{soSuKien} sự kiện lịch sử</b> liên quan</>}.
-        Nếu vụ đã được tính vào 1 kỳ báo cáo đã chốt, số liệu đã lưu của kỳ đó sẽ KHÔNG tự cập nhật —
-        vào "Kỳ báo cáo" bấm "Tính lại số liệu" cho kỳ liên quan sau khi xóa.
+        Nếu vụ đã được tính vào 1 kỳ báo cáo đã chốt, số liệu kỳ đó sẽ tự đổi (báo cáo tính lại từ log mỗi lần xem).
       </div>
 
       {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}

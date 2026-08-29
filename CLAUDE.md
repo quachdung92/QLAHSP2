@@ -2,6 +2,263 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Biểu 10 C39-C42 "Phân loại tội phạm" (Truy tố) — ĐẾM BỊ CAN, KHÔNG phải vụ (2026-08-29, `qlahs-sup.html`, nhánh `bieu-2-3`, CHƯA merge/deploy — ĐÃ kiểm chứng Excel thật)
+
+Dũng xác nhận trực tiếp: **C39-C42 đếm BỊ CAN** (mỗi bị can theo mức độ NT của tội danh chính CỦA
+CHÍNH họ), tổng = **C37** (bị can truy tố) — đúng quy tắc ngành `quy_tac_bieu_10.md` dòng 20
+`C37=C39+C40+C41+C42` (+ `C37>=C38`, `C37-C38=C43+..+C47`). Trước đây code đếm VỤ (`vuPrimaryMucDoNT`
+theo bị can đại diện), tổng khớp C36 (vụ) — SAI. `bieu_B10_mo_ta.md` cũ ghi "Vụ án" cũng SAI, đã sửa.
+
+**Đã sửa**:
+- JS `tinhBieu10`: bỏ `vuPrimaryMucDoNT`; thêm `bcMucDoNT(bc) = bc.mucDoNghiemTrong ||
+  mucDoNghiemTrongMacDinhTheoDieu(getDL(bc))`; `mdn(muc) = tt_truToBc.filter(bc => bcMucDoNT(bc)===muc).length`.
+- Excel: `B10_FORMULA[44..47]` đổi từ `SUMIFS($A[Đếm vụ],$B[Mã ĐL vụ],$AJ)` → `COUNTIFS($V[Mã ĐL
+  BC],$A{r},$AJ,"<nhãn>")` (đếm DÒNG bị can). Cột `$AJ` "Mức độ NT (BC)" ở "DS TT chuyển XX" nay
+  tính THEO TỪNG BỊ CAN qua cơ chế mới `bcExtraHeaders`/`bcExtraFn` của `addSheetVu`/`addSheetVuKy`
+  (cột phụ tính theo `bc`, nối SAU `extraHeaders`; vị trí cột GIỮ NGUYÊN AJ). Bỏ `vuPrimaryMucDoNT_xuat`.
+- `bieu_B10_mo_ta.md` dòng 136-139 sửa "Vụ án" → "Bị can" (file này giờ ĐÃ track trong git).
+
+**Kiểm chứng Excel THẬT** (đăng nhập `admin@qlva.local`, xuất kỳ 07/2026): ΣC39+C40+C41+C42 =
+**295 = C37** (`eq_C37: true`), trước = C36 = 31 (vụ). C39=0/C40=52/C41=2/C42=241 khớp đúng phân bố
+cột AJ "DS TT chuyển XX" ({Nghiêm trọng 52, Rất NT 2, ĐB NT 241}). Cột AJ giờ ĐỔI theo từng bị can
+(VD cùng 1 vụ: dòng Điều 123 = "ĐB NT", dòng Điều 318 = "Nghiêm trọng"). `DS ĐT chuyển TT` + `DS
+khởi tố ĐT` không lệch cột (36/36 ô). 0 lỗi `#REF`. C39 công thức row 3 =
+`COUNTIFS('DS TT chuyển XX'!$V:$V,$A3,'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")`.
+
+**⚠ ĐỔI SỐ THẬT** — C39-C42 ở khối Truy tố tăng mạnh (VD kỳ 07: ~31 → 295). Dũng phải mở Excel B10
+kỳ thật xác nhận đây là số mong muốn. (2 mục CLAUDE.md cũ "Biểu B10 C39-C42..." dựa trên tiền đề
+đếm VỤ — nay lỗi thời về mặt đó, cơ chế đọc `mucDoNghiemTrong` cấp bị can thì vẫn đúng.)
+
+## Biểu 10 "Tổng thụ lý" (C3/C4/C33/C34/C60/C61) — BỎ trừ "án huỷ", đúng lại theo mẫu ngành (2026-08-29, `qlahs-sup.html`, nhánh `bieu-2-3`, CHƯA merge/deploy — ĐÃ kiểm chứng Excel thật kỳ 07/2026)
+
+Theo yêu cầu Dũng ("công thức chuẩn ngành đã add vào rồi, biểu 10 lúc trước có vấn đề gì ko" →
+"ok fix triệt để đi"). Đối chiếu `quy_tac_bieu_10.md` (mới commit `6fcef9f`) + `bieu_B10_mo_ta.md`
+§3.2 phát hiện: JS `tinhBieu10` VÀ công thức Excel (`RA_THULY_GD` → `mkThuLyVu`/`mkThuLyBc`) đang
+**trừ thêm "án huỷ"** khỏi Tổng thụ lý — SAI về nguyên tắc:
+- `bieu_B10_mo_ta.md` §3.2: Tổng thụ lý = tồn kỳ trước + [mới đến G] + tách ra − nhập vụ − chuyển
+  đi. KHÔNG có "− án huỷ" (án huỷ là 1 hình thức GIẢI QUYẾT, vẫn nằm trong "đã thụ lý trong kỳ").
+- Quy tắc ngành: `D77_10238−D59_10238=C3`, `D79_10238−D66_10238=C4`, `D280_10238−D262_10238=C33`,
+  `D281_10238−D267_10238=C34`, `D17_10239=C60` (=`D1+D2+D3+D4+D9−D15`), `D18_10239=C61` — không
+  quy tắc nào trừ án huỷ.
+- Comment cũ ở `RA_THULY_GD` tự thừa nhận "mô tả §3.2 chỉ nêu 2 vế đầu, code LUÔN trừ thêm án huỷ,
+  giữ theo code để không đổi giá trị" — chính là chỗ lệch mẫu ngành.
+
+**Đã sửa**: bỏ hẳn số hạng `− vuCoD(...an_huy...)` / `− *_ahBc.length` khỏi C3/C4/C33/C34/C60/C61
+(JS, `tinhBieu10`); bỏ `"DS án huỷ ĐT/TT/XX"` khỏi `RA_THULY_GD` (Excel). GIỮ NGUYÊN: biến
+`dt_ahBc`/`tt_ahBc`/`xx_ahBc` + `dt_ah_vu`/... (vẫn nuôi 6 cột "Án huỷ" RIÊNG trong `vals[]`, idx
+82–87 `B10_FORMULA` `mkSfVu("DS án huỷ …")` — 2 khái niệm khác nhau, không đụng); sheet "DS án huỷ
+{gs}" vẫn tạo. VAO side (`VAO_GD`/`*_moi` gồm traVe/phucHoi/nhanLai) GIỮ NGUYÊN — §3.2 xác nhận
+"trả về ĐTBS" thuộc [mới đến G]; phục hồi/nhận lại là số hạng cân bằng (case tái nhập caseload).
+
+**Tác động số liệu thật = 0**: đã đếm qua pooler (phiên này) — `hoan_thanh` `hinhThucHoanThanh=an_huy`
+= 0 bản ghi ở MỌI kỳ thật. Sửa này chỉ "đúng lại nguyên tắc", không đổi con số nào đang có. An toàn
+merge, nhưng Dũng vẫn nên mở Excel B10 thật xác nhận C3/C4/C33/C34/C60/C61 không đổi + không #REF.
+
+**ĐÃ làm thêm (cùng đợt, commit `dabae4b`)** — **Cột "Kiểm tra" Biểu 2/3: quy tắc liên biểu
+`Cn_10173=Dm` tự đối chiếu với sheet "Biểu B10"**. 19 quy tắc (10 Biểu 2 + 9 Biểu 3, VD
+`C7_10173=D72`, `C60_10173=D17`, `D361=C58_10173`) trước chỉ ghi text `"(tra tay — liên biểu)"`;
+nay `congThucKiemTra` sinh CÔNG THỨC Excel thật `=IF(NOT((Dcell)=('Biểu B10'!<colCn><dòng TỔNG>)),
+"✗ [LIÊN BIỂU] <raw>",…)`. Thông báo lỗi PHÂN BIỆT 2 loại: `✗ [nội tại] ...` = lệch với dòng khác
+TRONG chính biểu; `✗ [LIÊN BIỂU] ...` = lệch với ô TỔNG bên sheet "Biểu B10".
+`phanTichQuyTacDong`: token `Cn_10173` → `{b10:n}`, cờ mới `lienBieu`.
+`themSheetBieu2Va3` nhận thêm `b10RefCua(n)` (từ `xuatBaoCaoThangExcel`: map `Cn` → chữ cái cột qua
+nhãn `(Cn)` trong `B10_HEADER_CHI_TIET`, vals idx = vị trí−2, cột Excel = +3; dòng TỔNG =
+`B10_R0 + b10Rows.length`). `[b]` (kỳ trước) vẫn tra tay. **Additive, KHÔNG đụng giá trị B10.**
+Test cô lập 13/13 + **kiểm chứng Excel THẬT** (đăng nhập `admin@qlva.local`, xuất kỳ 07/2026,
+`URL.createObjectURL` bắt Blob → `ExcelJS.xlsx.load` trong trình duyệt): B10 C3/C33/C60 công thức
+KHÔNG còn tham chiếu "DS án huỷ", 0 lỗi `#REF`, "DS án huỷ ĐT/TT/XX" = 0 dòng (⇒ bỏ án huỷ = 0
+tác động số thật); Biểu 2 D71/D72/D117/D361 + Biểu 3 D17/D22 ra đúng công thức
+`IF(NOT(...=('Biểu B10'!<col>47))...,"✗ [LIÊN BIỂU]/[nội tại] ...")` (dòng TỔNG B10 = 47 = 3+44 điều luật).
+
+**CHƯA làm / kết luận (phần còn lại của "fix triệt để")**:
+1. **C6-C7/C25-C26/C36-C37/C58-C59/C71-C72 "đếm quá rộng" — KẾT LUẬN: KHÔNG phải bug theo mẫu
+   ngành hiện có.** Rà lại: `bieu_B10_mo_ta.md` §3.1 ĐỊNH NGHĨA RÕ C6 = 4 nguồn (`an_khoi_to_moi`
+   + `tin_bao_khoi_to_len` + `phuc_hoi_dieu_tra` + `an_noi_khac_chuyen_den`) — code hiện đếm cả 4
+   là ĐÚNG §3.1. Ghi chú "đếm quá rộng" trước đây nhầm (từ nhánh `feature/tong-ke-dong` — ở đó lọc
+   riêng cho Biểu 2, KHÔNG phải yêu cầu B10). Quy tắc ngành ràng buộc C6/C7 chỉ là `D71_10238=C6`/
+   `D72_10238=C7` (định nghĩa qua dòng Biểu 2, thiếu tài liệu mô tả Biểu 2). Theo chỉ đạo Dũng
+   "dòng khó quá thì để lại hoặc ghi công thức để check" → ĐÃ ghi công thức: Biểu 2 D71/D72 tự khớp
+   B10 C6/C7 (mục trên); lệch sẽ tự lộ "✗". KHÔNG đổi số B10 khi chưa có căn cứ.
+2. C33/C34 (TT) / C60/C61 (XX): quy tắc `D280−D262`/`D17=D1+D2+D3+D4+D9−D15` còn tham chiếu dòng
+   Biểu 2/3 (D262/D274/D278/D2/D3) CHƯA rõ nghĩa (thiếu tài liệu mô tả Biểu 2/3). Việc bỏ án huỷ
+   ở trên là phần ĐÚNG CHẮC CHẮN theo mọi quy tắc; thành phần đầy đủ của C33/C60 cần Dũng/tài liệu.
+3. ~~Nghi vấn `quy_tac_bieu_10.md` dòng 20~~ — **ĐÃ GIẢI QUYẾT**: xem mục kiểm chứng file B10 thật
+   ngay dưới. `C37=C39+C40+C41+C42` là ĐÚNG (C39-C42 đếm BỊ CAN), đã sửa code + doc (commit `1713150`).
+
+## Kiểm chứng `quy_tac_bieu_10.md` với file B10 THẬT đã nhập lên hệ thống ngành (2026-08-29, Dũng cung cấp `10173.xlsx` 1 tháng thật)
+
+Dũng gửi 1 file Biểu 10 (72 cột C1–C72, 32 dòng điều luật + 1 dòng "Tổng") ĐÃ nhập lên hệ thống
+ngành, ngành KHÔNG báo lỗi (trừ các ô liên biểu). Chạy MỌI quy tắc trong `quy_tac_bieu_10.md` đối
+chiếu số liệu thật (script `xlsx` trong scratchpad, đã gỡ):
+- **40/40 quy tắc tự thân (không liên biểu) ĐỀU ĐÚNG** — cả ở dòng Tổng LẪN từng dòng điều luật.
+- **`C37=C39+C40+C41+C42` → `270 = 0+41+2+227` ✓** trên MỌI dòng → **XÁC NHẬN DỨT KHOÁT**: C39-C42
+  đếm BỊ CAN (tổng = C37 = 270 bị can), KHÔNG phải vụ (C36 = 29). Fix `1713150` đúng hướng ngành.
+- C-numbering của `B10_HEADER_CHI_TIET` (C1–C72) KHỚP CHÍNH XÁC layout ngành — cùng vị trí/ý nghĩa
+  cả 3 giai đoạn. (Kiểm tra chéo qua header 3 tầng của file thật.)
+- 29 quy tắc liên biểu (`Dxx_10238` → Biểu 2, `Dxx_10239` → Biểu 3) KHÔNG kiểm được ở đây (thiếu
+  Biểu 2/3 cùng kỳ) — đúng phần "trừ các ô liên biểu" Dũng nói; cấu trúc trong MD nhất quán, cần
+  Biểu 2/3 cùng tháng để đối chiếu (đã có cột "Kiểm tra" `[LIÊN BIỂU]` lo việc này).
+- Quan sát phụ (không phải lỗi công thức): file thật STT restart theo CHƯƠNG BLHS; có 1 dòng mã
+  điều lạ "101**" vẫn được ngành nhận (do các tổng nội tại cân). Bản xuất của hệ thống ta là danh
+  sách phẳng, không chia chương — ngành nhận cả 2 kiểu (validate theo tổng, không theo STT).
+
+→ **KẾT LUẬN: `quy_tac_bieu_10.md` chính xác.** Không cần sửa file quy tắc. Các mục "CHƯA làm" 1-2
+ở trên giữ nguyên (C6/C7 không phải bug; C33/C60 thành phần đầy đủ cần Biểu 2/3).
+
+## Biểu 2 & Biểu 3 — port lại từ nhánh cũ `feature/tong-ke-dong`, đặt lên nền hệ thống hiện tại (2026-08-28, `qlahs-sup.html`, nhánh `bieu-2-3` = tách từ `ton-ky-thong-nhat`, CHƯA merge/deploy — chỉ compile-check + test cô lập)
+
+**Bối cảnh**: Biểu 2 & Biểu 3 (2 sheet trong "Xuất Excel báo cáo tháng", cạnh Biểu 10) ĐÃ được
+build ngày 2026-08-06 trên nhánh `feature/tong-ke-dong`, kèm 3 file quy tắc ngành Dũng cung cấp
+(`Danh_sach_quy_tac_bieu_10/2/3.md` — **KHÔNG commit vào git, đã mất**; Dũng nói các quy tắc chủ
+yếu dạng `D26 = D25 − D27`, không đổi). Nhánh đó **chưa merge**, giờ lạc hậu ~30 commit so với
+`main` (kiến trúc "tồn" đã đổi hẳn — xem mục ngay dưới). Theo yêu cầu Dũng "tạo branch mới phát
+triển trên nền hiện tại".
+
+**Đã port sang `bieu-2-3`** (tách từ `ton-ky-thong-nhat`):
+- `BIEU2_ROWS` (396 dòng `{md, tc}`) + `BIEU3_ROWS` (150 dòng) — **cấu trúc mẫu ngành, chép nguyên
+  văn từ nhánh cũ**, không đổi. `BIEU23_CAN_XAC_NHAN` (Set các dòng "❓ cần xác nhận công thức").
+- `tinhBieu2(baoCao, biCanByVu, dtKhoiToMoiThat, dtChuyenDi_LanDau, ttChuyenDi_LanDau,
+  ttTraDi_TrucTiep, tongC7)` + `tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60,
+  tongC61)` + `themSheetBieu2Va3(wb, m2, m3)` — chép nguyên, KHÔNG cần sửa (dạng dữ liệu `baoCao`
+  của kiến trúc mới **tương thích**: vẫn có `tonDauKy/tonDauBiCan/tonCuoiKy/tonCuoiBiCanKy/soNhapVu`
+  + `ds.{khoiToTrucTiep,tachVu,traVe,phucHoi,chuyenDi,traDi,hoanThanh.{chuyen_di,dinh_chi,tam_dinh_chi,da_xet_xu},nhapVu}`).
+- **Wire vào `xuatBaoCaoThangExcel`** (khối ngay trước "Sheet 2: TK tội danh"): tự dựng 4 bộ lọc
+  `dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/`ttTraDi_TrucTiep`/`xxTraDi_KhongLapKy` (lọc "lần đầu"/
+  round-trip qua `lichSuCTMap` — 1 query `chuyen_giai_doan`+`tra_ho_so` của `_vuIdsChoBaoCao`,
+  bọc try/catch, lỗi → coi mọi vụ "lần đầu") + `dtKhoiToMoiThat` (lọc `nguon ∈ {an_khoi_to_moi,
+  tin_bao_khoi_to_len}`). `tongC7/C60/C61` = `b10Tong[8]/[69]/[70]` (cùng layout cột B10, đã đối
+  chiếu `B10_HEADER_CHI_TIET`). **KHÔNG đụng `tinhBieu10`/B10** — các bộ lọc này chỉ nuôi Biểu 2/3,
+  hoàn toàn tách khỏi B10 (khác nhánh cũ — ở đó dùng chung, kèm cả refactor C25-C26/C36-C37 + tính
+  năng "hồi tố Thêm bị can", CẢ 2 việc đó CHƯA port).
+
+**Trạng thái mỗi dòng trong sheet**: ✓ Tự động tính (xanh) / ❓ Cần xác nhận công thức (vàng) /
+⚠ Chưa có dữ liệu — cần bổ sung tính năng (xám, ~475/546 dòng: bắt giữ/biện pháp ngăn chặn/cưỡng
+chế/luật sư/hoạt động điều tra chi tiết... — cần thiết kế UI/schema mới, không phải sửa công thức).
+
+**Đã kiểm chứng**: compile-check `@babel/core` sạch. Test cô lập (`scratchpad`, không commit): 396/150
+dòng md liên tục 1..N; `tinhBieu2` ra 60 dòng có giá trị / `tinhBieu3` 18; các quy tắc nội bộ dạng
+`D77 = D57+D59+D60+D62+D71+D73−D61−D75`, `D272 = D93`, `D273 = D96`, `D72 = C7`, `D154/156 =
+tonCuoi ĐT`, `D17/18 = C60/C61` — đều khớp.
+
+**Cột "Quy tắc kiểm tra" + "Kiểm tra" (2026-08-28, Dũng cung cấp 3 file quy tắc — ĐÃ commit
+`quy_tac_bieu_2.md` / `quy_tac_bieu_3.md` / `quy_tac_bieu_10.md` vào gốc repo, GIỮ LÀM NGUỒN)**:
+- Sheet Biểu 2/3 giờ có 6 cột: Tiêu chí | Mã dòng | Số liệu | Trạng thái | **Quy tắc kiểm tra** |
+  **Kiểm tra (Excel tự tính khi nhập tay)**.
+- `BIEU2_QUY_TAC_RAW` (161 dòng) + `BIEU3_QUY_TAC_RAW` (84) = chép nguyên quy tắc từ 2 file md
+  (dạng `D26=D25-D27` / `D165>=D166` / `D77=D57+D58-...`). `phanTichQuyTacDong(raw)` parse → `{op,
+  lhs, rhs, anchor (D-code đầu vế trái), tuKiemTra}`. Quy tắc có `[b]` (kỳ trước) hoặc `Cxx_10173`/
+  `Dxx_10238` (liên biểu) → `tuKiemTra=false`.
+- Cột "Kiểm tra" = **CÔNG THỨC EXCEL** neo vào ĐÚNG dòng vế trái: `IF(NOT((C{md+1})op(...)),"✗
+  <raw>", IF(...,"✓ khớp (N quy tắc)"))` — mã dòng K ở hàng Excel K+1, giá trị ở cột C. Cán bộ nhập
+  tay ô "Số liệu" → công thức tự đối chiếu, vi phạm hiện "✗ <quy tắc>". Ô trống Excel = 0 nên dòng
+  chưa nhập không báo giả. `tuKiemTra=false` → ô ghi "(tra tay — liên biểu / kỳ trước)".
+- 5 dòng ghi chú cuối sheet giải thích 3 màu trạng thái + ý nghĩa cột Kiểm tra + lưu ý "dòng ✓ Tự
+  động tính dùng công thức RÚT GỌN, nhập tay dòng thiếu xong nhớ cập nhật lại dòng tổng".
+- Test cô lập: 161/161 + 84/84 quy tắc parse OK (140 + 75 tự-kiểm-tra được); công thức dài nhất
+  328 ký tự (giới hạn Excel 8192); offset `Dk → C{k+1}` đúng (D57→C58, D75→C76...).
+
+**CHƯA làm / cần Dũng**: (1) xuất Excel 1 kỳ THẬT, mở 2 sheet, đối chiếu vài dòng "✓ Tự động tính"
+với số tay + thử nhập 1 dòng ⚠ sai quy tắc xem ô "Kiểm tra" có báo "✗" không (cần Excel 2016+ cho
+IF lồng); (2) quyết định có port tiếp refactor B10 C25-C26/C36-C37 + "hồi tố Thêm bị can" từ
+`feature/tong-ke-dong` không (2 việc riêng, có thể đụng B10 đã kiểm chứng kỹ trên `main`); (3) merge
+`ton-ky-thong-nhat` TRƯỚC (nhánh này tách từ đó).
+
+## Thống nhất HOÀN TOÀN công thức "tồn" theo KỲ THỐNG KÊ + loại bỏ tàn dư snapshot Firebase (2026-08-28, `qlahs-sup.html`, nhánh `ton-ky-thong-nhat`, RPC ĐÃ chạy lên Supabase thật — JS CHƯA merge/deploy, chờ Dũng kiểm chứng UI)
+
+Theo chỉ đạo trực tiếp của Dũng: *"tất cả công thức phải base on kỳ thống kê. Nếu không phát sinh
+xử lý ở kỳ thống kê thì phải tính là tồn. Cách tính tồn theo `ngayKhoiTo <= ngày chốt kỳ` là TÀN DƯ
+của hệ thống Firebase. Chỉnh lại thống nhất và chính xác. Lần sửa này phải là FINAL. Loại bỏ tàn dư
+hệ thống snap của Firebase."* + *"tất cả bị can/vụ án đều đã gán kỳ rồi, trừ các bị can tôi cố ý cho
+vào kỳ lưu trữ (hợp thức số liệu / bổ sung vụ thiếu, KHÔNG muốn tính thống kê)."* + RPC lỗi thì
+*"cứ chặn đi, sau này tôi tính phương án index song song."*
+
+**MÔ HÌNH TỒN THỐNG NHẤT (mới)** — mọi số "tồn" (Kỳ báo cáo, Biểu B10, Cân đối số liệu, Dashboard):
+1. **Chỉ dựa `kyThongKe` của sự kiện, KHÔNG dựa ngày thật.** Bỏ hẳn `ngayKhoiTo <= ngày chốt kỳ`.
+2. **Sự kiện gán kỳ lưu trữ = NGOÀI mọi thống kê tồn.** Vụ/bị can mà mọi sự kiện đổi giai đoạn đều ở
+   kỳ lưu trữ → không xuất hiện trong báo cáo nào. Vụ có ≥1 sự kiện kỳ THẬT (VD lưu trữ rồi phục hồi
+   thật) → chỉ sự kiện kỳ thật quyết định trạng thái.
+3. **Bị can tồn đến hết kỳ K** = vụ của họ đang tồn ở K **VÀ** có sự kiện `khoi_to_bican` ở 1 kỳ
+   THẬT thứ tự ≤ K. Bị can khởi tố ở kỳ thật SAU K → là "mới" của kỳ đó, không tính tồn ở K.
+4. **RPC động là NGUỒN DUY NHẤT.** Không còn: `kybaocao.tonCuoiKy/tonCuoiBiCan/tonCuoiKyTheoTD/
+   tonCuoiKyIds/baoCaoLuu` (snapshot chốt), `tinhSnapTonTheoTD`/`tachBaoCaoLuu`/`tinhLaiBaoCaoLuu`,
+   nhánh "kỳ đã chốt đọc baoCaoLuu", nhánh `_tonCuoiKyNguon === "duphong"` + banner, 2 công cụ Cài
+   đặt (`TaiTaoTonTheoTDTool` "Sửa lại tồn cuối kỳ...", `SoSanhRPCTonKyTool` "So sánh RPC vs
+   snapshot"), `taiTaoTonCuoiKyTheoTDTatCa`, cột "Tồn cuối kỳ (xem nhanh)" + nút "Tính lại số liệu"
+   ở danh sách Kỳ báo cáo. **RPC lỗi (mất mạng/Postgres) → THROW, chặn xem/xuất báo cáo** (không có
+   dự phòng). Dashboard: kỳ nào RPC lỗi → để trống trên biểu đồ.
+5. **`chotKyBaoCao` CHỈ đổi `trangThai/ngayChot/nguoiChot/thoiDiemChot`** — không ghi ảnh chụp số
+   liệu nào. `ngayChot` vẫn ghi (dữ kiện hành chính hiển thị) nhưng KHÔNG còn là input công thức
+   (RPC xếp hạng kỳ theo `ngayBatDau`). → Không có bước "chốt lại"/"tính lại" cho kỳ đã chốt nữa.
+   Các field snapshot CŨ trên `kybaocao` **để nguyên, không xoá** (đúng "không sửa data") — chỉ
+   ngừng ghi + ngừng đọc.
+
+**RPC — file mới `supabase/rpc_ton_ky_thong_nhat_2026-08-28.sql`** (thay 2 file `..._2026-08-05.sql`,
+giữ 2 file cũ làm lịch sử — KHÔNG chạy lại chúng). ĐÃ `create or replace` lên Supabase thật (backup
+trước: `gh workflow run backup-supabase.yml`, run `33188104626` success). 2 thay đổi:
+- `layTrangThaiVuTaiKy`: `ky_hop_le` CHỈ nhận kỳ `loai IS NULL` (loại hẳn kỳ lưu trữ — trước coi
+  -infinity). Kiểm chứng dữ liệu thật 2026-08-28: **0 tác động** (mọi vụ lưu trữ đều khởi tố + hoàn
+  thành cùng kỳ lưu trữ → net 0; đúng 1 vụ `QLVA_E01.53_2511_0018` lưu trữ rồi phục hồi thật kỳ
+  08/2026 → vẫn tồn Điều tra, đúng).
+- `layTrangThaiBiCanTaiKy`: BỎ `bican.ngayKhoiTo <= ky_cutoff.moc`, thay bằng `join` với sự kiện
+  `khoi_to_bican` ở kỳ THẬT thứ tự ≤ K (strict — bị can không có `khoi_to_bican` ở kỳ thật nào →
+  KHÔNG tính; thiếu gán kỳ là việc vệ sinh dữ liệu, tự lộ ở "Cân đối số liệu").
+
+**Số ĐỔI trên dữ liệu thật (kiểm chứng qua pooler, 2026-08-28)** — CHỈ Điều tra–Bị can đổi:
+| Kỳ | ĐT bị can: cũ → mới | TT/XX bị can | Số VỤ (mọi giai đoạn) |
+|---|---|---|---|
+| 06/2026 (đã chốt) | 741 → **736** | không đổi | không đổi |
+| 07/2026 | 813 → **811** | không đổi | không đổi |
+| 08/2026 | 869 → 869 | không đổi | không đổi |
+5 (kỳ 06) + 2 (kỳ 07) bị can đó = thêm vào vụ Điều tra đã có, ngày khởi tố sớm nhưng sự kiện gán kỳ
+07/08 → theo mô hình mới thuộc kỳ 07/08. Lệch "Cân đối số liệu" 814/819 (ghi nhận 09/08) khép lại.
+
+**JS — thay đổi chính trong `qlahs-sup.html`**:
+- `locBiCanTheoCutoff(bcList, cutoff)` → **`locBiCanTheoKy(bcList, kyThongKeSuKien, bcKyKhoiToMap,
+  kyRankMap)`** (lọc theo kỳ, không theo ngày) + helper mới `layKyRankMap()` (Map kỳ THẬT → rank,
+  kỳ lưu trữ không có).
+- `vuAnTuLogDocs(logDocs, kyRankMap)` — truyền `kyRankMap` → `_soBiCan` lọc theo kỳ (hàm tự
+  `fetchKyKhoiToBiCan`); field gắn kèm đổi `_bcCutoff` → `_bcKyGioiHan` (= `l.kyThongKe`).
+- `tinhBaoCaoKyTuLog`: `tonCuoiKy`/`tonCuoiBiCanKy` = LUÔN từ `layTonTheoKyRPC(ky.id)` (throw nếu
+  null); `tonDauKy`/`tonDauBiCan` = RPC as-of kỳ TRƯỚC (throw nếu null). Bỏ nhánh `if da_chot đọc
+  ky.tonCuoiKy` + toàn bộ khối ledger `bcMoi`/`boSungTonBc`/`tonCuoiKy = tonDauKy + soMoi.tong −
+  soGiaiQuyetVu`. `soMoi` (vụ) + `_soBiCan` trong `ds.*` (đã lọc kỳ) vẫn tính — nuôi dòng "Tổng số
+  mới"/"Đã giải quyết" + cột "Tồn cuối (tính)" của "Cân đối số liệu" (cross-check độc lập với RPC).
+  `hoan_thanh` cũng lọc `_soBiCan` theo kỳ.
+- `tinhBaoCaoKy` → wrapper mỏng gọi thẳng `tinhBaoCaoKyTuLog` (bỏ baoCaoLuu/duphong/apDungRpcTonDau).
+- `tinhBieu10`: bỏ `kyTruoc.tonCuoiKyTheoTD`/`ky.tonCuoiKyTheoTD` snapshot + nhánh `tonTheoLogD`
+  (cộng dồn sổ cái). "Tồn kỳ trước/này" theo D = CHỈ `gomRpcTheoTD(rpcTonTruocList/rpcTonList)`
+  (rpcTonTruocList=null ⇒ kỳ đầu ⇒ 0). Bỏ 2 field `tonTD_truoc`/`kyTonTD` khỏi return.
+- `xuatBaoCaoThangExcel`: `rpcTonKyNay`/`rpcTonKyTruoc` THROW nếu RPC lỗi (bỏ `.catch(()=>null)`);
+  thêm `layKyRankMap()` vào Promise.all; `addSheetVu` lọc bị can qua `locBiCanTheoKy(list,
+  vu._bcKyGioiHan, bcKyKhoiToMap, kyRankMap)`.
+- Tab "Kết thúc điều tra"/"Kết thúc truy tố" (`AnDaGiaiQuyetModule.taiDsCgd`): tách "cũ (trả ĐTBS)/
+  mới" theo KỲ của lần trả hồ sơ (`locBiCanTheoKy`), không theo ngày.
+- Xoá component `TaiTaoTonTheoTDTool`, `SoSanhRPCTonKyTool` + render trong Cài đặt; xoá hàm
+  `taiTaoTonCuoiKyTheoTDTatCa`; xoá state/handler `dangTinhLai`/`bamTinhLai` + cột xem nhanh ở
+  `KyBaoCaoModule`; cập nhật mọi text UI "vào Kỳ báo cáo bấm Tính lại số liệu" (SuaKyModal,
+  XoaVuAnModal, XoaHinhThucGiaiQuyetModal) sang "tự tính lại từ log".
+- Sheet "Cân đối số liệu" (theo lựa chọn Dũng "giữ, làm dịu cảnh báo"): nhãn "Tồn cuối (chốt)"→
+  "(RPC)", "(tính)"→"(sổ cái)"; chỉ tô ĐỎ khi `|chênh lệch| > 1` (chênh 0 = xanh, ±1 = vàng — là
+  imprecision vô hại giữa "đếm sự kiện" và "đếm trạng thái cuối" khi 1 vụ có ≥2 lần "vào" cùng kỳ;
+  chênh > 1 = lỗi dữ liệu thật). Ghi chú trong sheet viết lại theo mô hình mới. **KHÔNG có Biểu 2/
+  Biểu 3 trong file xuất** — mới chỉ có Biểu 10 (B10); Biểu 2/3 là việc build tiếp theo, cần Dũng
+  cấp file mẫu ngành cho Biểu 3.
+
+**ĐÃ kiểm chứng**: RPC — pooler, 736/811, deterministic (chạy 2 lần khớp), vụ không đổi. JS —
+compile-check qua `@babel/core`+`@babel/preset-react` sạch qua nhiều vòng. Đối chiếu sổ cái VỤ kỳ 07
+Điều tra: vào 66 − ra 56 = +10 vs RPC +9 — lệch 1 VỤ, đây là imprecision CÓ SẴN TỪ TRƯỚC của sổ cái
+(đếm sự kiện) so với RPC (đếm trạng thái cuối distinct) khi 1 vụ có ≥2 sự kiện "vào" cùng kỳ; "Cân
+đối số liệu" tô đỏ đúng chỗ này theo thiết kế, KHÔNG phải regression.
+
+**CHƯA làm / cần Dũng**: (1) merge nhánh `ton-ky-thong-nhat` + deploy sau khi Dũng mở báo cáo thật
+trên `qlahs-sup.web.app` (đăng nhập) xác nhận: Biểu B10 "Tồn kỳ trước/này" ra số đúng, "Cân đối số
+liệu" chênh lệch chấp nhận được (0 hoặc ±nhỏ đã giải thích), Kỳ báo cáo hiện đúng 736/811, Dashboard
+tải được; mở file Excel THẬT xác nhận công thức B10 không vỡ. (2) **RPC đã LIVE trên Supabase dùng
+chung** — nên `qlahsp2.web.app`/`qlahs-sup.web.app` (còn chạy JS CŨ) HIỆN ĐÃ hiển thị 736/811 (JS cũ
+vẫn ưu tiên RPC cho tồn cuối kỳ, chỉ khác là còn giữ code dự phòng); revert nhanh = chạy lại 2 file
+`..._2026-08-05.sql` nếu cần. (3) Cập nhật `schema.sql` (không cần — cột snapshot vẫn tồn tại, chỉ
+ngừng dùng).
+
 ## Tab "Đã xét xử" — nhập điểm/khoản + mức án TỪNG tội danh của TỪNG bị can, panel chính riêng (2026-08-28, `qlahs-sup.html`, nhánh `main`, ĐÃ chạy migration + deploy `qlahs-sup.web.app` + production `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng — nâng cấp tab "Đã xét xử" trong module "Án đã giải quyết" (`AnDaGiaiQuyetModule`).
