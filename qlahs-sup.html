@@ -15493,13 +15493,30 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const ghiNhanVuVaoPhien = async (maVuAn, vuAn) => {
     const now = new Date();
     const fieldSoQd = fieldSoQuyetDinhTrenVuAn(vuAn.trangThai);
+    // Kế thừa "Số bút lục"/"Số tập hồ sơ" từ lần giao/nhận GẦN NHẤT trước đó của chính vụ này
+    // (2026-09-03, theo yêu cầu người dùng): 1 hồ sơ có thể được quét nhiều lần qua nhiều phiên —
+    // lần quét sau nếu KHÔNG nhập lại thì giữ nguyên số cũ; nếu số thực tế có thay đổi thì người
+    // quét sửa tay tại dòng (DongGiaoNhan) và giá trị mới sẽ được lưu đè. Lấy sự kiện
+    // "giao_nhan_ho_so" mới nhất theo `thoiDiemGhi` (bất kể giao/nhận/lưu trữ), sắp xếp phía client
+    // để khỏi cần composite index cho where + orderBy.
+    let soButLucKe = "", soTapKe = "";
+    try {
+      const truocDo = await db.collection("lichsuChuyenGiaiDoan")
+        .where("maVuAn", "==", maVuAn).where("loaiSuKien", "==", "giao_nhan_ho_so").get();
+      let msMoi = -1;
+      truocDo.docs.forEach(d => {
+        const data = d.data();
+        const ms = data.thoiDiemGhi?.toMillis?.() ?? (data.thoiDiemGhi ? new Date(data.thoiDiemGhi).getTime() : 0);
+        if (ms > msMoi) { msMoi = ms; soButLucKe = data.soButLuc || ""; soTapKe = data.soTapHoSo || ""; }
+      });
+    } catch (err) { console.error("Không tra được số bút lục/số tập lần trước:", err); }
     await db.collection("lichsuChuyenGiaiDoan").add(taoSuKien({
       maVuAn, loaiSuKien: "giao_nhan_ho_so", ngaySuKien: now, kyThongKe: null,
       nguoiThucHien: currentUser?.email || "", thoiDiemGhi: now,
       phienGiaoNhanId: phien.id, loaiGiaoDich: phien.loaiGiaoDich, tenVu: vuAn.tenVu || "",
       soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
-      nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "", soButLuc: "",
-      soTapHoSo: "", lyDoGiaoNhan: "",
+      nguoiGiao: vuAn.ksvChinh || "", nguoiNhan: vuAn.dtvCbdt || "", nguoiNhanThucTe: "", soButLuc: soButLucKe,
+      soTapHoSo: soTapKe, lyDoGiaoNhan: "",
       trangThaiVu: vuAn.trangThai || "dang_giai_quyet",
       soQdGiaiQuyet: fieldSoQd ? (vuAn[fieldSoQd] || "") : "",
       ngayQuyetDinh: vuAn.ngayQuyetDinh || null,
@@ -16457,6 +16474,13 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
       const themSheetDsVu = (tenSheet, ds) => {
         const ws = wb.addWorksheet(tenSheet);
         ws.views = [{ state: "frozen", ySplit: 1 }];
+        // Cấu hình in nhanh: khổ ngang, ép vừa 1 trang theo bề rộng, lặp hàng tiêu đề mỗi trang.
+        ws.pageSetup = {
+          orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+          horizontalCentered: true,
+          margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
+        };
+        ws.pageSetup.printTitlesRow = "1:1";
         const hRow = ws.addRow([
           "STT", "Mã vụ", "Tên vụ", "KSV", "Hình thức GQ",
           "Số QĐ KTVA", "Ngày QĐ KTVA", "Số QĐ GQ", "Ngày GQ",
@@ -16465,10 +16489,12 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
         ]);
         hRow.font = { bold: true };
         hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+        // Ẩn sẵn các cột B (Mã vụ), L (Số bút lục), M (Số tập), N (Vấn đề cần bổ sung) — bản in gọn,
+        // vẫn bỏ ẩn được trong Excel khi cần đối chiếu.
         ws.columns = [
-          { width: 6 }, { width: 13 }, { width: 32 }, { width: 18 }, { width: 14 },
+          { width: 6 }, { width: 13, hidden: true }, { width: 32 }, { width: 18 }, { width: 14 },
           { width: 16 }, { width: 14 }, { width: 16 }, { width: 14 },
-          { width: 16 }, { width: 20 }, { width: 12 }, { width: 8 }, { width: 55 },
+          { width: 16 }, { width: 20 }, { width: 12, hidden: true }, { width: 8, hidden: true }, { width: 55, hidden: true },
         ];
         // Sắp xếp cùng công thức với sổ chính thức (sapXepDsNopLuuKho) để KSV đối chiếu thuận tiện
         // với thứ tự sẽ dùng lúc chốt, dù đây chỉ là bản rà soát chưa chốt.
@@ -16483,9 +16509,17 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
             v.soButLuc || "", v.soTapHoSo || "",
             vanDe.length > 0 ? vanDe.join("; ") : "",
           ]);
-          row.getCell(14).alignment = { wrapText: true };
           if (vanDe.length > 0) row.getCell(14).font = { color: { argb: "FFB45309" } };
           if (!v.daNop) row.getCell(11).font = { color: { argb: "FFDC2626" }, bold: true };
+        });
+        // Wrap text + viền mọi ô (kể cả ô trống) để in ra đọc được ngay, không phải căn chỉnh lại.
+        const vienManh = { style: "thin", color: { argb: "FF94A3B8" } };
+        ws.eachRow((row) => {
+          for (let c = 1; c <= 14; c++) {
+            const cell = row.getCell(c);
+            cell.border = { top: vienManh, left: vienManh, bottom: vienManh, right: vienManh };
+            cell.alignment = { ...(cell.alignment || {}), wrapText: true, vertical: "top" };
+          }
         });
       };
 
