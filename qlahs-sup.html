@@ -11355,7 +11355,48 @@ const BIEU23_CAN_XAC_NHAN = new Set([
   "B3:2","B3:3","B3:6","B3:7",                                      // XX: hủy mới nhận / ĐTBS mới nhận lại (D17/18 ĐÃ tự tính qua b10Tong)
 ]);
 
-function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7, biCanBatTrongKy) {
+// ── Helpers dùng chung cho Biểu 2/3: "mọi ô số liệu = công thức Excel trỏ vào sheet DS" (2026-09,
+// sửa bug D86 ĐT tính SAI 224 thay vì 159 — nguyên nhân: D86 cũ SUY RA từ D79-D134-D156, D79 trộn
+// 3 hệ đếm không khớp nhau (RPC/B10-cohort/JS soBc) — xem CLAUDE.md). Nguyên tắc mới: MỌI ô có
+// nguồn dữ liệu = sheet "DS ..." đã có trong Xuất Excel báo cáo tháng ĐỀU ghi CÔNG THỨC Excel thật
+// (SUM/COUNTIFS trực tiếp trên sheet đó — "đếm thẳng"), KHÔNG còn suy ngược qua đẳng thức khác.
+// `result` (giá trị "cache" JS) LUÔN tính bằng ĐÚNG cách công thức đếm — không bịa/suy ngược riêng.
+// Promote lên TOP-LEVEL (trước đây `demBcSheet`/`demBcSheetM`/`demBcSheetKy` chỉ là const CỤC BỘ
+// bên trong `xuatBaoCaoThangExcel`, khai báo SAU vị trí Biểu 2/3 cần dùng) — để cả `tinhBieu2`/
+// `tinhBieu3` (2 hàm top-level riêng, không phải closure của `xuatBaoCaoThangExcel`) LẪN khối
+// "Tổng hợp báo cáo" (vẫn dùng các tên hàm y hệt, không đổi) dùng CHUNG đúng 1 định nghĩa.
+function _sumSheetA(sn) { return `SUM('${sn}'!$A:$A)`; }
+function _sumSheetsA(sheets) { return sheets.map(_sumSheetA).join("+") || "0"; }
+// demBcSheet: đếm dòng BỊ CAN THẬT trong 1 sheet (cột M<>"(Chưa có BC)", trừ COUNTBLANK cùng phạm
+// vi để không đếm nhầm hàng trống ngoài dữ liệu — xem bug "-BC ra 1.048.576" đã sửa, CLAUDE.md).
+function demBcSheet(sn) { return `COUNTIF('${sn}'!$M$2:$M$1048576,"<>(Chưa có BC)")-COUNTBLANK('${sn}'!$M$2:$M$1048576)`; }
+function demBcSheetM(sheets) { return sheets.map(demBcSheet).join("+") || "0"; }
+// demBcSheetKy: như demBcSheetM nhưng CHỈ đếm BC có cột "Kỳ TK BC" (AF) khớp 1 trong các kỳ
+// `dsKyTen` — dùng cho khối ĐT "mới" (chỉ ĐT có bị can bổ sung vào vụ đã có, xem tinhBieu10 C7-C24).
+function demBcSheetKy(sheets, dsKyTen) {
+  const parts = [];
+  for (const sn of sheets) for (const kt of dsKyTen) parts.push(`COUNTIFS('${sn}'!$AF:$AF,"${kt}")`);
+  return parts.join("+") || "0";
+}
+// _cfBcCrit/_sfVuCrit: COUNTIFS/SUMIF theo 1 tiêu chí PHỤ (Nguồn/"Lần đầu?"/"Trực tiếp"/"Chưa
+// nhận lại"...) trên TOÀN sheet (không lọc theo Mã ĐL như mkCfBc/mkSfVu của B10 — Biểu 2/3 không
+// tách theo tội danh). `_cfBcCrit` AN TOÀN khỏi bug "1048576" dù không giới hạn $2:$1048576: LUÔN
+// có ≥2 tiêu chí AND (M<>placeholder + cột tiêu chí = giá trị cụ thể) — hàng trống ngoài dữ liệu
+// có CẢ 2 cột đều rỗng nên không khớp tiêu chí giá trị cụ thể nào, tự loại trừ.
+function _cfBcCrit(sn, col, val) { return `COUNTIFS('${sn}'!$M:$M,"<>(Chưa có BC)",'${sn}'!$${col}:$${col},"${val}")`; }
+function _sfVuCrit(sn, col, val) { return `SUMIF('${sn}'!$${col}:$${col},"${val}",'${sn}'!$A:$A)`; }
+// _fc: bọc 1 giá trị JS (`result`, luôn tính SẴN theo đúng cách công thức đếm) + chuỗi công thức
+// (không có dấu "=") thành object {formula,result} — ExcelJS ghi thẳng, ô hiện `result` ngay cả
+// khi chưa mở Excel để recalc, và tự tính lại đúng khi mở file thật.
+function _fc(formula, result) { return { formula: "=" + formula, result }; }
+// _mv: đọc lại giá trị SỐ từ 1 ô Map đã `m.set` — chấp nhận CẢ số thường (dòng chưa chuyển sang
+// công thức) LẪN {formula,result} (dòng đã chuyển) — dùng khi 1 dòng khác cần cộng/trừ giá trị đó.
+function _mv(m, md) { const v = m.get(md); return v && typeof v === "object" && "result" in v ? v.result : (v || 0); }
+// _cRef: tham chiếu Excel tới CHÍNH Ô của dòng `md` khác TRONG CÙNG sheet Biểu 2/3 (dòng md nằm ở
+// hàng Excel md+1, giá trị luôn ở cột C — xem themSheetBieu2Va3's quy ước `Dxx -> C{xx+1}`).
+function _cRef(md) { return `C${md + 1}`; }
+
+function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7, biCanBatTrongKy, b10RefCua) {
   const m = new Map();
   const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds;
   const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
@@ -11390,160 +11431,180 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
     m.set(14, bcBat.filter(bc => bc.loaiBat === "khan_cap" && !bc.vksKhongPheChuan).length);
   }
 
-  // ── Điều tra (dòng 57-160) — đã đối chiếu khớp mẫu: D77=871, D79=2373, D83=254, D86=1619 ──
-  m.set(57, baoCao.dieu_tra.tonDauKy);
-  m.set(59, (dt.traVe || []).length);
-  m.set(60, (dt.tachVu || []).length);
-  m.set(61, baoCao.dieu_tra.soNhapVu);
-  m.set(62, (dt.phucHoi || []).length);
-  m.set(64, baoCao.dieu_tra.tonDauBiCan);
-  m.set(66, soBc(dt.traVe));
-  m.set(67, soBc(dt.tachVu));
-  m.set(68, soBc(dt.nhapVu));
-  m.set(69, soBc(dt.phucHoi));
+  // ── Điều tra (dòng 57-160) — 2026-09: MỌI ô có sheet DS tương ứng đổi sang {formula,result}
+  // (SUM/COUNTIFS trực tiếp trên sheet, "đếm thẳng") — xem helper _fc/_sumSheetA/demBcSheet/
+  // _cfBcCrit ở đầu file. `result` vẫn tính bằng ĐÚNG cách công thức đếm (không suy ngược).
+  m.set(57, _fc(_sumSheetA("DS tồn cuối kỳ trước ĐT"), baoCao.dieu_tra.tonDauKy));
+  m.set(64, _fc(demBcSheet("DS tồn cuối kỳ trước ĐT"), baoCao.dieu_tra.tonDauBiCan));
+  m.set(59, _fc(_sumSheetA("DS trả về ĐT"), (dt.traVe || []).length));
+  m.set(66, _fc(demBcSheet("DS trả về ĐT"), soBc(dt.traVe)));
+  m.set(60, _fc(_sumSheetA("DS vụ tách ĐT"), (dt.tachVu || []).length));
+  m.set(67, _fc(demBcSheet("DS vụ tách ĐT"), soBc(dt.tachVu)));
+  m.set(61, _fc(_sumSheetA("DS nhập vụ ĐT"), baoCao.dieu_tra.soNhapVu));
+  m.set(68, _fc(demBcSheet("DS nhập vụ ĐT"), soBc(dt.nhapVu)));
+  m.set(62, _fc(_sumSheetA("DS phục hồi TĐC ĐT"), (dt.phucHoi || []).length));
+  m.set(69, _fc(demBcSheet("DS phục hồi TĐC ĐT"), soBc(dt.phucHoi)));
   const dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
-  // D71 "Số vụ án CQĐT khởi tố mới" — DÙNG THẲNG tổng cột C6 của B10 (= b10Tong[7], đã cộng dồn ở
-  // xuatBaoCaoThangExcel; C6 narrow 2 nguồn an_khoi_to_moi + tin_bao_khoi_to_len) để D71 KHỚP
-  // TUYỆT ĐỐI với B10 — quy tắc ngành `D71_10238=C6`, y hệt cách D72=tongC7. KHÔNG tự đếm lại
-  // (tránh lệch giữa cột SUMIFS Excel và số JS ở ô "Kiểm tra" liên biểu).
-  m.set(71, tongC6);
-  // D72 "Số bị can mới khởi tố" — quy tắc chính thức `D72_10238=C7` (bằng ĐÚNG tổng cột C7 của
-  // B10, cộng dồn qua mọi tội danh — KHÔNG PHẢI chỉ soBc(dtKhoiToMoiThat) như bản đầu tiên, vì C7
-  // = dt_ktBcMoiKy = "mới" (kỳ khớp riêng theo bị can) + "bổ sung" (bị can thêm vào vụ đã có) —
-  // dùng THẲNG `tongC7` (đã cộng dồn sẵn ở xuatBaoCaoThangExcel qua b10Tong) để chắc chắn khớp
-  // tuyệt đối với B10, không tính lại logic "kỳ khởi tố riêng từng BC"/"bổ sung" một lần nữa ở đây.
-  m.set(72, tongC7);
-  m.set(73, dtNoiKhac.length);
-  m.set(74, soBc(dtNoiKhac));
-  m.set(75, (dt.hoanThanh?.chuyen_di || []).length);
-  m.set(76, soBc(dt.hoanThanh?.chuyen_di));
-  // D77/D79 "Tổng số CQĐT thụ lý điều tra" — CÔNG THỨC RIÊNG của Biểu 2 (KHÁC B10's "Tổng thụ lý"
-  // C3/C4, xem BIEU23_CAN_XAC_NHAN — đó là câu hỏi riêng "B10 có nên khớp D77 hay D77-D59", KHÔNG
-  // liên quan tới việc D77 tự nó tính đúng hay không) — đã đối chiếu khớp CHÍNH XÁC số mẫu (871,
-  // 2373) qua test cô lập test_bieu2_3.js.
-  m.set(77, m.get(57) + m.get(59) + m.get(60) + m.get(62) + m.get(71) + m.get(73) - m.get(61) - m.get(75));
-  m.set(79, m.get(64) + m.get(66) + m.get(67) + m.get(69) + m.get(72) + m.get(74) - m.get(68) - m.get(76));
-  // D83/D86 "Số vụ/bị can CQĐT đã giải quyết (đề nghị truy tố + đình chỉ)" — SUY RA từ đẳng thức
-  // ngành `D154 = D77-D83-D134` / `D156 = D79-D86-D141` (đảo lại). D154/D156 = tồn cuối ĐT thực tế
-  // (RPC as-of). D134/D141 = tạm đình chỉ trong kỳ. Bảo đảm 2 đẳng thức KHỚP số tồn thực tế khi
-  // upload lên phần mềm ngành — KHÔNG tự đếm `soBc(dt.chuyenDi)` (lệch do B10 C7 = cohort nhân
-  // khẩu 130, gồm bị can bổ sung khởi tố kỳ này vào vụ kỳ trước — Biểu 2 KHÔNG có dòng nhập tương
-  // ứng để trừ). Kiểm ĐÚNG TUYỆT ĐỐI trên file ngành thật (10238.xlsx): D83 = 367-18-320 = 29 =
-  // D83 thật; D86 = 942-0-812 = 130 = D86 thật. Vẫn thoả `D83>=D92+D100` / `D86>=D95+D117`.
-  m.set(83, m.get(77) - (dt.hoanThanh?.tam_dinh_chi || []).length - baoCao.dieu_tra.tonCuoiKy);
-  m.set(86, m.get(79) - soBc(dt.hoanThanh?.tam_dinh_chi) - baoCao.dieu_tra.tonCuoiBiCanKy);
-  m.set(92, (dt.chuyenDi || []).length);
-  m.set(93, (dt.chuyenDi || []).length - dtChuyenDi_LanDau.length);
-  m.set(95, soBc(dt.chuyenDi));
-  m.set(96, soBc(dt.chuyenDi) - soBc(dtChuyenDi_LanDau));
-  m.set(97, demBcTruong(dt.chuyenDi, "dangVien", "co"));
-  m.set(98, demBcTruong(dt.chuyenDi, "dangVienGiuChucVu", true));
-  m.set(100, (dt.hoanThanh?.dinh_chi || []).length);
-  m.set(117, soBc(dt.hoanThanh?.dinh_chi));
-  m.set(134, (dt.hoanThanh?.tam_dinh_chi || []).length);
-  m.set(141, soBc(dt.hoanThanh?.tam_dinh_chi));
-  m.set(154, baoCao.dieu_tra.tonCuoiKy);
-  m.set(156, baoCao.dieu_tra.tonCuoiBiCanKy);
+  // D71/D72 "Số vụ/bị can CQĐT khởi tố mới" — TRỎ THẲNG vào ô TỔNG cột C6/C7 trên sheet "Biểu B10"
+  // (qua b10RefCua, cùng cơ chế đã dùng cho cột "Kiểm tra" liên biểu) thay vì ghi số JS tĩnh —
+  // giữ ĐÚNG quy tắc ngành `C6_10173=D71`/`C7_10173=D72` (D71/D72 = ĐÚNG BẰNG C6/C7, không tính
+  // lại) nhưng giờ khớp bằng CÔNG THỨC Excel thật (click-trace được), không chỉ bằng giá trị JS.
+  const _r6 = b10RefCua && b10RefCua(6), _r7 = b10RefCua && b10RefCua(7);
+  m.set(71, _r6 ? _fc(_r6, tongC6) : tongC6);
+  m.set(72, _r7 ? _fc(_r7, tongC7) : tongC7);
+  m.set(73, _fc(_sfVuCrit("DS khởi tố ĐT", "AH", NHAN_NGUON.an_noi_khac_chuyen_den), dtNoiKhac.length));
+  m.set(74, _fc(_cfBcCrit("DS khởi tố ĐT", "AH", NHAN_NGUON.an_noi_khac_chuyen_den), soBc(dtNoiKhac)));
+  m.set(75, _fc(_sumSheetA("DS chuyển đi ĐT"), (dt.hoanThanh?.chuyen_di || []).length));
+  m.set(76, _fc(demBcSheet("DS chuyển đi ĐT"), soBc(dt.hoanThanh?.chuyen_di)));
+  // D77/D79 "Tổng số CQĐT thụ lý điều tra" — arithmetic tham chiếu NGAY CÁC Ô KHÁC trong CHÍNH
+  // sheet Biểu 2 (không phải sheet DS nào riêng — đã đối chiếu khớp mẫu ngành, xem CLAUDE.md).
+  m.set(77, _fc(`${_cRef(57)}+${_cRef(59)}+${_cRef(60)}+${_cRef(62)}+${_cRef(71)}+${_cRef(73)}-${_cRef(61)}-${_cRef(75)}`,
+    _mv(m,57) + _mv(m,59) + _mv(m,60) + _mv(m,62) + _mv(m,71) + _mv(m,73) - _mv(m,61) - _mv(m,75)));
+  m.set(79, _fc(`${_cRef(64)}+${_cRef(66)}+${_cRef(67)}+${_cRef(69)}+${_cRef(72)}+${_cRef(74)}-${_cRef(68)}-${_cRef(76)}`,
+    _mv(m,64) + _mv(m,66) + _mv(m,67) + _mv(m,69) + _mv(m,72) + _mv(m,74) - _mv(m,68) - _mv(m,76)));
+  // D83/D86 "Số vụ/bị can CQĐT đã giải quyết (đề nghị truy tố + đình chỉ)" — BUG THẬT đã sửa
+  // (2026-09, Dũng phát hiện qua kỳ 08/2026 thật: D86 ra 224, đúng ra 159 — dư 65). NGUYÊN NHÂN:
+  // bản cũ SUY RA từ đẳng thức `D154=D77-D83-D134` (đảo lại D83=D77-D134-D154), D154 lấy từ RPC
+  // tồn cuối kỳ ĐT — nhưng D77 trộn B10 C7 "cohort nhân khẩu" (gồm bị can bổ sung không có dòng
+  // "vào" đối ứng ở Biểu 2) nên D77 tự nó đã lệch, kéo D83/D86 sai theo dù đẳng thức "trông có vẻ"
+  // luôn khớp (tautology). ĐÃ SỬA: ĐẾM THẲNG (SUM/COUNT) trên 2 sheet "đã giải quyết" thật —
+  // KHÔNG còn suy từ D77/D134/D154 nữa. `D154=D77-D83-D134`/`D156=D79-D86-D141` giờ là ĐẲNG THỨC
+  // KIỂM TRA THẬT (cột "Kiểm tra" có thể báo ✗ nếu RPC tồn cuối kỳ lệch với đếm thẳng — đúng ý
+  // Dũng, không còn tự động "luôn ✓" giả).
+  m.set(83, _fc(`${_sumSheetA("DS ĐT chuyển TT")}+${_sumSheetA("DS đình chỉ ĐT")}`,
+    (dt.chuyenDi || []).length + (dt.hoanThanh?.dinh_chi || []).length));
+  m.set(86, _fc(demBcSheetM(["DS ĐT chuyển TT", "DS đình chỉ ĐT"]),
+    soBc(dt.chuyenDi) + soBc(dt.hoanThanh?.dinh_chi)));
+  m.set(92, _fc(_sumSheetA("DS ĐT chuyển TT"), (dt.chuyenDi || []).length));
+  m.set(95, _fc(demBcSheet("DS ĐT chuyển TT"), soBc(dt.chuyenDi)));
+  // D93/D96 "... trong đó truy tố lại do trả hồ sơ ĐTBS kỳ trước" (round-trip, KHÔNG lần đầu) =
+  // Tổng ĐT→TT − số "Lần đầu?" (cột phụ mới trên sheet "DS ĐT chuyển TT", xem addSheetVuKy).
+  m.set(93, _fc(`${_sumSheetA("DS ĐT chuyển TT")}-${_sfVuCrit("DS ĐT chuyển TT", "AK", "x")}`,
+    (dt.chuyenDi || []).length - dtChuyenDi_LanDau.length));
+  m.set(96, _fc(`${demBcSheet("DS ĐT chuyển TT")}-${_cfBcCrit("DS ĐT chuyển TT", "AK", "x")}`,
+    soBc(dt.chuyenDi) - soBc(dtChuyenDi_LanDau)));
+  m.set(97, _fc(_cfBcCrit("DS ĐT chuyển TT", "T", "x"), demBcTruong(dt.chuyenDi, "dangVien", "co")));
+  m.set(98, _fc(_cfBcCrit("DS ĐT chuyển TT", "AC", "có"), demBcTruong(dt.chuyenDi, "dangVienGiuChucVu", true)));
+  m.set(100, _fc(_sumSheetA("DS đình chỉ ĐT"), (dt.hoanThanh?.dinh_chi || []).length));
+  m.set(117, _fc(demBcSheet("DS đình chỉ ĐT"), soBc(dt.hoanThanh?.dinh_chi)));
+  m.set(134, _fc(_sumSheetA("DS tạm đình chỉ ĐT"), (dt.hoanThanh?.tam_dinh_chi || []).length));
+  m.set(141, _fc(demBcSheet("DS tạm đình chỉ ĐT"), soBc(dt.hoanThanh?.tam_dinh_chi)));
+  m.set(154, _fc(_sumSheetA("DS tồn cuối kỳ ĐT"), baoCao.dieu_tra.tonCuoiKy));
+  m.set(156, _fc(demBcSheet("DS tồn cuối kỳ ĐT"), baoCao.dieu_tra.tonCuoiBiCanKy));
 
-  // ── Truy tố (dòng 260-401) — đã đối chiếu khớp mẫu: D270+D272=D92 (158+89=247), D293=8 ──
-  m.set(260, baoCao.truy_to.tonDauKy);
-  m.set(261, (tt.phucHoi || []).length);
-  m.set(263, (tt.tachVu || []).length);
-  m.set(264, baoCao.truy_to.soNhapVu);
-  m.set(265, baoCao.truy_to.tonDauBiCan);
-  m.set(266, soBc(tt.phucHoi));
-  m.set(268, soBc(tt.tachVu));
-  m.set(269, soBc(tt.nhapVu));
-  // Bug đã sửa (2026-08-06, phát hiện qua đối chiếu "Danh sách quy tắc biểu 2.md" chính thức —
-  // quy tắc `D93=D272`/`D96=D273` bắt buộc): D270-273 ("mới thụ lý"/"nhận lại do CQĐT hoàn lại sau
-  // ĐTBS", giai đoạn TT) mô tả dòng chảy ĐT→TT (TT NHẬN từ ĐT) — PHẢI dùng `dt.chuyenDi`/
-  // `dtChuyenDi_LanDau` (phía ĐT, sự kiện chuyen_giai_doan denGiaiDoan=truy_to). Bản đầu tiên dùng
-  // NHẦM `ttChuyenDi_LanDau` (phía TT, dòng chảy TT→XX HOÀN TOÀN KHÁC, dùng cho D292-293 ngay
-  // dưới) — cùng tên biến "ChuyenDi" ở 2 giai đoạn dễ nhầm nếu không đọc kỹ chiều đi/đến.
-  m.set(270, dtChuyenDi_LanDau.length);
-  m.set(271, soBc(dtChuyenDi_LanDau));
-  // D272=D93, D273=D96 (quy tắc chính thức, cùng 1 tập bị can "chưa lần đầu" của dt.chuyenDi —
-  // alias TRỰC TIẾP qua m.get() thay vì tính lại, đảm bảo khớp tuyệt đối theo đúng quy tắc).
-  m.set(272, m.get(93));
-  m.set(273, m.get(96));
-  m.set(282, (tt.chuyenDi || []).length + (tt.hoanThanh?.dinh_chi || []).length);
-  m.set(285, soBc(tt.chuyenDi) + soBc(tt.hoanThanh?.dinh_chi));
-  m.set(292, (tt.chuyenDi || []).length);
-  m.set(293, (tt.chuyenDi || []).length - ttChuyenDi_LanDau.length);
-  m.set(296, soBc(tt.chuyenDi));
-  m.set(297, soBc(tt.chuyenDi) - soBc(ttChuyenDi_LanDau));
-  m.set(300, (tt.hoanThanh?.dinh_chi || []).length);
-  m.set(310, soBc(tt.hoanThanh?.dinh_chi));
-  m.set(326, (tt.hoanThanh?.tam_dinh_chi || []).length);
-  m.set(332, soBc(tt.hoanThanh?.tam_dinh_chi));
-  m.set(344, baoCao.truy_to.tonCuoiKy);
-  m.set(346, baoCao.truy_to.tonCuoiBiCanKy);
-  // ── Các dòng CHI TIẾT "vào/ra" giai đoạn TT (2026-08-30, nâng cấp tách đủ để chuỗi thành phần
-  // `D280=D260+D261+D262+D263-D264+D270+D272+D274-D276-D278` TỰ ĐÓNG, không phải suy ngược từ tồn):
-  const _ttNoiKhac = (tt.khoiToTrucTiep || []).concat(tt.nhanLai || []);
-  m.set(262, (tt.traVe || []).length);           // Vụ mới nhận lại để ĐTBS = Toà (XX) trả hồ sơ về TT
-  m.set(267, soBc(tt.traVe));                     // Bị can tương ứng D262
-  m.set(274, _ttNoiKhac.length);                 // Vụ nơi khác chuyển đến TT (khởi tố trực tiếp TT + nhận lại đã chuyển đi)
-  m.set(275, soBc(_ttNoiKhac));                   // Bị can tương ứng D274
-  m.set(276, (tt.hoanThanh?.chuyen_di || []).length); // Vụ TT chuyển đi nơi khác
-  m.set(277, soBc(tt.hoanThanh?.chuyen_di));      // Bị can tương ứng D276
-  m.set(278, (tt.traDi || []).length);           // Vụ VKS trả hồ sơ ĐTBS trong kỳ (RAW, gồm cả do Toà yêu cầu)
-  m.set(279, soBc(tt.traDi));                     // Bị can tương ứng D278
-  // D280/D281 "Tổng số vụ/bị can VKS thụ lý giải quyết" = CHUỖI THÀNH PHẦN ngành (nay đủ dòng).
-  // Ledger TT cân đối (Cân đối số liệu chênh 0) ⇒ đồng thời khớp `D344 = D280-D282-D326` = tồn RPC.
-  // Kiểm ĐÚNG TUYỆT ĐỐI file ngành thật (10238.xlsx): 44+0+8+0-0+21+8+0-0-11 = 70 = D280 thật;
-  // 418+0+29+0-0+57+73+0-0-85 = 492 = D281 thật.
-  m.set(280, m.get(260) + m.get(261) + m.get(262) + m.get(263) - m.get(264) + m.get(270) + m.get(272) + m.get(274) - m.get(276) - m.get(278));
-  m.set(281, m.get(265) + m.get(266) + m.get(267) + m.get(268) - m.get(269) + m.get(271) + m.get(273) + m.get(275) - m.get(277) - m.get(279));
-  // D352/361/367/368 (VKS trả hồ sơ ĐTBS "không tính vụ do Toà án yêu cầu") — tái dùng
-  // ttTraDi_TrucTiep của B10 (C58-C59). Lưu ý NHỎ: B10 C58-C59 loại THÊM round-trip "cùng kỳ" mà
-  // Biểu 2 dòng 352 không yêu cầu — chấp nhận sai khác cực hiếm này (round-trip trong 1 kỳ), xem
-  // CLAUDE.md. "CQĐT chấp nhận" (D361/368) dùng CHUNG giá trị với "VKS trả hồ sơ" (D352/367) vì hệ
-  // thống không theo dõi riêng trường hợp CQĐT từ chối/không chấp nhận.
-  m.set(352, ttTraDi_TrucTiep.length);
-  m.set(361, ttTraDi_TrucTiep.length);
-  m.set(367, soBc(ttTraDi_TrucTiep));
-  m.set(368, soBc(ttTraDi_TrucTiep));
+  // ── Truy tố (dòng 260-401) — cùng nguyên tắc "đếm thẳng" ──
+  m.set(260, _fc(_sumSheetA("DS tồn cuối kỳ trước TT"), baoCao.truy_to.tonDauKy));
+  m.set(265, _fc(demBcSheet("DS tồn cuối kỳ trước TT"), baoCao.truy_to.tonDauBiCan));
+  m.set(261, _fc(_sumSheetA("DS phục hồi TĐC TT"), (tt.phucHoi || []).length));
+  m.set(266, _fc(demBcSheet("DS phục hồi TĐC TT"), soBc(tt.phucHoi)));
+  m.set(263, _fc(_sumSheetA("DS vụ tách TT"), (tt.tachVu || []).length));
+  m.set(268, _fc(demBcSheet("DS vụ tách TT"), soBc(tt.tachVu)));
+  m.set(264, _fc(_sumSheetA("DS nhập vụ TT"), baoCao.truy_to.soNhapVu));
+  m.set(269, _fc(demBcSheet("DS nhập vụ TT"), soBc(tt.nhapVu)));
+  // D270/D271 "mới thụ lý (ĐT→TT lần đầu)" — Lưu ý: "DS chuyển đến TT" (nguồn `tt.chuyenDen`) và
+  // "DS ĐT chuyển TT" (nguồn `dt.chuyenDi`) mô tả CÙNG 1 tập vụ (2 góc nhìn của đúng 1 sự kiện
+  // chuyển giai đoạn ĐT→TT) — dùng THẲNG "DS ĐT chuyển TT" (đã có sẵn cột phụ "Lần đầu?") thay vì
+  // thêm cột trùng lặp vào "DS chuyển đến TT". D270 = D93's sheet nhưng lọc "Lần đầu?"="x" (ngược
+  // lại D93 lọc "Lần đầu?"<>"x") — cùng 1 sheet, khác tiêu chí lọc.
+  m.set(270, _fc(_sfVuCrit("DS ĐT chuyển TT", "AK", "x"), dtChuyenDi_LanDau.length));
+  m.set(271, _fc(_cfBcCrit("DS ĐT chuyển TT", "AK", "x"), soBc(dtChuyenDi_LanDau)));
+  // D272=D93, D273=D96 (quy tắc chính thức ngành — CÙNG 1 tập bị can "chưa lần đầu" của
+  // dt.chuyenDi, 2 nhãn khác nhau cho ĐÚNG 1 con số) — alias TRỰC TIẾP qua tham chiếu ô C94/C97
+  // (không tính lại), đảm bảo khớp tuyệt đối vì D93/D96 giờ đã tự đếm thẳng độc lập.
+  m.set(272, _fc(_cRef(93), _mv(m, 93)));
+  m.set(273, _fc(_cRef(96), _mv(m, 96)));
+  // D274/D275 "nơi khác chuyển đến TT" = SUMIFS Nguồn trên "DS khởi tố TT" + toàn bộ "DS nhận lại
+  // CĐ TT" (đúng nghĩa formula ⇒ result cũng lọc lại đúng theo nguồn, KHÔNG dùng nguyên
+  // `tt.khoiToTrucTiep` không lọc như bản cũ — xem CLAUDE.md).
+  const ttNoiKhacKT = (tt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
+  m.set(274, _fc(`${_sfVuCrit("DS khởi tố TT", "AH", NHAN_NGUON.an_noi_khac_chuyen_den)}+${_sumSheetA("DS nhận lại CĐ TT")}`,
+    ttNoiKhacKT.length + (tt.nhanLai || []).length));
+  m.set(275, _fc(`${_cfBcCrit("DS khởi tố TT", "AH", NHAN_NGUON.an_noi_khac_chuyen_den)}+${demBcSheet("DS nhận lại CĐ TT")}`,
+    soBc(ttNoiKhacKT) + soBc(tt.nhanLai)));
+  m.set(276, _fc(_sumSheetA("DS chuyển đi TT"), (tt.hoanThanh?.chuyen_di || []).length));
+  m.set(277, _fc(demBcSheet("DS chuyển đi TT"), soBc(tt.hoanThanh?.chuyen_di)));
+  m.set(278, _fc(_sumSheetA("DS TT trả ĐT"), (tt.traDi || []).length));
+  m.set(279, _fc(demBcSheet("DS TT trả ĐT"), soBc(tt.traDi)));
+  // D280/D281 "Tổng số vụ/bị can VKS thụ lý giải quyết" — arithmetic tham chiếu các ô KHÁC trong
+  // chính sheet Biểu 2 (chuỗi thành phần ngành, xem CLAUDE.md item "Nâng cấp: tách đủ dòng...").
+  m.set(280, _fc(`${_cRef(260)}+${_cRef(261)}+${_cRef(262)}+${_cRef(263)}-${_cRef(264)}+${_cRef(270)}+${_cRef(272)}+${_cRef(274)}-${_cRef(276)}-${_cRef(278)}`,
+    _mv(m,260)+_mv(m,261)+_mv(m,262)+_mv(m,263)-_mv(m,264)+_mv(m,270)+_mv(m,272)+_mv(m,274)-_mv(m,276)-_mv(m,278)));
+  m.set(281, _fc(`${_cRef(265)}+${_cRef(266)}+${_cRef(267)}+${_cRef(268)}-${_cRef(269)}+${_cRef(271)}+${_cRef(273)}+${_cRef(275)}-${_cRef(277)}-${_cRef(279)}`,
+    _mv(m,265)+_mv(m,266)+_mv(m,267)+_mv(m,268)-_mv(m,269)+_mv(m,271)+_mv(m,273)+_mv(m,275)-_mv(m,277)-_mv(m,279)));
+  // D282/D285 "VKS đã giải quyết (truy tố + đình chỉ)" — BUG THẬT đã sửa, CÙNG LỚP với D83/D86 ở
+  // trên (suy ngược từ D344/tồn cuối kỳ TT trước đây) — nay ĐẾM THẲNG.
+  m.set(282, _fc(`${_sumSheetA("DS TT chuyển XX")}+${_sumSheetA("DS đình chỉ TT")}`,
+    (tt.chuyenDi || []).length + (tt.hoanThanh?.dinh_chi || []).length));
+  m.set(285, _fc(demBcSheetM(["DS TT chuyển XX", "DS đình chỉ TT"]),
+    soBc(tt.chuyenDi) + soBc(tt.hoanThanh?.dinh_chi)));
+  m.set(292, _fc(_sumSheetA("DS TT chuyển XX"), (tt.chuyenDi || []).length));
+  m.set(296, _fc(demBcSheet("DS TT chuyển XX"), soBc(tt.chuyenDi)));
+  // D293/D297 — round-trip (KHÔNG lần đầu) của TT→XX, cùng khuôn D93/D96 nhưng trên sheet
+  // "DS TT chuyển XX" (cột phụ "Lần đầu?" cũng thêm ở đây, xem addSheetVuKy).
+  m.set(293, _fc(`${_sumSheetA("DS TT chuyển XX")}-${_sfVuCrit("DS TT chuyển XX", "AK", "x")}`,
+    (tt.chuyenDi || []).length - ttChuyenDi_LanDau.length));
+  m.set(297, _fc(`${demBcSheet("DS TT chuyển XX")}-${_cfBcCrit("DS TT chuyển XX", "AK", "x")}`,
+    soBc(tt.chuyenDi) - soBc(ttChuyenDi_LanDau)));
+  m.set(300, _fc(_sumSheetA("DS đình chỉ TT"), (tt.hoanThanh?.dinh_chi || []).length));
+  m.set(310, _fc(demBcSheet("DS đình chỉ TT"), soBc(tt.hoanThanh?.dinh_chi)));
+  m.set(326, _fc(_sumSheetA("DS tạm đình chỉ TT"), (tt.hoanThanh?.tam_dinh_chi || []).length));
+  m.set(332, _fc(demBcSheet("DS tạm đình chỉ TT"), soBc(tt.hoanThanh?.tam_dinh_chi)));
+  m.set(344, _fc(_sumSheetA("DS tồn cuối kỳ TT"), baoCao.truy_to.tonCuoiKy));
+  m.set(346, _fc(demBcSheet("DS tồn cuối kỳ TT"), baoCao.truy_to.tonCuoiBiCanKy));
+  // D262/D267 "vụ mới nhận lại để ĐTBS = Toà (XX) trả hồ sơ về TT".
+  m.set(262, _fc(_sumSheetA("DS trả về TT"), (tt.traVe || []).length));
+  m.set(267, _fc(demBcSheet("DS trả về TT"), soBc(tt.traVe)));
+  // D352/361/367/368 "VKS trả hồ sơ ĐTBS trực tiếp (không tính vụ do Toà án yêu cầu)" — sheet
+  // "DS TT trả ĐT" đã có sẵn cột phụ "Trực tiếp" (AJ, xem B10 C58/C59 dùng chung sheet này) — dùng
+  // THẲNG cột đó, không cần thêm cột mới. "CQĐT chấp nhận" (D361/368) dùng CHUNG với "VKS trả hồ
+  // sơ" (D352/367) vì hệ thống không theo dõi riêng trường hợp CQĐT từ chối/không chấp nhận.
+  m.set(352, _fc(_sfVuCrit("DS TT trả ĐT", "AJ", "x"), ttTraDi_TrucTiep.length));
+  m.set(361, _fc(_sfVuCrit("DS TT trả ĐT", "AJ", "x"), ttTraDi_TrucTiep.length));
+  m.set(367, _fc(_cfBcCrit("DS TT trả ĐT", "AJ", "x"), soBc(ttTraDi_TrucTiep)));
+  m.set(368, _fc(_cfBcCrit("DS TT trả ĐT", "AJ", "x"), soBc(ttTraDi_TrucTiep)));
 
   return m;
 }
 
-function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC61) {
+function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC61, b10RefCua) {
   const m = new Map();
   const xx = baoCao.xet_xu.ds;
   const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
 
-  m.set(1, baoCao.xet_xu.tonDauKy);
-  m.set(4, (xx.phucHoi || []).length);
-  m.set(5, baoCao.xet_xu.tonDauBiCan);
-  m.set(8, soBc(xx.phucHoi));
-  // D15/16 "TA trả hồ sơ ĐTBS trong kỳ đến cuối kỳ CHƯA NHẬN LẠI" — `xxTraDi_KhongLapKy` (đã loại
-  // vụ round-trip TT→XX→TT cùng kỳ, đúng nghĩa "chưa nhận lại").
-  m.set(15, xxTraDi_KhongLapKy.length);
-  m.set(16, soBc(xxTraDi_KhongLapKy));
-  // D9/D12 "Số vụ án/bị cáo mới thụ lý xét xử sơ thẩm" — SUY RA từ đẳng thức ngành
-  // `D17 = D1+D2+D3+D4+D9-D15` (D2/D3/D4 = "hủy/ĐTBS mới nhận lại/TĐC phục hồi", hệ thống CHƯA
-  // track → = 0). Đảo lại: D9 = D17 - D1 + D15 (D17 = tongC60 = tồn cuối XX + đã xét xử + đình chỉ
-  // + tạm đình chỉ, xem tinhBieu10 C60/C61). Đã kiểm ĐÚNG TUYỆT ĐỐI trên 2 file ngành thật
-  // (10239.xlsx: D9 = 66-50+8 = 24 = D9 thật; D12 = 373-172+21 = 222 = D12 thật). Cách này bảo đảm
-  // cả `D17=D1+..+D9-D15` LẪN `D84=D17-D22-D52-D70` khớp số tồn RPC khi upload lên phần mềm ngành.
-  m.set(9, tongC60 - baoCao.xet_xu.tonDauKy + xxTraDi_KhongLapKy.length);
-  m.set(12, tongC61 - baoCao.xet_xu.tonDauBiCan + soBc(xxTraDi_KhongLapKy));
+  // D1/D5 "Tồn đầu kỳ — vụ/BC" — trỏ thẳng sheet DS (cùng nguyên tắc ĐT/TT, xem tinhBieu2).
+  m.set(1, _fc(_sumSheetA("DS tồn cuối kỳ trước XX"), baoCao.xet_xu.tonDauKy));
+  m.set(5, _fc(demBcSheet("DS tồn cuối kỳ trước XX"), baoCao.xet_xu.tonDauBiCan));
+  m.set(4, _fc(_sumSheetA("DS phục hồi TĐC XX"), (xx.phucHoi || []).length));
+  m.set(8, _fc(demBcSheet("DS phục hồi TĐC XX"), soBc(xx.phucHoi)));
+  // D15/16 "TA trả hồ sơ ĐTBS trong kỳ đến cuối kỳ CHƯA NHẬN LẠI" — sheet "DS XX trả TT" có thêm
+  // cột phụ "Chưa nhận lại" (xem addSheetVuKy trong xuatBaoCaoThangExcel) đánh dấu đúng tập
+  // `xxTraDi_KhongLapKy` (đã loại vụ round-trip TT→XX→TT cùng kỳ).
+  m.set(15, _fc(_sfVuCrit("DS XX trả TT", "AJ", "x"), xxTraDi_KhongLapKy.length));
+  m.set(16, _fc(_cfBcCrit("DS XX trả TT", "AJ", "x"), soBc(xxTraDi_KhongLapKy)));
+  // D9/D12 "Số vụ án/bị cáo mới thụ lý xét xử sơ thẩm" — GIỮ NGUYÊN logic suy từ đẳng thức ngành
+  // `D17=D1+D2+D3+D4+D9-D15` (đảo lại D9=D17-D1+D15; D2/D3/D4="hủy/ĐTBS mới nhận lại", hệ thống
+  // CHƯA track, quy tắc ngành xác nhận =0 — xem quy_tac_bieu_3.md) — KHÔNG phải bug đã phát hiện
+  // (khác D83/D86 Biểu 2, chỉ D17 = b10RefCua(60), KHÔNG trộn B10-cohort như D77/D79 Biểu 2). Chỉ
+  // đổi HÌNH THỨC sang công thức Excel (tham chiếu C2/C16/C6/C17 + b10RefCua), KHÔNG đổi giá trị.
+  const _r60 = b10RefCua && b10RefCua(60), _r61 = b10RefCua && b10RefCua(61);
+  m.set(9, _r60 ? _fc(`${_r60}-${_cRef(1)}+${_cRef(15)}`, tongC60 - baoCao.xet_xu.tonDauKy + xxTraDi_KhongLapKy.length)
+                : tongC60 - baoCao.xet_xu.tonDauKy + xxTraDi_KhongLapKy.length);
+  m.set(12, _r61 ? _fc(`${_r61}-${_cRef(5)}+${_cRef(16)}`, tongC61 - baoCao.xet_xu.tonDauBiCan + soBc(xxTraDi_KhongLapKy))
+                 : tongC61 - baoCao.xet_xu.tonDauBiCan + soBc(xxTraDi_KhongLapKy));
   // D17/18 "Tổng số vụ án/bị cáo Tòa án thụ lý xét xử sơ thẩm" — quy tắc chính thức
-  // `D17_10239=C60`/`D18_10239=C61` (KHÔNG cần trừ gì thêm, khác ĐT/TT — xem tinhBieu10 mục
-  // "Tổng thụ lý") — dùng THẲNG tongC60/tongC61 (= b10Tong[69]/[70], cộng dồn sẵn ở
-  // xuatBaoCaoThangExcel) thay vì tự dựng lại D1+D2+D3+D4+D9-D15 (D2/D3 "hủy/ĐTBS mới nhận lại"
-  // CHƯA tracked) — tránh sai sót do thiếu 2 thành phần đó.
-  m.set(17, tongC60);
-  m.set(18, tongC61);
-  m.set(22, (xx.hoanThanh?.da_xet_xu || []).length);
-  m.set(35, soBc(xx.hoanThanh?.da_xet_xu));
-  m.set(52, (xx.hoanThanh?.dinh_chi || []).length);
-  m.set(61, soBc(xx.hoanThanh?.dinh_chi));
-  m.set(70, (xx.hoanThanh?.tam_dinh_chi || []).length);
-  m.set(76, soBc(xx.hoanThanh?.tam_dinh_chi));
-  m.set(84, baoCao.xet_xu.tonCuoiKy);
-  m.set(86, baoCao.xet_xu.tonCuoiBiCanKy);
+  // `D17_10239=C60`/`D18_10239=C61` — TRỎ THẲNG ô TỔNG cột C60/C61 trên "Biểu B10" (b10RefCua),
+  // không tính lại (không đổi giá trị so với `tongC60`/`tongC61` — chỉ đổi sang công thức click-
+  // trace được).
+  m.set(17, _r60 ? _fc(_r60, tongC60) : tongC60);
+  m.set(18, _r61 ? _fc(_r61, tongC61) : tongC61);
+  m.set(22, _fc(_sumSheetA("DS đã xét xử XX"), (xx.hoanThanh?.da_xet_xu || []).length));
+  m.set(35, _fc(demBcSheet("DS đã xét xử XX"), soBc(xx.hoanThanh?.da_xet_xu)));
+  m.set(52, _fc(_sumSheetA("DS đình chỉ XX"), (xx.hoanThanh?.dinh_chi || []).length));
+  m.set(61, _fc(demBcSheet("DS đình chỉ XX"), soBc(xx.hoanThanh?.dinh_chi)));
+  m.set(70, _fc(_sumSheetA("DS tạm đình chỉ XX"), (xx.hoanThanh?.tam_dinh_chi || []).length));
+  m.set(76, _fc(demBcSheet("DS tạm đình chỉ XX"), soBc(xx.hoanThanh?.tam_dinh_chi)));
+  m.set(84, _fc(_sumSheetA("DS tồn cuối kỳ XX"), baoCao.xet_xu.tonCuoiKy));
+  m.set(86, _fc(demBcSheet("DS tồn cuối kỳ XX"), baoCao.xet_xu.tonCuoiBiCanKy));
 
   return m;
 }
@@ -12255,6 +12316,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const ttTraDi_TrucTiep = (baoCao.truy_to.ds.traDi || []).filter(vu => !_dtCDIds.has(vu.id) && _laTrucTiepVaoTT(vu));
   const xxTraDi_KhongLapKy = (baoCao.xet_xu.ds.traDi || []).filter(vu => !_ttCDIds.has(vu.id));
   const _ttTraDiTrucTiepIds = new Set(ttTraDi_TrucTiep.map(v => v.id));
+  // Set id cho cột phụ "Lần đầu?"/"Chưa nhận lại" (2026-09, Biểu 2/3 "đếm thẳng" — xem
+  // postExtraHeaders/postExtraFn của addSheetVu, và D93/96/293/297/15/16 ở tinhBieu2/tinhBieu3).
+  const _dtLanDauIds = new Set(dtChuyenDi_LanDau.map(v => v.id));
+  const _ttLanDauIds = new Set(ttChuyenDi_LanDau.map(v => v.id));
+  const _xxKhongLapKyIds = new Set(xxTraDi_KhongLapKy.map(v => v.id));
 
   const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList, ttTraDi_TrucTiep);
   // Dòng Tổng
@@ -12642,8 +12708,8 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const b10RefCua = (n) => (b10ColCuaC[n] ? `'Biểu B10'!${b10ColCuaC[n]}${b10TongRowNum}` : null);
     themSheetBieu2Va3(
       wb,
-      tinhBieu2(baoCao, biCanByVu, b10Tong[7], dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8], biCanBatTrongKy),
-      tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70]),
+      tinhBieu2(baoCao, biCanByVu, b10Tong[7], dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8], biCanBatTrongKy, b10RefCua),
+      tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70], b10RefCua),
       b10RefCua,
       giaTriKyTruoc,
     );
@@ -12703,32 +12769,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const THVao = {
     dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO,
   };
-  // demBcSheet: đếm dòng BỊ CAN THẬT trong 1 sheet (cột M = Họ tên BC — loại bỏ dòng giả
-  // "(Chưa có BC)" của vụ 0 bị can, xem BC_EMPTY).
-  // Bug thật đã sửa (2026-07-31, phát hiện qua file thật mở bằng Excel — mọi ô "-BC" tính bằng
-  // công thức này ra số khổng lồ kiểu 1048576/2097152/... = bội số đúng của 1.048.576, giới hạn
-  // SỐ DÒNG TỐI ĐA của 1 sheet Excel). Nguyên nhân: `$M:$M` tham chiếu NGUYÊN CỘT không giới hạn
-  // dòng — tiêu chí "<>(Chưa có BC)" khớp ĐÚNG cả hàng tiêu đề (dòng 1, chữ "Họ tên BC") LẪN mọi ô
-  // TRỐNG phía dưới dữ liệu thật (blank ≠ "(Chưa có BC)" nên COUNTIF vẫn tính là khớp) — với hàng
-  // trăm nghìn dòng trống trong 1 cột 1.048.576 dòng, kết quả bị thổi phồng gần bằng chiều cao cả
-  // sheet. Trước đây KHÔNG phát hiện được vì mọi lần kiểm chứng qua ExcelJS chỉ ĐỌC LẠI giá trị
-  // "result" đã cache lúc ghi (đúng), không thực sự để Excel TÍNH LẠI công thức như khi mở file
-  // thật — chỉ lộ ra khi mở bằng Excel thật (Excel tự recalc lúc mở, ghi đè giá trị cache đúng
-  // bằng kết quả công thức sai). Sửa: giới hạn phạm vi từ dòng 2 (bỏ header) tới dòng 1.048.576
-  // (không cần biết chính xác dòng cuối có dữ liệu) + trừ đi COUNTBLANK cùng phạm vi để triệt tiêu
-  // đúng phần dòng trống bị đếm nhầm — không đổi ý nghĩa số liệu, chỉ sửa công thức cho khớp lại.
-  const demBcSheet = (sn) => `COUNTIF('${sn}'!$M$2:$M$1048576,"<>(Chưa có BC)")-COUNTBLANK('${sn}'!$M$2:$M$1048576)`;
-  const demBcSheetM = (sheets) => sheets.map(demBcSheet).join("+") || "0";
-  // demBcSheetKy: giống trên nhưng CHỈ đếm BC có cột "Kỳ TK BC" (AF) khớp kỳ đang tính báo cáo —
-  // dùng riêng cho khối ĐT "mới" (Điều tra là giai đoạn duy nhất bị can bổ sung được vào vụ đã có
-  // sẵn — "Thêm bị can" — nên phải lọc đúng kỳ của chính sự kiện khoi_to_bican, không tính cả BC
-  // bổ sung sau vào kỳ vụ mới. Xem lý do đầy đủ ở tinhBieu10 khối C7-C24, cùng 1 nguyên tắc).
-  const demBcSheetKy = (sheets, dsKyTen) => {
-    const parts = [];
-    for (const sn of sheets) for (const kt of dsKyTen) parts.push(`COUNTIFS('${sn}'!$AF:$AF,"${kt}")`);
-    return parts.join("+") || "0";
-  };
-  // Bản JS song song — cache "result" cho ô có formula (Excel chưa recalc vẫn hiện đúng số).
+  // demBcSheet/demBcSheetM/demBcSheetKy (2026-09) — PROMOTED lên top-level, đặt cạnh
+  // tinhBieu2/tinhBieu3 (2 hàm đó cần dùng lại, không phải closure của xuatBaoCaoThangExcel nên
+  // không thể đọc const cục bộ ở đây) — xem định nghĩa + lịch sử bug "-BC ra 1048576" đã sửa ngay
+  // phía trên `function tinhBieu2`. Bản JS song song — cache "result" cho ô có formula (Excel chưa recalc vẫn hiện đúng số).
   // Dùng `_soBiCan` (đã tính đúng "tại thời điểm sự kiện" qua vuAnTuLogDocs, xem
   // add_bo_sung_bican_2026-08-03.sql) THAY VÌ đếm lại biCanByVu[vu.id] TOÀN BỘ (live) — nếu không,
   // "Cân đối số liệu" (dùng hàm này) sẽ LỆCH với tonCuoiBiCanKy (dùng đúng _soBiCan) mỗi khi có
@@ -12964,10 +13008,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // bcExtraHeaders/bcExtraFn (2026-08-29): cột phụ TÍNH THEO TỪNG BỊ CAN (bcExtraFn(bc, vu)),
   // nối SAU extraHeaders (cột theo vụ). Dùng cho "Mức độ NT (BC)" ở "DS TT chuyển XX" (C39-C42 đếm
   // bị can). Dòng vụ 0 bị can: điền rỗng đủ số cột để không lệch vị trí AJ.
-  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn, gomBiCanPhu, bcExtraHeaders, bcExtraFn) {
+  function addSheetVu(tenSheet, vuArr, extraHeaders, extraFn, gomBiCanPhu, bcExtraHeaders, bcExtraFn, postExtraHeaders, postExtraFn) {
     extraHeaders = extraHeaders || [];
     extraFn = extraFn || (() => []);
     bcExtraHeaders = bcExtraHeaders || [];
+    // postExtraHeaders/postExtraFn (2026-09, cho Biểu 2/3 "đếm thẳng" — cột "Lần đầu?"/"Chưa nhận
+    // lại" trên "DS ĐT chuyển TT"/"DS TT chuyển XX"/"DS XX trả TT") — CỜ CẤP VỤ đặt Ở CUỐI hàng
+    // (SAU bcExtraHeaders), KHÁC bcExtraHeaders (cấp BỊ CAN, có thể khác nhau giữa các dòng BC
+    // cùng vụ, VD "Mức độ NT (BC)"). Đặt sau (không chèn giữa) để KHÔNG xê dịch vị trí cột của
+    // bcExtraHeaders đã có sẵn (VD "Mức độ NT (BC)" ở AJ, dùng bởi B10_FORMULA C39-C42 — chèn cột
+    // "Lần đầu?" TRƯỚC nó sẽ đẩy nó sang AK, phải sửa B10_FORMULA theo — tránh hẳn rủi ro đó).
+    // LUÔN dùng `extraPart`-style (giá trị tính từ `vu`, KHÔNG phụ thuộc bcArr.length) để đúng
+    // ngay cả với vụ 0 bị can — khác bcExtra (chỉ điền cho dòng BC thật, dòng "(Chưa có BC)" luôn
+    // để trống qua `bcExtraRong`, không phù hợp cho 1 cờ CẤP VỤ cần đúng trên MỌI dòng của vụ đó).
+    postExtraHeaders = postExtraHeaders || [];
+    postExtraFn = postExtraFn || (() => []);
     const bcExtra = (bc, vu) => (bcExtraFn ? bcExtraFn(bc, vu) : []);
     const bcExtraRong = bcExtraHeaders.map(() => "");
     const rows = [];
@@ -12976,6 +13031,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     for (const vu of vuArr) {
       const vuPart = vuBaseRow(vu);
       const extraPart = extraFn(vu);
+      const postPart = postExtraFn(vu);
       const maDLVu = vuPrimaryDL_xuat(vu);  // criteria key cho SUMIF trong Biểu B10
       // Lọc bị can: `_bcIdsTon` (Set mã bị can từ RPC layTrangThaiBiCanTaiKy — as-of kỳ, base
       // kyThongKe) nếu có; ngược lại `_bcKyGioiHan` (kyThongKe của sự kiện, gắn bởi vuAnTuLogDocs —
@@ -12986,13 +13042,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         ? (biCanByVu[vu.id] || []).filter(bc => vu._bcIdsTon.has(bc.id))
         : locBiCanTheoKy(biCanByVu[vu.id] || [], vu._bcKyGioiHan, bcKyKhoiToMap, kyRankMap);
       if (bcArr.length === 0) {
-        // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, extraHeaders(theo vụ), bcExtraHeaders(theo BC — rỗng ở đây)
-        rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart, ...bcExtraRong]);
+        // Thứ tự: A=đếm, B=maDL, C-K=VU_H, L-AE=BC_H, extraHeaders(theo vụ), bcExtraHeaders(theo BC — rỗng ở đây), postExtraHeaders(theo vụ)
+        rows.push([1, maDLVu, ...vuPart, ...BC_EMPTY, ...extraPart, ...bcExtraRong, ...postPart]);
         rowsCanNhom.push(false);
         nhomKeys.push(vu.id);
       } else {
         bcArr.forEach((bc, i) => {
-          rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart, ...bcExtra(bc, vu)]);
+          rows.push([i === 0 ? 1 : "", maDLVu, ...vuPart, ...bcCellsRow(bc, i + 1, vu), ...extraPart, ...bcExtra(bc, vu), ...postPart]);
           rowsCanNhom.push(gomBiCanPhu ? i > 0 : false);
           nhomKeys.push(vu.id);
         });
@@ -13001,9 +13057,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // Trả về worksheet (2026-07-31) — để nơi gọi thu thập lại sheet chi tiết, ẩn mặc định + tô màu
     // tab theo giai đoạn (xem khối "Sheets chi tiết ẩn mặc định" phía dưới cùng hàm).
     const sheet = themSheetDanhSach(wb, tenSheet,
-      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders, ...bcExtraHeaders],
+      ["Đếm vụ", "Mã ĐL vụ", ...VU_H, ...BC_H, ...extraHeaders, ...bcExtraHeaders, ...postExtraHeaders],
       rows,
-      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12), ...bcExtraHeaders.map(() => 14)], nhomKeys);
+      [8, 24, ...VU_W, ...BC_W, ...extraHeaders.map(() => 12), ...bcExtraHeaders.map(() => 14), ...postExtraHeaders.map(() => 12)], nhomKeys);
     if (gomBiCanPhu) {
       // summaryBelow:false — dòng ĐẦU (đã có info vụ) nằm TRÊN, các dòng bị can phụ thu gọn NẰM
       // DƯỚI — đúng thứ tự đọc trên-xuống-dưới tự nhiên, cùng cách đã dùng cho khối "Nhập vụ".
@@ -13022,10 +13078,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const _ngaySoQD = v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""];
   // addSheetVuKy: giống addSheetVu nhưng tự prepend cột "Kỳ TK" — dùng cho mọi sheet VÀO/RA
   // (trừ DS tồn vì tồn là live, không gắn với 1 kỳ cụ thể)
-  function addSheetVuKy(tenSheet, vuArr, extraHeaders, extraFn, bcExtraHeaders, bcExtraFn) {
+  function addSheetVuKy(tenSheet, vuArr, extraHeaders, extraFn, bcExtraHeaders, bcExtraFn, postExtraHeaders, postExtraFn) {
     const h = ["Kỳ TK", ...(extraHeaders || [])];
     const f = v => [tenKyBaoCao(v), ...((extraFn || (() => []))(v))];
-    return addSheetVu(tenSheet, vuArr, h, f, false, bcExtraHeaders, bcExtraFn);
+    return addSheetVu(tenSheet, vuArr, h, f, false, bcExtraHeaders, bcExtraFn, postExtraHeaders, postExtraFn);
   }
 
   // "DS bổ sung BC {gs}" (2026-08-03) — sheet MỚI cho bị can THÊM SAU vào 1 vụ ĐÃ CÓ SẴN (sự kiện
@@ -13537,11 +13593,17 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       // của tội danh chính CỦA CHÍNH bị can dòng đó (field bc.mucDoNghiemTrong, fallback suy theo
       // điều luật BC). CHỈ "DS TT chuyển XX" được B10_FORMULA COUNTIFS vào (C39-C42, đếm BỊ CAN,
       // tổng = C37) — thêm cho cả "DS ĐT chuyển TT" để 2 sheet đối xứng (ĐT không có khối này).
-      // Vị trí cột giữ nguyên AJ (Kỳ TK=AG, Ngày chuyển=AH, Số QĐ=AI, Mức độ NT (BC)=AJ).
+      // Vị trí cột giữ nguyên AJ (Kỳ TK=AG, Ngày chuyển=AH, Số QĐ=AI, Mức độ NT (BC)=AJ). Thêm cột
+      // phụ CẤP VỤ "Lần đầu?" (2026-09, Biểu 2 D93/96/293/297 — xem tinhBieu2) ở CUỐI (postExtra,
+      // AK) — đặt SAU "Mức độ NT (BC)" (không chèn giữa) để KHÔNG xê dịch AJ, tránh phải sửa
+      // B10_FORMULA C39-C42 (đang tham chiếu $AJ:$AJ của sheet "DS TT chuyển XX").
+      const lanDauIds = gd === "dieu_tra" ? _dtLanDauIds : _ttLanDauIds;
       add(`DS ${gs} chuyển ${gsNext}`, d.chuyenDi||[], ["Ngày chuyển", "Số QĐ"],
         v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""],
         ["Mức độ NT (BC)"],
-        (bc) => [NHAN_MUC_DO_NT[bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc))] || ""]);
+        (bc) => [NHAN_MUC_DO_NT[bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc))] || ""],
+        ["Lần đầu?"],
+        (vu) => [lanDauIds.has(vu.id) ? "x" : ""]);
     }
     // ── RA: trả hồ sơ (từ giai đoạn này về giai đoạn trước) ──
     // Lưu ý: cùng dữ liệu với "DS trả về {gsPrev}" nhưng từ góc nhìn giai đoạn nguồn.
@@ -13555,7 +13617,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         add(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ", "Trực tiếp"],
           v => [...(_ngaySoQD(v)), _ttTraDiTrucTiepIds.has(v.id) ? "x" : ""]);
       } else {
-        add(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ"], _ngaySoQD);
+        // gd === "xet_xu": thêm cột phụ CẤP VỤ "Chưa nhận lại" (postExtra, AJ — sheet này không có
+        // bcExtraHeaders nên "Chưa nhận lại" chiếm luôn vị trí ngay sau "Số QĐ") — đánh dấu đúng
+        // tập `xxTraDi_KhongLapKy` (2026-09, Biểu 3 D15/16 — xem tinhBieu3).
+        add(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ"], _ngaySoQD, undefined, undefined,
+          ["Chưa nhận lại"], (vu) => [_xxKhongLapKyIds.has(vu.id) ? "x" : ""]);
       }
     }
 

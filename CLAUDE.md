@@ -2,6 +2,79 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Nhánh `bieu2-3-cong-thuc-truc-tiep` — Biểu 2/3: MỌI ô số liệu = công thức Excel trỏ thẳng sheet DS, sửa bug D86 ĐT sai 224→159 (2026-09-04, `qlahs-sup.html`, tách từ `main`, CHƯA merge/deploy)
+
+Dũng phát hiện Biểu 2 sai hệ thống trên dữ liệu **thật kỳ 08/2026**: **D86** ("Số bị can CQĐT đã
+giải quyết = đề nghị truy tố + đình chỉ", Điều tra) hệ thống tính **224**, đúng ra phải **159**
+(ĐT→TT 159 BC + đình chỉ 0) — dư 65. D83 (vụ) dư ~6 tương tự. Đưa ra 1 kế hoạch sửa đầy đủ (đã
+review/test ở phiên khác) rồi giao lại cho phiên này thực thi trên nhánh riêng.
+
+**Nguyên nhân gốc**: `tinhBieu2` không đếm thẳng — tính GIÁN TIẾP `D86 = D79(Tổng thụ lý) −
+D141(tạm đình chỉ) − D156(tồn cuối kỳ RPC)` (đảo ngược đẳng thức ngành `D156=D79-D86-D141`). D79
+tự nó trộn **3 hệ đếm không khớp nhau** (RPC Postgres tồn đầu/cuối, B10 C7 "cohort nhân khẩu" —
+gồm bị can bổ sung không có dòng "vào" đối ứng ở Biểu 2, và JS `soBc`) nên D79 đã lệch sẵn, kéo
+D83/D86 sai theo — dù đẳng thức `D154=D77-D83-D134`/`D156=D79-D86-D141` "trông có vẻ" luôn khớp
+(vì D83/D86 được TÍNH RA để ép đẳng thức đó đúng — tự kiểm tra bằng chính công thức sinh ra nó là
+tautology, không phát hiện được sai). D282/D285 (Truy tố, cùng lớp bug — "TT đã giải quyết") cũng
+suy ngược tương tự từ D344/tồn cuối kỳ TT.
+
+**Đã sửa — nguyên tắc mới: MỌI ô Biểu 2/3 có sheet "DS ..." tương ứng (đã có sẵn trong Xuất Excel
+báo cáo tháng) ĐỀU ghi CÔNG THỨC Excel thật** (`SUM`/`COUNTIF(S)` trực tiếp trên sheet đó — "đếm
+thẳng"), không còn suy ngược qua đẳng thức khác. `result` (cache JS hiển thị khi chưa recalc) LUÔN
+tính bằng ĐÚNG cách công thức đếm — không bịa/suy ngược riêng. Áp dụng cho ~50 dòng: Điều tra
+(57/64/59/66/60/67/61/68/62/69/71-76/77/79/**83/86**/92/95/97/98/100/117/134/141/154/156), Truy tố
+(260-281/**282/285**/292/293/296/297/300/310/326/332/344/346/352/361/367/368), Xét xử/Biểu 3
+(1/4/5/8/9/12/15/16/17/18/22/35/52/61/70/76/84/86). **D83/D86/D282/D285 là 4 dòng SỬA BUG THẬT**
+(đếm thẳng thay suy ngược); các dòng còn lại giữ NGUYÊN giá trị/logic đã kiểm chứng trước đó
+(D9/D12/D17/D18 Biểu 3 vẫn suy từ đẳng thức ngành `D17=D1+D2+D3+D4+D9-D15` — KHÔNG đổi, vì không bị
+lỗi trộn-hệ-đếm như D83/D86 ĐT: D17 chỉ alias `b10RefCua(60)`, không trộn B10-cohort) — chỉ đổi
+HÌNH THỨC ghi (JS số tĩnh → `{formula,result}` tham chiếu Excel), không đổi con số.
+
+**Hạ tầng mới**:
+- **Helpers top-level mới** (`_sumSheetA`/`_sumSheetsA`/`_cfBcCrit`/`_sfVuCrit`/`_fc`/`_mv`/
+  `_cRef`, đặt ngay trước `function tinhBieu2`) — `_cfBcCrit`/`_sfVuCrit` = COUNTIFS/SUMIF theo 1
+  tiêu chí phụ (Nguồn/"Lần đầu?"/"Trực tiếp"/"Chưa nhận lại") trên TOÀN sheet (không lọc Mã ĐL như
+  `mkCfBc`/`mkSfVu` của B10 — Biểu 2/3 không tách theo tội danh); an toàn khỏi bug "COUNTIF ra
+  1.048.576" (xem mục cũ bên dưới) vì LUÔN có ≥2 tiêu chí AND. `_fc(formula,result)` bọc thành
+  `{formula:"="+formula, result}`; `_mv(m,md)` đọc lại số từ 1 ô Map (chấp nhận cả số thường lẫn
+  đã-là-{formula,result}); `_cRef(md)` = tham chiếu Excel `C{md+1}` (dòng md khác TRONG CÙNG sheet
+  Biểu 2/3 — dùng cho các dòng arithmetic như D77/D79/D280/D281/D9/D12/D17/D18).
+- **`demBcSheet`/`demBcSheetM`/`demBcSheetKy` PROMOTED lên top-level** (trước đây `const` cục bộ
+  bên trong `xuatBaoCaoThangExcel`, khai báo SAU vị trí Biểu 2/3 cần — đã xoá bản cục bộ, giữ ĐÚNG
+  1 định nghĩa; "Tổng hợp báo cáo"/"Cân đối số liệu" dùng lại tên cũ không đổi gì).
+- **`addSheetVu`/`addSheetVuKy` thêm `postExtraHeaders`/`postExtraFn`** (2 tham số trailing optional
+  mới) — cột phụ CẤP VỤ đặt Ở CUỐI hàng (SAU `bcExtraHeaders`), dùng `extraPart`-style (tính từ
+  `vu`, đúng trên MỌI dòng kể cả vụ 0 bị can — khác `bcExtra` chỉ điền dòng BC thật). Dùng để thêm:
+  **"Lần đầu?"** (cột AK, sau "Mức độ NT (BC)"=AJ) vào `DS ĐT chuyển TT`/`DS TT chuyển XX` — CỐ Ý
+  đặt SAU AJ (không chèn giữa) để KHÔNG xê dịch `B10_FORMULA` C39-C42 (đang tham chiếu $AJ:$AJ của
+  "DS TT chuyển XX") — tránh phải sửa B10_FORMULA dù kế hoạch gốc có nhắc dùng `extraFn` (vụ-level,
+  sẽ chèn giữa và xê dịch AJ) — chọn cách này để giữ đúng ràng buộc "KHÔNG động vào B10_FORMULA".
+  **"Chưa nhận lại"** (cột AJ, sau "Số QĐ") vào `DS XX trả TT` — đánh dấu tập `xxTraDi_KhongLapKy`.
+- `tinhBieu2`/`tinhBieu3` nhận thêm tham số `b10RefCua` (đã có sẵn ở `xuatBaoCaoThangExcel`, dùng
+  cho cột "Kiểm tra" liên biểu từ trước) — D71/D72/D17/D18 (Biểu 3) giờ trỏ THẲNG ô TỔNG cột
+  C6/C7/C60/C61 trên sheet "Biểu B10" qua công thức (trước đây chỉ khớp bằng giá trị JS tĩnh, quy
+  tắc `C6_10173=D71` chỉ tự kiểm ở cột "Kiểm tra" riêng — nay D71 CHÍNH NÓ là công thức, khớp tuyệt
+  đối, không thể lệch).
+
+**Đã kiểm chứng bằng test cô lập trong Node** (trích NGUYÊN VĂN `NHAN_NGUON` + toàn bộ helper mới +
+`tinhBieu2`/`tinhBieu3` từ chính `qlahs-sup.html`, chạy qua `vm.runInContext` — không phải chép lại
+logic) — dựng `baoCao` giả lập ĐÚNG theo số liệu kỳ 08/2026 Dũng cung cấp trong kế hoạch (ĐT: đề
+nghị TT 33 vụ/159 BC, đình chỉ 0, tạm đình chỉ 17 vụ/0 BC, tồn đầu 319 vụ/806 BC, tồn cuối 326
+vụ/793 BC; TT: TT→XX 7 vụ/9 BC, TT trả ĐT 11 vụ/54 BC, tồn đầu 42 vụ/219 BC, tồn cuối 60 vụ/323
+BC) — **D86 ra ĐÚNG 159 (không còn 224), D83=33, D282=7, D285=9** — khớp chính xác con số kỳ vọng
+trong kế hoạch. Cũng xác nhận D93/D96 (round-trip ĐT→TT) trừ đúng theo cột "Lần đầu?", D272/D273
+alias đúng `=C94`/`=C97` (bằng D93/D96), D57/D154 (tồn đầu/cuối ĐT) trỏ đúng sheet. Biên dịch qua
+`@babel/core`+`@babel/preset-react` toàn bộ `qlahs-sup.html` — sạch, không lỗi cú pháp.
+
+**CHƯA kiểm chứng bằng Excel THẬT** (không có tài khoản `admin@qlva.local` trong phiên này) — theo
+đúng quy trình đã ghi nhiều lần trong file này, TRƯỚC khi merge/deploy cần: đăng nhập
+`qlahs-sup.web.app`, xuất báo cáo kỳ 08/2026 thật, chặn `URL.createObjectURL` bắt Blob →
+`ExcelJS.xlsx.load` ngay trong trình duyệt, đọc **chuỗi công thức** (`cell.formula`, không chỉ
+`result`) của từng ô C Biểu 2/3 xác nhận trỏ đúng sheet, đối chiếu D86=159/D282=7/D285=9 trên dữ
+liệu thật, và mở bằng Excel THẬT xem cột "Kiểm tra" — các dòng ✗ còn lại (nếu có) giờ là TÍN HIỆU
+THẬT (VD `D154=D77-D83-D134` lệch ⇒ hé lộ chênh giữa B10-cohort và đếm thẳng, đúng ý Dũng muốn thấy
+— không còn tự động "luôn ✓" giả như hệ thống cũ). Chưa merge vào `main`, chưa deploy.
+
 ## Nhánh `bieu2-hoan-thien` — 4 cải tiến Excel báo cáo (2026-08-30, `qlahs-sup.html`, tách từ `main` sau khi `main` đã có toàn bộ Biểu 2/3/10 + fix ngành)
 
 Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 commit, ĐÃ kiểm chứng Excel thật (kỳ
