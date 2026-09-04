@@ -5124,12 +5124,9 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
 
   const luu = () => {
     if (!ngay) { hd.setLoi("Cần nhập ngày tách vụ."); return; }
-    // Vụ 0 bị can (hoặc chưa chọn ai) vẫn tách được — tạo 1 vụ mới trống, dùng cho trường hợp
-    // "hành vi chưa rõ đối tượng" cần tách ra theo dõi riêng trước khi xác định được bị can.
-    if (biCanList.length > 0 && idsChuyenHan.size === 0 && idsSaoChep.size === 0) {
-      hd.setLoi("Cần chọn ít nhất 1 bị can \"Chuyển hẳn\" hoặc \"Ở cả 2 vụ\" — hoặc để trống toàn bộ nếu vụ mới chưa xác định được bị can.");
-      return;
-    }
+    // Không chặn khi không ai "Chuyển hẳn"/"Ở cả 2 vụ": để TẤT CẢ bị can ở lại vụ gốc = tách ra 1
+    // vụ mới TRỐNG (chưa xác định bị can) — hợp lệ, dùng cho "hành vi chưa rõ đối tượng" cần theo
+    // dõi riêng. Trước đây báo lỗi đòi chọn "để trống toàn bộ" nhưng UI không có lựa chọn đó.
 
     hd.batDauXacNhanKy(async (kyId) => {
       const now = new Date();
@@ -5160,7 +5157,8 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
       ) : (
         <>
           <label className="text-xs text-slate-500 block mb-1">
-            Chọn bị can cho vụ mới ("Ở cả 2 vụ" dùng khi 1 người có nhiều hành vi, chỉ tách riêng 1 hành vi)
+            Chọn bị can cho vụ mới ("Ở cả 2 vụ" dùng khi 1 người có nhiều hành vi, chỉ tách riêng 1 hành vi).
+            Để tất cả ở "Ở lại vụ gốc" ⇒ tách ra 1 vụ mới trống, chưa có bị can.
           </label>
           <div className="mb-3">
             <ChonBiCan biCanList={biCanList} trangThai={trangThaiBiCan} onDoi={doiTrangThaiBiCan} nhanChuyenHan="Chuyển hẳn sang vụ mới" />
