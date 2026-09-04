@@ -1136,6 +1136,10 @@ const NHAN_TRANG_THAI = {
 const NHAN_NGUON = {
   an_khoi_to_moi: "Án khởi tố mới", tin_bao_khoi_to_len: "Tin báo khởi tố lên",
   an_noi_khac_chuyen_den: "Án nơi khác chuyển đến", phuc_hoi_dieu_tra: "Phục hồi điều tra",
+  // Vụ được TÁCH RA từ vụ khác (qua tachVuAn) — KHÔNG phải án khởi tố mới, đánh dấu riêng để
+  // phân biệt khi tra cứu/lọc. Không tính vào C6 "Khởi tố mới" của Biểu B10 (vụ tách nằm ở nhóm
+  // sự kiện `tach_vu`, không có `khoi_to_vu` — xem tinhBieu10/NGUON_MOI_THAT_B10).
+  tach_vu_an: "Tách vụ án",
 };
 const NHAN_SU_KIEN = {
   khoi_to_vu: "Khởi tố vụ", khoi_to_bican: "Khởi tố bị can", chuyen_giai_doan: "Chuyển giai đoạn",
@@ -1295,10 +1299,13 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
   batch.set(db.collection("vuan").doc(maVuMoi), {
     maNoiSinh: maVuMoi, maNganhCap: null,
     tenVu: tinhTenVu(biCanVuMoi) || vuGoc.tenVu,
-    nguon: vuGoc.nguon, nguonChiTiet: vuGoc.nguonChiTiet || "",
+    // Nguồn = "Tách vụ án" (KHÔNG kế thừa nguồn vụ gốc — vụ tách không phải án khởi tố mới).
+    nguon: "tach_vu_an", nguonChiTiet: "",
     hanDieuTra: vuGoc.hanDieuTra || null, soQdKtva: vuGoc.soQdKtva || "", ngayQdKtva: vuGoc.ngayQdKtva || null,
     ksvChinh: vuGoc.ksvChinh || "", ksvHoTro: vuGoc.ksvHoTro || [], dtvCbdt: vuGoc.dtvCbdt || "",
-    donViThuLy: vuGoc.donViThuLy || "", dieuLuat: tinhDieuLuat(biCanVuMoi),
+    // Điều luật: theo bị can chuyển sang vụ mới; nếu vụ mới CHƯA có bị can nào (tách "hành vi chưa
+    // rõ đối tượng") thì tự lấy điều luật của vụ gốc thay vì để trống.
+    donViThuLy: vuGoc.donViThuLy || "", dieuLuat: tinhDieuLuat(biCanVuMoi) || vuGoc.dieuLuat || "",
     coQuanThuLy: vuGoc.coQuanThuLy, trangThai: trangThaiVuMoi,
     noiChuyenDen: "", nhapVaoVu: null, vuGoc: vuGoc.id, soDemTach: 0,
     anDiem: vuGoc.anDiem || false, uyQuyenXetXu: vuGoc.uyQuyenXetXu || "", phienToaRutKN: vuGoc.phienToaRutKN || false,
@@ -5805,6 +5812,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
               <option value="tin_bao_khoi_to_len">Tin báo khởi tố lên</option>
               <option value="an_noi_khac_chuyen_den">Án nơi khác chuyển đến</option>
               <option value="phuc_hoi_dieu_tra">Phục hồi điều tra</option>
+              <option value="tach_vu_an">Tách vụ án</option>
             </select>
           </Truong>
           {nguon === "an_noi_khac_chuyen_den" && (
@@ -6428,6 +6436,7 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
               <option value="tin_bao_khoi_to_len">Tin báo khởi tố lên</option>
               <option value="an_noi_khac_chuyen_den">Án nơi khác chuyển đến</option>
               <option value="phuc_hoi_dieu_tra">Phục hồi điều tra</option>
+              <option value="tach_vu_an">Tách vụ án</option>
             </select>
           </Truong>
           {nguon === "an_noi_khac_chuyen_den" && (
@@ -9516,6 +9525,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
             <option value="tin_bao_khoi_to_len">Tin báo khởi tố lên</option>
             <option value="an_noi_khac_chuyen_den">Án nơi khác chuyển đến</option>
             <option value="phuc_hoi_dieu_tra">Phục hồi điều tra</option>
+            <option value="tach_vu_an">Tách vụ án</option>
           </select>
         </Truong>
         {ed.nguon === "an_noi_khac_chuyen_den" && (
