@@ -188,6 +188,20 @@ vụ đang giải quyết, xác nhận CẢ KSV chính lẫn hỗ trợ đều h
 modal chi tiết (Tổng/GQ theo kỳ); (3) mở modal chi tiết, xác nhận mặc định sắp xếp Tổng V giảm dần
 mà không cần bấm gì thêm.
 
+**Sửa tiếp lần 4 (cùng ngày) — ẩn khối "Tổng" (cột N-S) trong Excel xuất ra.** Dũng: *"hide cột N
+đến cột S"* — trong `xuatExcelPhanCongChiTiet` (19 cột: A=KSV, B-E=Điều tra, F-I=Truy tố, J-M=Xét
+xử, N-S=khối Tổng gồm Tồn đầu kỳ/Tổng/Đã giải quyết/Tồn cuối kỳ/Đang GQ/Tỉ lệ GQ), N-S đúng khớp
+`colsTong` (6 cột cuối). Đã thêm `ws.getColumn(c).hidden = true` cho đúng dải cột đó (tính động
+qua `tongSoCot - colsTong.length + 1` tới `tongSoCot`, cùng công thức đã dùng để tô đậm font khối
+Tổng — không hardcode chỉ số cột) — **CHỈ ẩn cột khi mở file, dữ liệu vẫn còn nguyên** (không xoá
+cột/dữ liệu), Dũng có thể tự "Hiện cột" lại trong Excel nếu cần đối chiếu Tồn đầu/cuối kỳ. Bảng
+trên MÀN HÌNH (modal) không đổi gì — chỉ áp dụng cho file Excel xuất ra.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch. **CHƯA
+mở thử file Excel thật bằng Excel** (không có tài khoản Supabase để xuất báo cáo thật trong phiên
+này) — nên Dũng tự xuất thử 1 lần trên `qlahs-sup.web.app` xác nhận cột N-S (khối "Tổng") bị ẩn
+đúng khi mở file, dữ liệu vẫn còn khi bấm hiện lại cột.
+
 ## ✅ ĐÃ MERGE `bieu2-3-cong-thuc-truc-tiep` VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-09-05, theo xác nhận Dũng "đúng rồi ok chạy đi" sau khi tự kiểm tra D86/D72 trên Excel thật kỳ 08/2026 tại `qlahs-sup.web.app`)
 
 Gồm cả 2 mục ngay dưới đây: sửa bug D86 ĐT (224→159, "công thức Excel trỏ thẳng sheet DS") VÀ sửa

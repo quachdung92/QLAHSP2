@@ -18443,6 +18443,10 @@ async function xuatExcelPhanCongChiTiet(hienThi, ketQua) {
   const doRongGD = [16, 16, 12, 10];
   const doRong = [26, ...doRongGD, ...doRongGD, ...doRongGD, 16, 16, 16, 16, 12, 10];
   doRong.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  // Ẩn khối "Tổng" (cột N-S: Tồn đầu kỳ/Tổng/Đã giải quyết/Tồn cuối kỳ/Đang GQ/Tỉ lệ GQ) khi mở
+  // file — theo yêu cầu Dũng (2026-09), bảng gọn hơn vì đã có đủ 3 khối theo giai đoạn. Dữ liệu vẫn
+  // còn nguyên, chỉ ẩn cột (Excel: bấm chọn 2 cột 2 bên rồi "Hiện cột" nếu cần đối chiếu lại).
+  for (let c = tongSoCot - colsTong.length + 1; c <= tongSoCot; c++) ws.getColumn(c).hidden = true;
 
   hienThi.forEach((r, idx) => {
     const gd = (g) => [gopVuBc(g.tongVu, g.tongBc), gopVuBc(g.gqVu, g.gqBc), gopVuBc(g.dangVu, g.dangBc), g.tiLe != null ? g.tiLe : null];
