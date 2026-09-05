@@ -2,7 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Nhánh `phan-cong-bao-cao-chi-tiet` — "Phân công hồ sơ": báo cáo chi tiết theo kỳ (mới/đang GQ/tỉ lệ giải quyết mỗi KSV) (2026-09-05, `qlahs-sup.html`, tách từ `main`, CHƯA merge/deploy)
+## ✅ ĐÃ MERGE `phan-cong-bao-cao-chi-tiet` VÀO `main` + ĐÃ DEPLOY `qlahsp2.web.app` (2026-09-05, theo yêu cầu Dũng "deloy site chính và merge main")
+
+Merge `--no-ff` vào `main` (commit `130bb1d`, không xung đột), push `main`, `./deploy.sh prod` —
+HTTP 200. **CHƯA deploy `qlahs-sup.web.app`** (site test riêng) trong đợt này — nếu cần đối chiếu
+song song 2 site, chạy thêm `./deploy.sh sup`. Đọc mục ngay dưới đây để biết chi tiết tính năng —
+mọi dòng "CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật" trong mục đó **VẪN CÒN ĐÚNG**,
+merge/deploy lần này KHÔNG đi kèm bước kiểm chứng UI thật nào mới (không có tài khoản đăng nhập
+trong phiên deploy) — Dũng nên tự kiểm chứng trên `qlahsp2.web.app` theo đúng checklist đã ghi.
+
+## Nhánh `phan-cong-bao-cao-chi-tiet` — "Phân công hồ sơ": báo cáo chi tiết theo kỳ (mới/đang GQ/tỉ lệ giải quyết mỗi KSV) (2026-09-05, `qlahs-sup.html`, tách từ `main`, ĐÃ merge/deploy — xem mục ngay trên)
 
 Theo yêu cầu Dũng: *"tạo 1 branch mới ở tab phân công hồ sơ thêm tính năng xuất báo cáo chi tiết
 để 1. chọn các tháng, kỳ báo cáo trước khi xuất 2. Xác định cụ thể từng người được phân bao nhiêu
