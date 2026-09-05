@@ -2,6 +2,206 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Nhánh `phan-cong-bao-cao-chi-tiet` — "Phân công hồ sơ": báo cáo chi tiết theo kỳ (mới/đang GQ/tỉ lệ giải quyết mỗi KSV) (2026-09-05, `qlahs-sup.html`, tách từ `main`, CHƯA merge/deploy)
+
+Theo yêu cầu Dũng: *"tạo 1 branch mới ở tab phân công hồ sơ thêm tính năng xuất báo cáo chi tiết
+để 1. chọn các tháng, kỳ báo cáo trước khi xuất 2. Xác định cụ thể từng người được phân bao nhiêu
+vụ án/bị can. hiện đang giải quyết bao nhiêu vụ án/bị can ở từng giai đoạn. tỉ lệ giải quyết..."*
+— module `PhanCongHoSoModule` trước đây (xem mục "Module mới 'Phân công hồ sơ'..." bên dưới) chỉ
+có 1 bảng nhanh (khối lượng ĐANG thụ lý LIVE + 2 vụ Điều tra gần nhất mỗi KSV), không có khái niệm
+"mới"/"đã giải quyết" theo kỳ, cũng không có tỉ lệ giải quyết.
+
+**Nút mới "📊 Báo cáo chi tiết theo kỳ"** (cạnh nút "⬇ Tải Excel" cũ, không đụng bảng/Excel cũ) mở
+modal `PhanCongBaoCaoChiTietModal` — bước 1 chọn 1/nhiều kỳ báo cáo (checkbox, kể cả kỳ lưu trữ,
+"Chọn tất cả"/"Bỏ chọn tất cả"/"Từ đây →" theo từng dòng — xem mục sửa lại ngay dưới), bước 2 xem
+bảng tổng hợp theo KSV (29 cột: 3 giai đoạn × [Tổng V/BC, GQ V/BC, Đang GQ V/BC, Tỉ lệ GQ] + khối
+Tổng 7 cột gồm cả Tồn đầu/cuối kỳ + Tỉ lệ GQ) rồi xuất Excel (gộp Vụ+BC thành 1 cột text).
+
+**2 hàm module-level mới, đặt ngay trước `PhanCongHoSoModule`**:
+- `gomTheoKsv(map, entries, chiBiCan)` — helper gộp 1 mảng entry (từ `baoCao[gd].ds.*`) theo
+  `ksvChinh` HIỆN TẠI của vụ (field trên chính entry, vì `vuAnTuLogDocs`/`vuBiCanTuLogDocs` luôn
+  spread đủ field `vuan` — xem CLAUDE.md phần `tinhBaoCaoKyTuLog`). `chiBiCan=true` dùng cho
+  `d.boSungBiCan` (mỗi entry = 1 bị can bổ sung, không cộng vào `soVu` — đúng cách
+  `tinhBaoCaoKyTuLog` đã tính `bcMoi`/`ds.boSungBiCan`, KHÔNG tự tính lại theo cách khác).
+- `tinhPhanCongTheoKy(dsKyDaChonDesc, listBaoCaoDesc)` — với MỖI kỳ đã chọn, gọi `tinhBaoCaoKy(ky,
+  timKyTruoc(ky, listBaoCaoDesc))` (y hệt Kỳ báo cáo, tận dụng cache `baoCaoLuu` nếu kỳ đã chốt),
+  cộng dồn "mới"/"giải quyết" của TỪNG giai đoạn theo KSV qua `gomTheoKsv` (đủ cả 7 nguồn "vào":
+  `khoiToTrucTiep`/`tachVu`/`chuyenDen`/`traVe`/`phucHoi`/`nhanLai`/`boSungBiCan`, và đủ "ra":
+  `chuyenDi`/`traDi`/`nhapVu`/`hoanThanh.*` qua `HOAN_THANH_TRUONG_TONG` — **CỐ TÌNH không tái
+  dùng `tinhBaoCaoTongHopNhieuKy`** đã có sẵn ở Kỳ báo cáo vì hàm đó THIẾU `phucHoi`/`nhanLai`/
+  `boSungBiCan` trong `ds` gộp — 1 gap có sẵn từ trước, phát hiện lúc đọc code nhưng KHÔNG sửa
+  inline (ngoài phạm vi yêu cầu lần này), viết hàm riêng để không kế thừa gap đó). "Tồn đầu/cuối
+  kỳ" theo KSV lấy qua `layTonTheoKyRPC`+`tinhDsTonTheoKy` (as-of kỳ SỚM NHẤT/MUỘN NHẤT trong nhóm
+  chọn — đúng RPC "as-of" đã kiểm chứng kỹ ở Kỳ báo cáo, không viết query mới). Nhận thẳng
+  `dsKyDaChonDesc` theo ĐÚNG thứ tự desc (mới→cũ) của cache `"kybaocao:desc"` — KHÔNG tự sort lại
+  theo ngày (né lặp lại bug đã ghi nhận nhiều lần trong file này: `ngayBatDau` trên Supabase là
+  chuỗi ISO thường, `.toMillis?.() ?? 0` luôn ra 0 làm sort thành no-op — xem mục
+  `KyBaoCaoModule`/`dsKyChon` bug đang chờ xử lý ở cuối mục này).
+
+**`PhanCongBaoCaoChiTietModal`** — nhận `bangHienTai` (= `bang` đã tính sẵn ở component cha, khối
+lượng ĐANG thụ lý LIVE theo KSV/giai đoạn) để dùng LẠI đúng số đó cho cột "Đang GQ" (không tính lại
+theo cách khác, tránh 2 nơi lệch nhau). Bảng kết quả (`hienThi`, sortable qua click header) tính
+Tỉ lệ GQ = `Đã giải quyết ÷ (Tồn đầu kỳ sớm nhất + Mới trong các kỳ đã chọn)` — mẫu số là TỔNG khối
+lượng phải xử lý trong khoảng thời gian đó, không phải chỉ số mới (vượt 100% = giải quyết cả phần
+tồn cũ nhiều hơn số mới nhận thêm, không phải lỗi).
+
+**`xuatExcelPhanCongChiTiet(hienThi, ketQua)`** — ExcelJS, 2 hàng header nhóm (Điều tra/Truy tố/
+Xét xử/Tổng, tô màu theo `MAU_GIAI_DOAN`-style) + cột con, viền/zebra-row/freeze-pane theo đúng
+convention đã dùng ở `xuatExcelPhanCong` (bảng nhanh cũ) — khổ ngang, `fitToWidth:1`, header lặp
+lại mỗi trang in. 30 cột: 6/giai đoạn × 3 + 11 cột Tổng (thêm Tồn đầu/cuối kỳ mà bảng màn hình
+không cần hiện đủ, dùng để đối chiếu tay).
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch. Test cô
+lập `gomTheoKsv` (5 assertion, trích nguyên hàm) — gộp đúng nhiều vụ cùng KSV, thiếu `ksvChinh` rơi
+đúng nhóm "(chưa gán KSV)", `chiBiCan=true` không cộng `soVu`, cộng dồn đúng qua nhiều lượt gọi
+(vụ mới + bổ sung BC), entries rỗng/null an toàn. Mở `qlahs-sup.html` qua server tĩnh cục bộ — tải
+sạch, 0 lỗi console thật (chỉ cảnh báo Babel kích thước file vô hại đã biết).
+
+**CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật** (không có tài khoản đăng nhập trong
+phiên này) — nên tự thử trên `qlahs-sup.web.app` trước khi deploy `prod`: (1) vào "Phân công hồ
+sơ", bấm "📊 Báo cáo chi tiết theo kỳ", chọn 1-2 kỳ gần nhất, bấm "Tính báo cáo" — xác nhận bảng ra
+đúng số (đối chiếu tay vài KSV quen thuộc với "Kỳ báo cáo"); (2) chọn nhiều kỳ liên tiếp (VD cả
+năm) xem tổng cộng dồn đúng không tăng vọt bất thường; (3) xuất Excel, mở bằng Excel thật, xác
+nhận 2 hàng header/màu/viền đúng như thiết kế, khổ ngang vừa 1 trang theo chiều rộng.
+
+**TODO chưa làm (ngoài phạm vi yêu cầu lần này)**: (1) không sửa gap `tinhBaoCaoTongHopNhieuKy`
+thiếu `phucHoi`/`nhanLai`/`boSungBiCan` — nếu Dũng phát hiện báo cáo tổng hợp năm ở Kỳ báo cáo
+(khác module này) thiếu 3 khoản đó, cần sửa riêng; (2) chưa flag/sửa bug `dsKyChon` sort no-op ở
+`KyBaoCaoModule`/`TongHopNhieuKyModal` (`.toMillis?.() ?? 0` trên chuỗi ISO Supabase) phát hiện
+tình cờ lúc đọc code cho tính năng này — gây tồn đầu/cuối kỳ bị hoán đổi khi chọn >1 kỳ ở màn "Xem
+báo cáo tổng hợp" (KHÁC module này — `tinhPhanCongTheoKy` viết riêng để tự né lỗi đó, không dùng
+`dsKyChon` đã sort sai — đã spawn 1 task riêng để phiên khác sửa, xem chip đã tạo trong session).
+
+**Sửa lại ngay sau đó theo phản hồi Dũng (cùng ngày)** — 3 việc:
+
+1. **Tỉ lệ giải quyết theo TỪNG giai đoạn** (trước chỉ có ở khối Tổng) — Dũng: *"tỉ lệ giải quyết
+   theo từng giai đoạn. ko cần cột mới, chỉ cần tổng số, đã giải quyết, đang giải quyết"*. Đổi hẳn
+   cột "Mới V/BC" (mỗi giai đoạn LẪN khối Tổng) thành **"Tổng V/BC"** = Tồn đầu kỳ + Mới (đúng bằng
+   MẪU SỐ của công thức Tỉ lệ GQ — bản đầu tiên có 1 lỗ hổng nhỏ: số hiển thị "Mới" KHÔNG khớp mẫu
+   số thật dùng để tính tỉ lệ ở khối Tổng, vì mẫu số = tồn đầu+mới còn cột hiển thị chỉ có mới) —
+   sửa luôn cho nhất quán. Mỗi giai đoạn giờ có 7 cột con: Tổng V/BC, GQ V/BC, Đang V/BC, **Tỉ lệ
+   GQ** (mới thêm, = GQ ÷ Tổng của ĐÚNG giai đoạn đó — không cần fetch gì thêm, `tinhPhanCongTheoKy`
+   đã trả sẵn `tonDau[gd]` per KSV qua RPC as-of, chỉ chưa surface ra UI). Bảng màn hình từ 26 lên
+   29 cột con; `hang` useMemo đổi field `moiVu/moiBc` → `tongVu/tongBc` (per-stage lẫn `tong.*`).
+2. **Excel: gộp Vụ+BC thành 1 cột text "N vụ/M bị can"** thay vì 2 cột số riêng — Dũng: *"lúc xuất
+   excel ra thì ko chia thành 2 cột vụ và bị can mà gộp thành 1 cột dạng 1 vụ/2 bị can như vậy dễ
+   quan sát hơn"*. Hàm mới `gopVuBc(vu, bc)` (đặt cạnh `xuatExcelPhanCongChiTiet`). Excel từ 30 cột
+   xuống còn **19 cột** (4/giai đoạn: Tổng/Đã giải quyết/Đang GQ/Tỉ lệ GQ + 6 khối Tổng: Tồn đầu
+   kỳ/Tổng/Đã giải quyết/Tồn cuối kỳ/Đang GQ/Tỉ lệ GQ) — gọn hơn hẳn, mỗi ô "Tổng"/"Đã giải quyết"/
+   "Đang GQ"/"Tồn đầu/cuối kỳ" giờ là 1 chuỗi "N vụ/M bị can". **CHỈ áp dụng cho Excel** — bảng trên
+   màn hình VẪN tách riêng 2 ô Vụ (đậm)/BC (xám) như cũ, vì trên màn hình 2 ô cạnh nhau dễ scan hơn
+   là đọc chuỗi ghép, đúng đúng theo lời Dũng chỉ nhắc riêng lúc xuất Excel.
+3. **Cho chọn cả kỳ lưu trữ + quick-select "chọn từ kỳ này trở đi"** — Dũng: *"cho chọn cả các kỳ
+   lưu trữ. khi chọn các kỳ thống kê bình thg cho option chọn từ kỳ này. như vậy nếu bấm vào tháng 7
+   thì auto chọn cả 7,8,9"*. Bỏ hẳn `listBaoCao.filter(k => k.loai !== "luu_tru")` (khác "Xem báo
+   cáo tổng hợp" ở Kỳ báo cáo — nơi đó CỐ Ý loại kỳ lưu trữ, ở đây Dũng muốn gộp cả án cũ backfill
+   vào kỳ lưu trữ) — kỳ lưu trữ hiện nhãn `" [Lưu trữ]"` đúng quy ước `ModalXacNhanKy`/`SuaKyModal`.
+   Thêm nút nhỏ **"Từ đây →"** ở mỗi dòng kỳ THỐNG KÊ BÌNH THƯỜNG (không hiện cho kỳ lưu trữ, đúng
+   phạm vi Dũng nêu) — bấm vào 1 kỳ (VD tháng 7) TỰ ĐỘNG chọn ĐÚNG kỳ đó VÀ mọi kỳ MỚI HƠN (hướng
+   về hiện tại, VD 7+8+9 nếu đó là 3 kỳ mới nhất) qua hàm `chonTuKyNay(idx)` — lấy
+   `listBaoCao.slice(0, idx+1)` (mảng desc, index 0 = mới nhất) rồi lọc bỏ kỳ lưu trữ nếu lỡ nằm
+   xen giữa khoảng đó, REPLACE hẳn lựa chọn hiện có (không cộng dồn, tránh lẫn với lựa chọn cũ).
+
+**Đã kiểm chứng lại sau 3 sửa đổi trên**: compile-check qua `@babel/core`+`@babel/preset-react`
+toàn file — sạch. Mở lại `qlahs-sup.html` qua server tĩnh cục bộ — tải sạch, 0 lỗi console thật
+(chỉ cảnh báo Babel kích thước file vô hại đã biết). **VẪN CHƯA kiểm chứng qua UI thật với dữ liệu
+Supabase thật** (không có tài khoản trong phiên này) — checklist kiểm chứng ở mục trên vẫn áp dụng
+đầy đủ, cộng thêm: (4) xác nhận Tỉ lệ GQ theo từng giai đoạn ra số hợp lý (0-100%, vượt 100% chỉ
+khi giải quyết nhiều hơn cả tồn đầu+mới); (5) chọn 1 kỳ lưu trữ, xác nhận vẫn tính được báo cáo
+bình thường (không lỗi vì kỳ đó thiếu `ngayBatDau`/dữ liệu đặc thù); (6) bấm "Từ đây →" ở 1 kỳ
+giữa danh sách, xác nhận chọn đúng đúng kỳ đó + mọi kỳ MỚI HƠN (không lẫn kỳ lưu trữ nếu có xen
+giữa, không chọn kỳ CŨ HƠN); (7) mở file Excel thật, xác nhận cột "Tổng"/"Đã giải quyết"/"Đang GQ"
+hiện đúng dạng "N vụ/M bị can" dễ đọc.
+
+**Sửa tiếp ngay sau đó (cùng ngày) — suy diễn "bỏ qua giai đoạn trước" khi có kỳ lưu trữ.** Dũng:
+*"do chọn cả kỳ án lưu nên số tổng, giải quyết ko chính xác lắm. nhưng bạn phải auto hiểu là nếu đã
+xét xử thì phải có số mới, giải quyết ở cả điều tra, truy tố"* — cho phép chọn kỳ lưu trữ (mục 3 ở
+trên) làm lộ ra 1 vấn đề số liệu: kỳ lưu trữ backfill án cũ thường chỉ ghi ĐÚNG 1 sự kiện `khoi_to_vu`
+thẳng vào giai đoạn CUỐI CÙNG đã biết (VD "Đã xét xử" → chỉ có 1 sự kiện vào thẳng Xét xử), không có
+sự kiện nào ở Điều tra/Truy tố — nhưng VỀ MẶT TỐ TỤNG, để tới được Xét xử BẮT BUỘC phải từng "mới" và
+"đã giải quyết" ở Điều tra VÀ Truy tố trước đó (trong CÙNG đơn vị, trừ khi đến từ đơn vị khác).
+
+**Đã sửa** (`tinhPhanCongTheoKy`, chỉ trong tính năng này — KHÔNG đụng `tinhBaoCaoKyTuLog`/B10/Kỳ
+báo cáo chính, vì suy diễn này ảnh hưởng số liệu chính thức rộng hơn phạm vi yêu cầu lần này, cần
+quyết định riêng nếu áp dụng nơi khác): gom mọi entry `khoiToTrucTiep` (khởi tố TRỰC TIẾP, không
+qua chuyển giai đoạn nội bộ) của Truy tố/Xét xử qua các kỳ đã chọn, lọc bỏ Nguồn = "Án nơi khác
+chuyển đến" (`v.nguon !== "an_noi_khac_chuyen_den"` — đúng nguyên tắc đã áp dụng cho D73/D74 Biểu
+2 và B10 C6/C7: nguồn này nghĩa là giai đoạn trước THẬT SỰ diễn ra ở đơn vị khác, không phải bỏ sót
+log nội bộ, không suy diễn), rồi cộng các entry còn lại vào CẢ "mới" LẪN "đã giải quyết" của (các)
+giai đoạn TRƯỚC nó trong CÙNG kỳ (Truy tố → cộng vào Điều tra; Xét xử → cộng vào CẢ Điều tra lẫn
+Truy tố) — dùng lại đúng `gomTheoKsv` sẵn có, không viết logic gộp mới.
+
+**Đã kiểm chứng bằng test cô lập** (8 assertion, trích nguyên `gomTheoKsv` + logic lọc/suy diễn) —
+vụ khởi tố trực tiếp vào Truy tố với nguồn thường (không phải "án nơi khác") được cộng đúng vào cả
+"mới" lẫn "đã giải quyết" của Điều tra; vụ nguồn "Án nơi khác chuyển đến" bị loại đúng, không suy
+diễn; vụ khởi tố trực tiếp vào Xét xử được cộng đúng vào CẢ Điều tra lẫn Truy tố; Xét xử/entry gốc
+của Truy tố không bị đụng vào (chỉ giai đoạn TRƯỚC được bổ sung, không tự thêm vào chính nó). 8/8
+PASS. Compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch. Mở lại qua server
+tĩnh cục bộ — tải sạch, 0 lỗi console thật.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** — nên tự thử trên `qlahs-sup.web.app` sau khi merge:
+chọn 1 kỳ lưu trữ có sẵn vụ "Đã xét xử" backfill, xác nhận cột "Tổng"/"Đã giải quyết" ở Điều tra VÀ
+Truy tố giờ KHÔNG còn = 0 cho KSV của vụ đó (trước đây chỉ Xét xử có số, 2 giai đoạn kia = 0); thử
+thêm 1 vụ backfill có Nguồn = "Án nơi khác chuyển đến" khởi tố trực tiếp vào Truy tố, xác nhận
+Điều tra KHÔNG bị cộng thêm (đúng vì giai đoạn trước ở đơn vị khác, không phải bỏ sót log).
+
+**Sửa tiếp lần 3 (cùng ngày) — loại cán bộ đã chuyển đơn vị + tính đủ vụ có KSV hỗ trợ + sort mặc
+định theo Tổng vụ.** Dũng, 2 tin nhắn liền: *"Cán bộ nào đã chuyển đơn vị thì ko cho vào thống kê
+nữa. sắp xếp theo tổng số vụ từ trên xuống dưới"* rồi *"vụ nào có 2 ng cùng làm thì tính cho cả 2"*.
+
+1. **Loại cán bộ đã chuyển đơn vị** — `useDanhSachCanBo()` (roster hiển thị) CHỈ trả người đang
+   công tác (`trangThai=="dang_cong_tac"`), nhưng KHÔNG đủ để LOẠI người đã chuyển: tên họ vẫn còn
+   đứng KSV chính/hỗ trợ trên vụ CŨ chưa bàn giao lại, nên vẫn lọt vào thống kê qua nhánh "gộp thêm
+   tên thấy được trong dữ liệu". Thêm cache mới **`"canbo:all"`** (`useCollectionCache`, tải TOÀN
+   BỘ `canbo` không lọc `trangThai` — dùng CHUNG 1 cacheKey ở cả `PhanCongHoSoModule` lẫn
+   `PhanCongBaoCaoChiTietModal`, registry tự dedupe nên không mở thêm listener) → dựng
+   `tenDaChuyenSet` (tên có `trangThai=="da_chuyen_don_vi"`) → lọc bỏ khỏi roster ở CẢ 2 nơi: bảng
+   nhanh (`PhanCongHoSoModule`'s `bang`, ảnh hưởng luôn cả "Đang GQ" của modal chi tiết vì đó dùng
+   lại `bangHienTai=bang`) VÀ `tenSet` trong `hang` của modal chi tiết (vì tên có thể lọt vào qua
+   log lịch sử `ket[gd].moi/giaiQuyet/tonDau/tonCuoi`, độc lập với `bangHienTai`).
+2. **Vụ có KSV hỗ trợ CÙNG làm — tính ĐỦ cho CẢ 2 (không chia đôi khối lượng)** — trước đây MỌI nơi
+   nhóm theo KSV (cả bảng nhanh lẫn `gomTheoKsv` của modal chi tiết) chỉ đọc `v.ksvChinh`, hoàn
+   toàn bỏ qua field mảng `ksvHoTro`. Thêm 2 hàm dùng chung mới (đặt cạnh `gomTheoKsv`):
+   `tenKsvLienQuanVu(v)` (khử trùng `[ksvChinh, ...ksvHoTro]`, KHÔNG có placeholder — dùng dựng
+   roster) và `dsKsvCuaVu(v)` (như trên, có fallback `"(chưa gán KSV)"` khi vụ chưa gán ai — dùng
+   gom số liệu, giữ đúng hành vi cũ cho vụ chưa gán). `gomTheoKsv` đổi từ đọc 1 tên duy nhất sang
+   lặp qua `dsKsvCuaVu(v)`, cộng ĐỦ (không chia tỉ lệ) cho MỌI KSV liên quan — đúng cách xem "đang
+   xử lý bao nhiêu việc" của từng người, không phải phân bổ đóng góp. `PhanCongHoSoModule`'s `bang`
+   cũng đổi từ `dsVu.filter(v => v.ksvChinh===ksv)` sang `dsVu.filter(v =>
+   tenKsvLienQuanVu(v).includes(ksv))` — 1 vụ giờ có thể "thuộc về" ĐỒNG THỜI nhiều KSV trong bảng
+   (tổng cộng dồn qua các dòng có thể VƯỢT tổng số vụ thật — đúng chủ ý, không phải bug).
+3. **Sort mặc định đổi từ "KSV" (alphabet) sang "Tổng V" giảm dần** ở modal chi tiết (khớp đúng
+   convention mặc định đã có sẵn ở bảng nhanh `PhanCongHoSoModule` từ trước — `sortCot="tongVu"`,
+   `sortChieu="desc"`).
+
+**Đã kiểm chứng bằng test cô lập** (8 assertion, trích nguyên `dsKsvCuaVu`/`gomTheoKsv` mới) — vụ
+1 KSV chính + 1 hỗ trợ: CẢ 2 được tính đủ (không chia đôi); vụ không có hỗ trợ: hành vi cũ giữ
+nguyên; tên trùng giữa `ksvChinh` và 1 phần tử `ksvHoTro` (dữ liệu lỗi/trùng): khử trùng, không
+cộng đúp cho cùng 1 người; vụ chưa gán ai: vẫn rơi đúng bucket "(chưa gán KSV)"; 3 người cùng làm
+(1 chính + 2 hỗ trợ): cả 3 đều được tính đủ. 8/8 PASS. Compile-check qua `@babel/core`+
+`@babel/preset-react` toàn file — sạch. Mở lại qua server tĩnh cục bộ — tải sạch, 0 lỗi console.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** — nên tự thử trên `qlahs-sup.web.app`: (1) đổi 1 cán
+bộ đang có vụ sang "Đã chuyển đơn vị" (Cài đặt → Cán bộ), xác nhận biến mất khỏi CẢ bảng nhanh lẫn
+modal chi tiết (kể cả sau khi tính báo cáo 1 kỳ có log lịch sử của họ); (2) thêm KSV hỗ trợ cho 1
+vụ đang giải quyết, xác nhận CẢ KSV chính lẫn hỗ trợ đều hiện đúng số ở bảng nhanh (Đang GQ) và
+modal chi tiết (Tổng/GQ theo kỳ); (3) mở modal chi tiết, xác nhận mặc định sắp xếp Tổng V giảm dần
+mà không cần bấm gì thêm.
+
+**Sửa tiếp lần 4 (cùng ngày) — ẩn khối "Tổng" (cột N-S) trong Excel xuất ra.** Dũng: *"hide cột N
+đến cột S"* — trong `xuatExcelPhanCongChiTiet` (19 cột: A=KSV, B-E=Điều tra, F-I=Truy tố, J-M=Xét
+xử, N-S=khối Tổng gồm Tồn đầu kỳ/Tổng/Đã giải quyết/Tồn cuối kỳ/Đang GQ/Tỉ lệ GQ), N-S đúng khớp
+`colsTong` (6 cột cuối). Đã thêm `ws.getColumn(c).hidden = true` cho đúng dải cột đó (tính động
+qua `tongSoCot - colsTong.length + 1` tới `tongSoCot`, cùng công thức đã dùng để tô đậm font khối
+Tổng — không hardcode chỉ số cột) — **CHỈ ẩn cột khi mở file, dữ liệu vẫn còn nguyên** (không xoá
+cột/dữ liệu), Dũng có thể tự "Hiện cột" lại trong Excel nếu cần đối chiếu Tồn đầu/cuối kỳ. Bảng
+trên MÀN HÌNH (modal) không đổi gì — chỉ áp dụng cho file Excel xuất ra.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch. **CHƯA
+mở thử file Excel thật bằng Excel** (không có tài khoản Supabase để xuất báo cáo thật trong phiên
+này) — nên Dũng tự xuất thử 1 lần trên `qlahs-sup.web.app` xác nhận cột N-S (khối "Tổng") bị ẩn
+đúng khi mở file, dữ liệu vẫn còn khi bấm hiện lại cột.
+
 ## ✅ ĐÃ MERGE `bieu2-3-cong-thuc-truc-tiep` VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-09-05, theo xác nhận Dũng "đúng rồi ok chạy đi" sau khi tự kiểm tra D86/D72 trên Excel thật kỳ 08/2026 tại `qlahs-sup.web.app`)
 
 Gồm cả 2 mục ngay dưới đây: sửa bug D86 ĐT (224→159, "công thức Excel trỏ thẳng sheet DS") VÀ sửa
