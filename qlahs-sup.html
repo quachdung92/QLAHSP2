@@ -17953,10 +17953,83 @@ function ChartCotChong({ labels, datasets }) {
 // khác vụ họ đang giữ ở Truy tố/Xét xử (thường đã theo từ trước, không phản ánh đúng nhịp phân
 // công gần đây) — KHÔNG hiện mã vụ (không cần để phân công, chỉ cần tên + ngày + số bị can).
 // ====================================================================
+
+// Báo cáo phân công chi tiết theo kỳ (2026-09, nhánh phan-cong-bao-cao-chi-tiet) — cộng dồn 1
+// mảng "vào"/"ra" (từ ds.* của tinhBaoCaoKy) vào 1 map theo `ksvChinh` HIỆN TẠI của vụ. `chiBiCan`
+// (dùng cho ds.boSungBiCan — sự kiện CẤP BỊ CAN, mỗi entry đúng 1 người) chỉ cộng cột BC, KHÔNG
+// cộng "1 vụ" — đúng cách tinhBaoCaoKyTuLog đã tách "soMoi.boSungBiCan" khỏi "soMoi.tong".
+function gomTheoKsv(map, entries, chiBiCan) {
+  for (const v of entries || []) {
+    const ksv = v.ksvChinh || "(chưa gán KSV)";
+    if (!map[ksv]) map[ksv] = { soVu: 0, soBiCan: 0 };
+    if (!chiBiCan) map[ksv].soVu += 1;
+    map[ksv].soBiCan += chiBiCan ? 1 : (v._soBiCan || 0);
+  }
+}
+
+// Tính báo cáo "Phân công hồ sơ chi tiết" cho (các) kỳ báo cáo đã chọn — "Mới"/"Đã giải quyết"
+// cộng dồn theo TỪNG kỳ (log-based, đúng nguyên tắc "log là nguồn sự thật duy nhất"), "Tồn đầu/
+// cuối kỳ" lấy as-of qua RPC ở kỳ SỚM NHẤT/MUỘN NHẤT trong nhóm chọn — tái dùng nguyên
+// tinhBaoCaoKy/layTonTheoKyRPC/tinhDsTonTheoKy đã kiểm chứng ở module Kỳ báo cáo, không tính lại
+// công thức riêng. Nhóm theo `ksvChinh` HIỆN TẠI của vụ — hệ thống KHÔNG lưu lịch sử điều chuyển
+// KSV theo thời gian, nên vụ đổi KSV giữa chừng sẽ tính hết cho KSV hiện tại (cùng giới hạn đã áp
+// dụng cho "2 vụ Điều tra gần nhất" ở bảng chính của module này).
+//
+// dsKyDaChonDesc: mảng kỳ đã chọn, GIỮ NGUYÊN thứ tự desc (mới→cũ) như cache "kybaocao:desc" trả
+// về — KHÔNG tự sort lại theo ngày (né lặp lại bug "?.toMillis?.() luôn ra 0" trên dữ liệu Supabase
+// — ISO string không có .toMillis(), xem CLAUDE.md) — vì vậy phần tử ĐẦU = kỳ MUỘN NHẤT, phần tử
+// CUỐI = kỳ SỚM NHẤT. `listBaoCaoDesc` = TOÀN BỘ kỳ (không riêng phần đã chọn, đã loại kỳ lưu trữ)
+// để `timKyTruoc` tìm đúng kỳ liền trước kỳ sớm nhất.
+async function tinhPhanCongTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
+  if (!dsKyDaChonDesc.length) return null;
+  const kyMuonNhat = dsKyDaChonDesc[0];
+  const kySomNhat = dsKyDaChonDesc[dsKyDaChonDesc.length - 1];
+  const kyTruocSomNhat = timKyTruoc(kySomNhat, listBaoCaoDesc);
+
+  const baoCaoTungKy = await Promise.all(
+    dsKyDaChonDesc.map(ky => tinhBaoCaoKy(ky, timKyTruoc(ky, listBaoCaoDesc)))
+  );
+  const [rpcDauKy, rpcCuoiKy] = await Promise.all([
+    kyTruocSomNhat ? layTonTheoKyRPC(kyTruocSomNhat.id) : Promise.resolve(null),
+    layTonTheoKyRPC(kyMuonNhat.id),
+  ]);
+  if (!rpcCuoiKy) throw new Error("Không tính được tồn cuối kỳ (RPC không phản hồi — cần kết nối mạng ổn định).");
+  if (kyTruocSomNhat && !rpcDauKy) throw new Error("Không tính được tồn đầu kỳ (RPC không phản hồi — cần kết nối mạng ổn định).");
+
+  const ket = {};
+  for (const gd of THU_TU_GIAI_DOAN) {
+    const moi = {}, giaiQuyet = {}, tonDau = {}, tonCuoi = {};
+    for (const b of baoCaoTungKy) {
+      const d = b[gd].ds;
+      gomTheoKsv(moi, d.khoiToTrucTiep);
+      gomTheoKsv(moi, d.tachVu);
+      gomTheoKsv(moi, d.chuyenDen);
+      gomTheoKsv(moi, d.traVe);
+      gomTheoKsv(moi, d.phucHoi);
+      gomTheoKsv(moi, d.nhanLai);
+      gomTheoKsv(moi, d.boSungBiCan, true); // chỉ +1 BC, không tính "1 vụ mới"
+
+      gomTheoKsv(giaiQuyet, d.chuyenDi);
+      gomTheoKsv(giaiQuyet, d.traDi);
+      gomTheoKsv(giaiQuyet, d.nhapVu);
+      for (const k of HOAN_THANH_TRUONG_TONG) gomTheoKsv(giaiQuyet, d.hoanThanh[k]);
+    }
+    if (rpcDauKy) {
+      const { list } = await tinhDsTonTheoKy(gd, kySomNhat, rpcDauKy);
+      gomTheoKsv(tonDau, list);
+    }
+    const { list: dsCuoi } = await tinhDsTonTheoKy(gd, kyMuonNhat, rpcCuoiKy);
+    gomTheoKsv(tonCuoi, dsCuoi);
+    ket[gd] = { moi, giaiQuyet, tonDau, tonCuoi };
+  }
+  return { ket, kySomNhat, kyMuonNhat };
+}
+
 function PhanCongHoSoModule() {
   const [dsVu, dangTai] = useDanhSachDangGiaiQuyet();
   const dsCanBo = useDanhSachCanBo();
   const [tuKhoa, setTuKhoa] = useState("");
+  const [hienBaoCaoChiTiet, setHienBaoCaoChiTiet] = useState(false);
   const [sortCot, setSortCot] = useState("tongVu");
   const [sortChieu, setSortChieu] = useState("desc");
 
@@ -18166,11 +18239,21 @@ function PhanCongHoSoModule() {
       <div className="flex items-center justify-between mb-3 gap-3">
         <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)} placeholder="Tìm theo tên KSV..."
                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-64" />
-        <button onClick={xuatExcelPhanCong}
-                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">
-          ⬇ Tải Excel
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setHienBaoCaoChiTiet(true)}
+                  className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
+            📊 Báo cáo chi tiết theo kỳ
+          </button>
+          <button onClick={xuatExcelPhanCong}
+                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">
+            ⬇ Tải Excel
+          </button>
+        </div>
       </div>
+
+      {hienBaoCaoChiTiet && (
+        <PhanCongBaoCaoChiTietModal bangHienTai={bang} onDong={() => setHienBaoCaoChiTiet(false)} />
+      )}
 
       {dangTai && <div className="text-sm text-slate-400">Đang tải...</div>}
 
@@ -18222,6 +18305,388 @@ function PhanCongHoSoModule() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// Xuất Excel "Phân công hồ sơ chi tiết" — cùng phong cách 2 hàng header nhóm+cột-con/viền/tô màu
+// theo nhóm đã dùng ở xuatExcelPhanCong (bảng nhanh), nhưng thêm hẳn 3 chiều mới: Mới/Đã giải
+// quyết TRONG KỲ đã chọn (thay vì chỉ "đang thụ lý" live), Tồn đầu/cuối kỳ (chỉ ở cột Tổng, dùng
+// làm mẫu số tính tỉ lệ), và Tỉ lệ giải quyết.
+async function xuatExcelPhanCongChiTiet(hienThi, ketQua) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Phân công chi tiết");
+
+  const colsGD = ["Mới (Vụ)", "Mới (BC)", "GQ (Vụ)", "GQ (BC)", "Đang GQ (Vụ)", "Đang GQ (BC)"];
+  const colsTong = [
+    "Tồn đầu kỳ (Vụ)", "Tồn đầu kỳ (BC)", "Mới (Vụ)", "Mới (BC)", "GQ (Vụ)", "GQ (BC)",
+    "Tồn cuối kỳ (Vụ)", "Tồn cuối kỳ (BC)", "Đang GQ (Vụ)", "Đang GQ (BC)", "Tỉ lệ GQ (%)",
+  ];
+  const NHOM = [
+    { nhan: "", cols: ["KSV"], mau: "FFE2E8F0" },
+    { nhan: "Điều tra", cols: colsGD, mau: "FFEFF6FF" },
+    { nhan: "Truy tố", cols: colsGD, mau: "FFFAF5FF" },
+    { nhan: "Xét xử", cols: colsGD, mau: "FFECFDF5" },
+    { nhan: "Tổng", cols: colsTong, mau: "FFFEF3C7" },
+  ];
+  const tongSoCot = NHOM.reduce((s, n) => s + n.cols.length, 0);
+  const VIEN = { style: "thin", color: { argb: "FFCBD5E1" } };
+  const oVien = { top: VIEN, left: VIEN, bottom: VIEN, right: VIEN };
+  const VIEN_DAM = { style: "medium", color: { argb: "FF94A3B8" } };
+  const dauNhomCot = new Set();
+  { let c = 1; NHOM.forEach(n => { dauNhomCot.add(c); c += n.cols.length; }); }
+
+  const tenGop = ketQua.kySomNhat.id === ketQua.kyMuonNhat.id
+    ? ketQua.kySomNhat.tenKy
+    : `${ketQua.kySomNhat.tenKy} → ${ketQua.kyMuonNhat.tenKy}`;
+
+  const tieuDe = ws.addRow([`PHÂN CÔNG HỒ SƠ CHI TIẾT — ${tenGop} — xuất ngày ${fmtDate(new Date())}`]);
+  tieuDe.font = { bold: true, size: 13 };
+  ws.mergeCells(tieuDe.number, 1, tieuDe.number, tongSoCot);
+  for (let c = 1; c <= tongSoCot; c++) tieuDe.getCell(c).border = oVien;
+
+  const ghiChu = ws.addRow([
+    `"Mới"/"GQ" (đã giải quyết) cộng dồn theo kỳ thống kê của TẤT CẢ kỳ đã chọn, nhóm theo KSV hiện tại của vụ ` +
+    `(vụ đổi KSV giữa chừng tính hết cho KSV hiện tại — hệ thống không lưu lịch sử điều chuyển). "Đang GQ" = số ` +
+    `tồn LIVE tại thời điểm xuất, KHÔNG phụ thuộc kỳ đã chọn. "Tỉ lệ GQ" = GQ ÷ (Tồn đầu kỳ sớm nhất + Mới trong các kỳ đã chọn).`,
+  ]);
+  ghiChu.font = { italic: true, size: 10, color: { argb: "FF64748B" } };
+  ws.mergeCells(ghiChu.number, 1, ghiChu.number, tongSoCot);
+  for (let c = 1; c <= tongSoCot; c++) ghiChu.getCell(c).border = oVien;
+
+  const hangNhom = ws.addRow([]);
+  const hangCon = ws.addRow([]);
+  let col = 1;
+  NHOM.forEach(n => {
+    const rong = n.cols.length;
+    if (rong === 1) {
+      ws.mergeCells(hangNhom.number, col, hangCon.number, col);
+      hangNhom.getCell(col).value = n.cols[0];
+    } else {
+      ws.mergeCells(hangNhom.number, col, hangNhom.number, col + rong - 1);
+      hangNhom.getCell(col).value = n.nhan;
+      n.cols.forEach((c, j) => { hangCon.getCell(col + j).value = c; });
+    }
+    for (let c = col; c < col + rong; c++) {
+      [hangNhom, hangCon].forEach(h => {
+        const cell = h.getCell(c);
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: n.mau } };
+        cell.font = { bold: true };
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+        cell.border = { ...oVien, ...(dauNhomCot.has(c) && c > 1 ? { left: VIEN_DAM } : {}) };
+      });
+    }
+    col += rong;
+  });
+  ws.views = [{ state: "frozen", ySplit: hangCon.number }];
+
+  const doRong = [26, ...Array(colsGD.length * 3).fill(8), ...Array(colsTong.length).fill(10)];
+  doRong.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+  hienThi.forEach((r, idx) => {
+    const row = ws.addRow([
+      r.ksv,
+      r.theoGD.dieu_tra.moiVu, r.theoGD.dieu_tra.moiBc, r.theoGD.dieu_tra.gqVu, r.theoGD.dieu_tra.gqBc, r.theoGD.dieu_tra.dangVu, r.theoGD.dieu_tra.dangBc,
+      r.theoGD.truy_to.moiVu, r.theoGD.truy_to.moiBc, r.theoGD.truy_to.gqVu, r.theoGD.truy_to.gqBc, r.theoGD.truy_to.dangVu, r.theoGD.truy_to.dangBc,
+      r.theoGD.xet_xu.moiVu, r.theoGD.xet_xu.moiBc, r.theoGD.xet_xu.gqVu, r.theoGD.xet_xu.gqBc, r.theoGD.xet_xu.dangVu, r.theoGD.xet_xu.dangBc,
+      r.tong.tonDauVu, r.tong.tonDauBc, r.tong.moiVu, r.tong.moiBc, r.tong.gqVu, r.tong.gqBc,
+      r.tong.tonCuoiVu, r.tong.tonCuoiBc, r.tong.dangVu, r.tong.dangBc,
+      r.tong.tiLeVu != null ? r.tong.tiLeVu : null,
+    ]);
+    row.height = 20;
+    const nenXen = idx % 2 === 1 ? "FFF8FAFC" : "FFFFFFFF";
+    row.eachCell({ includeEmpty: true }, (cell, c) => {
+      cell.border = { ...oVien, ...(dauNhomCot.has(c) && c > 1 ? { left: VIEN_DAM } : {}) };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: nenXen } };
+      cell.alignment = c === 1 ? { vertical: "middle", wrapText: true } : { vertical: "middle", horizontal: "center" };
+    });
+    row.getCell(1).font = { bold: true };
+    for (let c = tongSoCot - colsTong.length + 1; c <= tongSoCot; c++) {
+      row.getCell(c).font = { bold: true, color: { argb: "FFB45309" } };
+    }
+  });
+
+  const hangDauBang = tieuDe.number, hangCuoiBang = ws.lastRow.number;
+  const VIEN_KHUNG = { style: "medium", color: { argb: "FF334155" } };
+  for (let r = hangDauBang; r <= hangCuoiBang; r++) {
+    const hang = ws.getRow(r);
+    hang.getCell(1).border = { ...hang.getCell(1).border, left: VIEN_KHUNG };
+    hang.getCell(tongSoCot).border = { ...hang.getCell(tongSoCot).border, right: VIEN_KHUNG };
+  }
+  for (let c = 1; c <= tongSoCot; c++) {
+    const oTren = ws.getRow(hangDauBang).getCell(c), oDuoi = ws.getRow(hangCuoiBang).getCell(c);
+    oTren.border = { ...oTren.border, top: VIEN_KHUNG };
+    oDuoi.border = { ...oDuoi.border, bottom: VIEN_KHUNG };
+  }
+
+  ws.pageSetup = {
+    orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+    horizontalCentered: true,
+    margins: { left: 0.3, right: 0.3, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+  };
+  ws.pageSetup.printTitlesRow = `${hangNhom.number}:${hangCon.number}`;
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `QLVA_PhanCongChiTiet_${toInputDateNhanh(new Date())}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Modal "Báo cáo phân công hồ sơ chi tiết" (2026-09, nhánh phan-cong-bao-cao-chi-tiet) — bước 1
+// chọn 1/nhiều kỳ báo cáo, bước 2 xem bảng tổng hợp theo KSV rồi xuất Excel. `bangHienTai` = mảng
+// `bang` đã tính sẵn ở PhanCongHoSoModule (khối lượng ĐANG thụ lý LIVE theo từng KSV/giai đoạn) —
+// dùng LẠI đúng số liệu đó cho cột "Đang GQ", không tính lại để tránh 2 nơi lệch nhau.
+function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
+  const listBaoCaoTho = useCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  const dangTaiKy = !useCacheLoaded(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  // Loại kỳ lưu trữ án cũ (giống "Xem báo cáo tổng hợp" ở Kỳ báo cáo) — không phản ánh phân công
+  // thật trong 1 kỳ thống kê, chỉ dùng để backfill dữ liệu cũ.
+  const listBaoCao = useMemo(() => listBaoCaoTho.filter(k => k.loai !== "luu_tru"), [listBaoCaoTho]);
+
+  const [kyChon, setKyChon] = useState(new Set());
+  const [dangTinh, setDangTinh] = useState(false);
+  const [ketQua, setKetQua] = useState(null);
+  const [loi, setLoi] = useState("");
+  const [sortCot, setSortCot] = useState("ksv");
+  const [sortChieu, setSortChieu] = useState("asc");
+
+  const toggleKy = (id) => setKyChon(s => { const m = new Set(s); m.has(id) ? m.delete(id) : m.add(id); return m; });
+
+  const tinhBaoCao = async () => {
+    const daChon = listBaoCao.filter(k => kyChon.has(k.id));
+    if (!daChon.length) return;
+    setDangTinh(true); setLoi(""); setKetQua(null);
+    try {
+      const kq = await tinhPhanCongTheoKy(daChon, listBaoCao);
+      setKetQua(kq);
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi tính báo cáo: " + err.message);
+    } finally {
+      setDangTinh(false);
+    }
+  };
+
+  const hang = useMemo(() => {
+    if (!ketQua) return [];
+    const { ket } = ketQua;
+    const hienTaiMap = Object.fromEntries(bangHienTai.map(r => [r.ksv, r]));
+    const tenSet = new Set(bangHienTai.map(r => r.ksv));
+    for (const gd of THU_TU_GIAI_DOAN) {
+      [ket[gd].moi, ket[gd].giaiQuyet, ket[gd].tonDau, ket[gd].tonCuoi].forEach(
+        m => Object.keys(m).forEach(k => tenSet.add(k))
+      );
+    }
+    const layTiLe = (gq, mauSo) => mauSo > 0 ? Math.round((gq / mauSo) * 1000) / 10 : null;
+    return [...tenSet].map(ksv => {
+      const theoGD = {};
+      let tTonDauVu = 0, tTonDauBc = 0, tMoiVu = 0, tMoiBc = 0, tGqVu = 0, tGqBc = 0,
+          tTonCuoiVu = 0, tTonCuoiBc = 0, tDangVu = 0, tDangBc = 0;
+      for (const gd of THU_TU_GIAI_DOAN) {
+        const moi = ket[gd].moi[ksv] || { soVu: 0, soBiCan: 0 };
+        const gq = ket[gd].giaiQuyet[ksv] || { soVu: 0, soBiCan: 0 };
+        const tonDau = ket[gd].tonDau[ksv] || { soVu: 0, soBiCan: 0 };
+        const tonCuoi = ket[gd].tonCuoi[ksv] || { soVu: 0, soBiCan: 0 };
+        const dang = hienTaiMap[ksv]?.theoGD?.[gd] || { soVu: 0, soBiCan: 0 };
+        theoGD[gd] = { moiVu: moi.soVu, moiBc: moi.soBiCan, gqVu: gq.soVu, gqBc: gq.soBiCan, dangVu: dang.soVu, dangBc: dang.soBiCan };
+        tTonDauVu += tonDau.soVu; tTonDauBc += tonDau.soBiCan;
+        tMoiVu += moi.soVu; tMoiBc += moi.soBiCan;
+        tGqVu += gq.soVu; tGqBc += gq.soBiCan;
+        tTonCuoiVu += tonCuoi.soVu; tTonCuoiBc += tonCuoi.soBiCan;
+        tDangVu += dang.soVu; tDangBc += dang.soBiCan;
+      }
+      return {
+        ksv, theoGD,
+        tong: {
+          tonDauVu: tTonDauVu, tonDauBc: tTonDauBc, moiVu: tMoiVu, moiBc: tMoiBc,
+          gqVu: tGqVu, gqBc: tGqBc, tonCuoiVu: tTonCuoiVu, tonCuoiBc: tTonCuoiBc,
+          dangVu: tDangVu, dangBc: tDangBc,
+          tiLeVu: layTiLe(tGqVu, tTonDauVu + tMoiVu),
+        },
+      };
+    });
+  }, [ketQua, bangHienTai]);
+
+  const hienThi = useMemo(() => {
+    const arr = [...hang];
+    arr.sort((a, b) => {
+      let va, vb;
+      if (sortCot === "ksv") { va = a.ksv; vb = b.ksv; }
+      else if (sortCot === "moiVu") { va = a.tong.moiVu; vb = b.tong.moiVu; }
+      else if (sortCot === "gqVu") { va = a.tong.gqVu; vb = b.tong.gqVu; }
+      else if (sortCot === "dangVu") { va = a.tong.dangVu; vb = b.tong.dangVu; }
+      else { va = a.tong.tiLeVu ?? -1; vb = b.tong.tiLeVu ?? -1; }
+      if (typeof va === "string") return sortChieu === "asc" ? va.localeCompare(vb, "vi") : vb.localeCompare(va, "vi");
+      return sortChieu === "asc" ? va - vb : vb - va;
+    });
+    return arr;
+  }, [hang, sortCot, sortChieu]);
+
+  const doiSort = (cot) => {
+    if (sortCot === cot) setSortChieu(c => c === "asc" ? "desc" : "asc");
+    else { setSortCot(cot); setSortChieu(cot === "ksv" ? "asc" : "desc"); }
+  };
+
+  const muiTen = (cot) => sortCot === cot ? (sortChieu === "asc" ? " ▲" : " ▼") : "";
+  const tenGop = ketQua
+    ? (ketQua.kySomNhat.id === ketQua.kyMuonNhat.id ? ketQua.kySomNhat.tenKy : `${ketQua.kySomNhat.tenKy} → ${ketQua.kyMuonNhat.tenKy}`)
+    : "";
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-40 overflow-auto py-8">
+      <div className="bg-white rounded-xl shadow-lg w-[1150px] max-w-[97vw] p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Báo cáo phân công hồ sơ chi tiết</h3>
+          <button onClick={onDong} className="text-red-400 hover:text-red-600 text-sm">Đóng ✕</button>
+        </div>
+
+        {!ketQua && (
+          <>
+            <div className="text-sm text-slate-500 mb-3">
+              Chọn 1 hoặc nhiều kỳ báo cáo (tháng) cần thống kê — "Mới"/"Đã giải quyết" cộng dồn theo TẤT CẢ
+              kỳ đã chọn (chọn nhiều kỳ liên tiếp, VD 12 tháng, để ra báo cáo cả năm); "Đang giải quyết"
+              luôn là số tồn hiện tại (LIVE), không phụ thuộc kỳ đã chọn.
+            </div>
+            {dangTaiKy && <div className="text-sm text-slate-400">Đang tải danh sách kỳ...</div>}
+            {!dangTaiKy && (
+              <>
+                <div className="flex items-center gap-3 mb-2">
+                  <button onClick={() => setKyChon(new Set(listBaoCao.map(k => k.id)))}
+                          className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">Chọn tất cả</button>
+                  <button onClick={() => setKyChon(new Set())}
+                          className="text-xs text-slate-500 hover:text-slate-700 font-medium">Bỏ chọn tất cả</button>
+                  <span className="text-xs text-slate-400">Đã chọn {kyChon.size} kỳ</span>
+                </div>
+                <div className="border border-slate-200 rounded-lg max-h-64 overflow-auto mb-4">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {listBaoCao.map((ky, i) => (
+                        <tr key={ky.id} onClick={() => toggleKy(ky.id)}
+                            className={`cursor-pointer border-b border-slate-100 last:border-0 hover:bg-indigo-50/50 ${i % 2 === 1 ? "bg-slate-50/60" : ""}`}>
+                          <td className="p-2 w-8" onClick={e => e.stopPropagation()}>
+                            <input type="checkbox" checked={kyChon.has(ky.id)} onChange={() => toggleKy(ky.id)} />
+                          </td>
+                          <td className="p-2 font-medium">{ky.tenKy}</td>
+                          <td className="p-2 text-slate-400">{fmtDate(ky.ngayBatDau) || "—"}</td>
+                          <td className="p-2">
+                            <span className={`text-xs px-2 py-0.5 rounded ${ky.trangThai === "dang_mo" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}>
+                              {ky.trangThai === "dang_mo" ? "Đang mở" : "Đã chốt"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                      {listBaoCao.length === 0 && (
+                        <tr><td colSpan={4} className="p-4 text-center text-slate-400">Chưa có kỳ báo cáo nào.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-3">{loi}</div>}
+                <button onClick={tinhBaoCao} disabled={kyChon.size === 0 || dangTinh}
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+                  {dangTinh ? "Đang tính toán (có thể mất vài giây)..." : `Tính báo cáo (${kyChon.size} kỳ)`}
+                </button>
+              </>
+            )}
+          </>
+        )}
+
+        {ketQua && (
+          <>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm text-slate-600">
+                Kỳ: <span className="font-medium">{tenGop}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setKetQua(null)}
+                        className="text-xs text-slate-500 hover:text-slate-700 font-medium">← Chọn lại kỳ</button>
+                <button onClick={() => xuatExcelPhanCongChiTiet(hienThi, ketQua)}
+                        className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700">
+                  ⬇ Xuất Excel chi tiết
+                </button>
+              </div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[60vh]">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 sticky top-0 z-10">
+                  <tr>
+                    <th rowSpan={2} className="text-left px-2 py-2 border-b border-r border-slate-200 font-medium align-bottom cursor-pointer" onClick={() => doiSort("ksv")}>
+                      KSV{muiTen("ksv")}
+                    </th>
+                    <th colSpan={6} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-blue-50">Điều tra</th>
+                    <th colSpan={6} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-purple-50">Truy tố</th>
+                    <th colSpan={6} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-emerald-50">Xét xử</th>
+                    <th colSpan={7} className="text-center px-2 py-1 border-b border-slate-200 font-medium bg-amber-50">Tổng</th>
+                  </tr>
+                  <tr className="text-[10px] text-slate-500">
+                    {["dieu_tra", "truy_to", "xet_xu"].map((gd, gi) => (
+                      <React.Fragment key={gd}>
+                        <th className="px-1 py-1 border-b border-slate-200 font-normal">Mới V</th>
+                        <th className="px-1 py-1 border-b border-slate-200 font-normal">Mới BC</th>
+                        <th className="px-1 py-1 border-b border-slate-200 font-normal">GQ V</th>
+                        <th className="px-1 py-1 border-b border-slate-200 font-normal">GQ BC</th>
+                        <th className="px-1 py-1 border-b border-slate-200 font-normal">Đang V</th>
+                        <th className="px-1 py-1 border-b border-r border-slate-200 font-normal">Đang BC</th>
+                      </React.Fragment>
+                    ))}
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal cursor-pointer" onClick={() => doiSort("moiVu")}>Mới V{muiTen("moiVu")}</th>
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal">Mới BC</th>
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal cursor-pointer" onClick={() => doiSort("gqVu")}>GQ V{muiTen("gqVu")}</th>
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal">GQ BC</th>
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal cursor-pointer" onClick={() => doiSort("dangVu")}>Đang V{muiTen("dangVu")}</th>
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal">Đang BC</th>
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal cursor-pointer" onClick={() => doiSort("tiLe")}>Tỉ lệ GQ{muiTen("tiLe")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hienThi.map(r => (
+                    <tr key={r.ksv} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                      <td className="px-2 py-1.5 font-medium border-r border-slate-100">{r.ksv}</td>
+                      {["dieu_tra", "truy_to", "xet_xu"].map(gd => (
+                        <React.Fragment key={gd}>
+                          <td className="px-1 py-1.5 text-center">{r.theoGD[gd].moiVu}</td>
+                          <td className="px-1 py-1.5 text-center text-slate-400">{r.theoGD[gd].moiBc}</td>
+                          <td className="px-1 py-1.5 text-center">{r.theoGD[gd].gqVu}</td>
+                          <td className="px-1 py-1.5 text-center text-slate-400">{r.theoGD[gd].gqBc}</td>
+                          <td className="px-1 py-1.5 text-center">{r.theoGD[gd].dangVu}</td>
+                          <td className="px-1 py-1.5 text-center text-slate-400 border-r border-slate-100">{r.theoGD[gd].dangBc}</td>
+                        </React.Fragment>
+                      ))}
+                      <td className="px-1 py-1.5 text-center font-semibold">{r.tong.moiVu}</td>
+                      <td className="px-1 py-1.5 text-center text-slate-500">{r.tong.moiBc}</td>
+                      <td className="px-1 py-1.5 text-center font-semibold">{r.tong.gqVu}</td>
+                      <td className="px-1 py-1.5 text-center text-slate-500">{r.tong.gqBc}</td>
+                      <td className="px-1 py-1.5 text-center font-semibold">{r.tong.dangVu}</td>
+                      <td className="px-1 py-1.5 text-center text-slate-500">{r.tong.dangBc}</td>
+                      <td className="px-1 py-1.5 text-center font-bold text-amber-700">{r.tong.tiLeVu != null ? `${r.tong.tiLeVu}%` : "—"}</td>
+                    </tr>
+                  ))}
+                  {hienThi.length === 0 && (
+                    <tr><td colSpan={26} className="px-3 py-6 text-center text-slate-400">Không có KSV nào.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-xs text-slate-400 mt-3">
+              "Mới"/"Đã giải quyết" (GQ) cộng dồn theo kỳ thống kê gắn trên từng sự kiện, nhóm theo KSV hiện
+              tại của vụ (vụ đổi KSV giữa chừng tính hết cho KSV hiện tại — hệ thống không lưu lịch sử điều
+              chuyển). "Đang GQ" là số tồn LIVE tại thời điểm xem, KHÔNG phụ thuộc kỳ đã chọn. "Tỉ lệ GQ" =
+              Đã giải quyết ÷ (Tồn đầu kỳ sớm nhất + Mới trong các kỳ đã chọn) — vượt 100% nghĩa là giải quyết
+              cả phần tồn cũ nhiều hơn số mới nhận thêm. Xuất Excel để xem thêm cột "Tồn đầu/cuối kỳ".
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

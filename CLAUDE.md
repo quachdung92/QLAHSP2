@@ -2,6 +2,76 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Nhánh `phan-cong-bao-cao-chi-tiet` — "Phân công hồ sơ": báo cáo chi tiết theo kỳ (mới/đang GQ/tỉ lệ giải quyết mỗi KSV) (2026-09-05, `qlahs-sup.html`, tách từ `main`, CHƯA merge/deploy)
+
+Theo yêu cầu Dũng: *"tạo 1 branch mới ở tab phân công hồ sơ thêm tính năng xuất báo cáo chi tiết
+để 1. chọn các tháng, kỳ báo cáo trước khi xuất 2. Xác định cụ thể từng người được phân bao nhiêu
+vụ án/bị can. hiện đang giải quyết bao nhiêu vụ án/bị can ở từng giai đoạn. tỉ lệ giải quyết..."*
+— module `PhanCongHoSoModule` trước đây (xem mục "Module mới 'Phân công hồ sơ'..." bên dưới) chỉ
+có 1 bảng nhanh (khối lượng ĐANG thụ lý LIVE + 2 vụ Điều tra gần nhất mỗi KSV), không có khái niệm
+"mới"/"đã giải quyết" theo kỳ, cũng không có tỉ lệ giải quyết.
+
+**Nút mới "📊 Báo cáo chi tiết theo kỳ"** (cạnh nút "⬇ Tải Excel" cũ, không đụng bảng/Excel cũ) mở
+modal `PhanCongBaoCaoChiTietModal` — bước 1 chọn 1/nhiều kỳ báo cáo (checkbox, "Chọn tất cả"/"Bỏ
+chọn tất cả", dùng chung cache `"kybaocao:desc"` đã có ở nơi khác), bước 2 xem bảng tổng hợp theo
+KSV (26 cột: 3 giai đoạn × [Mới V/BC, GQ V/BC, Đang GQ V/BC] + khối Tổng 7 cột gồm cả Tồn đầu/cuối
+kỳ + Tỉ lệ GQ) rồi xuất Excel.
+
+**2 hàm module-level mới, đặt ngay trước `PhanCongHoSoModule`**:
+- `gomTheoKsv(map, entries, chiBiCan)` — helper gộp 1 mảng entry (từ `baoCao[gd].ds.*`) theo
+  `ksvChinh` HIỆN TẠI của vụ (field trên chính entry, vì `vuAnTuLogDocs`/`vuBiCanTuLogDocs` luôn
+  spread đủ field `vuan` — xem CLAUDE.md phần `tinhBaoCaoKyTuLog`). `chiBiCan=true` dùng cho
+  `d.boSungBiCan` (mỗi entry = 1 bị can bổ sung, không cộng vào `soVu` — đúng cách
+  `tinhBaoCaoKyTuLog` đã tính `bcMoi`/`ds.boSungBiCan`, KHÔNG tự tính lại theo cách khác).
+- `tinhPhanCongTheoKy(dsKyDaChonDesc, listBaoCaoDesc)` — với MỖI kỳ đã chọn, gọi `tinhBaoCaoKy(ky,
+  timKyTruoc(ky, listBaoCaoDesc))` (y hệt Kỳ báo cáo, tận dụng cache `baoCaoLuu` nếu kỳ đã chốt),
+  cộng dồn "mới"/"giải quyết" của TỪNG giai đoạn theo KSV qua `gomTheoKsv` (đủ cả 7 nguồn "vào":
+  `khoiToTrucTiep`/`tachVu`/`chuyenDen`/`traVe`/`phucHoi`/`nhanLai`/`boSungBiCan`, và đủ "ra":
+  `chuyenDi`/`traDi`/`nhapVu`/`hoanThanh.*` qua `HOAN_THANH_TRUONG_TONG` — **CỐ TÌNH không tái
+  dùng `tinhBaoCaoTongHopNhieuKy`** đã có sẵn ở Kỳ báo cáo vì hàm đó THIẾU `phucHoi`/`nhanLai`/
+  `boSungBiCan` trong `ds` gộp — 1 gap có sẵn từ trước, phát hiện lúc đọc code nhưng KHÔNG sửa
+  inline (ngoài phạm vi yêu cầu lần này), viết hàm riêng để không kế thừa gap đó). "Tồn đầu/cuối
+  kỳ" theo KSV lấy qua `layTonTheoKyRPC`+`tinhDsTonTheoKy` (as-of kỳ SỚM NHẤT/MUỘN NHẤT trong nhóm
+  chọn — đúng RPC "as-of" đã kiểm chứng kỹ ở Kỳ báo cáo, không viết query mới). Nhận thẳng
+  `dsKyDaChonDesc` theo ĐÚNG thứ tự desc (mới→cũ) của cache `"kybaocao:desc"` — KHÔNG tự sort lại
+  theo ngày (né lặp lại bug đã ghi nhận nhiều lần trong file này: `ngayBatDau` trên Supabase là
+  chuỗi ISO thường, `.toMillis?.() ?? 0` luôn ra 0 làm sort thành no-op — xem mục
+  `KyBaoCaoModule`/`dsKyChon` bug đang chờ xử lý ở cuối mục này).
+
+**`PhanCongBaoCaoChiTietModal`** — nhận `bangHienTai` (= `bang` đã tính sẵn ở component cha, khối
+lượng ĐANG thụ lý LIVE theo KSV/giai đoạn) để dùng LẠI đúng số đó cho cột "Đang GQ" (không tính lại
+theo cách khác, tránh 2 nơi lệch nhau). Bảng kết quả (`hienThi`, sortable qua click header) tính
+Tỉ lệ GQ = `Đã giải quyết ÷ (Tồn đầu kỳ sớm nhất + Mới trong các kỳ đã chọn)` — mẫu số là TỔNG khối
+lượng phải xử lý trong khoảng thời gian đó, không phải chỉ số mới (vượt 100% = giải quyết cả phần
+tồn cũ nhiều hơn số mới nhận thêm, không phải lỗi).
+
+**`xuatExcelPhanCongChiTiet(hienThi, ketQua)`** — ExcelJS, 2 hàng header nhóm (Điều tra/Truy tố/
+Xét xử/Tổng, tô màu theo `MAU_GIAI_DOAN`-style) + cột con, viền/zebra-row/freeze-pane theo đúng
+convention đã dùng ở `xuatExcelPhanCong` (bảng nhanh cũ) — khổ ngang, `fitToWidth:1`, header lặp
+lại mỗi trang in. 30 cột: 6/giai đoạn × 3 + 11 cột Tổng (thêm Tồn đầu/cuối kỳ mà bảng màn hình
+không cần hiện đủ, dùng để đối chiếu tay).
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch. Test cô
+lập `gomTheoKsv` (5 assertion, trích nguyên hàm) — gộp đúng nhiều vụ cùng KSV, thiếu `ksvChinh` rơi
+đúng nhóm "(chưa gán KSV)", `chiBiCan=true` không cộng `soVu`, cộng dồn đúng qua nhiều lượt gọi
+(vụ mới + bổ sung BC), entries rỗng/null an toàn. Mở `qlahs-sup.html` qua server tĩnh cục bộ — tải
+sạch, 0 lỗi console thật (chỉ cảnh báo Babel kích thước file vô hại đã biết).
+
+**CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật** (không có tài khoản đăng nhập trong
+phiên này) — nên tự thử trên `qlahs-sup.web.app` trước khi deploy `prod`: (1) vào "Phân công hồ
+sơ", bấm "📊 Báo cáo chi tiết theo kỳ", chọn 1-2 kỳ gần nhất, bấm "Tính báo cáo" — xác nhận bảng ra
+đúng số (đối chiếu tay vài KSV quen thuộc với "Kỳ báo cáo"); (2) chọn nhiều kỳ liên tiếp (VD cả
+năm) xem tổng cộng dồn đúng không tăng vọt bất thường; (3) xuất Excel, mở bằng Excel thật, xác
+nhận 2 hàng header/màu/viền đúng như thiết kế, khổ ngang vừa 1 trang theo chiều rộng.
+
+**TODO chưa làm (ngoài phạm vi yêu cầu lần này)**: (1) không sửa gap `tinhBaoCaoTongHopNhieuKy`
+thiếu `phucHoi`/`nhanLai`/`boSungBiCan` — nếu Dũng phát hiện báo cáo tổng hợp năm ở Kỳ báo cáo
+(khác module này) thiếu 3 khoản đó, cần sửa riêng; (2) chưa flag/sửa bug `dsKyChon` sort no-op ở
+`KyBaoCaoModule`/`TongHopNhieuKyModal` (`.toMillis?.() ?? 0` trên chuỗi ISO Supabase) phát hiện
+tình cờ lúc đọc code cho tính năng này — gây tồn đầu/cuối kỳ bị hoán đổi khi chọn >1 kỳ ở màn "Xem
+báo cáo tổng hợp" (KHÁC module này — `tinhPhanCongTheoKy` viết riêng để tự né lỗi đó, không dùng
+`dsKyChon` đã sort sai).
+
 ## ✅ ĐÃ MERGE `bieu2-3-cong-thuc-truc-tiep` VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-09-05, theo xác nhận Dũng "đúng rồi ok chạy đi" sau khi tự kiểm tra D86/D72 trên Excel thật kỳ 08/2026 tại `qlahs-sup.web.app`)
 
 Gồm cả 2 mục ngay dưới đây: sửa bug D86 ĐT (224→159, "công thức Excel trỏ thẳng sheet DS") VÀ sửa
