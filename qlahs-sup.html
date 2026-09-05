@@ -18313,15 +18313,17 @@ function PhanCongHoSoModule() {
 // theo nhóm đã dùng ở xuatExcelPhanCong (bảng nhanh), nhưng thêm hẳn 3 chiều mới: Mới/Đã giải
 // quyết TRONG KỲ đã chọn (thay vì chỉ "đang thụ lý" live), Tồn đầu/cuối kỳ (chỉ ở cột Tổng, dùng
 // làm mẫu số tính tỉ lệ), và Tỉ lệ giải quyết.
+// Gộp Vụ+BC thành 1 chuỗi "N vụ/M bị can" cho dễ đọc trong Excel (2026-09, theo yêu cầu Dũng
+// "ko chia thành 2 cột vụ và bị can mà gộp thành 1 cột... dễ quan sát hơn") — chỉ áp dụng cho
+// Excel, bảng trên màn hình vẫn tách 2 ô riêng (Vụ đậm/BC xám) để dễ scan bằng mắt.
+const gopVuBc = (vu, bc) => `${vu} vụ/${bc} bị can`;
+
 async function xuatExcelPhanCongChiTiet(hienThi, ketQua) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Phân công chi tiết");
 
-  const colsGD = ["Mới (Vụ)", "Mới (BC)", "GQ (Vụ)", "GQ (BC)", "Đang GQ (Vụ)", "Đang GQ (BC)"];
-  const colsTong = [
-    "Tồn đầu kỳ (Vụ)", "Tồn đầu kỳ (BC)", "Mới (Vụ)", "Mới (BC)", "GQ (Vụ)", "GQ (BC)",
-    "Tồn cuối kỳ (Vụ)", "Tồn cuối kỳ (BC)", "Đang GQ (Vụ)", "Đang GQ (BC)", "Tỉ lệ GQ (%)",
-  ];
+  const colsGD = ["Tổng", "Đã giải quyết", "Đang GQ", "Tỉ lệ GQ (%)"];
+  const colsTong = ["Tồn đầu kỳ", "Tổng", "Đã giải quyết", "Tồn cuối kỳ", "Đang GQ", "Tỉ lệ GQ (%)"];
   const NHOM = [
     { nhan: "", cols: ["KSV"], mau: "FFE2E8F0" },
     { nhan: "Điều tra", cols: colsGD, mau: "FFEFF6FF" },
@@ -18346,9 +18348,9 @@ async function xuatExcelPhanCongChiTiet(hienThi, ketQua) {
   for (let c = 1; c <= tongSoCot; c++) tieuDe.getCell(c).border = oVien;
 
   const ghiChu = ws.addRow([
-    `"Mới"/"GQ" (đã giải quyết) cộng dồn theo kỳ thống kê của TẤT CẢ kỳ đã chọn, nhóm theo KSV hiện tại của vụ ` +
-    `(vụ đổi KSV giữa chừng tính hết cho KSV hiện tại — hệ thống không lưu lịch sử điều chuyển). "Đang GQ" = số ` +
-    `tồn LIVE tại thời điểm xuất, KHÔNG phụ thuộc kỳ đã chọn. "Tỉ lệ GQ" = GQ ÷ (Tồn đầu kỳ sớm nhất + Mới trong các kỳ đã chọn).`,
+    `"Tổng" = Tồn đầu kỳ sớm nhất + số mới cộng dồn trong TẤT CẢ kỳ đã chọn, nhóm theo KSV hiện tại của ` +
+    `vụ (vụ đổi KSV giữa chừng tính hết cho KSV hiện tại — hệ thống không lưu lịch sử điều chuyển). "Đang ` +
+    `GQ" = số tồn LIVE tại thời điểm xuất, KHÔNG phụ thuộc kỳ đã chọn. "Tỉ lệ GQ" = Đã giải quyết ÷ Tổng.`,
   ]);
   ghiChu.font = { italic: true, size: 10, color: { argb: "FF64748B" } };
   ws.mergeCells(ghiChu.number, 1, ghiChu.number, tongSoCot);
@@ -18380,18 +18382,20 @@ async function xuatExcelPhanCongChiTiet(hienThi, ketQua) {
   });
   ws.views = [{ state: "frozen", ySplit: hangCon.number }];
 
-  const doRong = [26, ...Array(colsGD.length * 3).fill(8), ...Array(colsTong.length).fill(10)];
+  const doRongGD = [16, 16, 12, 10];
+  const doRong = [26, ...doRongGD, ...doRongGD, ...doRongGD, 16, 16, 16, 16, 12, 10];
   doRong.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
 
   hienThi.forEach((r, idx) => {
+    const gd = (g) => [gopVuBc(g.tongVu, g.tongBc), gopVuBc(g.gqVu, g.gqBc), gopVuBc(g.dangVu, g.dangBc), g.tiLe != null ? g.tiLe : null];
     const row = ws.addRow([
       r.ksv,
-      r.theoGD.dieu_tra.moiVu, r.theoGD.dieu_tra.moiBc, r.theoGD.dieu_tra.gqVu, r.theoGD.dieu_tra.gqBc, r.theoGD.dieu_tra.dangVu, r.theoGD.dieu_tra.dangBc,
-      r.theoGD.truy_to.moiVu, r.theoGD.truy_to.moiBc, r.theoGD.truy_to.gqVu, r.theoGD.truy_to.gqBc, r.theoGD.truy_to.dangVu, r.theoGD.truy_to.dangBc,
-      r.theoGD.xet_xu.moiVu, r.theoGD.xet_xu.moiBc, r.theoGD.xet_xu.gqVu, r.theoGD.xet_xu.gqBc, r.theoGD.xet_xu.dangVu, r.theoGD.xet_xu.dangBc,
-      r.tong.tonDauVu, r.tong.tonDauBc, r.tong.moiVu, r.tong.moiBc, r.tong.gqVu, r.tong.gqBc,
-      r.tong.tonCuoiVu, r.tong.tonCuoiBc, r.tong.dangVu, r.tong.dangBc,
-      r.tong.tiLeVu != null ? r.tong.tiLeVu : null,
+      ...gd(r.theoGD.dieu_tra),
+      ...gd(r.theoGD.truy_to),
+      ...gd(r.theoGD.xet_xu),
+      gopVuBc(r.tong.tonDauVu, r.tong.tonDauBc), gopVuBc(r.tong.tongVu, r.tong.tongBc),
+      gopVuBc(r.tong.gqVu, r.tong.gqBc), gopVuBc(r.tong.tonCuoiVu, r.tong.tonCuoiBc),
+      gopVuBc(r.tong.dangVu, r.tong.dangBc), r.tong.tiLeVu != null ? r.tong.tiLeVu : null,
     ]);
     row.height = 20;
     const nenXen = idx % 2 === 1 ? "FFF8FAFC" : "FFFFFFFF";
@@ -18449,9 +18453,10 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
   const dangTaiKy = !useCacheLoaded(
     "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
   );
-  // Loại kỳ lưu trữ án cũ (giống "Xem báo cáo tổng hợp" ở Kỳ báo cáo) — không phản ánh phân công
-  // thật trong 1 kỳ thống kê, chỉ dùng để backfill dữ liệu cũ.
-  const listBaoCao = useMemo(() => listBaoCaoTho.filter(k => k.loai !== "luu_tru"), [listBaoCaoTho]);
+  // Cho chọn CẢ kỳ lưu trữ án cũ (2026-09, theo yêu cầu Dũng) — khác "Xem báo cáo tổng hợp" ở Kỳ
+  // báo cáo (nơi đó loại hẳn kỳ lưu trữ), ở đây Dũng có thể muốn thống kê luôn cả án cũ được gán
+  // vào kỳ lưu trữ. Kỳ lưu trữ hiện nhãn " [Lưu trữ]" theo đúng quy ước ModalXacNhanKy/SuaKyModal.
+  const listBaoCao = listBaoCaoTho;
 
   const [kyChon, setKyChon] = useState(new Set());
   const [dangTinh, setDangTinh] = useState(false);
@@ -18461,6 +18466,15 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
   const [sortChieu, setSortChieu] = useState("asc");
 
   const toggleKy = (id) => setKyChon(s => { const m = new Set(s); m.has(id) ? m.delete(id) : m.add(id); return m; });
+
+  // "Chọn từ kỳ này" (2026-09, theo yêu cầu Dũng: "bấm vào tháng 7 thì auto chọn cả 7,8,9") — chọn
+  // ĐÚNG kỳ này VÀ mọi kỳ MỚI HƠN (hướng về hiện tại) — trong desc-order, đó là mọi phần tử từ đầu
+  // mảng (mới nhất) tới ĐÚNG vị trí kỳ vừa bấm. Chỉ lấy kỳ THỐNG KÊ BÌNH THƯỜNG (không lẫn kỳ lưu
+  // trữ dù nó nằm xen giữa khoảng đó) — đúng phạm vi Dũng nêu "khi chọn các kỳ thống kê bình thg".
+  const chonTuKyNay = (idx) => {
+    const ids = listBaoCao.slice(0, idx + 1).filter(k => k.loai !== "luu_tru").map(k => k.id);
+    setKyChon(new Set(ids));
+  };
 
   const tinhBaoCao = async () => {
     const daChon = listBaoCao.filter(k => kyChon.has(k.id));
@@ -18488,9 +18502,13 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
       );
     }
     const layTiLe = (gq, mauSo) => mauSo > 0 ? Math.round((gq / mauSo) * 1000) / 10 : null;
+    // "Tổng" (theo giai đoạn LẪN theo tổng cả 3 gđ) = Tồn đầu kỳ + Mới trong các kỳ đã chọn —
+    // CHÍNH LÀ mẫu số của Tỉ lệ GQ, không phải chỉ riêng "Mới" (2026-09, theo yêu cầu Dũng: "tỉ lệ
+    // giải quyết theo từng giai đoạn... chỉ cần tổng số, đã giải quyết, đang giải quyết" — số hiển
+    // thị phải khớp đúng với số dùng làm mẫu số tính tỉ lệ, không lệch nhau như bản trước).
     return [...tenSet].map(ksv => {
       const theoGD = {};
-      let tTonDauVu = 0, tTonDauBc = 0, tMoiVu = 0, tMoiBc = 0, tGqVu = 0, tGqBc = 0,
+      let tTonDauVu = 0, tTonDauBc = 0, tTongVu = 0, tTongBc = 0, tGqVu = 0, tGqBc = 0,
           tTonCuoiVu = 0, tTonCuoiBc = 0, tDangVu = 0, tDangBc = 0;
       for (const gd of THU_TU_GIAI_DOAN) {
         const moi = ket[gd].moi[ksv] || { soVu: 0, soBiCan: 0 };
@@ -18498,9 +18516,13 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
         const tonDau = ket[gd].tonDau[ksv] || { soVu: 0, soBiCan: 0 };
         const tonCuoi = ket[gd].tonCuoi[ksv] || { soVu: 0, soBiCan: 0 };
         const dang = hienTaiMap[ksv]?.theoGD?.[gd] || { soVu: 0, soBiCan: 0 };
-        theoGD[gd] = { moiVu: moi.soVu, moiBc: moi.soBiCan, gqVu: gq.soVu, gqBc: gq.soBiCan, dangVu: dang.soVu, dangBc: dang.soBiCan };
+        const tongVu = tonDau.soVu + moi.soVu, tongBc = tonDau.soBiCan + moi.soBiCan;
+        theoGD[gd] = {
+          tongVu, tongBc, gqVu: gq.soVu, gqBc: gq.soBiCan, dangVu: dang.soVu, dangBc: dang.soBiCan,
+          tiLe: layTiLe(gq.soVu, tongVu),
+        };
         tTonDauVu += tonDau.soVu; tTonDauBc += tonDau.soBiCan;
-        tMoiVu += moi.soVu; tMoiBc += moi.soBiCan;
+        tTongVu += tongVu; tTongBc += tongBc;
         tGqVu += gq.soVu; tGqBc += gq.soBiCan;
         tTonCuoiVu += tonCuoi.soVu; tTonCuoiBc += tonCuoi.soBiCan;
         tDangVu += dang.soVu; tDangBc += dang.soBiCan;
@@ -18508,10 +18530,10 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
       return {
         ksv, theoGD,
         tong: {
-          tonDauVu: tTonDauVu, tonDauBc: tTonDauBc, moiVu: tMoiVu, moiBc: tMoiBc,
+          tonDauVu: tTonDauVu, tonDauBc: tTonDauBc, tongVu: tTongVu, tongBc: tTongBc,
           gqVu: tGqVu, gqBc: tGqBc, tonCuoiVu: tTonCuoiVu, tonCuoiBc: tTonCuoiBc,
           dangVu: tDangVu, dangBc: tDangBc,
-          tiLeVu: layTiLe(tGqVu, tTonDauVu + tMoiVu),
+          tiLeVu: layTiLe(tGqVu, tTongVu),
         },
       };
     });
@@ -18522,7 +18544,7 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
     arr.sort((a, b) => {
       let va, vb;
       if (sortCot === "ksv") { va = a.ksv; vb = b.ksv; }
-      else if (sortCot === "moiVu") { va = a.tong.moiVu; vb = b.tong.moiVu; }
+      else if (sortCot === "tongVu") { va = a.tong.tongVu; vb = b.tong.tongVu; }
       else if (sortCot === "gqVu") { va = a.tong.gqVu; vb = b.tong.gqVu; }
       else if (sortCot === "dangVu") { va = a.tong.dangVu; vb = b.tong.dangVu; }
       else { va = a.tong.tiLeVu ?? -1; vb = b.tong.tiLeVu ?? -1; }
@@ -18553,8 +18575,9 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
         {!ketQua && (
           <>
             <div className="text-sm text-slate-500 mb-3">
-              Chọn 1 hoặc nhiều kỳ báo cáo (tháng) cần thống kê — "Mới"/"Đã giải quyết" cộng dồn theo TẤT CẢ
-              kỳ đã chọn (chọn nhiều kỳ liên tiếp, VD 12 tháng, để ra báo cáo cả năm); "Đang giải quyết"
+              Chọn 1 hoặc nhiều kỳ báo cáo (tháng, kể cả kỳ lưu trữ án cũ) cần thống kê — "Tổng"/"Đã giải
+              quyết" cộng dồn theo TẤT CẢ kỳ đã chọn (chọn nhiều kỳ liên tiếp, VD 12 tháng, để ra báo cáo
+              cả năm — bấm "Từ đây →" ở 1 kỳ để tự chọn luôn kỳ đó và mọi kỳ mới hơn); "Đang giải quyết"
               luôn là số tồn hiện tại (LIVE), không phụ thuộc kỳ đã chọn.
             </div>
             {dangTaiKy && <div className="text-sm text-slate-400">Đang tải danh sách kỳ...</div>}
@@ -18576,17 +18599,28 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
                           <td className="p-2 w-8" onClick={e => e.stopPropagation()}>
                             <input type="checkbox" checked={kyChon.has(ky.id)} onChange={() => toggleKy(ky.id)} />
                           </td>
-                          <td className="p-2 font-medium">{ky.tenKy}</td>
+                          <td className="p-2 font-medium">
+                            {ky.tenKy}{ky.loai === "luu_tru" && <span className="text-slate-400 font-normal"> [Lưu trữ]</span>}
+                          </td>
                           <td className="p-2 text-slate-400">{fmtDate(ky.ngayBatDau) || "—"}</td>
                           <td className="p-2">
                             <span className={`text-xs px-2 py-0.5 rounded ${ky.trangThai === "dang_mo" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}>
                               {ky.trangThai === "dang_mo" ? "Đang mở" : "Đã chốt"}
                             </span>
                           </td>
+                          <td className="p-2 text-right" onClick={e => e.stopPropagation()}>
+                            {ky.loai !== "luu_tru" && (
+                              <button onClick={() => chonTuKyNay(i)}
+                                      title="Chọn kỳ này và mọi kỳ mới hơn (tới kỳ mới nhất)"
+                                      className="text-xs text-indigo-500 hover:text-indigo-700 hover:underline">
+                                Từ đây →
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       ))}
                       {listBaoCao.length === 0 && (
-                        <tr><td colSpan={4} className="p-4 text-center text-slate-400">Chưa có kỳ báo cáo nào.</td></tr>
+                        <tr><td colSpan={5} className="p-4 text-center text-slate-400">Chưa có kỳ báo cáo nào.</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -18623,24 +18657,25 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
                     <th rowSpan={2} className="text-left px-2 py-2 border-b border-r border-slate-200 font-medium align-bottom cursor-pointer" onClick={() => doiSort("ksv")}>
                       KSV{muiTen("ksv")}
                     </th>
-                    <th colSpan={6} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-blue-50">Điều tra</th>
-                    <th colSpan={6} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-purple-50">Truy tố</th>
-                    <th colSpan={6} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-emerald-50">Xét xử</th>
+                    <th colSpan={7} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-blue-50">Điều tra</th>
+                    <th colSpan={7} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-purple-50">Truy tố</th>
+                    <th colSpan={7} className="text-center px-2 py-1 border-b border-r border-slate-200 font-medium bg-emerald-50">Xét xử</th>
                     <th colSpan={7} className="text-center px-2 py-1 border-b border-slate-200 font-medium bg-amber-50">Tổng</th>
                   </tr>
                   <tr className="text-[10px] text-slate-500">
                     {["dieu_tra", "truy_to", "xet_xu"].map((gd, gi) => (
                       <React.Fragment key={gd}>
-                        <th className="px-1 py-1 border-b border-slate-200 font-normal">Mới V</th>
-                        <th className="px-1 py-1 border-b border-slate-200 font-normal">Mới BC</th>
+                        <th className="px-1 py-1 border-b border-slate-200 font-normal">Tổng V</th>
+                        <th className="px-1 py-1 border-b border-slate-200 font-normal">Tổng BC</th>
                         <th className="px-1 py-1 border-b border-slate-200 font-normal">GQ V</th>
                         <th className="px-1 py-1 border-b border-slate-200 font-normal">GQ BC</th>
                         <th className="px-1 py-1 border-b border-slate-200 font-normal">Đang V</th>
-                        <th className="px-1 py-1 border-b border-r border-slate-200 font-normal">Đang BC</th>
+                        <th className="px-1 py-1 border-b border-slate-200 font-normal">Đang BC</th>
+                        <th className="px-1 py-1 border-b border-r border-slate-200 font-normal">Tỉ lệ GQ</th>
                       </React.Fragment>
                     ))}
-                    <th className="px-1 py-1 border-b border-slate-200 font-normal cursor-pointer" onClick={() => doiSort("moiVu")}>Mới V{muiTen("moiVu")}</th>
-                    <th className="px-1 py-1 border-b border-slate-200 font-normal">Mới BC</th>
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal cursor-pointer" onClick={() => doiSort("tongVu")}>Tổng V{muiTen("tongVu")}</th>
+                    <th className="px-1 py-1 border-b border-slate-200 font-normal">Tổng BC</th>
                     <th className="px-1 py-1 border-b border-slate-200 font-normal cursor-pointer" onClick={() => doiSort("gqVu")}>GQ V{muiTen("gqVu")}</th>
                     <th className="px-1 py-1 border-b border-slate-200 font-normal">GQ BC</th>
                     <th className="px-1 py-1 border-b border-slate-200 font-normal cursor-pointer" onClick={() => doiSort("dangVu")}>Đang V{muiTen("dangVu")}</th>
@@ -18654,16 +18689,19 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
                       <td className="px-2 py-1.5 font-medium border-r border-slate-100">{r.ksv}</td>
                       {["dieu_tra", "truy_to", "xet_xu"].map(gd => (
                         <React.Fragment key={gd}>
-                          <td className="px-1 py-1.5 text-center">{r.theoGD[gd].moiVu}</td>
-                          <td className="px-1 py-1.5 text-center text-slate-400">{r.theoGD[gd].moiBc}</td>
+                          <td className="px-1 py-1.5 text-center">{r.theoGD[gd].tongVu}</td>
+                          <td className="px-1 py-1.5 text-center text-slate-400">{r.theoGD[gd].tongBc}</td>
                           <td className="px-1 py-1.5 text-center">{r.theoGD[gd].gqVu}</td>
                           <td className="px-1 py-1.5 text-center text-slate-400">{r.theoGD[gd].gqBc}</td>
                           <td className="px-1 py-1.5 text-center">{r.theoGD[gd].dangVu}</td>
-                          <td className="px-1 py-1.5 text-center text-slate-400 border-r border-slate-100">{r.theoGD[gd].dangBc}</td>
+                          <td className="px-1 py-1.5 text-center text-slate-400">{r.theoGD[gd].dangBc}</td>
+                          <td className="px-1 py-1.5 text-center font-medium text-amber-700 border-r border-slate-100">
+                            {r.theoGD[gd].tiLe != null ? `${r.theoGD[gd].tiLe}%` : "—"}
+                          </td>
                         </React.Fragment>
                       ))}
-                      <td className="px-1 py-1.5 text-center font-semibold">{r.tong.moiVu}</td>
-                      <td className="px-1 py-1.5 text-center text-slate-500">{r.tong.moiBc}</td>
+                      <td className="px-1 py-1.5 text-center font-semibold">{r.tong.tongVu}</td>
+                      <td className="px-1 py-1.5 text-center text-slate-500">{r.tong.tongBc}</td>
                       <td className="px-1 py-1.5 text-center font-semibold">{r.tong.gqVu}</td>
                       <td className="px-1 py-1.5 text-center text-slate-500">{r.tong.gqBc}</td>
                       <td className="px-1 py-1.5 text-center font-semibold">{r.tong.dangVu}</td>
@@ -18672,17 +18710,18 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
                     </tr>
                   ))}
                   {hienThi.length === 0 && (
-                    <tr><td colSpan={26} className="px-3 py-6 text-center text-slate-400">Không có KSV nào.</td></tr>
+                    <tr><td colSpan={29} className="px-3 py-6 text-center text-slate-400">Không có KSV nào.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
             <div className="text-xs text-slate-400 mt-3">
-              "Mới"/"Đã giải quyết" (GQ) cộng dồn theo kỳ thống kê gắn trên từng sự kiện, nhóm theo KSV hiện
-              tại của vụ (vụ đổi KSV giữa chừng tính hết cho KSV hiện tại — hệ thống không lưu lịch sử điều
-              chuyển). "Đang GQ" là số tồn LIVE tại thời điểm xem, KHÔNG phụ thuộc kỳ đã chọn. "Tỉ lệ GQ" =
-              Đã giải quyết ÷ (Tồn đầu kỳ sớm nhất + Mới trong các kỳ đã chọn) — vượt 100% nghĩa là giải quyết
-              cả phần tồn cũ nhiều hơn số mới nhận thêm. Xuất Excel để xem thêm cột "Tồn đầu/cuối kỳ".
+              "Tổng" = Tồn đầu kỳ sớm nhất + số mới cộng dồn theo kỳ thống kê gắn trên từng sự kiện trong
+              các kỳ đã chọn, nhóm theo KSV hiện tại của vụ (vụ đổi KSV giữa chừng tính hết cho KSV hiện
+              tại — hệ thống không lưu lịch sử điều chuyển). "Đang GQ" là số tồn LIVE tại thời điểm xem,
+              KHÔNG phụ thuộc kỳ đã chọn. "Tỉ lệ GQ" = Đã giải quyết ÷ Tổng (theo TỪNG giai đoạn lẫn theo
+              Tổng chung) — vượt 100% nghĩa là giải quyết cả phần tồn cũ nhiều hơn số mới nhận thêm. Xuất
+              Excel để xem thêm cột "Tồn đầu/cuối kỳ".
             </div>
           </>
         )}

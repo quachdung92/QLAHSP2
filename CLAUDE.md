@@ -12,10 +12,10 @@ có 1 bảng nhanh (khối lượng ĐANG thụ lý LIVE + 2 vụ Điều tra g�
 "mới"/"đã giải quyết" theo kỳ, cũng không có tỉ lệ giải quyết.
 
 **Nút mới "📊 Báo cáo chi tiết theo kỳ"** (cạnh nút "⬇ Tải Excel" cũ, không đụng bảng/Excel cũ) mở
-modal `PhanCongBaoCaoChiTietModal` — bước 1 chọn 1/nhiều kỳ báo cáo (checkbox, "Chọn tất cả"/"Bỏ
-chọn tất cả", dùng chung cache `"kybaocao:desc"` đã có ở nơi khác), bước 2 xem bảng tổng hợp theo
-KSV (26 cột: 3 giai đoạn × [Mới V/BC, GQ V/BC, Đang GQ V/BC] + khối Tổng 7 cột gồm cả Tồn đầu/cuối
-kỳ + Tỉ lệ GQ) rồi xuất Excel.
+modal `PhanCongBaoCaoChiTietModal` — bước 1 chọn 1/nhiều kỳ báo cáo (checkbox, kể cả kỳ lưu trữ,
+"Chọn tất cả"/"Bỏ chọn tất cả"/"Từ đây →" theo từng dòng — xem mục sửa lại ngay dưới), bước 2 xem
+bảng tổng hợp theo KSV (29 cột: 3 giai đoạn × [Tổng V/BC, GQ V/BC, Đang GQ V/BC, Tỉ lệ GQ] + khối
+Tổng 7 cột gồm cả Tồn đầu/cuối kỳ + Tỉ lệ GQ) rồi xuất Excel (gộp Vụ+BC thành 1 cột text).
 
 **2 hàm module-level mới, đặt ngay trước `PhanCongHoSoModule`**:
 - `gomTheoKsv(map, entries, chiBiCan)` — helper gộp 1 mảng entry (từ `baoCao[gd].ds.*`) theo
@@ -70,7 +70,48 @@ thiếu `phucHoi`/`nhanLai`/`boSungBiCan` — nếu Dũng phát hiện báo cáo
 `KyBaoCaoModule`/`TongHopNhieuKyModal` (`.toMillis?.() ?? 0` trên chuỗi ISO Supabase) phát hiện
 tình cờ lúc đọc code cho tính năng này — gây tồn đầu/cuối kỳ bị hoán đổi khi chọn >1 kỳ ở màn "Xem
 báo cáo tổng hợp" (KHÁC module này — `tinhPhanCongTheoKy` viết riêng để tự né lỗi đó, không dùng
-`dsKyChon` đã sort sai).
+`dsKyChon` đã sort sai — đã spawn 1 task riêng để phiên khác sửa, xem chip đã tạo trong session).
+
+**Sửa lại ngay sau đó theo phản hồi Dũng (cùng ngày)** — 3 việc:
+
+1. **Tỉ lệ giải quyết theo TỪNG giai đoạn** (trước chỉ có ở khối Tổng) — Dũng: *"tỉ lệ giải quyết
+   theo từng giai đoạn. ko cần cột mới, chỉ cần tổng số, đã giải quyết, đang giải quyết"*. Đổi hẳn
+   cột "Mới V/BC" (mỗi giai đoạn LẪN khối Tổng) thành **"Tổng V/BC"** = Tồn đầu kỳ + Mới (đúng bằng
+   MẪU SỐ của công thức Tỉ lệ GQ — bản đầu tiên có 1 lỗ hổng nhỏ: số hiển thị "Mới" KHÔNG khớp mẫu
+   số thật dùng để tính tỉ lệ ở khối Tổng, vì mẫu số = tồn đầu+mới còn cột hiển thị chỉ có mới) —
+   sửa luôn cho nhất quán. Mỗi giai đoạn giờ có 7 cột con: Tổng V/BC, GQ V/BC, Đang V/BC, **Tỉ lệ
+   GQ** (mới thêm, = GQ ÷ Tổng của ĐÚNG giai đoạn đó — không cần fetch gì thêm, `tinhPhanCongTheoKy`
+   đã trả sẵn `tonDau[gd]` per KSV qua RPC as-of, chỉ chưa surface ra UI). Bảng màn hình từ 26 lên
+   29 cột con; `hang` useMemo đổi field `moiVu/moiBc` → `tongVu/tongBc` (per-stage lẫn `tong.*`).
+2. **Excel: gộp Vụ+BC thành 1 cột text "N vụ/M bị can"** thay vì 2 cột số riêng — Dũng: *"lúc xuất
+   excel ra thì ko chia thành 2 cột vụ và bị can mà gộp thành 1 cột dạng 1 vụ/2 bị can như vậy dễ
+   quan sát hơn"*. Hàm mới `gopVuBc(vu, bc)` (đặt cạnh `xuatExcelPhanCongChiTiet`). Excel từ 30 cột
+   xuống còn **19 cột** (4/giai đoạn: Tổng/Đã giải quyết/Đang GQ/Tỉ lệ GQ + 6 khối Tổng: Tồn đầu
+   kỳ/Tổng/Đã giải quyết/Tồn cuối kỳ/Đang GQ/Tỉ lệ GQ) — gọn hơn hẳn, mỗi ô "Tổng"/"Đã giải quyết"/
+   "Đang GQ"/"Tồn đầu/cuối kỳ" giờ là 1 chuỗi "N vụ/M bị can". **CHỈ áp dụng cho Excel** — bảng trên
+   màn hình VẪN tách riêng 2 ô Vụ (đậm)/BC (xám) như cũ, vì trên màn hình 2 ô cạnh nhau dễ scan hơn
+   là đọc chuỗi ghép, đúng đúng theo lời Dũng chỉ nhắc riêng lúc xuất Excel.
+3. **Cho chọn cả kỳ lưu trữ + quick-select "chọn từ kỳ này trở đi"** — Dũng: *"cho chọn cả các kỳ
+   lưu trữ. khi chọn các kỳ thống kê bình thg cho option chọn từ kỳ này. như vậy nếu bấm vào tháng 7
+   thì auto chọn cả 7,8,9"*. Bỏ hẳn `listBaoCao.filter(k => k.loai !== "luu_tru")` (khác "Xem báo
+   cáo tổng hợp" ở Kỳ báo cáo — nơi đó CỐ Ý loại kỳ lưu trữ, ở đây Dũng muốn gộp cả án cũ backfill
+   vào kỳ lưu trữ) — kỳ lưu trữ hiện nhãn `" [Lưu trữ]"` đúng quy ước `ModalXacNhanKy`/`SuaKyModal`.
+   Thêm nút nhỏ **"Từ đây →"** ở mỗi dòng kỳ THỐNG KÊ BÌNH THƯỜNG (không hiện cho kỳ lưu trữ, đúng
+   phạm vi Dũng nêu) — bấm vào 1 kỳ (VD tháng 7) TỰ ĐỘNG chọn ĐÚNG kỳ đó VÀ mọi kỳ MỚI HƠN (hướng
+   về hiện tại, VD 7+8+9 nếu đó là 3 kỳ mới nhất) qua hàm `chonTuKyNay(idx)` — lấy
+   `listBaoCao.slice(0, idx+1)` (mảng desc, index 0 = mới nhất) rồi lọc bỏ kỳ lưu trữ nếu lỡ nằm
+   xen giữa khoảng đó, REPLACE hẳn lựa chọn hiện có (không cộng dồn, tránh lẫn với lựa chọn cũ).
+
+**Đã kiểm chứng lại sau 3 sửa đổi trên**: compile-check qua `@babel/core`+`@babel/preset-react`
+toàn file — sạch. Mở lại `qlahs-sup.html` qua server tĩnh cục bộ — tải sạch, 0 lỗi console thật
+(chỉ cảnh báo Babel kích thước file vô hại đã biết). **VẪN CHƯA kiểm chứng qua UI thật với dữ liệu
+Supabase thật** (không có tài khoản trong phiên này) — checklist kiểm chứng ở mục trên vẫn áp dụng
+đầy đủ, cộng thêm: (4) xác nhận Tỉ lệ GQ theo từng giai đoạn ra số hợp lý (0-100%, vượt 100% chỉ
+khi giải quyết nhiều hơn cả tồn đầu+mới); (5) chọn 1 kỳ lưu trữ, xác nhận vẫn tính được báo cáo
+bình thường (không lỗi vì kỳ đó thiếu `ngayBatDau`/dữ liệu đặc thù); (6) bấm "Từ đây →" ở 1 kỳ
+giữa danh sách, xác nhận chọn đúng đúng kỳ đó + mọi kỳ MỚI HƠN (không lẫn kỳ lưu trữ nếu có xen
+giữa, không chọn kỳ CŨ HƠN); (7) mở file Excel thật, xác nhận cột "Tổng"/"Đã giải quyết"/"Đang GQ"
+hiện đúng dạng "N vụ/M bị can" dễ đọc.
 
 ## ✅ ĐÃ MERGE `bieu2-3-cong-thuc-truc-tiep` VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-09-05, theo xác nhận Dũng "đúng rồi ok chạy đi" sau khi tự kiểm tra D86/D72 trên Excel thật kỳ 08/2026 tại `qlahs-sup.web.app`)
 
