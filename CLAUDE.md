@@ -2,7 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Nhánh `bieu2-3-cong-thuc-truc-tiep` — Biểu 2/3: MỌI ô số liệu = công thức Excel trỏ thẳng sheet DS, sửa bug D86 ĐT sai 224→159 (2026-09-04, `qlahs-sup.html`, tách từ `main`, CHƯA merge/deploy)
+## ✅ ĐÃ MERGE `bieu2-3-cong-thuc-truc-tiep` VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-09-05, theo xác nhận Dũng "đúng rồi ok chạy đi" sau khi tự kiểm tra D86/D72 trên Excel thật kỳ 08/2026 tại `qlahs-sup.web.app`)
+
+Gồm cả 2 mục ngay dưới đây: sửa bug D86 ĐT (224→159, "công thức Excel trỏ thẳng sheet DS") VÀ sửa
+bug D72/C7 "khởi tố mới" bị stack cộng "nơi khác chuyển đến"/"phục hồi điều tra" (95→~70). Merge
+fast-forward (`8c3fa52`, không xung đột), push `main`, `./deploy.sh prod` — HTTP 200. Dũng đã tự
+xác nhận cả 2 con số đúng qua Excel thật trên `qlahs-sup.web.app` TRƯỚC khi yêu cầu deploy prod —
+đọc 2 mục dưới đây để biết chi tiết từng bug, KHÔNG còn "CHƯA merge/deploy" nữa.
+
+## Nhánh `bieu2-3-cong-thuc-truc-tiep` — Biểu 2/3: MỌI ô số liệu = công thức Excel trỏ thẳng sheet DS, sửa bug D86 ĐT sai 224→159 (2026-09-04, `qlahs-sup.html`, tách từ `main`, ĐÃ merge/deploy — xem mục ngay trên)
 
 Dũng phát hiện Biểu 2 sai hệ thống trên dữ liệu **thật kỳ 08/2026**: **D86** ("Số bị can CQĐT đã
 giải quyết = đề nghị truy tố + đình chỉ", Điều tra) hệ thống tính **224**, đúng ra phải **159**
