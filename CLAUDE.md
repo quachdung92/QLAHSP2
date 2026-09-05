@@ -113,6 +113,38 @@ giữa danh sách, xác nhận chọn đúng đúng kỳ đó + mọi kỳ MỚI
 giữa, không chọn kỳ CŨ HƠN); (7) mở file Excel thật, xác nhận cột "Tổng"/"Đã giải quyết"/"Đang GQ"
 hiện đúng dạng "N vụ/M bị can" dễ đọc.
 
+**Sửa tiếp ngay sau đó (cùng ngày) — suy diễn "bỏ qua giai đoạn trước" khi có kỳ lưu trữ.** Dũng:
+*"do chọn cả kỳ án lưu nên số tổng, giải quyết ko chính xác lắm. nhưng bạn phải auto hiểu là nếu đã
+xét xử thì phải có số mới, giải quyết ở cả điều tra, truy tố"* — cho phép chọn kỳ lưu trữ (mục 3 ở
+trên) làm lộ ra 1 vấn đề số liệu: kỳ lưu trữ backfill án cũ thường chỉ ghi ĐÚNG 1 sự kiện `khoi_to_vu`
+thẳng vào giai đoạn CUỐI CÙNG đã biết (VD "Đã xét xử" → chỉ có 1 sự kiện vào thẳng Xét xử), không có
+sự kiện nào ở Điều tra/Truy tố — nhưng VỀ MẶT TỐ TỤNG, để tới được Xét xử BẮT BUỘC phải từng "mới" và
+"đã giải quyết" ở Điều tra VÀ Truy tố trước đó (trong CÙNG đơn vị, trừ khi đến từ đơn vị khác).
+
+**Đã sửa** (`tinhPhanCongTheoKy`, chỉ trong tính năng này — KHÔNG đụng `tinhBaoCaoKyTuLog`/B10/Kỳ
+báo cáo chính, vì suy diễn này ảnh hưởng số liệu chính thức rộng hơn phạm vi yêu cầu lần này, cần
+quyết định riêng nếu áp dụng nơi khác): gom mọi entry `khoiToTrucTiep` (khởi tố TRỰC TIẾP, không
+qua chuyển giai đoạn nội bộ) của Truy tố/Xét xử qua các kỳ đã chọn, lọc bỏ Nguồn = "Án nơi khác
+chuyển đến" (`v.nguon !== "an_noi_khac_chuyen_den"` — đúng nguyên tắc đã áp dụng cho D73/D74 Biểu
+2 và B10 C6/C7: nguồn này nghĩa là giai đoạn trước THẬT SỰ diễn ra ở đơn vị khác, không phải bỏ sót
+log nội bộ, không suy diễn), rồi cộng các entry còn lại vào CẢ "mới" LẪN "đã giải quyết" của (các)
+giai đoạn TRƯỚC nó trong CÙNG kỳ (Truy tố → cộng vào Điều tra; Xét xử → cộng vào CẢ Điều tra lẫn
+Truy tố) — dùng lại đúng `gomTheoKsv` sẵn có, không viết logic gộp mới.
+
+**Đã kiểm chứng bằng test cô lập** (8 assertion, trích nguyên `gomTheoKsv` + logic lọc/suy diễn) —
+vụ khởi tố trực tiếp vào Truy tố với nguồn thường (không phải "án nơi khác") được cộng đúng vào cả
+"mới" lẫn "đã giải quyết" của Điều tra; vụ nguồn "Án nơi khác chuyển đến" bị loại đúng, không suy
+diễn; vụ khởi tố trực tiếp vào Xét xử được cộng đúng vào CẢ Điều tra lẫn Truy tố; Xét xử/entry gốc
+của Truy tố không bị đụng vào (chỉ giai đoạn TRƯỚC được bổ sung, không tự thêm vào chính nó). 8/8
+PASS. Compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch. Mở lại qua server
+tĩnh cục bộ — tải sạch, 0 lỗi console thật.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** — nên tự thử trên `qlahs-sup.web.app` sau khi merge:
+chọn 1 kỳ lưu trữ có sẵn vụ "Đã xét xử" backfill, xác nhận cột "Tổng"/"Đã giải quyết" ở Điều tra VÀ
+Truy tố giờ KHÔNG còn = 0 cho KSV của vụ đó (trước đây chỉ Xét xử có số, 2 giai đoạn kia = 0); thử
+thêm 1 vụ backfill có Nguồn = "Án nơi khác chuyển đến" khởi tố trực tiếp vào Truy tố, xác nhận
+Điều tra KHÔNG bị cộng thêm (đúng vì giai đoạn trước ở đơn vị khác, không phải bỏ sót log).
+
 ## ✅ ĐÃ MERGE `bieu2-3-cong-thuc-truc-tiep` VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-09-05, theo xác nhận Dũng "đúng rồi ok chạy đi" sau khi tự kiểm tra D86/D72 trên Excel thật kỳ 08/2026 tại `qlahs-sup.web.app`)
 
 Gồm cả 2 mục ngay dưới đây: sửa bug D86 ĐT (224→159, "công thức Excel trỏ thẳng sheet DS") VÀ sửa

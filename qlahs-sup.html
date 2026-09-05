@@ -17997,10 +17997,13 @@ async function tinhPhanCongTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
   if (kyTruocSomNhat && !rpcDauKy) throw new Error("Không tính được tồn đầu kỳ (RPC không phản hồi — cần kết nối mạng ổn định).");
 
   const ket = {};
+  const khoiToTrucTiepTheoGd = {}; // gd -> mọi entry "khởi tố trực tiếp" gộp qua các kỳ đã chọn
   for (const gd of THU_TU_GIAI_DOAN) {
     const moi = {}, giaiQuyet = {}, tonDau = {}, tonCuoi = {};
+    const ktt = [];
     for (const b of baoCaoTungKy) {
       const d = b[gd].ds;
+      ktt.push(...(d.khoiToTrucTiep || []));
       gomTheoKsv(moi, d.khoiToTrucTiep);
       gomTheoKsv(moi, d.tachVu);
       gomTheoKsv(moi, d.chuyenDen);
@@ -18014,6 +18017,7 @@ async function tinhPhanCongTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
       gomTheoKsv(giaiQuyet, d.nhapVu);
       for (const k of HOAN_THANH_TRUONG_TONG) gomTheoKsv(giaiQuyet, d.hoanThanh[k]);
     }
+    khoiToTrucTiepTheoGd[gd] = ktt;
     if (rpcDauKy) {
       const { list } = await tinhDsTonTheoKy(gd, kySomNhat, rpcDauKy);
       gomTheoKsv(tonDau, list);
@@ -18022,6 +18026,29 @@ async function tinhPhanCongTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
     gomTheoKsv(tonCuoi, dsCuoi);
     ket[gd] = { moi, giaiQuyet, tonDau, tonCuoi };
   }
+
+  // Suy diễn "bỏ qua giai đoạn trước" (2026-09, theo yêu cầu Dũng: "phải auto hiểu là nếu đã xét
+  // xử thì phải có số mới, giải quyết ở cả điều tra, truy tố") — 1 vụ khởi tố TRỰC TIẾP vào Truy
+  // tố/Xét xử (không qua sự kiện chuyển giai đoạn nội bộ nào) thường do KỲ LƯU TRỮ backfill án cũ
+  // chỉ ghi đúng 1 sự kiện "vào" ở giai đoạn cuối cùng đã biết, không có sự kiện nào ở giai đoạn
+  // trước — nhưng VỀ MẶT TỐ TỤNG, để tới được Truy tố/Xét xử BẮT BUỘC phải từng "mới" VÀ "đã giải
+  // quyết" ở (các) giai đoạn trước đó (trừ khi Nguồn = "Án nơi khác chuyển đến" — trường hợp đó
+  // giai đoạn trước THẬT SỰ diễn ra ở ĐƠN VỊ KHÁC, không phải bỏ sót log nội bộ, giữ nguyên không
+  // suy diễn — đúng nguyên tắc đã áp dụng cho D73/D74 Biểu 2/B10 C6/C7). Cộng vào giai đoạn trước
+  // CÙNG kỳ (không biết ngày thật xảy ra, kỳ đang chọn là xấp xỉ hợp lý nhất). CHỈ áp dụng cho
+  // riêng tính năng "Phân công hồ sơ chi tiết" này — KHÔNG đụng `tinhBaoCaoKyTuLog`/B10/Kỳ báo cáo
+  // chính (phạm vi suy diễn ảnh hưởng số liệu chính thức rộng hơn, cần quyết định riêng nếu áp
+  // dụng nơi khác).
+  const boQuaGiaiDoanTruoc = (entries) => (entries || []).filter(v => v.nguon !== "an_noi_khac_chuyen_den");
+  const bsTT = boQuaGiaiDoanTruoc(khoiToTrucTiepTheoGd.truy_to);
+  gomTheoKsv(ket.dieu_tra.moi, bsTT);
+  gomTheoKsv(ket.dieu_tra.giaiQuyet, bsTT);
+  const bsXX = boQuaGiaiDoanTruoc(khoiToTrucTiepTheoGd.xet_xu);
+  gomTheoKsv(ket.dieu_tra.moi, bsXX);
+  gomTheoKsv(ket.dieu_tra.giaiQuyet, bsXX);
+  gomTheoKsv(ket.truy_to.moi, bsXX);
+  gomTheoKsv(ket.truy_to.giaiQuyet, bsXX);
+
   return { ket, kySomNhat, kyMuonNhat };
 }
 
@@ -18720,8 +18747,11 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
               các kỳ đã chọn, nhóm theo KSV hiện tại của vụ (vụ đổi KSV giữa chừng tính hết cho KSV hiện
               tại — hệ thống không lưu lịch sử điều chuyển). "Đang GQ" là số tồn LIVE tại thời điểm xem,
               KHÔNG phụ thuộc kỳ đã chọn. "Tỉ lệ GQ" = Đã giải quyết ÷ Tổng (theo TỪNG giai đoạn lẫn theo
-              Tổng chung) — vượt 100% nghĩa là giải quyết cả phần tồn cũ nhiều hơn số mới nhận thêm. Xuất
-              Excel để xem thêm cột "Tồn đầu/cuối kỳ".
+              Tổng chung) — vượt 100% nghĩa là giải quyết cả phần tồn cũ nhiều hơn số mới nhận thêm. Vụ
+              khởi tố TRỰC TIẾP vào Truy tố/Xét xử (thường do kỳ lưu trữ backfill án cũ) được TỰ ĐỘNG
+              tính thêm là "mới" và "đã giải quyết" ở (các) giai đoạn trước đó trong CÙNG kỳ — trừ khi
+              Nguồn là "Án nơi khác chuyển đến" (giai đoạn trước thật sự ở đơn vị khác). Xuất Excel để
+              xem thêm cột "Tồn đầu/cuối kỳ".
             </div>
           </>
         )}
