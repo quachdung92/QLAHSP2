@@ -17958,12 +17958,28 @@ function ChartCotChong({ labels, datasets }) {
 // mảng "vào"/"ra" (từ ds.* của tinhBaoCaoKy) vào 1 map theo `ksvChinh` HIỆN TẠI của vụ. `chiBiCan`
 // (dùng cho ds.boSungBiCan — sự kiện CẤP BỊ CAN, mỗi entry đúng 1 người) chỉ cộng cột BC, KHÔNG
 // cộng "1 vụ" — đúng cách tinhBaoCaoKyTuLog đã tách "soMoi.boSungBiCan" khỏi "soMoi.tong".
+// Tên KSV thật sự liên quan tới 1 vụ (KSV chính + toàn bộ KSV hỗ trợ, khử trùng) — KHÔNG có
+// placeholder cho vụ chưa gán ai (dùng ở nơi cần liệt kê tên THẬT, VD dựng roster hiển thị).
+function tenKsvLienQuanVu(v) {
+  return [...new Set([v.ksvChinh, ...(v.ksvHoTro || [])].filter(Boolean))];
+}
+// Như trên nhưng có fallback "(chưa gán KSV)" khi vụ hoàn toàn chưa có ai — dùng để GOM SỐ LIỆU
+// (mọi vụ đều phải rơi vào đúng 1 nhóm để tổng luôn khớp, kể cả nhóm "chưa gán").
+function dsKsvCuaVu(v) {
+  const ds = tenKsvLienQuanVu(v);
+  return ds.length ? ds : ["(chưa gán KSV)"];
+}
+
+// Vụ có KSV hỗ trợ CÙNG làm (2026-09, theo yêu cầu Dũng "vụ nào có 2 ng cùng làm thì tính cho cả
+// 2") — TÍNH ĐỦ (không chia đôi khối lượng) cho MỌI KSV liên quan (chính + hỗ trợ), đúng cách xem
+// "đang xử lý bao nhiêu việc" của từng người chứ không phải phân bổ đóng góp theo tỉ lệ.
 function gomTheoKsv(map, entries, chiBiCan) {
   for (const v of entries || []) {
-    const ksv = v.ksvChinh || "(chưa gán KSV)";
-    if (!map[ksv]) map[ksv] = { soVu: 0, soBiCan: 0 };
-    if (!chiBiCan) map[ksv].soVu += 1;
-    map[ksv].soBiCan += chiBiCan ? 1 : (v._soBiCan || 0);
+    for (const ksv of dsKsvCuaVu(v)) {
+      if (!map[ksv]) map[ksv] = { soVu: 0, soBiCan: 0 };
+      if (!chiBiCan) map[ksv].soVu += 1;
+      map[ksv].soBiCan += chiBiCan ? 1 : (v._soBiCan || 0);
+    }
   }
 }
 
@@ -18055,6 +18071,18 @@ async function tinhPhanCongTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
 function PhanCongHoSoModule() {
   const [dsVu, dangTai] = useDanhSachDangGiaiQuyet();
   const dsCanBo = useDanhSachCanBo();
+  // Cán bộ ĐÃ chuyển đơn vị (2026-09, theo yêu cầu Dũng "cán bộ nào đã chuyển đơn vị thì ko cho
+  // vào thống kê nữa") — `useDanhSachCanBo()` CHỈ trả về người đang công tác nên tự nó không đủ để
+  // LOẠI người đã chuyển: cần biết CHÍNH XÁC ai đã chuyển (không phải chỉ "không nằm trong danh
+  // sách đang công tác" — tên KSV nhập tay/dữ liệu cũ không có trong danh mục Cán bộ cũng rơi vào
+  // "không nằm trong danh sách" nhưng KHÔNG có nghĩa là đã chuyển đơn vị). Tải riêng TOÀN BỘ
+  // `canbo` (kể cả đã chuyển) để dựng đúng tập tên cần loại — vẫn còn đứng tên KSV chính/hỗ trợ
+  // trên vụ CŨ chưa kịp bàn giao lại cho người khác.
+  const dsCanBoTatCa = useCollectionCache("canbo:all", () => db.collection("canbo"));
+  const tenDaChuyenSet = useMemo(
+    () => new Set(dsCanBoTatCa.filter(c => c.trangThai === "da_chuyen_don_vi").map(c => c.hoTen)),
+    [dsCanBoTatCa]
+  );
   const [tuKhoa, setTuKhoa] = useState("");
   const [hienBaoCaoChiTiet, setHienBaoCaoChiTiet] = useState(false);
   const [sortCot, setSortCot] = useState("tongVu");
@@ -18062,15 +18090,18 @@ function PhanCongHoSoModule() {
 
   const bang = useMemo(() => {
     // Danh sách KSV: gộp roster canbo (vai trò ksv, luôn đầy đủ kể cả đang 0 vụ) với mọi tên
-    // ksvChinh thấy được trong dữ liệu đang tồn (phòng tên KSV cũ/nhập tay không có trong danh
-    // mục Cán bộ) — cùng pattern lọc KSV đã dùng ở DanhSachPanel.
+    // KSV chính/hỗ trợ thấy được trong dữ liệu đang tồn (phòng tên KSV cũ/nhập tay không có trong
+    // danh mục Cán bộ) — cùng pattern lọc KSV đã dùng ở DanhSachPanel — rồi LOẠI HẲN người đã
+    // chuyển đơn vị khỏi thống kê, dù vẫn còn đứng tên trên vụ cũ.
     const tuCanBo = dsCanBo.filter(c => c.vaiTro === "ksv").map(c => c.hoTen);
-    const tuDuLieu = dsVu.map(v => v.ksvChinh).filter(Boolean);
-    const dsTen = [...new Set([...tuCanBo, ...tuDuLieu])];
+    const tuDuLieu = dsVu.flatMap(v => tenKsvLienQuanVu(v));
+    const dsTen = [...new Set([...tuCanBo, ...tuDuLieu])].filter(ten => !tenDaChuyenSet.has(ten));
 
     return dsTen.map(ksv => {
       // dsVu đã sort desc theo ngayTao (từ hook) — filter giữ nguyên thứ tự đó, không sort lại.
-      const vuCuaKsv = dsVu.filter(v => (v.ksvChinh || "") === ksv);
+      // 1 vụ có KSV hỗ trợ (cùng làm) được TÍNH ĐỦ cho CẢ chính lẫn hỗ trợ (2026-09, theo yêu cầu
+      // Dũng "vụ nào có 2 ng cùng làm thì tính cho cả 2"), không chia đôi khối lượng.
+      const vuCuaKsv = dsVu.filter(v => tenKsvLienQuanVu(v).includes(ksv));
       const theoGD = {};
       for (const gd of THU_TU_GIAI_DOAN) {
         const arr = vuCuaKsv.filter(v => v.coQuanThuLy === gd);
@@ -18083,7 +18114,7 @@ function PhanCongHoSoModule() {
         ganNhatDieuTra: theoGD.dieu_tra.arr.slice(0, 2),
       };
     });
-  }, [dsCanBo, dsVu]);
+  }, [dsCanBo, dsVu, tenDaChuyenSet]);
 
   const hienThi = useMemo(() => {
     const k = tuKhoa.trim().toLowerCase();
@@ -18484,13 +18515,24 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
   // báo cáo (nơi đó loại hẳn kỳ lưu trữ), ở đây Dũng có thể muốn thống kê luôn cả án cũ được gán
   // vào kỳ lưu trữ. Kỳ lưu trữ hiện nhãn " [Lưu trữ]" theo đúng quy ước ModalXacNhanKy/SuaKyModal.
   const listBaoCao = listBaoCaoTho;
+  // Cán bộ ĐÃ chuyển đơn vị (2026-09) — dùng CHUNG cacheKey "canbo:all" với PhanCongHoSoModule
+  // (registry dùng chung của useCollectionCache tự dedupe, không mở thêm listener) để loại đúng
+  // những tên đã rời đơn vị nhưng vẫn còn xuất hiện trong LOG lịch sử ("mới"/"đã giải quyết" của
+  // các kỳ đã chọn), không chỉ lọc ở `bangHienTai` (số "Đang GQ") truyền từ component cha.
+  const dsCanBoTatCa = useCollectionCache("canbo:all", () => db.collection("canbo"));
+  const tenDaChuyenSet = useMemo(
+    () => new Set(dsCanBoTatCa.filter(c => c.trangThai === "da_chuyen_don_vi").map(c => c.hoTen)),
+    [dsCanBoTatCa]
+  );
 
   const [kyChon, setKyChon] = useState(new Set());
   const [dangTinh, setDangTinh] = useState(false);
   const [ketQua, setKetQua] = useState(null);
   const [loi, setLoi] = useState("");
-  const [sortCot, setSortCot] = useState("ksv");
-  const [sortChieu, setSortChieu] = useState("asc");
+  // Mặc định sắp xếp theo Tổng số vụ giảm dần (2026-09, theo yêu cầu Dũng "sắp xếp theo tổng số vụ
+  // từ trên xuống dưới") — khớp đúng convention mặc định của bảng nhanh ở PhanCongHoSoModule.
+  const [sortCot, setSortCot] = useState("tongVu");
+  const [sortChieu, setSortChieu] = useState("desc");
 
   const toggleKy = (id) => setKyChon(s => { const m = new Set(s); m.has(id) ? m.delete(id) : m.add(id); return m; });
 
@@ -18528,6 +18570,9 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
         m => Object.keys(m).forEach(k => tenSet.add(k))
       );
     }
+    // Loại cán bộ ĐÃ chuyển đơn vị (2026-09) — dù vẫn còn xuất hiện trong log lịch sử của vụ cũ
+    // chưa bàn giao lại, không cho vào thống kê nữa.
+    for (const ten of tenDaChuyenSet) tenSet.delete(ten);
     const layTiLe = (gq, mauSo) => mauSo > 0 ? Math.round((gq / mauSo) * 1000) / 10 : null;
     // "Tổng" (theo giai đoạn LẪN theo tổng cả 3 gđ) = Tồn đầu kỳ + Mới trong các kỳ đã chọn —
     // CHÍNH LÀ mẫu số của Tỉ lệ GQ, không phải chỉ riêng "Mới" (2026-09, theo yêu cầu Dũng: "tỉ lệ
@@ -18564,7 +18609,7 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
         },
       };
     });
-  }, [ketQua, bangHienTai]);
+  }, [ketQua, bangHienTai, tenDaChuyenSet]);
 
   const hienThi = useMemo(() => {
     const arr = [...hang];
@@ -18750,8 +18795,9 @@ function PhanCongBaoCaoChiTietModal({ bangHienTai, onDong }) {
               Tổng chung) — vượt 100% nghĩa là giải quyết cả phần tồn cũ nhiều hơn số mới nhận thêm. Vụ
               khởi tố TRỰC TIẾP vào Truy tố/Xét xử (thường do kỳ lưu trữ backfill án cũ) được TỰ ĐỘNG
               tính thêm là "mới" và "đã giải quyết" ở (các) giai đoạn trước đó trong CÙNG kỳ — trừ khi
-              Nguồn là "Án nơi khác chuyển đến" (giai đoạn trước thật sự ở đơn vị khác). Xuất Excel để
-              xem thêm cột "Tồn đầu/cuối kỳ".
+              Nguồn là "Án nơi khác chuyển đến" (giai đoạn trước thật sự ở đơn vị khác). Vụ có KSV hỗ
+              trợ cùng làm được tính ĐỦ cho CẢ KSV chính lẫn hỗ trợ (không chia đôi). Cán bộ ĐÃ chuyển
+              đơn vị không còn hiện trong bảng này nữa. Xuất Excel để xem thêm cột "Tồn đầu/cuối kỳ".
             </div>
           </>
         )}

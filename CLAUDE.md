@@ -145,6 +145,49 @@ Truy tố giờ KHÔNG còn = 0 cho KSV của vụ đó (trước đây chỉ X�
 thêm 1 vụ backfill có Nguồn = "Án nơi khác chuyển đến" khởi tố trực tiếp vào Truy tố, xác nhận
 Điều tra KHÔNG bị cộng thêm (đúng vì giai đoạn trước ở đơn vị khác, không phải bỏ sót log).
 
+**Sửa tiếp lần 3 (cùng ngày) — loại cán bộ đã chuyển đơn vị + tính đủ vụ có KSV hỗ trợ + sort mặc
+định theo Tổng vụ.** Dũng, 2 tin nhắn liền: *"Cán bộ nào đã chuyển đơn vị thì ko cho vào thống kê
+nữa. sắp xếp theo tổng số vụ từ trên xuống dưới"* rồi *"vụ nào có 2 ng cùng làm thì tính cho cả 2"*.
+
+1. **Loại cán bộ đã chuyển đơn vị** — `useDanhSachCanBo()` (roster hiển thị) CHỈ trả người đang
+   công tác (`trangThai=="dang_cong_tac"`), nhưng KHÔNG đủ để LOẠI người đã chuyển: tên họ vẫn còn
+   đứng KSV chính/hỗ trợ trên vụ CŨ chưa bàn giao lại, nên vẫn lọt vào thống kê qua nhánh "gộp thêm
+   tên thấy được trong dữ liệu". Thêm cache mới **`"canbo:all"`** (`useCollectionCache`, tải TOÀN
+   BỘ `canbo` không lọc `trangThai` — dùng CHUNG 1 cacheKey ở cả `PhanCongHoSoModule` lẫn
+   `PhanCongBaoCaoChiTietModal`, registry tự dedupe nên không mở thêm listener) → dựng
+   `tenDaChuyenSet` (tên có `trangThai=="da_chuyen_don_vi"`) → lọc bỏ khỏi roster ở CẢ 2 nơi: bảng
+   nhanh (`PhanCongHoSoModule`'s `bang`, ảnh hưởng luôn cả "Đang GQ" của modal chi tiết vì đó dùng
+   lại `bangHienTai=bang`) VÀ `tenSet` trong `hang` của modal chi tiết (vì tên có thể lọt vào qua
+   log lịch sử `ket[gd].moi/giaiQuyet/tonDau/tonCuoi`, độc lập với `bangHienTai`).
+2. **Vụ có KSV hỗ trợ CÙNG làm — tính ĐỦ cho CẢ 2 (không chia đôi khối lượng)** — trước đây MỌI nơi
+   nhóm theo KSV (cả bảng nhanh lẫn `gomTheoKsv` của modal chi tiết) chỉ đọc `v.ksvChinh`, hoàn
+   toàn bỏ qua field mảng `ksvHoTro`. Thêm 2 hàm dùng chung mới (đặt cạnh `gomTheoKsv`):
+   `tenKsvLienQuanVu(v)` (khử trùng `[ksvChinh, ...ksvHoTro]`, KHÔNG có placeholder — dùng dựng
+   roster) và `dsKsvCuaVu(v)` (như trên, có fallback `"(chưa gán KSV)"` khi vụ chưa gán ai — dùng
+   gom số liệu, giữ đúng hành vi cũ cho vụ chưa gán). `gomTheoKsv` đổi từ đọc 1 tên duy nhất sang
+   lặp qua `dsKsvCuaVu(v)`, cộng ĐỦ (không chia tỉ lệ) cho MỌI KSV liên quan — đúng cách xem "đang
+   xử lý bao nhiêu việc" của từng người, không phải phân bổ đóng góp. `PhanCongHoSoModule`'s `bang`
+   cũng đổi từ `dsVu.filter(v => v.ksvChinh===ksv)` sang `dsVu.filter(v =>
+   tenKsvLienQuanVu(v).includes(ksv))` — 1 vụ giờ có thể "thuộc về" ĐỒNG THỜI nhiều KSV trong bảng
+   (tổng cộng dồn qua các dòng có thể VƯỢT tổng số vụ thật — đúng chủ ý, không phải bug).
+3. **Sort mặc định đổi từ "KSV" (alphabet) sang "Tổng V" giảm dần** ở modal chi tiết (khớp đúng
+   convention mặc định đã có sẵn ở bảng nhanh `PhanCongHoSoModule` từ trước — `sortCot="tongVu"`,
+   `sortChieu="desc"`).
+
+**Đã kiểm chứng bằng test cô lập** (8 assertion, trích nguyên `dsKsvCuaVu`/`gomTheoKsv` mới) — vụ
+1 KSV chính + 1 hỗ trợ: CẢ 2 được tính đủ (không chia đôi); vụ không có hỗ trợ: hành vi cũ giữ
+nguyên; tên trùng giữa `ksvChinh` và 1 phần tử `ksvHoTro` (dữ liệu lỗi/trùng): khử trùng, không
+cộng đúp cho cùng 1 người; vụ chưa gán ai: vẫn rơi đúng bucket "(chưa gán KSV)"; 3 người cùng làm
+(1 chính + 2 hỗ trợ): cả 3 đều được tính đủ. 8/8 PASS. Compile-check qua `@babel/core`+
+`@babel/preset-react` toàn file — sạch. Mở lại qua server tĩnh cục bộ — tải sạch, 0 lỗi console.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** — nên tự thử trên `qlahs-sup.web.app`: (1) đổi 1 cán
+bộ đang có vụ sang "Đã chuyển đơn vị" (Cài đặt → Cán bộ), xác nhận biến mất khỏi CẢ bảng nhanh lẫn
+modal chi tiết (kể cả sau khi tính báo cáo 1 kỳ có log lịch sử của họ); (2) thêm KSV hỗ trợ cho 1
+vụ đang giải quyết, xác nhận CẢ KSV chính lẫn hỗ trợ đều hiện đúng số ở bảng nhanh (Đang GQ) và
+modal chi tiết (Tổng/GQ theo kỳ); (3) mở modal chi tiết, xác nhận mặc định sắp xếp Tổng V giảm dần
+mà không cần bấm gì thêm.
+
 ## ✅ ĐÃ MERGE `bieu2-3-cong-thuc-truc-tiep` VÀO `main` + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (2026-09-05, theo xác nhận Dũng "đúng rồi ok chạy đi" sau khi tự kiểm tra D86/D72 trên Excel thật kỳ 08/2026 tại `qlahs-sup.web.app`)
 
 Gồm cả 2 mục ngay dưới đây: sửa bug D86 ĐT (224→159, "công thức Excel trỏ thẳng sheet DS") VÀ sửa
