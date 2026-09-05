@@ -75,6 +75,52 @@ liệu thật, và mở bằng Excel THẬT xem cột "Kiểm tra" — các dòn
 THẬT (VD `D154=D77-D83-D134` lệch ⇒ hé lộ chênh giữa B10-cohort và đếm thẳng, đúng ý Dũng muốn thấy
 — không còn tự động "luôn ✓" giả như hệ thống cũ). Chưa merge vào `main`, chưa deploy.
 
+## Bug đã sửa (cùng nhánh `bieu2-3-cong-thuc-truc-tiep`, 2026-09) — D72 Biểu 2/C7 Biểu 10 "khởi tố mới" STACK cộng lại với D73/D74 (nơi khác chuyển đến) + phục hồi điều tra
+
+Dũng phát hiện qua kỳ 08/2026 thật: **D72 ("Số bị can mới khởi tố") tính ra 95**, trong khi tự đếm
+tay "DS khởi tố ĐT" bỏ qua các vụ nguồn "Án nơi khác chuyển đến" chỉ ra **38 BC**, cộng "DS bổ sung
+BC" (bị can bổ sung vào vụ đã có, hợp lệ tính vào C7 theo thiết kế cũ) **32 bị can** — 38+32=70,
+còn thiếu ~25 so với 95, đúng bằng số BC thuộc vụ "nơi khác chuyển đến"/"phục hồi điều tra" (nguồn).
+
+**Nguyên nhân gốc — bất đối xứng Vụ vs Bị can**: `D71/C6` ("Số vụ án mới khởi tố", ĐÃ sửa đúng từ
+2026-08-30) hẹp đúng CHỈ 2 nguồn "mới thật" (`an_khoi_to_moi`/`tin_bao_khoi_to_len`), loại hẳn "Án
+nơi khác chuyển đến" (đã có D73/C25 riêng) và "Phục hồi điều tra" (nguồn, khác PhucHoiModal). Nhưng
+`D72/C7` ("Số bị can mới khởi tố") **CHƯA BAO GIỜ được hẹp tương tự** — cả JS (`dt_ktBcMoiKy` trong
+`tinhBieu10`) lẫn công thức Excel (`B10_FORMULA[8]`, dùng `DT_KTO = ["DS khởi tố ĐT", "DS phục hồi
+ĐT", "DS bổ sung BC ĐT (C7-C24)"]` không lọc cột Nguồn AH) đều đếm MỌI bị can trong "DS khởi tố ĐT"
+bất kể Nguồn. Hậu quả: `D79 = D64+D66+D67+D69+D72+D74-D68-D76` (Tổng số bị can CQĐT thụ lý) **cộng
+2 lần** bị can "nơi khác chuyển đến" — 1 lần lẫn trong D72, 1 lần ở D74. Bị can "Phục hồi điều tra"
+(nguồn) cũng lẫn trong D72 dù chưa có dòng D-số nào khác dành riêng cho chúng — TODO ở dưới.
+
+**Đã sửa**: hàm mới `mkCfBcKyMoi(r, dsKyTen, ...extra)` (đặt cạnh `mkCfBcKy`, thay hẳn
+`mkCfBcKy(DT_KTO, ...)` ở TOÀN BỘ 18 ô C7-C24, index 8-25 của `B10_FORMULA`) — tách "DS khởi tố ĐT"
+thành 2 COUNTIFS lọc cột AH đúng 2 nguồn (y hệt cách C6 dùng 2 SUMIFS), bỏ hẳn "DS phục hồi ĐT" khỏi
+danh sách sheet nguồn, giữ nguyên "DS bổ sung BC ĐT (C7-C24)" không lọc Nguồn (bị can bổ sung vào vụ
+đã có không thuộc nguồn nào — vẫn tính vào C7 theo đúng thiết kế đã thống nhất trước đó, xem "3 vòng
+sửa C7-C24" ở lịch sử). Song song sửa đúng biến JS `dt_ktBcMoiKy` (đổi `dt.khoiToTrucTiep` →
+`dtKhoiToMoiThat_b10`, biến C6 đã dùng sẵn) và `dtKtoCaNhan` (khối tự kiểm tra "thiếu Trình độ/Năm
+sinh" — phải dùng ĐÚNG cùng cohort với C7 thật sự đếm, nếu không khối kiểm tra sẽ tự lệch theo).
+
+**Đã kiểm chứng bằng test độc lập** (`test_mkCfBcKyMoi.js`, scratchpad) — 9/9 PASS: công thức C7
+sinh đúng 2 COUNTIFS lọc AH="Án khởi tố mới"/"Tin báo khởi tố lên" + 1 COUNTIFS "DS bổ sung BC ĐT
+(C7-C24)" không lọc AH, KHÔNG còn tham chiếu "DS phục hồi ĐT" hay chuỗi "nơi khác chuyển đến"/"phục
+hồi điều tra" trong formula; C8 (pháp nhân, có `...extra`) áp đúng tiêu chí phụ cho cả 3 phần; báo
+cáo gộp nhiều kỳ nhân đúng số COUNTIFS theo số kỳ. Compile-check qua `@babel/core`+
+`@babel/preset-react` — sạch. **CHƯA kiểm chứng bằng Excel THẬT/dữ liệu Supabase thật** (đúng bài
+học "sửa JS không đủ, phải sửa cả formula" đã ghi nhiều lần — lần này đã sửa CẢ HAI đồng bộ, nhưng
+vẫn cần Dũng mở lại báo cáo kỳ 08/2026 thật xác nhận D72 giờ ra đúng ~70 (38 mới thật + 32 bổ sung,
+KHÔNG còn cộng "nơi khác chuyển đến"/"phục hồi") trước khi tin tưởng tuyệt đối.
+
+**TODO — cần Dũng quyết định trước khi làm tiếp**: bị can vụ "Phục hồi điều tra" (nguồn, tạo vụ MỚI
+với cờ "Phục hồi điều tra" — KHÁC PhucHoiModal/"DS phục hồi TĐC ĐT") sau bản sửa này **không còn
+được đếm ở BẤT KỲ đâu trong Tổng thụ lý D79** (giống vụ của chúng vốn đã không được đếm ở D77 từ
+2026-08-30). Đối chiếu 1 file ngành thật trước đó (`D71_10238=C6=48` TÁCH RIÊNG với `D62="phục hồi"
+=7`) gợi ý: "Phục hồi điều tra" (nguồn) nên gộp vào D62/D69 ("Số vụ/bị can án tạm đình chỉ phục hồi
+điều tra trong kỳ", hiện CHỈ nguồn từ "DS phục hồi TĐC ĐT"/PhucHoiModal) — cần thêm "DS phục hồi ĐT"
+làm nguồn thứ 2 cho D62/D69 (`_sumSheetA`/`demBcSheet`) nếu Dũng xác nhận đúng ý ngành. Hỏi lại Dũng
+trước khi làm, vì đây là quyết định gộp bucket ảnh hưởng số liệu chính thức, không chỉ 1 lỗi kỹ
+thuật rõ ràng như "nơi khác chuyển đến".
+
 ## Nhánh `bieu2-hoan-thien` — 4 cải tiến Excel báo cáo (2026-08-30, `qlahs-sup.html`, tách từ `main` sau khi `main` đã có toàn bộ Biểu 2/3/10 + fix ngành)
 
 Theo yêu cầu Dũng "tiếp tục cải tiến". 4 việc, mỗi việc 1 commit, ĐÃ kiểm chứng Excel thật (kỳ

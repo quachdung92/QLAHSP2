@@ -10463,8 +10463,12 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // C7-C24 = 2 phần: "mới" (bị can của vụ MỞ đúng kỳ này, lọc theo kỳ khởi tố RIÊNG của từng bị
     // can — bị can bổ sung vào kỳ SAU sẽ không bị đếm nhầm vào đây) + "bổ sung" (dt_boSungBcRaw,
     // dựng ở trên — bị can thêm vào vụ ĐÃ CÓ, so kỳ trực tiếp, không phụ thuộc bo_sung_bican).
+    // Bug đã sửa (2026-09, xem mkCfBcKyMoi) — "mới" trước đây đếm trên `dt.khoiToTrucTiep` KHÔNG
+    // lọc Nguồn (gồm cả "Án nơi khác chuyển đến"/"Phục hồi điều tra"), trong khi C6/D71 (Vụ) ĐÃ hẹp
+    // đúng 2 nguồn "mới thật" — khiến D72 Biểu 2 "stack" cộng lại số đã có dòng riêng D73/D74. Đổi
+    // sang `dtKhoiToMoiThat_b10` (CÙNG biến C6 dùng) để BC (D72/C7) khớp đúng Nguồn với Vụ (D71/C6).
     const dt_ktBcMoiKy = [
-      ...bcCoD(dt.khoiToTrucTiep || [], D).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id))),
+      ...bcCoD(dtKhoiToMoiThat_b10, D).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id))),
       ...dt_boSungBcRaw.filter(bc => getDL(bc) === D),
     ];
     const C6  = vuCoD(dtKhoiToMoiThat_b10, D).length;
@@ -10696,9 +10700,10 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       }
     };
     // Điều tra — C7-C24 "mới khởi tố" — dùng ĐÚNG 2 cohort (mới + bổ sung) mà C7 thật sự dùng, để
-    // khối kiểm tra này không đếm thiếu/lệch.
+    // khối kiểm tra này không đếm thiếu/lệch. `dtKhoiToMoiThat_b10` (không phải
+    // `baoCao.dieu_tra.ds.khoiToTrucTiep` thô) — khớp đúng cohort C7 dùng sau bug fix mkCfBcKyMoi.
     const dtKtoCaNhan = [
-      ...bcTatCa(baoCao.dieu_tra.ds.khoiToTrucTiep || []).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id)) && bc.loaiBiCan !== "phap_nhan"),
+      ...bcTatCa(dtKhoiToMoiThat_b10 || []).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id)) && bc.loaiBiCan !== "phap_nhan"),
       ...dt_boSungBcRaw.filter(bc => bc.loaiBiCan !== "phap_nhan"),
     ];
     kiemTraHoanChinhNhomBc("Phân tích bị can mới khởi tố (Điều tra)", dtKtoCaNhan, "C9-C13", true);
@@ -12395,6 +12400,23 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     for (const sn of sheets) for (const kt of dsKyTen) parts.push(mkCfBc(sn, r, "AF", kt, ...extra));
     return parts.join("+") || "0";
   }
+  // mkCfBcKyMoi (2026-09, sửa bug "stack" Dũng phát hiện qua kỳ 08/2026 — D72 Biểu 2 tính ra 95
+  // thay vì đúng khoảng 38, vì "DS khởi tố ĐT" KHÔNG lọc theo Nguồn trong khi C6/D71 (Vụ) ĐÃ lọc
+  // hẹp còn đúng 2 nguồn "mới thật" từ 2026-08-30) — dùng CHO C7-C24 THAY mkCfBcKy(DT_KTO,...):
+  // "DS khởi tố ĐT" hẹp lại đúng 2 nguồn an_khoi_to_moi/tin_bao_khoi_to_len (khớp C6, dùng 2
+  // COUNTIFS riêng qua cột AH — y hệt cách C6 dùng 2 SUMIFS) — loại "Án nơi khác chuyển đến" (đã
+  // có D73/D74 riêng, cộng thêm ở đây sẽ stack 2 lần khi D79=...+D72+D74) và "Phục hồi điều tra"
+  // (nguồn, KHÁC PhucHoiModal — hiện CHƯA có dòng Biểu 2 riêng cho nguồn này, TODO hỏi lại Dũng nên
+  // gộp vào D62/D69 "TĐC phục hồi" hay không trước khi thêm). "DS bổ sung BC ĐT (C7-C24)" GIỮ
+  // NGUYÊN không lọc Nguồn (không trùng D73/D74/D62 — bị can bổ sung vào vụ ĐÃ CÓ không phải "mới
+  // khởi tố" theo nguồn nào cả, chỉ đơn thuần cá nhân họ mới bị khởi tố trong kỳ, xem `dt_boSungBc`).
+  function mkCfBcKyMoi(r, dsKyTen, ...extra) {
+    const moi = ["an_khoi_to_moi", "tin_bao_khoi_to_len"]
+      .map(k => mkCfBcKy(["DS khởi tố ĐT"], r, dsKyTen, "AH", NHAN_NGUON[k], ...extra))
+      .join("+");
+    const boSung = mkCfBcKy(["DS bổ sung BC ĐT (C7-C24)"], r, dsKyTen, ...extra);
+    return `${moi}+${boSung}`;
+  }
   // Nhóm DS sheets theo vai trò — dùng cho B10 và TK tội danh. Thêm "DS phục hồi TĐC"/"DS nhận
   // lại CĐ" (2026-08-01) — PHẢI khớp đúng tên + có mặt trong VAO_SHEETS_GD (khối "Cân đối số
   // liệu" ở dưới) để "Tổng thụ lý" (C3/C33/C60) và "Cân đối số liệu" luôn tính TRÊN CÙNG 1 tập
@@ -12414,7 +12436,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // ở tinhBieu10 — so trực tiếp kỳ khởi tố bị can với kỳ khởi tố vụ, KHÔNG dựa vào bo_sung_bican) —
   // sheet MỚI, KHÁC "DS bổ sung BC ĐT" đã có ở DT_VAO (nguồn event, dùng riêng cho "Tổng thụ lý" —
   // giữ NGUYÊN không đổi, tránh ảnh hưởng "Cân đối số liệu" đã kiểm chứng kỹ trước đó).
-  const DT_KTO = ["DS khởi tố ĐT", "DS phục hồi ĐT", "DS bổ sung BC ĐT (C7-C24)"];
+  // Vòng 4 (2026-09, Dũng phát hiện qua kỳ 08/2026: D72 Biểu 2 ra 95 thay vì ~38, "stack" cộng cả
+  // 'Án nơi khác chuyển đến' lẫn 'Phục hồi điều tra' dù 2 khoản này đã có dòng riêng D73/D74) — bỏ
+  // hẳn `DT_KTO`/`mkCfBcKy(DT_KTO,...)`, thay bằng `mkCfBcKyMoi` (định nghĩa cạnh mkCfBcKy ở trên) —
+  // hẹp "DS khởi tố ĐT" lại đúng 2 nguồn "mới thật" (khớp C6/D71), giữ nguyên "DS bổ sung BC ĐT
+  // (C7-C24)" không lọc nguồn.
   // "Tổng thụ lý" (C3/C4, C33/C34, C60/C61, xem bieu_B10_mo_ta.md mục 3.2) = Tồn kỳ trước (ô CÙNG
   // DÒNG, đã có sẵn — không phải DS sheet) + Σ(*_VAO ở trên) − Σ("DS nhập vụ"/"DS chuyển đi" của
   // đúng giai đoạn đó) — 2026-07-2x, sheet-hoá nốt 6 ô cuối cùng của B10 còn ghi số JS tĩnh (audit
@@ -12516,24 +12542,24 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     //   AF=Kỳ TK riêng BC (dùng cho C7-C24 — xem mkCfBcKy, KHÔNG dùng W/loaiKhoiTo nữa)
     // ĐT
     6:  r => mkCfBcM(DT_VAO, r, "X","phap_nhan"),              // C5 pháp nhân ĐT mới
-    8:  r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao),                // C7 ĐT khởi tố BC mới trong kỳ
-    9:  r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"X","phap_nhan"),// C8 pháp nhân trong C7
-    10: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Y","14_16"),    // C9-C13 tuổi
-    11: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Y","16_18"),
-    12: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Y","18_30"),
-    13: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Y","30_70"),
-    14: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Y",">70"),
-    15: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Z","khong_biet_chu"),  // C14-C18 trình độ
-    16: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Z","tieu_hoc"),
-    17: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Z","thcs"),
-    18: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Z","thpt"),
-    19: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"Z","dh_tro_len"),
-    20: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"AA","nữ"),      // C19 giới tính nữ
-    21: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"AB","có"),      // C20 dân tộc KK
-    22: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"T","x"),        // C21 đảng viên
-    23: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"AC","có"),      // C22 giữ chức vụ
-    24: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"AD","có"),      // C23 quốc tịch NN
-    25: r => mkCfBcKy(DT_KTO, r, dsKyTenTrongBaoCao,"AE","có"),      // C24 tái phạm
+    8:  r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao),                // C7 ĐT khởi tố BC mới trong kỳ (hẹp đúng 2 nguồn, khớp C6)
+    9:  r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"X","phap_nhan"),// C8 pháp nhân trong C7
+    10: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Y","14_16"),    // C9-C13 tuổi
+    11: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Y","16_18"),
+    12: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Y","18_30"),
+    13: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Y","30_70"),
+    14: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Y",">70"),
+    15: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Z","khong_biet_chu"),  // C14-C18 trình độ
+    16: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Z","tieu_hoc"),
+    17: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Z","thcs"),
+    18: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Z","thpt"),
+    19: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Z","dh_tro_len"),
+    20: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"AA","nữ"),      // C19 giới tính nữ
+    21: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"AB","có"),      // C20 dân tộc KK
+    22: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"T","x"),        // C21 đảng viên
+    23: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"AC","có"),      // C22 giữ chức vụ
+    24: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"AD","có"),      // C23 quốc tịch NN
+    25: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"AE","có"),      // C24 tái phạm
     27: r => mkCfBcM(["DS ĐT chuyển TT"], r),                  // C26 ĐT→TT BC
     28: r => mkCfBcM(["DS ĐT chuyển TT"], r, "X","phap_nhan"), // C27
     30: r => mkCfBcM(["DS đình chỉ ĐT"], r),                   // C29 đình chỉ BC
