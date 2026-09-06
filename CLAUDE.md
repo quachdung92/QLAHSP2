@@ -2,7 +2,56 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Sửa TRIỆT ĐỂ Biểu 2 D154/D156/D344/D346 — bug RPC "tach_vu vô hình" + double-count "khởi tố mới ↔ phục hồi" (2026-09-06, `qlahs-sup.html` + `supabase/`, nhánh `main`, RPC ĐÃ CHẠY lên Supabase thật — JS CHƯA commit/deploy, xem checklist cuối mục)
+## Kiểm chứng D77 sau khi deploy `qlahs-sup.web.app` — xác nhận đúng fix double-count, PHÁT HIỆN THÊM bug mới "vụ thiếu điều luật bị rơi khỏi D71 (pin vào B10 tổng)" (2026-09-06, cùng ngày với mục ngay dưới)
+
+Ngay sau khi mục dưới đây (double-count "khởi tố mới ↔ phục hồi") được commit+push, Dũng gửi tiếp
+1 phát hiện MỚI qua ảnh chụp Biểu 2 thật kỳ 08/2026: **D77(379) − D83(33) − D134(17) = 329 ≠
+D154(330)**, lệch 1, và nói "tương tự dòng bị can" (D79/D86/D141 vs D156). Dũng cấp thêm tài khoản
+đăng nhập `qlahs-sup.web.app` (`admin@qlva.local`) ngay trong chat — lần đầu tiên phiên này có thể
+tự đăng nhập kiểm chứng qua UI thật thay vì chỉ suy luận qua DB.
+
+**Bước 1 — xác nhận đúng giả thuyết ban đầu**: `qlahs-sup.web.app` lúc đó ĐANG CHẠY code CŨ (kiểm
+tra qua `fetch(location.href)` rồi tìm chuỗi `"phucHoiDieuTraBoSung"` trong HTML trả về — không có
+= code cũ, đúng dự đoán "JS đã commit+push nhưng chưa deploy"). Đã chạy `./deploy.sh sup` để đưa
+code có fix (commit `2222e7d`) lên site test này (KHÔNG đụng `qlahsp2.web.app`/production).
+
+**Sau khi deploy — kiểm chứng qua UI thật + đọc CÔNG THỨC Excel thật (bắt `Blob` qua hook
+`URL.createObjectURL`, nạp lại bằng `ExcelJS.Workbook().xlsx.load()` ngay trong trình duyệt)**:
+- Báo cáo kỳ 08/2026 (màn hình): "Án khởi tố mới" ĐT giảm đúng 18→15 vụ (3 vụ dời sang "Phục hồi"
+  vì trùng sự kiện), "Phục hồi điều tra" (nguồn) 5→0 (gộp hết vào "Phục hồi (từ TĐC)"), "Phục hồi
+  (từ TĐC)" 10→12. **Tổng số mới ĐT: 71→65 — ĐÚNG NHƯ DỰ ĐOÁN`** (khớp chính xác con số đã tính
+  trước bằng script SQL độc lập trước khi deploy).
+- Excel Biểu 2: **D77 vẫn = 379** (KHÔNG đổi!) dù dedup đã hoạt động đúng. Đào bằng cách đọc công
+  thức `D71 = ='Biểu B10'!K52` (không phải đếm thẳng `dtKhoiToMoiThat_b10.length`) — **PHÁT HIỆN
+  BUG MỚI, KHÁC HẲN bug double-count đã sửa**: `vuPrimaryDL(vu)` (hàm nhóm vụ theo điều luật để
+  tính tổng B10) khi vụ **0 bị can** đọc thẳng `vu.dieuLuat` (không có bị can để tra) — nếu
+  `vu.dieuLuat` rỗng, trả về `""`, không khớp bất kỳ điều luật chuẩn nào trong `tatCaDieuLuatChuan`
+  → vụ đó **hoàn toàn biến mất khỏi tổng B10 (K52)**, kéo theo `tongC6`/D71/D77 hụt đúng 1 mỗi vụ
+  như vậy. Đây là điều KHÁC với cơ chế `canhBao` "Vụ chưa xác định được điều luật" đã có sẵn trong
+  Biểu B10 (bảng đó rỗng — không tự động flag được trường hợp 0-bị-can-vu-rỗng-dieuLuat này).
+- **Tìm ra ĐÚNG 1 vụ gây lệch kỳ 08**: `QLVA_E01.53_2511_0051` ("Nguyễn Thị Hoa Vinh bị LĐCĐTS") —
+  có sự kiện `khoi_to_vu` (nguồn `tin_bao_khoi_to_len`, kỳ 08) rồi **8 phút sau** có sự kiện
+  `nhap_vu` (nhập luôn vào vụ khác) — vụ "vỏ" chưa kịp nhập bị can/điều luật trước khi bị merge. Đã
+  kiểm chứng qua Postgres: đúng 28 vụ trong cohort "khởi tố mới" (sau dedup) của kỳ 08 ĐT, đúng 1
+  vụ có `dieuLuat=""` (0 bị can) — khớp CHÍNH XÁC với `D71(=27)` thay vì `28` mong đợi, và
+  `D77(379)` thay vì `380` mong đợi. `380−33−17=330=D154` — khớp tuyệt đối nếu vụ này được phân
+  loại đúng điều luật (hoặc bị loại khỏi cohort "khởi tố mới" nếu coi vụ 0-bị-can-merge-ngay không
+  nên tính là "mới" — CẦN DŨNG QUYẾT ĐỊNH, xem "Cần làm tiếp" bên dưới).
+- **Dòng bị can (D156)**: `D79(955) − D86(159) − D141(0) = 796 ≠ D156(798)`, lệch 2 — đã kiểm tra
+  RIÊNG cả 2 cohort nuôi `tongC7`/D72 (khởi tố trực tiếp 2 nguồn: 36 BC; bổ sung BC vào vụ đã có:
+  ~32-36 BC) qua Postgres, **KHÔNG có bị can nào thiếu điều luật trong cả 2 nhóm** — nguyên nhân
+  gây lệch 2 này KHÁC hẳn cơ chế "thiếu điều luật" vừa tìm ở trên, **CHƯA xác định được**, cần điều
+  tra thêm ở phiên sau (không phải bug đã biết trong lịch sử file này).
+
+**Kết luận cho Dũng**: bug double-count ĐÃ FIX ĐÚNG (xác nhận qua UI thật), nhưng **D77/D154 vẫn
+CHƯA khớp tuyệt đối vì 1 lỗ hổng MỚI KHÁC** (D71 "rơi" vụ thiếu điều luật khỏi tổng B10) — không
+phải do fix sai, mà do phát hiện thêm 1 lớp bug riêng biệt. `qlahs-sup.web.app` ĐÃ deploy fix
+double-count (commit `2222e7d`), **`qlahsp2.web.app` (production) VẪN CHƯA đụng gì** — chờ quyết
+định về hướng xử lý bug "vụ thiếu điều luật" (sửa data 1 vụ cụ thể, hay sửa công thức D71/D72 để
+không phụ thuộc B10-pin) trước khi deploy production, và điều tra thêm nguyên nhân lệch 2 ở dòng
+bị can trước khi coi Biểu 2 ĐT là đã khớp tuyệt đối 100%.
+
+## Sửa TRIỆT ĐỂ Biểu 2 D154/D156/D344/D346 — bug RPC "tach_vu vô hình" + double-count "khởi tố mới ↔ phục hồi" (2026-09-06, `qlahs-sup.html` + `supabase/`, nhánh `main`, RPC ĐÃ CHẠY lên Supabase thật, JS ĐÃ commit/push + ĐÃ DEPLOY `qlahs-sup.web.app` — xem mục ngay TRÊN — CHƯA deploy `qlahsp2.web.app` production)
 
 Tiếp theo yêu cầu Dũng ("Kiểm tra lại biểu 2, Dòng 154/156/344/346 báo lỗi lệch công thức nội tại và
 số tồn thực tế" rồi "tôi muốn sửa triệt để... Kì 06 chỉ là kì đầu tiên tôi nhập để hợp lí hóa số
