@@ -12614,10 +12614,16 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // ngành (D77_10238−D59_10238=C3, D280_10238−D262_10238=C33, D17_10239=C60): án huỷ là 1 hình thức
   // giải quyết, KHÔNG rời khỏi "đã thụ lý". (Trước 2026-08-29 code trừ nhầm án huỷ; án huỷ = 0 trên
   // mọi kỳ thật nên giá trị không đổi, chỉ đúng lại về nguyên tắc.)
+  // xet_xu: thêm "DS XX trả TT" (2026-09-06, sửa bug thật) — JS (`C60`/`C61` trong `tinhBieu10`,
+  // xem item "cf1a34b" 2026-08-30) đã trừ `xx.traDi` (Toà trả hồ sơ về TT) từ lâu, nhưng CÔNG THỨC
+  // EXCEL của C60/C61 (sinh qua `mkThuLyVu`/`mkThuLyBc` dùng RA_THULY_GD này) thì CHƯA — khiến JS
+  // "result" cache (đúng) và Excel THẬT tính lại (thiếu trừ, dư đúng bằng số vụ/bc XX trả TT) lệch
+  // nhau. Dũng phát hiện qua Excel thật kỳ 08/2026: D17=57 (57-1-0-0=56) ≠ D84=52 — lệch đúng 4 =
+  // countVu('DS XX trả TT'); D18 lệch đúng 12 = countBc('DS XX trả TT').
   const RA_THULY_GD = {
     dieu_tra: ["DS nhập vụ ĐT", "DS chuyển đi ĐT"],
     truy_to:  ["DS nhập vụ TT", "DS chuyển đi TT"],
-    xet_xu:   ["DS nhập vụ XX", "DS chuyển đi XX"],
+    xet_xu:   ["DS nhập vụ XX", "DS chuyển đi XX", "DS XX trả TT"],
   };
   const VAO_GD = { dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO };
   // Vị trí (0-based, trong vals[]) của "Tồn kỳ trước — Vụ" mỗi giai đoạn — cột "BC" luôn ngay cột
