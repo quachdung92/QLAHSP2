@@ -10536,6 +10536,9 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       }
     }
   }
+  // Dạng BỊ CAN THUẦN (khớp pattern dt_boSungBcRaw) — dùng để cộng vào C34 (Tổng thụ lý TT bị
+  // can) theo TỪNG tội danh D, cùng lớp bug với C4 ĐT ở trên (2026-09-06).
+  const tt_boSungBcRaw = tt_boSungBc.map(v => ({ ...v._bican }));
 
   const tatCaDieuLuatChuan = new Set();
   for (const k of tatCaDieuLuat) {
@@ -10586,8 +10589,21 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // C3/C4 Tổng thụ lý ĐT — theo bieu_B10_mo_ta.md §3.2 + quy tắc ngành (D77_10238−D59_10238=C3):
     // tồn kỳ trước + [mới đến ĐT] + tách ra − nhập vụ − chuyển đi. KHÔNG trừ "án huỷ" (án huỷ là 1
     // hình thức giải quyết, không rời khỏi "đã thụ lý"; không quy tắc nào trừ nó khỏi Tổng thụ lý).
+    // C4 CỘNG THÊM `dt_boSungBcRaw` (bổ sung bị can) — bug thật phát hiện 2026-09-06 (cùng đợt phát
+    // hiện C33/C34 thiếu trừ "TT trả ĐT"): TRƯỚC khi sửa, Σ C4 (mọi D) < D79 (Biểu 2, ledger độc
+    // lập) đúng bằng số bị can bổ sung — vì D72 (Biểu 2's "bị can mới khởi tố", nuôi D79) alias
+    // `=tongC7`, mà C7 ĐÃ gồm `dt_boSungBcRaw` (xem `dt_ktBcMoiKy` dưới), còn C4 (Tổng thụ lý) thì
+    // KHÔNG. Kiểm chứng Excel thật kỳ 08/2026 TRƯỚC sửa: C4=923, D79=953 (lệch 30). C3 (vụ) KHÔNG
+    // cần sửa — bổ sung bị can không tạo vụ mới, C3=D77=380 khớp sẵn.
+    // ⚠ SAU KHI SỬA vẫn còn lệch NHỎ theo chiều NGƯỢC LẠI (kỳ 08/2026: C4=957 > D79=953, lệch 4) —
+    // KHÔNG phải do fix này sai, mà do 1 khoảng trống KHÁC đã biết từ trước (xem TODO "bị can vụ
+    // 'Phục hồi điều tra' (nguồn)..." trong CLAUDE.md, mục Biểu 10 C7-C24 "3 vòng sửa"): `dt_moi`
+    // (nuôi C4) dùng `dt.khoiToTrucTiep` KHÔNG lọc Nguồn (mọi nguồn), trong khi D72/D74 (nuôi D79)
+    // chỉ phủ đúng 2+1 nguồn cố định — bị can vụ nguồn "Phục hồi điều tra" lọt vào C4 nhưng KHÔNG
+    // được đếm ở BẤT KỲ đâu trong D79. Đây là quyết định gộp bucket CẦN DŨNG XÁC NHẬN (đã ghi trong
+    // CLAUDE.md từ trước), KHÔNG tự ý sửa thêm ở đây — để nguyên phần lệch còn lại này.
     const C3  = dt_tp_vu + vuCoD(dt_moi, D).length - vuCoD(dt.nhapVu || [], D).length - vuCoD(dt.hoanThanh?.chuyen_di || [], D).length;
-    const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length;
+    const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length + dt_boSungBcRaw.filter(bc => getDL(bc) === D).length;
     const C5  = dt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     // C7-C24 = 2 phần: "mới" (bị can của vụ MỞ đúng kỳ này, lọc theo kỳ khởi tố RIÊNG của từng bị
@@ -10643,8 +10659,20 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // khi C36/C37 (dưới) đã cộng thêm đúng dân số này, quy tắc nội tại `C33>=C36+C53+C56`/
     // `C34>=C37+C54+C57` (quy_tac_bieu_10.md, cột "Tự kiểm tra" B10) sẽ ✗ SAI (trừ 1 nơi, cộng nơi
     // khác cùng 1 dân số). Đồng bộ với `RA_THULY_GD.truy_to` đã bỏ "DS chuyển đi TT" (xem dưới).
-    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length;
-    const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length;
+    // TRỪ THÊM "TT trả ĐT" (tt.traDi) — bug thật phát hiện 2026-09-06 (Dũng hỏi "tổng thụ lý Biểu
+    // 2/10 không khớp"): Σ C33 (mọi D) LUÔN LỚN HƠN D280 (Biểu 2) đúng bằng số vụ VKS trả hồ sơ
+    // ĐTBS trong kỳ (D278) vì C33 trước đây KHÔNG trừ khoản này (chỉ trừ nhập vụ qua
+    // `RA_THULY_GD.truy_to`), trong khi D280 (ledger độc lập trong Biểu 2) CÓ trừ (-D278) — đúng
+    // CÙNG LỚP bug đã sửa cho C60/C61 XX (thiếu trừ "DS XX trả TT", xem mục D84/D86 trong
+    // CLAUDE.md). Kiểm chứng Excel thật kỳ 08/2026: Σ C33=79, D280(thật, sau khi sửa bug thứ tự
+    // m.set ở trên)=68, lệch đúng 11=D278. Đã thêm "DS TT trả ĐT" vào `RA_THULY_GD.truy_to` (dưới)
+    // để đồng bộ Excel formula.
+    // C34 CỘNG THÊM `tt_boSungBcRaw` (bổ sung bị can, cùng lớp bug với C4 ĐT — xem ghi chú C4 ở
+    // trên) — sau khi sửa "TT trả ĐT" vẫn còn lệch 2 (C34=336 vs D281=338 ở kỳ 08/2026), đúng bằng
+    // đúng 2 bị can bổ sung (Đặng Quốc Thịnh/Ngô Thị Cẩm Vân, xem ghi chú tt_boSungBc ở trên) mà
+    // D281 (qua sheet "DS bổ sung BC TT (D281)") đã cộng nhưng C34 thì chưa.
+    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.traDi || [], D).length;
+    const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length - bcCoD(tt.traDi || [], D).length + tt_boSungBcRaw.filter(bc => getDL(bc) === D).length;
     const C35 = tt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     // tt_truToVu/tt_truToBc "Truy tố" (C36-C52) — 2026-09-06, theo yêu cầu Dũng: vụ "chuyển đi"
@@ -11652,6 +11680,16 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   m.set(265, _fc(demBcSheet("DS tồn cuối kỳ trước TT"), baoCao.truy_to.tonDauBiCan));
   m.set(261, _fc(_sumSheetA("DS phục hồi TĐC TT"), (tt.phucHoi || []).length));
   m.set(266, _fc(demBcSheet("DS phục hồi TĐC TT"), soBc(tt.phucHoi)));
+  // D262/D267 "vụ/bị can mới nhận lại để ĐTBS = Toà (XX) trả hồ sơ về TT" — ĐẶT Ở ĐÂY (không phải
+  // dưới xa, gần D300+ như bản cũ) vì D280/D281 (dưới) tham chiếu `_mv(m,262)`/`_mv(m,267)` để tính
+  // "result" cache — set SAU điểm dùng khiến `_mv` đọc `m.get()` = undefined → fallback 0, làm
+  // "result" cache của D280/D281 THIẾU đúng khoản D262/D267 (bug thật phát hiện 2026-09-06 khi đối
+  // chiếu D280 với Biểu 10's C33: JS "result" cache của D280 ra 64 dù công thức Excel THẬT tính ra
+  // 68 — công thức Excel vẫn ĐÚNG (chỉ tham chiếu C263=D262, Excel luôn tính đúng khi mở file),
+  // chỉ "result" cache JS bị stale do thứ tự m.set(). Dời lên đây để cache JS khớp đúng công thức,
+  // không phụ thuộc Excel tự sửa hộ).
+  m.set(262, _fc(_sumSheetA("DS trả về TT"), (tt.traVe || []).length));
+  m.set(267, _fc(demBcSheet("DS trả về TT"), soBc(tt.traVe)));
   m.set(263, _fc(_sumSheetA("DS vụ tách TT"), (tt.tachVu || []).length));
   m.set(268, _fc(demBcSheet("DS vụ tách TT"), soBc(tt.tachVu)));
   m.set(264, _fc(_sumSheetA("DS nhập vụ TT"), baoCao.truy_to.soNhapVu));
@@ -11739,9 +11777,7 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   m.set(332, _fc(demBcSheet("DS tạm đình chỉ TT"), soBc(tt.hoanThanh?.tam_dinh_chi)));
   m.set(344, _fc(_sumSheetA("DS tồn cuối kỳ TT"), baoCao.truy_to.tonCuoiKy));
   m.set(346, _fc(demBcSheet("DS tồn cuối kỳ TT"), baoCao.truy_to.tonCuoiBiCanKy));
-  // D262/D267 "vụ mới nhận lại để ĐTBS = Toà (XX) trả hồ sơ về TT".
-  m.set(262, _fc(_sumSheetA("DS trả về TT"), (tt.traVe || []).length));
-  m.set(267, _fc(demBcSheet("DS trả về TT"), soBc(tt.traVe)));
+  // D262/D267 đã dời lên trên (gần D260/D261/D263/D264) — xem ghi chú ở đó về bug thứ tự m.set().
   // D352/361/367/368 "VKS trả hồ sơ ĐTBS trực tiếp (không tính vụ do Toà án yêu cầu)" — sheet
   // "DS TT trả ĐT" đã có sẵn cột phụ "Trực tiếp" (AJ, xem B10 C58/C59 dùng chung sheet này) — dùng
   // THẲNG cột đó, không cần thêm cột mới. "CQĐT chấp nhận" (D361/368) dùng CHUNG với "VKS trả hồ
@@ -12681,9 +12717,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // này (vụ "chuyển đi" TT nay tính là ĐÃ truy tố, không rời khỏi Tổng thụ lý sớm — xem D276/D280
   // ở tinhBieu2). RA_SHEETS_GD.truy_to (Cân đối số liệu, phía dưới) VẪN GIỮ "DS chuyển đi TT" — đó
   // là ledger "tồn cuối" (những vụ này THẬT SỰ rời khỏi RPC "tồn"), khác khái niệm với Tổng thụ lý.
+  // THÊM "DS TT trả ĐT" (2026-09-06, bug thật — xem ghi chú C33/C34 ở trên): song song đúng "DS XX
+  // trả TT" đã có ở xet_xu — vụ VKS trả hồ sơ ĐTBS thật sự rời khỏi Tổng thụ lý TT trong kỳ.
   const RA_THULY_GD = {
     dieu_tra: ["DS nhập vụ ĐT", "DS chuyển đi ĐT"],
-    truy_to:  ["DS nhập vụ TT"],
+    truy_to:  ["DS nhập vụ TT", "DS TT trả ĐT"],
     xet_xu:   ["DS nhập vụ XX", "DS chuyển đi XX", "DS XX trả TT"],
   };
   const VAO_GD = { dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO };

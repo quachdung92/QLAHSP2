@@ -2,6 +2,56 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ HOÀN TẤT — "Tổng thụ lý" Biểu 2 khớp Biểu 10 (C33/C34 TT thiếu trừ "TT trả ĐT" + C4 ĐT/C34 TT thiếu cộng "bổ sung bị can") (2026-09-06, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
+
+Dũng hỏi: *"các dòng tổng thụ lý của biểu 2 và biểu 10 ko khớp nhau điều này sẽ dẫn đến lỗi công
+thức khi so sánh biểu ko?"* — đúng, tìm ra **2 bug thật độc lập**, cả 2 đều là B10 THIẾU 1 số hạng
+mà Biểu 2 (ledger riêng, độc lập, không tham chiếu B10) đã có sẵn. Không có quy tắc `[LIÊN BIỂU]`
+nào đang wire trực tiếp D280/D281 (TT) hay D77/D79 (ĐT) với C33/C34/C3/C4 nên KHÔNG có `✗` nào tự
+hiện trên cột "Kiểm tra" của chính hệ thống ta — nhưng số liệu 2 biểu vẫn thật sự lệch nhau, đúng
+loại rủi ro khi đối chiếu tay hoặc upload lên phần mềm ngành (ngành CÓ kiểm `D280_10238−D262_10238
+=C33` theo `quy_tac_bieu_10.md`).
+
+**Bug #1 — C33/C34 (Tổng thụ lý TT) thiếu trừ "DS TT trả ĐT"** (vụ VKS trả hồ sơ điều tra bổ sung,
+`tt.traDi`) — CÙNG LỚP bug đã sửa cho C60/C61 XX (thiếu trừ "DS XX trả TT", xem mục D84/D86 phía
+dưới), nhưng KHÔNG được áp dụng song song cho TT lúc đó. D280 (Biểu 2, ledger riêng) CÓ trừ khoản
+này (`-D278`), C33 (B10) thì KHÔNG (`RA_THULY_GD.truy_to` chỉ có `"DS nhập vụ TT"`) — Σ C33 luôn
+LỚN HƠN D280 đúng bằng D278. **Đã sửa**: thêm `"DS TT trả ĐT"` vào `RA_THULY_GD.truy_to` (Excel) +
+trừ `vuCoD(tt.traDi,D)`/`bcCoD(tt.traDi,D)` khỏi C33/C34 (JS, `tinhBieu10`).
+
+**Bug #2 — C4 (ĐT)/C34 (TT) thiếu cộng "bổ sung bị can"** — `dt_boSungBc`/`tt_boSungBc` (đã có sẵn
+từ đợt sửa D346/D156 sáng cùng ngày) chỉ được dùng để nuôi C7 (ĐT)/sheet "DS bổ sung BC TT (D281)"
+— KHÔNG hề được cộng vào C4/C34 (Tổng thụ lý). Vì D72 (Biểu 2) alias `=tongC7` (đã có bổ sung) và
+D281 dùng thẳng sheet bổ sung, 2 dòng D79/D281 "nhìn thấy" khoản này còn C4/C34 thì không. **Đã
+sửa**: cộng `dt_boSungBcRaw.filter(getDL===D).length` vào C4, `tt_boSungBcRaw.filter(getDL===D)
+.length` vào C34 (thêm `tt_boSungBcRaw` mới, cùng dạng `dt_boSungBcRaw`).
+
+**Kiểm chứng Excel THẬT kỳ 08/2026 (`qlahs-sup.web.app`)**: sau khi sửa cả 2 bug — **Σ C33=68=D280,
+Σ C34=338=D281 — KHỚP TUYỆT ĐỐI (TT).** Σ C3=380=D77 (ĐT, khớp sẵn từ trước — ĐT không có khoản
+"trả về giai đoạn trước" nên Bug #1 không áp dụng cho C3/C4). Σ C4=957 vs D79=953 — **còn lệch 4,
+KHÔNG phải do fix sai** mà do 1 khoảng trống KHÁC, đã biết từ trước (xem TODO "bị can vụ 'Phục hồi
+điều tra' (nguồn)" ở mục Biểu 10 C7-C24 phía dưới): `dt_moi` (nuôi C4) dùng `dt.khoiToTrucTiep`
+KHÔNG lọc Nguồn, trong khi D72/D74 (nuôi D79) chỉ phủ đúng 1 vài nguồn cố định — bị can nguồn
+"Phục hồi điều tra" lọt vào C4 nhưng không được đếm ở đâu trong D79. Đây là quyết định gộp bucket
+đã ghi rõ "CẦN DŨNG QUYẾT ĐỊNH" từ lâu — KHÔNG tự ý sửa thêm, để nguyên phần lệch 4 này chờ quyết
+định của Dũng.
+
+**Đã kiểm tra không phá vỡ gì**: quy tắc nội tại B10 `C33>=C36+C53+C56` (68>=8), `C34>=C37+C54+C57`
+(338>=15), `C3>=C25+C28+C31` (380>=50), `C4>=C26+C29+C32` (957>=159) — tất cả vẫn đúng sau khi sửa
+(C33 giảm, C4/C34 tăng, không có hướng nào làm vỡ bất đẳng thức `>=` này).
+
+**Phát hiện phụ (đã sửa tiện thể) — bug thứ tự `m.set()` làm "result" cache JS của D280/D281 (TT)
+bị SAI (không phải công thức Excel sai)**: `m.set(262,...)`/`m.set(267,...)` ("DS trả về TT") được
+đặt Ở DƯỚI XA (sau D300+), trong khi D280/D281 (ở trên) đã gọi `_mv(m,262)`/`_mv(m,267)` để tính
+"result" cache TRƯỚC KHI 2 dòng đó được set — `_mv` đọc `m.get()` = `undefined` → fallback 0, làm
+"result" cache của D280 thiếu đúng D262 (64 thay vì 68 thật), D281 thiếu đúng D267. Công thức Excel
+THẬT vẫn ĐÚNG (chỉ tham chiếu ô C263/C268, Excel luôn tính đúng khi mở file) — đây là bug thuần JS
+cache, đã dời `m.set(262)`/`m.set(267)` lên gần D260/D261/D263/D264 để cache JS khớp đúng công thức
+ngay từ đầu, không phụ thuộc Excel tự sửa hộ.
+
+Compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Đã deploy `qlahs-sup.web.app` rồi
+`qlahsp2.web.app` (production).
+
 ## ✅ HOÀN TẤT — D281 (TT) hết báo lỗi giả — công thức "Kiểm tra" thiếu term "bổ sung bị can" mà chính công thức GIÁ TRỊ của D281 đã có sẵn (2026-09-06, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`)
 
 Ngay sau fix D292/294/296/298 (mục ngay dưới) — Dũng báo tiếp: *"còn dòng 281 báo lỗi Tổng số bị
