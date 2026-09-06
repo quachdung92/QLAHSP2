@@ -2,6 +2,66 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ HOÀN TẤT — Biểu 2 TT: vụ "chuyển đi" tính là truy tố + D294/D298 mới + quy tắc D290=D291=D285 (2026-09-06, `qlahs-sup.html`, nhánh `main`, commit `1d9e10c`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
+
+Theo yêu cầu Dũng: **"đối với những vụ chuyển đi trong giai đoạn truy tố thì phải tính là truy
+tố"** — vụ "chuyển đi" phát sinh ở Truy tố (`tt.hoanThanh?.chuyen_di`, sự kiện Hoàn thành với hình
+thức "Chuyển đi") tại đơn vị này LUÔN LÀ trường hợp **"VKS cấp trên phân công VKS cấp dưới THQCT,
+KSXX sơ thẩm"** — về bản chất VẪN LÀ đã quyết định TRUY TỐ (chỉ giao việc thực hành quyền công tố/
+kiểm sát xét xử sơ thẩm cho đơn vị cấp dưới), KHÔNG phải "rời khỏi hệ thống" như "chuyển đi nơi
+khác" ở Điều tra/Xét xử. Dũng cho số liệu cụ thể cần khớp: D292=29 (=D292 cũ 24 + 5 chuyển đi),
+D294=5 (mới, "Trong đó VKS cấp trên phân công..."), D296=270 (=D296 cũ 222 + 48), D298=48.
+
+**Đã sửa (`tinhBieu2`)**: D276/D277 ("Số vụ/bị can chuyển đi nơi khác" TT) không còn đọc từ
+`tt.hoanThanh.chuyen_di` nữa — luôn = 0 (hằng số, không phải công thức Excel). D292/D296 ("Số vụ/
+bị can truy tố") cộng thêm `SUM/COUNTIF('DS chuyển đi TT'!...)` vào công thức cũ (chỉ có "DS TT
+chuyển XX"). D294/D298 (trước đây trống, chưa từng tính) = ĐÚNG BẰNG toàn bộ "DS chuyển đi TT" (vụ/
+bị can) — tại đơn vị này KHÔNG có loại "chuyển đi TT" nào khác. D282/D285 ("VKS đã giải quyết =
+truy tố+đình chỉ") cộng thêm "DS chuyển đi TT" để giữ đúng quy tắc ngành `D282=D292+D300`/
+`D285=D296+D310` (quy_tac_bieu_2.md) — nếu không, D292 tăng mà D282 không tăng theo sẽ làm vỡ đẳng
+thức đó. D280/D281 (Tổng số VKS thụ lý) KHÔNG cần đổi công thức — số hạng `-D276`/`-D277` tự động
+thành `-0`, và về đại số D280 tăng đúng bằng đúng lượng D282 tăng nên hiệu số (dùng trong
+`D344=D280-D282-D326`, so khớp RPC) không đổi.
+
+**D290/D291 (mới, theo xác nhận riêng của Dũng — KHÔNG PHẢI quy tắc chính thức trong
+quy_tac_bieu_2.md)**: tại đơn vị này, 100% bị can đã giải quyết (truy tố+đình chỉ) đều được VKS
+TRỰC TIẾP hỏi cung, và luôn hỏi cung TRƯỚC khi ra QĐ truy tố — `D290=D291=D285` LUÔN đúng trên thực
+tế. Đã pin cứng bằng công thức alias (`=C286`, tham chiếu D285) thay vì bắt nhập tay mỗi kỳ, cộng
+thêm 2 quy tắc `"D290=D291"`/`"D291=D285"` vào `BIEU2_QUY_TAC_RAW` (ghi rõ chú thích đây KHÔNG phải
+chuẩn ngành, chỉ là quy ước riêng của đơn vị — không sửa file `quy_tac_bieu_2.md` gốc).
+
+**Đã lan sang Biểu 10 (B10) để không phá liên biểu** — audit phát hiện: D292-D293=C36/D296-D297=C37
+(ghi chú lịch sử đối chiếu file ngành thật, không phải công thức sống) và đặc biệt **`C33>=C36+C53+
+C56`/`C34>=C37+C54+C57`/`C37=C39+C40+C41+C42`** (từ `quy_tac_bieu_10.md`, ĐANG LÀ công thức Excel
+SỐNG trong cột "Tự kiểm tra" của B10) sẽ ✗ nếu chỉ sửa Biểu 2 mà không sửa B10 — vì `tt_truToVu`/
+`tt_truToBc` (nguồn C36-C52) trước đây CHỈ = `tt.chuyenDi` (TT→XX), còn C33/C34 (Tổng thụ lý TT)
+VẪN trừ `tt.hoanThanh.chuyen_di` như 1 khoản "ra" — cộng 1 nơi bớt nơi khác đúng CÙNG 1 dân số sẽ
+làm sai lệch các bất đẳng thức nội tại đó. Đã sửa: `tt_truToVu`/`tt_truToBc` gộp thêm
+`tt.hoanThanh.chuyen_di` (tác động dây chuyền tới C36/C37/C38/C39-C42/C43-C52, mọi cột đều dùng
+chung 2 biến này); C33/C34 **bỏ hẳn** số hạng trừ `hoanThanh.chuyen_di`; `RA_THULY_GD.truy_to` bỏ
+"DS chuyển đi TT" (đồng bộ Excel formula, đúng bài học "sửa JS không đủ phải sửa cả formula"); thêm
+cột phụ **"Mức độ NT (BC)"** vào sheet "DS chuyển đi TT" (chỉ TT, cùng vị trí AJ như "DS TT chuyển
+XX") để C39-C42 (Phân loại tội phạm, đếm theo mức độ NT của BC) cộng đúng qua sheet này.
+**`RA_SHEETS_GD.truy_to` ("Cân đối số liệu") CỐ TÌNH GIỮ NGUYÊN "DS chuyển đi TT"** — đây là ledger
+tồn cuối kỳ (những vụ này THẬT SỰ rời khỏi RPC "tồn"), khác khái niệm với "Tổng thụ lý", 2 metric
+không cần dùng chung 1 tập "ra".
+
+**Đã kiểm chứng 2 lớp**: (1) test cô lập trích nguyên `tinhBieu2` (`vm.runInContext`) với dữ liệu
+giả lập đúng số Dũng cho (24 vụ/222 BC "TT chuyển XX" + 5 vụ/48 BC "chuyển đi") — D292=29, D294=5,
+D296=270, D298=48, D282=D292+D300, D285=D296+D310, D290=D291=D285 — khớp đúng cả 7 assertion; (2)
+**Excel THẬT trên dữ liệu Supabase thật** (`qlahs-sup.web.app`, kỳ 08/2026, chặn
+`URL.createObjectURL` bắt Blob → `ExcelJS.load` trong trình duyệt, đọc CẢ `cell.formula` lẫn
+`cell.result`/giá trị thô — không chỉ tin cache) — kỳ này có đúng 1 vụ/6 bị can "DS chuyển đi TT":
+D276=D277=0 (hằng số, không công thức); D292=8=D293(0)+... hợp lệ, D294=1, D296=15, D298=6; D282=8=
+D292(8)+D300(0) ✓; D285=15=D296(15)+D310(0) ✓; D290=D291=D285=15 ✓; mọi rule `>=` còn lại
+(D282>=D283/284, D285>=D286/290, D286<=D287+288+289, D292>=D293/294/295, D297>=D293, D298>=D294,
+D299>=D295) đều tự tay đánh giá TRUE bằng giá trị `result` thật (không phải chuỗi công thức, vì
+cột "Kiểm tra" là formula thuần không có `result` cache — đã tự thay số vào từng vế). B10 TỔNG
+(dòng 52): C33(AP)=79>=C36(8)+C53(0)+C56(0) ✓; C34(AQ)=390>=C37(15)+C54(0)+C57(0) ✓; C37(15)=
+C39+C40+C41+C42(0+0+0+15) ✓; C37-C38(15)=C43+..+C47(0+0+3+12+0=15) ✓; C36(8)<=C37(15) ✓; công thức
+AS (C36) đúng đọc `SUMIF('DS chuyển đến XX'!...)+SUMIF('DS chuyển đi TT'!...)`. Đã commit `1d9e10c`
++ push `main` + deploy CẢ `qlahs-sup.web.app` LẪN `qlahsp2.web.app` (production).
+
 ## ✅ HOÀN TẤT — D84/D86 (Biểu 3/XX) khớp TUYỆT ĐỐI kỳ 08/2026 — bug thật: công thức Excel C60/C61 (B10) thiếu trừ "DS XX trả TT" (2026-09-06, `qlahs-sup.html`, nhánh `main`, commit `8bcf833`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
 
 Ngay sau mục "HOÀN TẤT — D346 (TT)..." dưới đây (mục đó đã kết luận "Biểu 3/XX hiện KHÔNG lỗi" —
