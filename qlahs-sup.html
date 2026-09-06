@@ -10636,15 +10636,25 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // ── Truy tố ──
     const tt_moiBc = bcCoD(tt_moi, D);
     const tt_nhapBc = bcCoD(tt.nhapVu || [], D);
-    const tt_cdNoiBc = bcCoD(tt.hoanThanh?.chuyen_di || [], D);
     const tt_ahBc = bcCoD(tt.hoanThanh?.an_huy || [], D); // chỉ dùng cho cột "Án huỷ" riêng (vals)
     // C33/C34 Tổng thụ lý TT — như C3/C4: KHÔNG trừ "án huỷ" (quy tắc D280_10238−D262_10238=C33).
-    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.hoanThanh?.chuyen_di || [], D).length;
-    const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length - tt_cdNoiBc.length;
+    // KHÔNG còn trừ "hoanThanh.chuyen_di" nữa (2026-09-06, xem D276/D280 ở tinhBieu2 — vụ "chuyển
+    // đi" ở TT nay tính là ĐÃ truy tố, không phải rời khỏi hệ thống sớm) — nếu vẫn trừ ở đây trong
+    // khi C36/C37 (dưới) đã cộng thêm đúng dân số này, quy tắc nội tại `C33>=C36+C53+C56`/
+    // `C34>=C37+C54+C57` (quy_tac_bieu_10.md, cột "Tự kiểm tra" B10) sẽ ✗ SAI (trừ 1 nơi, cộng nơi
+    // khác cùng 1 dân số). Đồng bộ với `RA_THULY_GD.truy_to` đã bỏ "DS chuyển đi TT" (xem dưới).
+    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length;
+    const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length;
     const C35 = tt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
-    const tt_truToBc = bcCoD(tt.chuyenDi || [], D);
-    const tt_truToVu = vuCoD(tt.chuyenDi || [], D);
+    // tt_truToVu/tt_truToBc "Truy tố" (C36-C52) — 2026-09-06, theo yêu cầu Dũng: vụ "chuyển đi"
+    // phát sinh ở Truy tố (tt.hoanThanh?.chuyen_di, luôn là "VKS cấp trên phân công VKS cấp dưới
+    // THQCT, KSXX sơ thẩm") giờ CŨNG tính là "đã truy tố" (xem Biểu 2 D292/D296 ở tinhBieu2) — gộp
+    // thêm vào đây để giữ đúng liên biểu `D292_10238-D293_10238=C36`/`D296_10238-D297_10238=C37`
+    // (quy_tac_bieu_10.md) không bị lệch do D292/D296 tăng mà C36/C37 không đổi.
+    const _ttTruToNguon = [...(tt.chuyenDi || []), ...(tt.hoanThanh?.chuyen_di || [])];
+    const tt_truToBc = bcCoD(_ttTruToNguon, D);
+    const tt_truToVu = vuCoD(_ttTruToNguon, D);
     const C36 = tt_truToVu.length;
     const C37 = tt_truToBc.length;
     const C38 = tt_truToBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
@@ -10837,9 +10847,10 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       ...dt_boSungBcRaw.filter(bc => bc.loaiBiCan !== "phap_nhan"),
     ];
     kiemTraHoanChinhNhomBc("Phân tích bị can mới khởi tố (Điều tra)", dtKtoCaNhan, "C9-C13", true);
-    // Truy tố — C43-C52 "đã truy tố" (vụ chuyển từ Truy tố sang Xét xử trong kỳ, đã lọc kỳ sẵn ở
-    // baoCao.truy_to.ds.chuyenDi — không cần lọc kỳ riêng theo bị can như Điều tra)
-    const ttTruyToCaNhan = bcTatCa(baoCao.truy_to.ds.chuyenDi || [])
+    // Truy tố — C43-C52 "đã truy tố" (vụ chuyển từ Truy tố sang Xét xử TRONG KỲ + vụ "chuyển đi"
+    // TT nay cũng tính là đã truy tố, xem tt_truToVu/tt_truToBc ở trên — đã lọc kỳ sẵn ở cả 2 nguồn,
+    // không cần lọc kỳ riêng theo bị can như Điều tra)
+    const ttTruyToCaNhan = bcTatCa([...(baoCao.truy_to.ds.chuyenDi || []), ...(baoCao.truy_to.ds.hoanThanh?.chuyen_di || [])])
       .filter(bc => bc.loaiBiCan !== "phap_nhan");
     kiemTraHoanChinhNhomBc("Phân tích bị can đã truy tố (Truy tố)", ttTruyToCaNhan, "C43-C47", false);
   }
@@ -11665,12 +11676,21 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
     ttNoiKhacKT.length + (tt.nhanLai || []).length));
   m.set(275, _fc(`${_cfBcCrit("DS khởi tố TT", "AH", NHAN_NGUON.an_noi_khac_chuyen_den)}+${demBcSheet("DS nhận lại CĐ TT")}`,
     soBc(ttNoiKhacKT) + soBc(tt.nhanLai)));
-  m.set(276, _fc(_sumSheetA("DS chuyển đi TT"), (tt.hoanThanh?.chuyen_di || []).length));
-  m.set(277, _fc(demBcSheet("DS chuyển đi TT"), soBc(tt.hoanThanh?.chuyen_di)));
+  // D276/D277 "Số vụ/bị can chuyển đi nơi khác" (Truy tố) — SỬA THEO YÊU CẦU DŨNG (2026-09-06): vụ
+  // "chuyển đi" phát sinh ở Truy tố (tt.hoanThanh?.chuyen_di) LUÔN LÀ trường hợp "VKS cấp trên
+  // phân công VKS cấp dưới THQCT, KSXX sơ thẩm" — về bản chất VẪN LÀ đã quyết định TRUY TỐ (chỉ
+  // giao việc THQCT/KSXX sơ thẩm cho đơn vị cấp dưới), KHÔNG phải "rời khỏi hệ thống" như "chuyển
+  // đi nơi khác" ở ĐT/XX. Không tách riêng dòng này nữa — cộng hẳn vào D292/D296 (D294/D298 là
+  // đúng khoản này, xem dưới), D276/D277 luôn = 0. Sheet "DS chuyển đi TT" VẪN GIỮ NGUYÊN (không
+  // đổi/xoá) — vẫn dùng làm "ra" của Tổng thụ lý TT ở B10 (RA_THULY_GD, C33/C34) và "Cân đối số
+  // liệu" (RA_SHEETS_GD) — 2 chỗ đó tính TT rời khỏi caseload theo góc nhìn khác, không đụng ở đây.
+  m.set(276, 0);
+  m.set(277, 0);
   m.set(278, _fc(_sumSheetA("DS TT trả ĐT"), (tt.traDi || []).length));
   m.set(279, _fc(demBcSheet("DS TT trả ĐT"), soBc(tt.traDi)));
   // D280/D281 "Tổng số vụ/bị can VKS thụ lý giải quyết" — arithmetic tham chiếu các ô KHÁC trong
   // chính sheet Biểu 2 (chuỗi thành phần ngành, xem CLAUDE.md item "Nâng cấp: tách đủ dòng...").
+  // Số hạng "-D276"/"-D277" giờ luôn trừ 0 (xem ngay trên) — KHÔNG cần đổi công thức D280/D281.
   m.set(280, _fc(`${_cRef(260)}+${_cRef(261)}+${_cRef(262)}+${_cRef(263)}-${_cRef(264)}+${_cRef(270)}+${_cRef(272)}+${_cRef(274)}-${_cRef(276)}-${_cRef(278)}`,
     _mv(m,260)+_mv(m,261)+_mv(m,262)+_mv(m,263)-_mv(m,264)+_mv(m,270)+_mv(m,272)+_mv(m,274)-_mv(m,276)-_mv(m,278)));
   // D281 "Tổng số bị can VKS thụ lý giải quyết" — thêm term bổ sung bị can (2026-09-06, sửa bug
@@ -11679,16 +11699,36 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   // (D281)" (so kỳ trực tiếp, KHÔNG phụ thuộc sự kiện bo_sung_bican quá thưa).
   m.set(281, _fc(`${_cRef(265)}+${_cRef(266)}+${_cRef(267)}+${_cRef(268)}-${_cRef(269)}+${_cRef(271)}+${_cRef(273)}+${_cRef(275)}+${demBcSheet("DS bổ sung BC TT (D281)")}-${_cRef(277)}-${_cRef(279)}`,
     _mv(m,265)+_mv(m,266)+_mv(m,267)+_mv(m,268)-_mv(m,269)+_mv(m,271)+_mv(m,273)+_mv(m,275)+(ttBoSungBc||[]).length-_mv(m,277)-_mv(m,279)));
-  // D282/D285 "VKS đã giải quyết (truy tố + đình chỉ)" — BUG THẬT đã sửa, CÙNG LỚP với D83/D86 ở
-  // trên (suy ngược từ D344/tồn cuối kỳ TT trước đây) — nay ĐẾM THẲNG.
-  m.set(282, _fc(`${_sumSheetA("DS TT chuyển XX")}+${_sumSheetA("DS đình chỉ TT")}`,
-    (tt.chuyenDi || []).length + (tt.hoanThanh?.dinh_chi || []).length));
-  m.set(285, _fc(demBcSheetM(["DS TT chuyển XX", "DS đình chỉ TT"]),
-    soBc(tt.chuyenDi) + soBc(tt.hoanThanh?.dinh_chi)));
-  m.set(292, _fc(_sumSheetA("DS TT chuyển XX"), (tt.chuyenDi || []).length));
-  m.set(296, _fc(demBcSheet("DS TT chuyển XX"), soBc(tt.chuyenDi)));
+  // D282/D285 "VKS đã giải quyết (truy tố + đình chỉ)" — cộng thêm "DS chuyển đi TT" (2026-09-06,
+  // nay tính là truy tố, xem D276/D277 ở trên) để giữ đúng quy tắc ngành `D282=D292+D300`/
+  // `D285=D296+D310` (D292/D296 giờ CŨNG cộng "DS chuyển đi TT" — xem ngay dưới).
+  m.set(282, _fc(`${_sumSheetA("DS TT chuyển XX")}+${_sumSheetA("DS chuyển đi TT")}+${_sumSheetA("DS đình chỉ TT")}`,
+    (tt.chuyenDi || []).length + (tt.hoanThanh?.chuyen_di || []).length + (tt.hoanThanh?.dinh_chi || []).length));
+  m.set(285, _fc(demBcSheetM(["DS TT chuyển XX", "DS chuyển đi TT", "DS đình chỉ TT"]),
+    soBc(tt.chuyenDi) + soBc(tt.hoanThanh?.chuyen_di) + soBc(tt.hoanThanh?.dinh_chi)));
+  // D290/D291 (2026-09-06, theo xác nhận Dũng — KHÔNG phải quy tắc chính thức trong
+  // quy_tac_bieu_2.md, chỉ là thực tế nghiệp vụ riêng của đơn vị này): 100% bị can đã giải quyết
+  // (truy tố+đình chỉ) đều được VKS TRỰC TIẾP hỏi cung, và luôn hỏi cung TRƯỚC khi ra QĐ truy tố —
+  // D290=D291=D285 LUÔN đúng trên thực tế, pin thẳng bằng công thức alias (không bắt nhập tay mỗi
+  // kỳ). Quy tắc `>=` gốc của ngành (D285>=D290, D290>=D291) vẫn giữ nguyên, luôn thoả vì bằng
+  // nhau; thêm 2 quy tắc `=` riêng (xem BIEU2_QUY_TAC_RAW) để tự kiểm nếu sau này đổi lại.
+  m.set(290, _fc(_cRef(285), _mv(m, 285)));
+  m.set(291, _fc(_cRef(285), _mv(m, 285)));
+  // D292/D296 "Số vụ án/bị can truy tố" — cộng thêm "DS chuyển đi TT" (2026-09-06, theo yêu cầu
+  // Dũng: vụ "chuyển đi" ở Truy tố luôn là "VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ
+  // thẩm" — về bản chất ĐÃ quyết định truy tố, không phải rời hệ thống — xem D276/D277 ở trên).
+  m.set(292, _fc(`${_sumSheetA("DS TT chuyển XX")}+${_sumSheetA("DS chuyển đi TT")}`,
+    (tt.chuyenDi || []).length + (tt.hoanThanh?.chuyen_di || []).length));
+  m.set(296, _fc(demBcSheetM(["DS TT chuyển XX", "DS chuyển đi TT"]),
+    soBc(tt.chuyenDi) + soBc(tt.hoanThanh?.chuyen_di)));
+  // D294/D298 "Trong đó: Số vụ/bị can VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ thẩm"
+  // (2026-09-06, MỚI — trước đây chưa từng tính) — ĐÚNG BẰNG toàn bộ "DS chuyển đi TT" (không phải
+  // 1 phần) — tại đơn vị này, MỌI vụ "chuyển đi" ở Truy tố đều thuộc loại này.
+  m.set(294, _fc(_sumSheetA("DS chuyển đi TT"), (tt.hoanThanh?.chuyen_di || []).length));
+  m.set(298, _fc(demBcSheet("DS chuyển đi TT"), soBc(tt.hoanThanh?.chuyen_di)));
   // D293/D297 — round-trip (KHÔNG lần đầu) của TT→XX, cùng khuôn D93/D96 nhưng trên sheet
-  // "DS TT chuyển XX" (cột phụ "Lần đầu?" cũng thêm ở đây, xem addSheetVuKy).
+  // "DS TT chuyển XX" (cột phụ "Lần đầu?" cũng thêm ở đây, xem addSheetVuKy). KHÔNG gồm "DS chuyển
+  // đi TT" — khoản đó không có khái niệm "lần đầu"/round-trip (không đi qua trả hồ sơ ĐTBS).
   m.set(293, _fc(`${_sumSheetA("DS TT chuyển XX")}-${_sfVuCrit("DS TT chuyển XX", "AK", "x")}`,
     (tt.chuyenDi || []).length - ttChuyenDi_LanDau.length));
   m.set(297, _fc(`${demBcSheet("DS TT chuyển XX")}-${_cfBcCrit("DS TT chuyển XX", "AK", "x")}`,
@@ -11805,6 +11845,12 @@ const BIEU2_QUY_TAC_RAW = [
   "D285>=D290",
   "D286<=D287+D288+D289",
   "D290>=D291",
+  // 2 quy tắc dưới đây KHÔNG có trong quy_tac_bieu_2.md (không phải chuẩn ngành) — thêm theo xác
+  // nhận riêng của Dũng (2026-09-06): tại đơn vị này, MỌI bị can đã giải quyết (truy tố+đình chỉ)
+  // đều được VKS trực tiếp hỏi cung, luôn hỏi cung TRƯỚC khi ra QĐ truy tố ⇒ D290=D291=D285 LUÔN
+  // đúng (đã pin cứng bằng công thức alias trong tinhBieu2, 2 quy tắc này chỉ để tự kiểm bổ sung).
+  "D290=D291",
+  "D291=D285",
   "D292>=D293",
   "D292>=D294",
   "D292>=D295",
@@ -12620,9 +12666,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // "result" cache (đúng) và Excel THẬT tính lại (thiếu trừ, dư đúng bằng số vụ/bc XX trả TT) lệch
   // nhau. Dũng phát hiện qua Excel thật kỳ 08/2026: D17=57 (57-1-0-0=56) ≠ D84=52 — lệch đúng 4 =
   // countVu('DS XX trả TT'); D18 lệch đúng 12 = countBc('DS XX trả TT').
+  // truy_to: BỎ "DS chuyển đi TT" (2026-09-06) — khớp đúng việc C33/C34 (tinhBieu10) hết trừ dân số
+  // này (vụ "chuyển đi" TT nay tính là ĐÃ truy tố, không rời khỏi Tổng thụ lý sớm — xem D276/D280
+  // ở tinhBieu2). RA_SHEETS_GD.truy_to (Cân đối số liệu, phía dưới) VẪN GIỮ "DS chuyển đi TT" — đó
+  // là ledger "tồn cuối" (những vụ này THẬT SỰ rời khỏi RPC "tồn"), khác khái niệm với Tổng thụ lý.
   const RA_THULY_GD = {
     dieu_tra: ["DS nhập vụ ĐT", "DS chuyển đi ĐT"],
-    truy_to:  ["DS nhập vụ TT", "DS chuyển đi TT"],
+    truy_to:  ["DS nhập vụ TT"],
     xet_xu:   ["DS nhập vụ XX", "DS chuyển đi XX", "DS XX trả TT"],
   };
   const VAO_GD = { dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO };
@@ -12685,7 +12735,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     26: r => mkSfVu("DS chuyển đến TT",r),   // C25 ĐT → TT vụ
     29: r => mkSfVu("DS đình chỉ ĐT",r),     // C28 ĐT đình chỉ vụ
     32: r => mkSfVu("DS tạm đình chỉ ĐT",r), // C31 ĐT TĐC vụ
-    41: r => mkSfVu("DS chuyển đến XX",r),   // C36 TT truy tố vụ
+    // C36/C37/C38/C43-C52 (2026-09-06) — cộng thêm "DS chuyển đi TT" (nay tính là truy tố, xem
+    // tt_truToVu/tt_truToBc + Biểu 2 D292/D296) vào bên cạnh "DS chuyển đến XX"/"DS TT chuyển XX"
+    // (2 tên sheet khác nhau nhưng CÙNG 1 dữ liệu, 2 góc nhìn — xem CLAUDE.md).
+    41: r => `${mkSfVu("DS chuyển đến XX",r)}+${mkSfVu("DS chuyển đi TT",r)}`,   // C36 TT truy tố vụ
     58: r => mkSfVu("DS đình chỉ TT",r),     // C53 TT đình chỉ vụ
     61: r => mkSfVu("DS tạm đình chỉ TT",r), // C56 TT TĐC vụ
     63: r => `SUMIFS('DS TT trả ĐT'!$A:$A,'DS TT trả ĐT'!$B:$B,$A${r},'DS TT trả ĐT'!$AJ:$AJ,"x")`, // C58 TT trả ĐT TRỰC TIẾP vụ (khớp Biểu 2 D361)
@@ -12700,10 +12753,12 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // xác nhận C39-C42 đếm BỊ CAN, tổng = C37; quy tắc ngành C37=C39+C40+C41+C42). COUNTIFS trên
     // dòng BC: cột V = Mã ĐL BC (khớp $A{r}), cột AJ = "Mức độ NT (BC)" nay là mức độ của CHÍNH bị
     // can dòng đó (bcExtraFn ở "DS TT chuyển XX", KHÔNG còn là mức độ bị can đại diện của vụ). ──
-    44: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")`,
-    45: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Nghiêm trọng")`,
-    46: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Rất nghiêm trọng")`,
-    47: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Đặc biệt nghiêm trọng")`,
+    // C39-C42 cộng thêm COUNTIFS trên "DS chuyển đi TT" (cột "Mức độ NT (BC)" đã thêm ở AJ, cùng vị
+    // trí "DS TT chuyển XX" — xem addSheetVuKy's lời gọi `add("DS chuyển đi ${gs}", ...)`).
+    44: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")+COUNTIFS('DS chuyển đi TT'!$V:$V,$A${r},'DS chuyển đi TT'!$AJ:$AJ,"Ít nghiêm trọng")`,
+    45: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Nghiêm trọng")+COUNTIFS('DS chuyển đi TT'!$V:$V,$A${r},'DS chuyển đi TT'!$AJ:$AJ,"Nghiêm trọng")`,
+    46: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Rất nghiêm trọng")+COUNTIFS('DS chuyển đi TT'!$V:$V,$A${r},'DS chuyển đi TT'!$AJ:$AJ,"Rất nghiêm trọng")`,
+    47: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Đặc biệt nghiêm trọng")+COUNTIFS('DS chuyển đi TT'!$V:$V,$A${r},'DS chuyển đi TT'!$AJ:$AJ,"Đặc biệt nghiêm trọng")`,
     // ── BC-level COUNTIFS (cột V=Mã ĐL BC + criteria phụ) ──
     // Cột criteria BC: W=Loại KTBC, X=Pháp nhân, Y=Nhóm tuổi, Z=Trình độ,
     //   AA=Giới tính nữ, AB=Dân tộc KK, T=Đảng viên(x), AC=Giữ chức vụ, AD=Quốc tịch NN, AE=Tái phạm,
@@ -12735,18 +12790,19 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     33: r => mkCfBcM(["DS tạm đình chỉ ĐT"], r),               // C32 TĐC BC
     // TT
     40: r => mkCfBcM(TT_VAO, r, "X","phap_nhan"),              // C35 pháp nhân TT mới
-    42: r => mkCfBcM(["DS TT chuyển XX"], r),                  // C37 TT→XX BC
-    43: r => mkCfBcM(["DS TT chuyển XX"], r, "X","phap_nhan"), // C38
-    48: r => mkCfBcM(["DS TT chuyển XX"], r, "Y","14_16"),     // C43-C47 tuổi TT truy tố BC
-    49: r => mkCfBcM(["DS TT chuyển XX"], r, "Y","16_18"),
-    50: r => mkCfBcM(["DS TT chuyển XX"], r, "Y","18_30"),
-    51: r => mkCfBcM(["DS TT chuyển XX"], r, "Y","30_70"),
-    52: r => mkCfBcM(["DS TT chuyển XX"], r, "Y",">70"),
-    53: r => mkCfBcM(["DS TT chuyển XX"], r, "AA","nữ"),       // C48
-    54: r => mkCfBcM(["DS TT chuyển XX"], r, "AB","có"),       // C49 dân tộc KK
-    55: r => mkCfBcM(["DS TT chuyển XX"], r, "T","x"),         // C50 đảng viên
-    56: r => mkCfBcM(["DS TT chuyển XX"], r, "AC","có"),       // C51 giữ chức vụ
-    57: r => mkCfBcM(["DS TT chuyển XX"], r, "AD","có"),       // C52 quốc tịch NN
+    // C37/C38/C43-C52 (2026-09-06) — cộng thêm "DS chuyển đi TT" (xem C36 ở trên).
+    42: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r),                  // C37 TT→XX BC
+    43: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "X","phap_nhan"), // C38
+    48: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y","14_16"),     // C43-C47 tuổi TT truy tố BC
+    49: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y","16_18"),
+    50: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y","18_30"),
+    51: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y","30_70"),
+    52: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y",">70"),
+    53: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "AA","nữ"),       // C48
+    54: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "AB","có"),       // C49 dân tộc KK
+    55: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "T","x"),         // C50 đảng viên
+    56: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "AC","có"),       // C51 giữ chức vụ
+    57: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "AD","có"),       // C52 quốc tịch NN
     59: r => mkCfBcM(["DS đình chỉ TT"], r),                   // C54 đình chỉ TT BC
     60: r => mkCfBcM(["DS đình chỉ TT"], r, "X","phap_nhan"),
     62: r => mkCfBcM(["DS tạm đình chỉ TT"], r),              // C57 TĐC TT BC
@@ -13831,8 +13887,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     add(`DS đã xét xử ${gs}`,
       d.hoanThanh?.da_xet_xu||[], ["Ngày XXT", "Số bản án"], _ngaySoQD);
 
+    // "DS chuyển đi TT" — thêm cột phụ "Mức độ NT (BC)" (2026-09-06, CHỈ Truy tố, cùng vị trí AJ
+    // như "DS TT chuyển XX" — extraHeaders cùng đếm 2 cột "Ngày CĐ"/"Số QĐ" nên cột phụ rơi đúng
+    // cùng cột) — vụ "chuyển đi" ở TT nay tính là "đã truy tố" (Biểu 2 D292/D296, B10 C36-C52), cần
+    // cột này để B10_FORMULA C39-C42 (Phân loại tội phạm, đếm BỊ CAN) cộng thêm đúng qua sheet này.
     add(`DS chuyển đi ${gs}`,
-      d.hoanThanh?.chuyen_di||[], ["Ngày CĐ", "Số QĐ"], _ngaySoQD);
+      d.hoanThanh?.chuyen_di||[], ["Ngày CĐ", "Số QĐ"], _ngaySoQD,
+      gd === "truy_to" ? ["Mức độ NT (BC)"] : undefined,
+      gd === "truy_to" ? (bc => [NHAN_MUC_DO_NT[bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc))] || ""]) : undefined);
 
     add(`DS tạm đình chỉ ${gs}`,
       d.hoanThanh?.tam_dinh_chi||[], ["Ngày TĐC", "Số QĐ TĐC"], _ngaySoQD);
