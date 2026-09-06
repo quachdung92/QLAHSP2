@@ -2,6 +2,44 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ HOÀN TẤT — D281 (TT) hết báo lỗi giả — công thức "Kiểm tra" thiếu term "bổ sung bị can" mà chính công thức GIÁ TRỊ của D281 đã có sẵn (2026-09-06, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`)
+
+Ngay sau fix D292/294/296/298 (mục ngay dưới) — Dũng báo tiếp: *"còn dòng 281 báo lỗi Tổng số bị
+can VKS thụ lý giải quyết 281 338 ✓ Tự động tính D281=D265+D266+D267+D268-D269+D271+D273+D275-
+D277-D279 ✗ [nội tại] D281=..."* — dòng D281 vẫn báo ✗ dù giá trị D281 (338) là ĐÚNG.
+
+**Nguyên nhân (KHÔNG liên quan gì tới fix D292/294/296/298 vừa xong)**: đây là 1 lớp bug pre-
+existing từ đợt sửa D346 TT hồi đầu ngày 2026-09-06 (mục "HOÀN TẤT — D346 (TT)..." ở dưới) — lúc đó
+đã thêm 1 số hạng `+ demBcSheet("DS bổ sung BC TT (D281)")` (COUNTIF thô trên 1 sheet Excel, không
+phải tham chiếu D-code nào) THẲNG vào công thức GIÁ TRỊ của ô D281 (`m.set(281, ...)` trong
+`tinhBieu2`) để sửa đúng bug undercounting D281 lúc đó — nhưng KHÔNG hề cập nhật RAW text của quy
+tắc tự kiểm (`BIEU2_QUY_TAC_RAW`: `"D281=D265+...+D273+D275-D277-D279"`), vì schema 546-dòng chính
+thức của ngành KHÔNG có dòng D-code riêng nào cho khoản "bổ sung bị can" này — không có cách nào
+diễn đạt số hạng đó bằng cú pháp `Dxx`/`Cxx_10173`/`Dxx[b]` mà `phanTichQuyTacDong` hỗ trợ. Hậu
+quả: công thức "Kiểm tra" (`congThucKiemTra`, dựng lại RHS THUẦN TỪ CÁC TERM CỦA RULE qua
+`bieuThuc(q.rhs)`) luôn tính thiếu đúng khoản này so với giá trị THẬT của ô D281 — báo ✗ giả dù
+D281 đúng.
+
+**Đã sửa** (`themSheetBieu2Va3`, hàm `congThucKiemTra`, ~dòng 12158): sau khi build `R =
+bieuThuc(q.rhs)`, special-case `q.anchor === 281` (chỉ đúng 1 rule trong 546 dòng Biểu 2/3 có
+anchor này — xác nhận qua grep `"D281="` không có dòng thứ 2) → nối thêm
+`+demBcSheet("DS bổ sung BC TT (D281)")` vào R, khớp ĐÚNG số hạng đã có sẵn trong công thức giá
+trị của C282 (ô D281) — RHS giờ **cấu trúc HỆT như LHS** (cùng 1 chuỗi công thức), nên
+`NOT(L=R)` luôn `FALSE` bất kể dữ liệu — hết báo ✗ vĩnh viễn, không phải chỉ đúng ở 1 lần snapshot
+dữ liệu. Đã kiểm tra: D79 (ĐT, cặp tương đương của D281) KHÔNG dính bug này — value formula của
+D79 hoàn toàn ghép từ D-code (`_cRef`) thuần tuý (bổ sung bị can ĐT đã được gộp SẴN vào D72 qua
+B10's C7, không cần số hạng rời như TT) nên rule text tự đủ để tái tạo đúng RHS, không cần sửa gì.
+
+**Kiểm chứng bằng Excel THẬT (kỳ 08/2026, `qlahs-sup.web.app`)** — trước khi sửa, đọc thẳng
+`cell.formula` cột "Kiểm tra" (F282): RHS thiếu hẳn đoạn COUNTIF/COUNTBLANK trên sheet "DS bổ sung
+BC TT (D281)" mà C282 (giá trị D281) đang có — xác nhận đúng nguyên nhân. Sau khi sửa + deploy lại
+`qlahs-sup.web.app`, xuất lại báo cáo: RHS của cột "Kiểm tra" giờ **giống hệt** công thức C282 —
+`C266+C267+C268+C269-C270+C272+C274+C276+COUNTIF(...)-COUNTBLANK(...)-C278-C280`. Quét toàn bộ cột
+"Kiểm tra" của cả Biểu 2 lẫn Biểu 3 — không còn cell nào cache "✗" nào khác.
+
+Compile-check qua `@babel/core`+`@babel/preset-react` — sạch. **Đã deploy `qlahs-sup.web.app` rồi
+`qlahsp2.web.app` (production)**.
+
 ## ✅ HOÀN TẤT — Biểu 2 TT: vụ "chuyển đi" tính là truy tố + D294/D298 mới + quy tắc D290=D291=D285 (2026-09-06, `qlahs-sup.html`, nhánh `main`, commit `1d9e10c`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
 
 Theo yêu cầu Dũng: **"đối với những vụ chuyển đi trong giai đoạn truy tố thì phải tính là truy

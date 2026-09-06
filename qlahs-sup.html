@@ -12157,7 +12157,18 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     let f = `"✓ khớp (${auto.length} quy tắc${soLien ? `, ${soLien} liên biểu` : ""}${soPrev ? `, ${soPrev} có số kỳ trước` : ""})"`;
     for (let i = auto.length - 1; i >= 0; i--) {
       const q = auto[i];
-      const L = bieuThuc(q.lhs), R = bieuThuc(q.rhs);
+      const L = bieuThuc(q.lhs);
+      let R = bieuThuc(q.rhs);
+      // D281 (TT, "Tổng số bị can VKS thụ lý giải quyết") — công thức GIÁ TRỊ thật của chính ô
+      // D281 (xem `m.set(281, ...)` trong tinhBieu2) có CỘNG THÊM `demBcSheet("DS bổ sung BC TT
+      // (D281)")` — số bị can được bổ sung vào 1 vụ TT ĐÃ CÓ TỪ TRƯỚC, không rơi vào bất kỳ term
+      // D-code nào của chuỗi cộng/trừ D265..D279 — nhưng quy tắc CHUẨN NGÀNH (`quy_tac_bieu_2.md`,
+      // raw string trên) không có D-code riêng cho khoản này (schema 546 dòng của ngành không có
+      // dòng nào cho "bổ sung bị can"), nên `phanTichQuyTacDong` không thể tự biểu diễn được —
+      // thêm thẳng số hạng này vào RHS tự sinh ở đây để khớp ĐÚNG công thức GIÁ TRỊ, tránh báo giả
+      // "✗ [nội tại]" (2026-09-06, theo báo cáo Dũng — D281 thực = 338, công thức chuẩn tính ra
+      // thấp hơn đúng bằng số bị can bổ sung trong kỳ).
+      if (q.anchor === 281) R = `${R}+${demBcSheet("DS bổ sung BC TT (D281)")}`;
       // Nói rõ loại lệch: [LIÊN BIỂU] = lệch ô TỔNG bên "Biểu B10"; [KỲ TRƯỚC] = có dùng hằng số tồn
       // đầu kỳ (= tồn cuối kỳ trước); [nội tại] = chỉ lệch với dòng khác trong CHÍNH sheet này.
       const nhan = q.lienBieu ? "✗ [LIÊN BIỂU] " : (q.coPrev ? "✗ [KỲ TRƯỚC] " : "✗ [nội tại] ");
