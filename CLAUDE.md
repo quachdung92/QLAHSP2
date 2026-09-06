@@ -2,6 +2,57 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ HOÀN TẤT — Đóng nốt "4-unit gap" C4 vs D79 kỳ 08/2026 — bug thật "vụ tách vô hình" ở CẤP BỊ CAN (KHÔNG phải phục hồi điều tra) (2026-09-07, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`)
+
+Tiếp theo mục "HOÀN TẤT — Tổng thụ lý Biểu 2 khớp Biểu 10..." ngay dưới đây — mục đó để lại 1 khoảng
+lệch 4 đơn vị (Σ C4=957 vs D79=953) và ghi "CẦN DŨNG QUYẾT ĐỊNH" vì nghi ngờ là do bucket "Phục hồi
+điều tra" (nguồn). Dũng làm rõ ngay sau đó: *"nó chỉ có 1 loại phục hồi điều tra thôi ko tách ra...
+cái tag phục hồi điều tra là do tôi ko có đầy đủ danh sách vụ đã tạm đình chỉ trc đây"* — xác nhận
+KHÔNG cần bucket riêng. Điều tra trực tiếp qua console xác nhận `dt.khoiToTrucTiep` kỳ08 có ĐÚNG 0
+vụ nguồn "phuc_hoi_dieu_tra" (dedup logic có sẵn đã gộp hết vào `dt.phucHoi`) — **bác bỏ hoàn toàn
+giả thuyết cũ**, khoảng lệch 4 phải do nguyên nhân KHÁC.
+
+**Root cause thật (đào sâu bằng cách tái tạo tay TỪNG thành phần của cả C4 và D79 từ dữ liệu thô,
+không tin bất kỳ "result" cache nào)**: `fetchKyKhoiToBiCan(vuIds)` — hàm tra "kỳ khởi tố CỦA
+CHÍNH bị can" qua sự kiện `khoi_to_bican` — chỉ query `WHERE maVuAn IN vuIds`, với `vuIds` đã
+resolve qua `idVuThatCuaLog` (= `vuTachRa`, tức ID vụ CON sau khi tách). Nhưng **bị can đã khởi tố
+TỪ TRƯỚC lúc vụ bị tách** (tuyệt đại đa số bị can của 1 vụ tách — tách vụ luôn xảy ra SAU khi vụ đã
+có bị can) có sự kiện `khoi_to_bican` ghi `maVuAn` = vụ **GỐC** (nơi họ thực sự được khởi tố),
+KHÔNG PHẢI vụ con — CÙNG LỚP BUG với "vụ tách vô hình" đã sửa ở RPC `layTrangThaiVuTaiKy` (xem mục
+"Sửa TRIỆT ĐỂ Biểu 2 D154/D156..." bên dưới), nhưng ở tầng BỊ CAN, tại 1 hàm JS khác hẳn. Hậu quả:
+`locBiCanTheoKy` (strict) coi các bị can này "chưa gán kỳ thật nào" và LOẠI khỏi `_soBiCan` — dòng
+"Vụ tách ra (từ vụ khác, tách trong kỳ này)" ở kỳ 08/2026 báo **"3 vụ / 0 BC"** dù 3 vụ đó thực có
+**4 bị can** (kỳ khởi tố thật 06/2026 và 07/2026, TRƯỚC khi tách trong kỳ 08). Vì `dt_moi`/`dt.
+tachVu`'s `_soBiCan` nuôi cả D67 (Biểu 2, "Số bị can vụ tách") LẪN `dt_moiBc` (nuôi C4 B10), khoản
+thiếu 4 người này chỉ lộ ra ở D67 (JS "result" cache SAI = 0, nhưng công thức EXCEL của D67 đọc
+thẳng dữ liệu thô sheet "DS vụ tách ĐT" nên đúng = 4 khi Excel thật recalculate) — trùng hợp làm
+D79 (Biểu 2, phụ thuộc D67) và C4 (B10, phụ thuộc `dt_moiBc` tính qua đường KHÁC — `xuatBaoCaoThangExcel`'s
+`fetchKyKhoiToBiCan(_vuIdsChoBaoCao)` riêng, vô tình ĐÚNG vì `_vuIdsChoBaoCao` rộng hơn, tình cờ đã
+gồm cả vụ gốc) LỆCH NHAU đúng 4 đơn vị — **không phải 1 bug "thiếu 1 term" như đoán ban đầu, mà là
+1 hàm dùng chung bị lỗi, chỉ tình cờ được bù đắp ở 1 trong 2 đường gọi**.
+
+**Đã sửa tận gốc**: `fetchKyKhoiToBiCan` giờ tự truy ngược TOÀN BỘ chuỗi "vụ gốc" của các vụ tách
+(hàm mới `layVuGocChoTachVu`, đi ngược `tach_vu` qua `vuTachRa → maVuAn`, lặp tối đa 5 tầng — an
+toàn cho tách nhiều tầng như `..._1_1`) TRƯỚC khi query `khoi_to_bican`, gộp cả 2 tập ID lại — bị
+can khởi tố dưới vụ gốc giờ được resolve đúng bất kể gọi từ đâu (không còn phụ thuộc `vuIds` truyền
+vào có tình cờ đủ rộng hay không). Đây là fix ở ĐÚNG 1 hàm dùng chung, tự động sửa đúng CẢ 4 nơi gọi
+`fetchKyKhoiToBiCan` trong file (Kỳ báo cáo, `hoan_thanh` ledger, `xuatBaoCaoThangExcel` chính, và
+`vuAnTuLogDocs` nội bộ) — không cần vá riêng từng chỗ.
+
+**Kiểm chứng bằng Excel THẬT sau khi sửa (kỳ 08/2026, `qlahs-sup.web.app`)**: dòng "Vụ tách ra" trên
+màn hình Kỳ báo cáo đổi đúng từ "3 vụ / 0 BC" → **"3 vụ / 4 BC"**; xuất lại Excel, D67 = 4 (khớp
+công thức); **D79 = C4 = 957 CHÍNH XÁC (khớp tuyệt đối, hết lệch 4)**; quét cột "Kiểm tra" toàn bộ
+Biểu 2/3 và "Tự kiểm tra" B10 — **0 dòng "✗"**; "Cân đối số liệu" cả 3 giai đoạn Chênh lệch = 0.
+Test độc lập qua console: `fetchKyKhoiToBiCan(["QLVA_E01.53_2304_0008_1", "QLVA_E01.53_2603_0011_1"])`
+(2 vụ tách thật của kỳ08) trước khi sửa trả `undefined` cho cả 3 bị can liên quan; sau khi sửa trả
+đúng kỳ khởi tố thật (06/2026, 06/2026, 07/2026) của cả 3 người.
+
+Compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Theo chỉ đạo đang có hiệu lực ("tự
+fix... deploy đi ko cần phải ý tôi nữa"), đã deploy CẢ `qlahs-sup.web.app` LẪN `qlahsp2.web.app`
+(production) ngay sau khi kiểm chứng xong bằng Excel thật ở trên. Fix ảnh hưởng số liệu "Vụ tách
+ra"/Tổng thụ lý cho MỌI kỳ có vụ tách (không chỉ kỳ08) — số liệu tăng đúng, không giảm (bù thêm bị
+can trước đây bị bỏ sót, không xoá/đổi gì đã có).
+
 ## ✅ HOÀN TẤT — "Tổng thụ lý" Biểu 2 khớp Biểu 10 (C33/C34 TT thiếu trừ "TT trả ĐT" + C4 ĐT/C34 TT thiếu cộng "bổ sung bị can") (2026-09-06, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
 
 Dũng hỏi: *"các dòng tổng thụ lý của biểu 2 và biểu 10 ko khớp nhau điều này sẽ dẫn đến lỗi công

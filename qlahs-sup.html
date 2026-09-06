@@ -10090,13 +10090,47 @@ async function fetchBiCanTheoVuIds(vuIds) {
 async function fetchKyKhoiToBiCan(vuIds) {
   const map = new Map();
   if (!vuIds.length) return map;
-  const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", vuIds,
+  // Bug thật phát hiện 2026-09-06/07 (cùng lớp "vụ tách vô hình" đã sửa ở RPC layTrangThaiVuTaiKy)
+  // — bị can vốn ĐÃ khởi tố TRƯỚC lúc vụ bị tách (tuyệt đại đa số bị can của 1 vụ tách, vì tách vụ
+  // luôn xảy ra SAU khi vụ đã có bị can) có sự kiện khoi_to_bican ghi maVuAn = vụ GỐC (nơi họ thực
+  // sự được khởi tố), KHÔNG PHẢI vụ CON vừa tách ra (id trong vuIds ở đây, đã resolve qua
+  // idVuThatCuaLog = vuTachRa). Chỉ query đúng vuIds sẽ bỏ sót HOÀN TOÀN các bị can này —
+  // locBiCanTheoKy (strict) coi họ "chưa gán kỳ thật" và LOẠI khỏi _soBiCan, khiến MỌI ledger dùng
+  // hàm này (Kỳ báo cáo, Biểu 2/10 Tổng thụ lý, dòng "Vụ tách ra") đếm THIẾU bị can của vụ tách —
+  // kiểm chứng thật: kỳ 08/2026, "Vụ tách ra" báo "3 vụ / 0 BC" trong khi 3 vụ đó thực có 4 bị can
+  // (Kỳ TK BC = 06/07/2026, khớp đúng ngày họ được khởi tố TRƯỚC khi vụ tách trong kỳ 08). Đã tự
+  // kiểm chứng qua console: query CÙNG bị can NHƯNG kèm thêm 2 vụ gốc → resolve đúng cả 3/3.
+  // Đã dò ngược tất cả gốc (có thể nhiều tầng, VD "..._1_1") bằng cách truy ngược sự kiện tach_vu
+  // (vuTachRa → maVuAn), lặp tối đa 5 tầng — an toàn tránh vòng lặp vô hạn nếu dữ liệu hỏng.
+  const gocIds = await layVuGocChoTachVu(vuIds);
+  const allIds = gocIds.length ? [...new Set([...vuIds, ...gocIds])] : vuIds;
+  const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", allIds,
     q => q.where("loaiSuKien", "==", "khoi_to_bican"));
   docs.forEach(d => {
     const e = d.data();
     if (e.maBiCan) map.set(e.maBiCan, e.kyThongKe || null);
   });
   return map;
+}
+
+// Truy ngược chuỗi "vụ gốc" của các vụ TÁCH RA trong vuIds (có thể nhiều tầng, VD vụ "..._1" tách
+// tiếp ra "..._1_1") — dùng bởi fetchKyKhoiToBiCan để không bỏ sót bị can khởi tố dưới vụ gốc TRƯỚC
+// khi tách (xem ghi chú ở đó). Mỗi vòng lặp tìm thêm 1 tầng gốc qua sự kiện tach_vu (vuTachRa →
+// maVuAn), dừng khi không tìm thêm được gì mới hoặc đã đủ 5 tầng (an toàn, thực tế hiếm khi >2).
+async function layVuGocChoTachVu(vuIds) {
+  const found = new Set();
+  let frontier = vuIds;
+  for (let i = 0; i < 5 && frontier.length; i++) {
+    const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "vuTachRa", frontier,
+      q => q.where("loaiSuKien", "==", "tach_vu"));
+    const next = [];
+    docs.forEach(d => {
+      const goc = d.data().maVuAn;
+      if (goc && !found.has(goc) && !vuIds.includes(goc)) { found.add(goc); next.push(goc); }
+    });
+    frontier = next;
+  }
+  return [...found];
 }
 
 // Helper: fetch kỳ thống kê khởi tố THẬT của riêng từng VỤ (khác fetchKyKhoiToBiCan — đó là kỳ của
