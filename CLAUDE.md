@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Sửa gap "Kỳ mới" của vụ TÁCH RA + ghi chú tự động tách/nhập vụ (2026-09-06, `qlahs-sup.html`, nhánh `phan-cong-bao-cao-chi-tiet`)
+## ✅ ĐÃ COMMIT + PUSH + DEPLOY `qlahsp2.web.app` — Sửa gap "Kỳ mới" của vụ TÁCH RA + ghi chú tự động tách/nhập vụ (2026-09-06, `qlahs-sup.html`, nhánh `main`, commit `216b76c`)
 
 Dũng hỏi: vụ tách ra không có "kỳ mới" hiển thị ở cột nào — hệ thống đang dùng kỳ nào để tính báo
 cáo/lưu lịch sử? Trả lời: sự kiện `tach_vu` VẪN có `kyThongKe` đầy đủ (hỏi qua `ModalXacNhanKy` lúc
