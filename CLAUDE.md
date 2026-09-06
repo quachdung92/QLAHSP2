@@ -2,6 +2,78 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ HOÀN TẤT — D346 (TT) khớp TUYỆT ĐỐI kỳ 08/2026 (lệch 0) — bug thật D281 thiếu term "bổ sung bị can", đã kiểm tra Biểu 3/XX (hiện KHÔNG lỗi) (2026-09-06, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
+
+Tiếp theo mục "HOÀN TẤT — D154/D156... ĐT" ngay dưới đây — sau khi ĐT khớp tuyệt đối, Dũng gửi 2 báo
+lỗi tương tự: Biểu 2 TT báo "✗ [nội tại] D346=D281-D285-D332" (D346 thật=323, công thức tính ra
+thấp hơn), và Biểu 3/XX báo "✗ [nội tại] D84=D17-D22-D52-D70" + "✗ [nội tại] D86=D18-D35-D61-D76".
+Theo đúng chỉ đạo đang có hiệu lực ("tự fix... deploy đi ko cần phải ý tôi nữa"), tự điều tra và sửa
+mà không hỏi lại, dùng phương pháp giống hệt vụ ĐT: export Excel thật qua UI (chặn
+`URL.createObjectURL`, đọc bằng ExcelJS trong trình duyệt), **luôn đọc `cell.formula` VÀ tự đếm lại
+dữ liệu thô của sheet nguồn (cột M) — KHÔNG tin `cell.result` (cache JS, đã nhiều lần chứng minh bị
+stale)**.
+
+**Bug thật đã tìm ra + sửa — Biểu 2 D281 (TT, "Tổng số bị can VKS thụ lý giải quyết") THIẾU HẲN 1
+term "bổ sung bị can"**, khác ĐT (D72/D79 đã có `dt_boSungBc` cộng qua `tongC7`) — D281 là 1 chuỗi
+cộng/trừ ĐỘC LẬP xây riêng trong Biểu 2 (không tham chiếu B10), gồm: tồn cuối kỳ trước + phục hồi
+TĐC + trả về + tách − nhập vụ + ĐT chuyển TT (lần đầu) + (nơi khác chuyển đến + nhận lại) − chuyển
+đi − TT trả ĐT. Bị can được **bổ sung vào 1 vụ ĐÃ ở TT từ TRƯỚC kỳ này** (không phải vụ mới/vừa đến
+TT đúng kỳ này) không rơi vào bất kỳ term nào trong chuỗi trên — nhưng nếu vụ đó RỜI TT (trả về ĐT/
+chuyển XX) **NGAY TRONG CÙNG KỲ**, `_soBiCan` của sự kiện "ra" đó (`locBiCanTheoKy`, lọc theo kỳ-
+rank ≤ kỳ sự kiện, không phân biệt thứ tự trong-kỳ — đúng quy tắc đã lập khi sửa ĐT) **VẪN đếm đủ
+họ** → D281 (ledger vào−ra) bị hụt đúng phần "vào" tương ứng, tồn cuối kỳ tính THIẾU.
+
+**Kiểm chứng thật bằng phương pháp "diff tập hợp"** (đối chiếu CHÍNH XÁC từng người giữa "DS tồn
+cuối kỳ TT" — RPC ground truth, 323 người — với TỔNG các sheet "vào"/"ra" mà D281 cộng/trừ, thay vì
+chỉ so SỐ LƯỢNG): tìm ra ĐÚNG 2 người bị hụt — **Đặng Quốc Thịnh** (vụ `QLVA_E01.53_2602_0034`,
+`loaiKTBC=bo_sung`, `kỳ TK BC=08/2026`) và **Ngô Thị Cẩm Vân** (vụ `QLVA_E01.53_2410_0138`, cùng
+`loaiKTBC=bo_sung`, `kỳ TK BC=08/2026`) — cả 2 nằm trong sheet "DS TT trả ĐT" với `Kỳ TK=08/2026`
+(cùng kỳ với lúc họ được bổ sung) — đúng khớp kịch bản "bổ sung rồi rời TT ngay trong kỳ".
+
+**Đã sửa** (`tinhBieu10`): thêm `tt_boSungBc` — CÙNG NGUYÊN TẮC "so kỳ trực tiếp" như `dt_boSungBc`
+đã sửa cho ĐT (so kỳ khởi tố CỦA CHÍNH bị can qua `bcKyKhoiToMap` với kỳ báo cáo, KHÔNG phụ thuộc
+sự kiện `bo_sung_bican` quá thưa) — nhưng phạm vi loại trừ khác: ĐT loại "vụ mở đúng kỳ này" (qua
+`vuKyKhoiToMap`) + "vào ĐT đúng kỳ này" (trả về/phục hồi/nhận lại); TT (không có khái niệm "khởi tố
+mới" riêng, chỉ có "vào TT") loại toàn bộ "vào TT đúng kỳ này" (khởi tố trực tiếp/tách/chuyển đến/
+trả về/phục hồi TĐC/nhận lại — `_ttVaoKyNayIds`), quét trên `allVuTT` (gồm CẢ vụ đã "ra", giống
+`allVuDT` — cần thiết vì D281 là ledger CẦN cộng "vào" cho vụ dù có rời đi ngay trong kỳ, để phần
+"ra" trừ đúng có phần "vào" đối ứng, net về 0 nếu vào-rồi-ra cùng kỳ). Thêm sheet Excel mới **"DS bổ
+sung BC TT (D281)"** (`addSheetBoSungBiCan`, giống sheet "DS bổ sung BC ĐT (C7-C24)" đã có cho ĐT)
++ wire thẳng vào công thức D281 (`demBcSheet(...)` cộng thêm 1 số hạng).
+
+**Kiểm chứng bằng Excel THẬT (kỳ 08/2026, sau deploy `qlahs-sup.web.app`)**: sheet mới "DS bổ sung
+BC TT (D281)" có ĐÚNG 2 dòng = 2 người tìm được ở trên; tự đếm lại RAW toàn bộ 10 term của D281 từ
+dữ liệu thô (không dùng cache) = **332** (trước sửa 330); `D281(332) − D285(9) − D332(0) = 323 =
+D346` (RPC, không đổi, luôn đúng) — **khớp TUYỆT ĐỐI**. D280 (vụ) không đụng (bổ sung bị can không
+tạo vụ mới, vẫn khớp 60=60 như trước). Cached "result" của ô D281 khi đọc lại qua ExcelJS hiện
+`320` (thiếu đúng 12 = giá trị D267/"trả về TT" — 1 trong nhiều ô mất cache "result" khi giá trị
+liên quan =0/style ghi đè sau, đúng lỗi ExcelJS đã ghi nhận nhiều lần trong file này) — **KHÔNG phải
+lỗi công thức**, xác nhận qua đọc thẳng `cell.formula` (đúng) + tự tái tạo tay bằng dữ liệu thô
+(332, khớp) — Excel THẬT sẽ tự tính lại đúng khi mở file, không phụ thuộc cache này.
+
+**Biểu 3/XX (D84/D86) — ĐÃ KIỂM TRA, HIỆN KHÔNG THẤY LỖI trên dữ liệu thật kỳ 08/2026**: đọc trực
+tiếp `cell.formula` + giá trị: `D84(52) = D17(53)−D22(1)−D52(0)−D70(0) = 52` ✓, `D86(324) =
+D18(325)−D35(1)−D61(0)−D76(0) = 324` ✓ — cả 2 tự khớp đúng với dữ liệu HIỆN TẠI (khác ảnh chụp Dũng
+gửi, nhiều khả năng chụp từ 1 bản export CŨ hơn — trước khi có các sửa đổi khác trong ngày hoặc
+trước khi dữ liệu vụ án kỳ 08 được cập nhật tiếp bởi cán bộ). **Dũng nên tự xuất lại báo cáo kỳ
+08/2026 MỚI để xác nhận Biểu 3 hết "✗" trên máy mình** — nếu vẫn thấy lỗi, gửi lại ảnh chụp công
+thức "Kiểm tra" (không chỉ số liệu) để điều tra tiếp.
+
+**⚠ Rủi ro cấu trúc TIỀM ẨN đã phát hiện ở XX, CHƯA SỬA (chỉ ghi chú theo dõi, không có bằng chứng
+đang gây lỗi thật)**: khác TT (D281 là ledger độc lập trong Biểu 2), Biểu 3's D17/D18 (XX) **THAM
+CHIẾU THẲNG** vào B10's C60/C61 ("Tổng thụ lý XX", qua `tongC60`/`tongC61`) — mà JS "result" cache
+của C60/C61 (`tinhBieu10`, biến `C60`/`C61` trong vòng lặp theo tội danh D, dùng `xx_moi`/
+`xx_moiBc`) **HOÀN TOÀN KHÔNG có term "bổ sung bị can" nào** (không sparse event-sourced, không so-
+kỳ-trực-tiếp) — cùng LỚP THIẾU SÓT vừa sửa cho TT, nhưng KHÔNG được sửa ở đây (rủi ro thấp hơn:
+Excel formula thật cho C60/C61 — `mkThuLyBc`, qua `XX_VAO` — CÓ tham chiếu sheet event-sourced "DS
+bổ sung BC XX" sparse, ít nhất phủ được phần nào; và JS/Excel hiện TRÙNG KHỚP vì "DS bổ sung BC XX"
+rỗng ở kỳ08 — chưa có bằng chứng số liệu SAI thật). Nếu kỳ sau xuất hiện 1 vụ XX bị bổ sung bị can
+rồi rời XX (nhập vụ/chuyển đi/XX trả TT) NGAY TRONG CÙNG KỲ, nhiều khả năng sẽ tái diễn ĐÚNG lớp bug
+này ở D84/D86 — cần thêm `xx_boSungBc` (cùng khuôn `tt_boSungBc`) nếu/khi xảy ra, ưu tiên thấp vì
+chưa có dấu hiệu thật.
+
+Đã commit + push `main` (`686968c`) + deploy `qlahs-sup.web.app` rồi `qlahsp2.web.app` (production).
+
 ## ✅ HOÀN TẤT — D154/D156 khớp TUYỆT ĐỐI kỳ 08/2026 ĐT (lệch 0) — sửa data vụ thiếu điều luật + bug `dt_boSungBc` đếm đúp bị can "trả về ↔ bổ sung" (2026-09-06, `qlahs-sup.html` + Supabase, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`)
 
 Tiếp theo 2 mục ngay dưới đây (fix double-count "khởi tố mới ↔ phục hồi" + phát hiện "vụ thiếu điều
