@@ -2,6 +2,108 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Sửa TRIỆT ĐỂ Biểu 2 D154/D156/D344/D346 — bug RPC "tach_vu vô hình" + double-count "khởi tố mới ↔ phục hồi" (2026-09-06, `qlahs-sup.html` + `supabase/`, nhánh `main`, RPC ĐÃ CHẠY lên Supabase thật — JS CHƯA commit/deploy, xem checklist cuối mục)
+
+Tiếp theo yêu cầu Dũng ("Kiểm tra lại biểu 2, Dòng 154/156/344/346 báo lỗi lệch công thức nội tại và
+số tồn thực tế" rồi "tôi muốn sửa triệt để... Kì 06 chỉ là kì đầu tiên tôi nhập để hợp lí hóa số
+liệu... Đến thời điểm kì tháng 8 là kì báo cáo phải làm mới nhất hiện tại là phải khớp rồi") — Dũng
+cấp mật khẩu DB trực tiếp trong chat (`VksP2@25252`, chỉ dùng qua biến môi trường lúc chạy script
+tạm trong scratchpad, không ghi vào file nào — đúng quy tắc `supabase/README.md`) để tự điều tra qua
+Session pooler.
+
+**Phương pháp điều tra quyết định**: thay vì đoán mò, so **TRỰC TIẾP** tập hợp "vụ RPC coi là tồn/
+mới/rời khỏi ĐT ở đúng kỳ" (từ `layTrangThaiVuTaiKy`, nguồn sự thật) với tập hợp "vụ mà công thức
+D77 (JS) tính là vào/ra" — tìm ra CHÍNH XÁC những vụ lệch giữa 2 tập, rồi truy ngược lý do — thay vì
+chỉ so SỐ LƯỢNG (dễ bị nhiều lỗi bù trừ nhau che khuất, đúng thứ đã xảy ra ở đây).
+
+**Bug #1 (NGHIÊM TRỌNG NHẤT, ảnh hưởng TOÀN BỘ hệ thống thống kê, không riêng Biểu 2) — RPC
+`layTrangThaiVuTaiKy` khiến VỤ TÁCH RA hoàn toàn "vô hình"**: sự kiện `tach_vu` ghi `maVuAn` = vụ
+**GỐC** (nơi lưu sự kiện), còn vụ **CON** thật sự phát sinh nằm ở field riêng `vuTachRa` (đã ghi rõ
+trong nhiều đoạn comment JS trước đây — `idVuThatCuaLog`/`fetchKyKhoiToVu` đã tự sửa đúng phía JS
+từ lâu). Nhưng chính **RPC** (`rpc_ton_ky_thong_nhat_2026-08-28.sql`, CTE `log_loc`) lại nhóm sự
+kiện theo thẳng `l."maVuAn"` — KHÔNG hề resolve `vuTachRa` — nghĩa là vụ con **không có bất kỳ sự
+kiện nào mang đúng `maVuAn` của chính nó**, nên RPC **không bao giờ trả nó về ở bất kỳ kỳ nào, giai
+đoạn nào**, dù bản ghi `vuan` của nó hoàn toàn hợp lệ (`coQuanThuLy`/`trangThai` đúng, đang giải
+quyết thật). Kiểm chứng bằng cách tạo 1 hàm RPC test riêng (`layTrangThaiVuTaiKy_test`, không đụng
+hàm thật) sửa đúng chỗ này rồi so — số tồn ĐT (vụ) tăng đúng bằng số vụ con đang thực tồn ở từng kỳ:
+kỳ 06 (chưa có vụ tách) 310→310, kỳ 07 319→**320**, kỳ 08 326→**330**, kỳ 09 330→**334** — Truy tố/
+Xét xử không đổi (mọi `tach_vu` từ trước tới giờ đều `denGiaiDoan='dieu_tra'`, xác nhận qua
+`GROUP BY denGiaiDoan`). **Ảnh hưởng TOÀN HỆ THỐNG**: Kỳ báo cáo/Dashboard/Biểu 2/3/10 đều dựa vào
+đúng RPC này — mọi báo cáo trước đây đã ÂM THẦM THIẾU các vụ tách ra khỏi số "tồn".
+
+**ĐÃ SỬA VÀ CHẠY LÊN SUPABASE THẬT** — `supabase/fix_tach_vu_vutachra_2026-09-06.sql`
+(`create or replace function "layTrangThaiVuTaiKy"`, CTE `log_loc` đổi `"maVuAn"` thành
+`case when l."loaiSuKien" = 'tach_vu' then l."vuTachRa" else l."maVuAn" end`, loại luôn dòng
+`tach_vu` thiếu `vuTachRa` nếu có dữ liệu hỏng). Đã **backup Supabase trước** (`gh workflow run
+backup-supabase.yml`, xác nhận "success" trước khi chạy) rồi chạy fix qua Session pooler, xác nhận
+lại số liệu đúng như dự đoán ở trên (Dũng đã xác nhận cho chạy qua `AskUserQuestion`). Kiểm tra
+`layTrangThaiBiCanTaiKy` (phụ thuộc RPC trên) vẫn chạy đúng sau khi sửa, không lỗi.
+
+**Bug #2 — D62/D71/D73 double-count/thiếu sót khi 1 vụ có CẢ sự kiện khởi tố mới/tách/trả về/chuyển
+đến LẪN sự kiện `phuc_hoi` (phục hồi) cùng kỳ + cùng giai đoạn**: phát hiện qua đối chiếu — 3 vụ ở
+kỳ 08/2026 có ĐỒNG THỜI `khoi_to_vu` (nguồn `an_khoi_to_moi`) và `phuc_hoi` cùng `kyThongKe` (dữ
+liệu backfill án cũ hay dùng 2 hành động cho 1 vụ — VD "+Thêm vụ án" RỒI "Phục hồi điều tra" cùng
+lúc để hợp thức hoá 1 hồ sơ cũ) — bị đếm "vào" 2 LẦN (1 lần qua D71/khởi tố mới, 1 lần qua D62/phục
+hồi). Đồng thời, TODO cũ đã ghi trong file này ("Phục hồi điều tra... không còn được đếm ở BẤT KỲ
+đâu trong D79") vẫn còn nguyên: vụ tạo mới với `nguon="phuc_hoi_dieu_tra"` (field chọn lúc "+Thêm vụ
+án" — KHÁC HẲN sự kiện `phuc_hoi` của `PhucHoiModal`) bị loại khỏi CẢ C6/D71 (chỉ 2 nguồn
+`an_khoi_to_moi`/`tin_bao_khoi_to_len`) LẪN D62 (chỉ đọc "DS phục hồi TĐC ĐT") — không đếm ở đâu cả.
+
+**ĐÃ SỬA** (`tinhBaoCaoKyTuLog`, đúng 1 chỗ NGUỒN — mọi nơi khác (Biểu 2 D59/D60/D62/D71/D73,
+B10 C6/C7 qua `dtKhoiToMoiThat_b10`, "Tổng hợp báo cáo", "Cân đối số liệu", các sheet Excel "DS khởi
+tố ĐT"/"DS phục hồi TĐC ĐT"...) đều đọc lại TỪ ĐÚNG 1 mảng `baoCao[gd].ds.*` này nên tự động nhất
+quán, không cần sửa rải rác nhiều nơi): dựng SỚM (ngay sau khi tải snapshot, trước khi tính bất kỳ
+số nào) đủ 6 mảng `dsKhoiToTrucTiep/dsTachVuArr/dsChuyenDenArr/dsTraVeArr/dsPhucHoiArr/dsNhanLaiArr`
+qua `vuAnTuLogDocs`, rồi:
+1. (Chỉ Điều tra) gộp vào `dsPhucHoiArr` mọi vụ trong `dsKhoiToTrucTiep` có `nguon==
+   "phuc_hoi_dieu_tra"` mà CHƯA có trong `dsPhucHoiArr` (tránh cộng đúp ngược nếu vụ đó cũng đã có
+   sẵn 1 sự kiện `phuc_hoi` thật).
+2. Loại khỏi `dsKhoiToTrucTiep`/`dsTachVuArr`/`dsTraVeArr`/`dsChuyenDenArr` MỌI vụ đã có mặt trong
+   `dsPhucHoiArr` (sau bước 1) — ưu tiên tuyệt đối coi là "phục hồi" (đúng bản chất D62: vụ tồn cũ
+   quay lại xử lý, không phải vụ hoàn toàn mới).
+3. `nguonDem`/`soMoi.*` tính lại từ ĐỘ DÀI MẢNG ĐÃ DEDUP (không còn dùng `.size` thô của snapshot
+   Firestore/Supabase như trước) — tránh đúng bài học "JS tính 1 đằng, Excel công thức tính 1 nẻo"
+   đã lặp lại nhiều lần trong dự án (vì các sheet Excel "DS khởi tố ĐT"/... cũng dựng từ CHÍNH mảng
+   đã dedup này, nên công thức SUMIFS B10 tự động đúng theo, không cần sửa `B10_FORMULA` riêng).
+
+**Kiểm chứng bằng dữ liệu Supabase THẬT (sau khi áp dụng CẢ 2 fix trên)** — viết lại công thức
+`D77=D57+D59+D60+D62+D71+D73−D61−D75` bằng script độc lập (không phải code app) dùng đúng tập hợp
+vụ theo từng nhóm sự kiện (đã sửa `tach_vu` dùng `vuTachRa`) — so với `D154` thật (RPC, đã sửa) ở CẢ
+4 kỳ: **06=310/310 (lệch 0), 07=320/320 (lệch 0), 08=330/330 (lệch 0), 09=334/334 (lệch 0)** — khớp
+TUYỆT ĐỐI, kể cả kỳ 06 (Dũng xác nhận riêng không bắt buộc phải khớp) tự nhiên cũng khớp. Đã viết
+thêm 1 unit test trích **nguyên văn** đúng khối code vừa sửa (không phải diễn giải lại) chạy độc lập
+với dữ liệu mô phỏng đúng kịch bản thật tìm thấy ở kỳ 08 (3 vụ tối vào cả 2 phía, 2 vụ chỉ có nguồn
+phục hồi điều tra) — khớp đúng kỳ vọng (28/12, xem script `26_unit_test_dedup.js` trong lịch sử làm
+việc nếu cần chạy lại). Compile-check qua `@babel/core`+`@babel/preset-react` toàn bộ file — sạch.
+
+**CHƯA kiểm chứng bị can (D79/D156) bằng cách tương đương** — thử 1 phép xấp xỉ thô (đếm MỌI bị can
+hiện có của mỗi vụ, không lọc theo kỳ khởi tố riêng từng bị can) ra lệch lớn (-66/32/34/0) nhưng đây
+là **do chính phép xấp xỉ quá thô** (không mô phỏng đúng `locBiCanTheoKy`/`bcKyKhoiToMap` — cohort
+"bổ sung bị can" đã được ghi nhận từ trước là quá phức tạp để tái tạo tay trong SQL, xem mục
+`bieu2-3-cong-thuc-truc-tiep`), KHÔNG phải bằng chứng bug — logic dedup hôm nay chỉ đổi VỤ NÀO nằm
+trong nhóm nào (set-membership cấp vụ), không đụng gì tới cách tính `_soBiCan` mỗi vụ (đã đúng từ
+trước, độc lập với sửa lần này) nên về lý thuyết D156 cũng sẽ tự đúng theo, nhưng **CHƯA xác nhận
+bằng số liệu thật** — Dũng cần tự mở báo cáo kỳ 08/2026 thật xem cột D156 hết "✗" hay chưa.
+
+**CHƯA kiểm chứng TT/XX (D280/D281/D344/D346)** bằng Excel thật — đã kiểm tra riêng và xác nhận
+KHÔNG có `tach_vu` nào từng landing vào truy_to/xet_xu (0 sự kiện), và KHÔNG có vụ nào ở Truy tố
+từng có ĐỒNG THỜI `khoi_to_vu` + `phuc_hoi` cùng kỳ (0 trường hợp, khác hẳn ĐT) — nên NHIỀU KHẢ NĂNG
+TT/XX không bị ảnh hưởng bởi cả 2 bug trên và tự nhiên vẫn khớp như trước, nhưng đây là suy luận từ
+dữ liệu HIỆN CÓ, không phải bằng chứng tuyệt đối cho MỌI kỳ tương lai — code dedup (bước 2 ở trên)
+áp dụng chung cho CẢ 3 giai đoạn (không chỉ ĐT) nên nếu trường hợp tương tự phát sinh ở TT/XX sau
+này, công thức đã tự động xử lý đúng, không cần sửa thêm.
+
+**CHƯA commit/push/deploy JS** (RPC đã chạy lên Supabase thật rồi, không phụ thuộc JS) — do phiên
+sửa lỗi này **không có tài khoản đăng nhập** nên không lặp lại được quy trình kiểm chứng chuẩn của
+dự án (xuất Excel kỳ thật qua UI, chặn `URL.createObjectURL` đọc formula thật). **Trước khi
+commit/push/deploy, Dũng cần**: (1) đăng nhập `qlahs-sup.web.app`/`qlahsp2.web.app`, mở lại báo cáo
+kỳ 08/2026, xuất Excel, xác nhận CẢ 4 ô "Kiểm tra" D154/D156/D344/D346 hết "✗" (đặc biệt D156 và
+D344/D346 — 2 mảng CHƯA được xác nhận bằng dữ liệu thật ở trên); (2) xác nhận số liệu "Tổng số mới"/
+"Đã giải quyết" trên màn hình Kỳ báo cáo hợp lý (không nhảy vọt bất thường ngoài đúng phần dịch
+chuyển từ dòng "Phục hồi điều tra" sang dòng "Phục hồi (từ Tạm đình chỉ)" — dự kiến, không phải
+lỗi); (3) nếu ổn, `git add qlahs-sup.html supabase/fix_tach_vu_vutachra_2026-09-06.sql`, commit,
+push `main`, rồi `./deploy.sh sup` → `./deploy.sh prod`.
+
 ## ✅ ĐÃ COMMIT + PUSH + DEPLOY `qlahsp2.web.app` — Sửa gap "Kỳ mới" của vụ TÁCH RA + ghi chú tự động tách/nhập vụ (2026-09-06, `qlahs-sup.html`, nhánh `main`, commit `216b76c`)
 
 Dũng hỏi: vụ tách ra không có "kỳ mới" hiển thị ở cột nào — hệ thống đang dùng kỳ nào để tính báo

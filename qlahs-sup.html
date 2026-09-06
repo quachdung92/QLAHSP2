@@ -9127,8 +9127,43 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "bo_sung_bican").where("denGiaiDoan", "==", gd).get(),
     ]);
 
+    // Dựng đủ các mảng "vào" NGAY Ở ĐÂY (trước đây tachVu/chuyenDen/traVe/phucHoi chỉ dựng muộn hơn
+    // ở dưới, tách rời khỏi soMoi/nguonDem tính từ SIZE thô của snapshot) — cần dựng sớm để áp dụng
+    // dedup (xem ngay dưới) TRƯỚC khi tính bất kỳ số nào dựa trên chúng, đảm bảo soMoi/nguonDem/
+    // ds.*/sheet Excel đều nhất quán tuyệt đối với nhau (không còn 2 nguồn số khác nhau cho cùng 1
+    // khái niệm "vào").
+    let dsKhoiToTrucTiep = await vuAnTuLogDocs(khoiToTrucTiepSnap.docs, kyRankMap);
+    let dsTachVuArr = await vuAnTuLogDocs(tachVuSnap.docs, kyRankMap);
+    let dsChuyenDenArr = await vuAnTuLogDocs(chuyenDenSnap.docs, kyRankMap);
+    let dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs, kyRankMap);
+    let dsPhucHoiArr = await vuAnTuLogDocs(phucHoiSnap.docs, kyRankMap);
+    const dsNhanLaiArr = await vuAnTuLogDocs(nhanLaiSnap.docs, kyRankMap);
+
+    // Sửa triệt để double-count/thiếu sót "vào" khi 1 vụ có CẢ sự kiện khởi tố mới/tách/chuyển đến/
+    // trả về LẪN sự kiện "phục hồi" (phuc_hoi) cùng kỳ + cùng giai đoạn — dữ liệu backfill án cũ
+    // hay dùng 2 hành động cho cùng 1 vụ (VD "Thêm vụ án" rồi "Phục hồi điều tra" cùng lúc để hợp
+    // thức hoá 1 hồ sơ cũ) khiến vụ đó bị đếm "vào" HAI LẦN. Chỉ tính "vào" ĐÚNG 1 LẦN, ưu tiên coi
+    // là "phục hồi" (khớp đúng bản chất D62: vụ tồn cũ quay lại xử lý, không phải vụ hoàn toàn mới)
+    // — kiểm chứng bằng dữ liệu Supabase thật: công thức D77=D57+D59+D60+D62+D71+D73-D61-D75 khớp
+    // TUYỆT ĐỐI (lệch 0) với số tồn RPC ở cả 4 kỳ 06-09/2026 sau khi áp dụng đúng dedup này (trước
+    // đó luôn lệch, dấu/độ lớn khác nhau tuỳ kỳ). Riêng Điều tra: nguồn "Phục hồi điều tra" (tạo vụ
+    // MỚI với nguồn này lúc "+Thêm vụ án" — KHÁC HẲN sự kiện phuc_hoi của PhucHoiModal) trước đây
+    // KHÔNG được đếm ở BẤT KỲ đâu trong D77/D79 (TODO cũ, xem mục "bieu2-hoan-thien" CLAUDE.md) —
+    // nay gộp vào D62/D69 nếu vụ đó CHƯA trùng với phục hồi TĐC (tránh đếm đúp ngược lại).
+    if (gd === "dieu_tra") {
+      const idaTrongPhucHoi = new Set(dsPhucHoiArr.map(v => v.id));
+      const phucHoiDieuTraBoSung = dsKhoiToTrucTiep.filter(v => v.nguon === "phuc_hoi_dieu_tra" && !idaTrongPhucHoi.has(v.id));
+      if (phucHoiDieuTraBoSung.length) dsPhucHoiArr = [...dsPhucHoiArr, ...phucHoiDieuTraBoSung];
+    }
+    const _idDaTinhPhucHoi = new Set(dsPhucHoiArr.map(v => v.id));
+    if (_idDaTinhPhucHoi.size) {
+      dsKhoiToTrucTiep = dsKhoiToTrucTiep.filter(v => !_idDaTinhPhucHoi.has(v.id));
+      dsTachVuArr = dsTachVuArr.filter(v => !_idDaTinhPhucHoi.has(v.id));
+      dsTraVeArr = dsTraVeArr.filter(v => !_idDaTinhPhucHoi.has(v.id));
+      dsChuyenDenArr = dsChuyenDenArr.filter(v => !_idDaTinhPhucHoi.has(v.id));
+    }
+
     const nguonDem = { an_khoi_to_moi: 0, tin_bao_khoi_to_len: 0, an_noi_khac_chuyen_den: 0, phuc_hoi_dieu_tra: 0 };
-    const dsKhoiToTrucTiep = await vuAnTuLogDocs(khoiToTrucTiepSnap.docs, kyRankMap);
     if (gd === "dieu_tra") {
       for (const v of dsKhoiToTrucTiep) { if (v.nguon in nguonDem) nguonDem[v.nguon]++; }
     }
@@ -9136,15 +9171,18 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     // "Khởi tạo trực tiếp" chỉ hiển thị riêng cho Truy tố/Xét xử — ở Điều tra, cùng nhóm sự kiện
     // khoi_to_vu đó ĐÃ được thể hiện qua 4 dòng nguồn (án khởi tố mới/tin báo/...) ở trên rồi,
     // hiện thêm 1 dòng tổng riêng sẽ trùng lặp số liệu (nguon vẫn cộng đủ vào soMoi.tong).
+    // Mọi số ở đây giờ tính từ ĐỘ DÀI MẢNG ĐÃ DEDUP (không còn dùng `.size` thô của snapshot) — để
+    // nhất quán tuyệt đối với ds.*/sheet Excel (đã dedup y hệt), tránh lặp lại bài học "JS tính 1
+    // đằng, Excel công thức tính 1 nẻo" đã gặp nhiều lần trong dự án.
     const soMoi = {
       // "tong" là số VỤ mới vào giai đoạn — bo_sung_bican CỐ Ý KHÔNG cộng vào đây (không phải 1
       // vụ mới, chỉ là bị can bổ sung cho vụ đã đếm rồi — xem bcMoi bên dưới, nơi DUY NHẤT cộng
       // boSungBiCan, và chỉ cộng vào tổng BỊ CAN).
-      tong: khoiToTrucTiepSnap.size + tachVuSnap.size + chuyenDenSnap.size + traVeSnap.size
-          + phucHoiSnap.size + nhanLaiSnap.size,
-      chuyenDenTu: chuyenDenSnap.size, traVeTu: traVeSnap.size, tachVu: tachVuSnap.size,
-      phucHoi: phucHoiSnap.size, nhanLai: nhanLaiSnap.size, boSungBiCan: boSungBiCanSnap.size,
-      ...(gd === "dieu_tra" ? nguonDem : { khoiTaoTrucTiep: khoiToTrucTiepSnap.size }),
+      tong: dsKhoiToTrucTiep.length + dsTachVuArr.length + dsChuyenDenArr.length + dsTraVeArr.length
+          + dsPhucHoiArr.length + dsNhanLaiArr.length,
+      chuyenDenTu: dsChuyenDenArr.length, traVeTu: dsTraVeArr.length, tachVu: dsTachVuArr.length,
+      phucHoi: dsPhucHoiArr.length, nhanLai: dsNhanLaiArr.length, boSungBiCan: boSungBiCanSnap.size,
+      ...(gd === "dieu_tra" ? nguonDem : { khoiTaoTrucTiep: dsKhoiToTrucTiep.length }),
     };
 
     const [chuyenDi, traDi, hoanThanhSnap, nhapVuSnap] = await Promise.all([
@@ -9196,14 +9234,9 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: toiDanhChinhCuaVu(vuDoc.data(), bcInfo.toiDanhChinh) });
     }));
 
-    // Hoist các mảng ds.* (kèm _soBiCan từng vụ) LÊN TRƯỚC bước tính tonCuoiKy — vừa để dùng
-    // chung công thức log-based bên dưới (bcMoi/bcGiaiQuyet), vừa tránh gọi lại vuAnTuLogDocs
-    // 2 LẦN cho cùng 1 snapshot khi dựng object baoCao[gd].ds ở cuối (đỡ tốn query kép).
-    const dsTachVuArr = await vuAnTuLogDocs(tachVuSnap.docs, kyRankMap);
-    const dsChuyenDenArr = await vuAnTuLogDocs(chuyenDenSnap.docs, kyRankMap);
-    const dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs, kyRankMap);
-    const dsPhucHoiArr = await vuAnTuLogDocs(phucHoiSnap.docs, kyRankMap);
-    const dsNhanLaiArr = await vuAnTuLogDocs(nhanLaiSnap.docs, kyRankMap);
+    // dsTachVuArr/dsChuyenDenArr/dsTraVeArr/dsPhucHoiArr/dsNhanLaiArr đã dựng + dedup Ở TRÊN (đầu
+    // hàm, cùng lúc với soMoi/nguonDem) — KHÔNG dựng lại ở đây nữa (trước đây dựng 2 lần cho cùng 1
+    // snapshot, và bản dựng lại này không hề dedup nên sẽ làm lệch lại đúng bug vừa sửa).
     const dsChuyenDiArr = await vuAnTuLogDocs(chuyenDi.docs, kyRankMap);
     const dsTraDiArr = await vuAnTuLogDocs(traDi.docs, kyRankMap);
     // "bo_sung_bican" là sự kiện CẤP BỊ CAN (không phải cấp vụ) — dùng vuBiCanTuLogDocs riêng
@@ -11493,6 +11526,15 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   m.set(67, _fc(demBcSheet("DS vụ tách ĐT"), soBc(dt.tachVu)));
   m.set(61, _fc(_sumSheetA("DS nhập vụ ĐT"), baoCao.dieu_tra.soNhapVu));
   m.set(68, _fc(demBcSheet("DS nhập vụ ĐT"), soBc(dt.nhapVu)));
+  // D62/D69 "phục hồi" — dt.phucHoi (2026-09-06) giờ KHÔNG CHỈ gồm sự kiện phuc_hoi (TĐC) mà còn
+  // được BỔ SUNG (dedup ở tinhBaoCaoKyTuLog, xem ghi chú ở đó) các vụ nguồn "Phục hồi điều tra"
+  // (tạo vụ MỚI với nguồn này) — cả 2 trường hợp: (a) vụ CHỈ có nguồn này (trước đây KHÔNG được
+  // đếm ở BẤT KỲ đâu trong D77/D79, nay gộp vào đây đúng theo file ngành thật `D71=C6` tách riêng
+  // với `D62`), và (b) vụ có CẢ khoi_to_vu (nguồn khởi tố mới/nơi khác/phục hồi ĐT) LẪN 1 sự kiện
+  // phuc_hoi cùng kỳ (double-entry do quy trình backfill án cũ) — ưu tiên tính là "phục hồi", loại
+  // khỏi D59/D60/D71/D73 để không đếm đúp. `dt.khoiToTrucTiep`/`dt.tachVu`/`dt.traVe`/`dt.chuyenDen`
+  // ĐÃ được loại các vụ này từ nguồn (cùng chỗ dedup), nên sheet "DS khởi tố ĐT" cũng tự động không
+  // còn các vụ này — công thức Excel B10 C6/C7 (SUMIFS trên sheet đó) tự đúng, không cần sửa riêng.
   m.set(62, _fc(_sumSheetA("DS phục hồi TĐC ĐT"), (dt.phucHoi || []).length));
   m.set(69, _fc(demBcSheet("DS phục hồi TĐC ĐT"), soBc(dt.phucHoi)));
   const dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
@@ -12131,9 +12173,28 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
     ].forEach(r => { const nr = ws.addRow(r); nr.font = { size: 9, color: { argb: "FF6B7280" } }; nr.getCell(1).alignment = { wrapText: true }; });
     return ws;
   };
-  // Toàn bộ chuỗi tồn cuối kỳ 3 giai đoạn đã KHÉP HẲN: ĐT (D154/D156 ← D83/D86 suy ngược), XX
-  // (D84/D86 ← D9/D12 suy ngược), TT (D280/D281 tính đủ chuỗi thành phần nhờ đã tách D262/D267/
-  // D274-D279). KHÔNG còn dòng nào cần bỏ self-check `=`.
+  // ⚠ COMMENT CŨ (2026-08-30) đã LỖI THỜI, giữ lại để biết lịch sử: từng nói "khép hẳn" nhờ D83/D86
+  // suy ngược từ D154/D156 (tautology, luôn ✓). Từ 2026-09 (bug D86 224→159), D83/D86/D282/D285 đã
+  // đổi sang ĐẾM THẲNG (độc lập với D154/D156/D344/D346, không còn suy ngược) — nên đẳng thức
+  // `D154=D77-D83-D134`/`D156=D79-D86-D141`/`D344=D280-D282-D326`/`D346=D281-D285-D332` GIỜ LÀ KIỂM
+  // TRA THẬT, có thể báo ✗ nếu D77/D79/D280/D281 (Tổng thụ lý, ledger cộng dồn theo sự kiện) không
+  // khớp tuyệt đối với D154/D156/D344/D346 (RPC as-of, tồn thực tế) — ĐÚNG Ý ĐỊNH THIẾT KẾ (Dũng
+  // muốn thấy tín hiệu thật, không tự "luôn ✓" giả như trước). `mdBoQuaBangNhau` vẫn để RỖNG cho cả
+  // 2 sheet — KHÔNG tự ý bỏ qua các dòng này, vì đó là quyết định "chấp nhận sai số" cần hỏi Dũng.
+  // ĐÃ SỬA (2026-09-06, xem ghi chú đầy đủ ở tinhBaoCaoKyTuLog + m.set(62,...) phía trên): 2 nguồn
+  // lệch THẬT đã tìm ra bằng cách so trực tiếp vụ nào RPC coi là tồn/mới với vụ nào ledger đếm —
+  // (1) BUG RPC `layTrangThaiVuTaiKy` nhóm sự kiện "tach_vu" theo `maVuAn` (vụ GỐC) thay vì
+  // `vuTachRa` (vụ CON thật sự phát sinh) khiến vụ tách hoàn toàn "vô hình" trong RPC — ĐÃ SỬA qua
+  // `supabase/fix_tach_vu_vutachra_2026-09-06.sql` (đã chạy lên Supabase thật); (2) vụ có CẢ sự
+  // kiện khởi tố mới/tách/trả về/chuyển đến LẪN sự kiện phục hồi (`phuc_hoi`) cùng kỳ+giai đoạn
+  // (backfill án cũ dùng 2 hành động cho 1 vụ) từng bị đếm "vào" 2 lần, VÀ vụ nguồn "Phục hồi điều
+  // tra" (TODO cũ nêu trên, giờ đã lỗi thời) từng không được đếm ở đâu cả — ĐÃ SỬA bằng dedup ưu
+  // tiên "phục hồi" ở `tinhBaoCaoKyTuLog`. Kiểm chứng bằng dữ liệu Supabase thật: D154=D77-D83-D134
+  // khớp TUYỆT ĐỐI (lệch 0) với RPC ở cả 4 kỳ 06/07/08/09-2026 sau khi áp dụng cả 2 fix trên. TT/XX
+  // (D280/D281/D344/D346) không có tach_vu/phục-hồi-trùng-lặp nào trong dữ liệu hiện có (đã kiểm
+  // tra trực tiếp) nên nhiều khả năng không bị ảnh hưởng — CHƯA kiểm chứng bằng Excel thật (không có
+  // tài khoản đăng nhập trong phiên sửa lỗi này), Dũng nên tự mở lại báo cáo kỳ 08/2026 xác nhận cả
+  // 4 ô D154/D156/D344/D346 hết "✗" trước khi tin tưởng tuyệt đối.
   themSheet("Biểu 2", BIEU2_ROWS, giaTriBieu2, "B2", BIEU2_QUY_TAC);
   themSheet("Biểu 3", BIEU3_ROWS, giaTriBieu3, "B3", BIEU3_QUY_TAC);
 }
