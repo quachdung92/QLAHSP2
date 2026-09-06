@@ -2,6 +2,53 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ HOÀN TẤT — D84/D86 (Biểu 3/XX) khớp TUYỆT ĐỐI kỳ 08/2026 — bug thật: công thức Excel C60/C61 (B10) thiếu trừ "DS XX trả TT" (2026-09-06, `qlahs-sup.html`, nhánh `main`, commit `8bcf833`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
+
+Ngay sau mục "HOÀN TẤT — D346 (TT)..." dưới đây (mục đó đã kết luận "Biểu 3/XX hiện KHÔNG lỗi" —
+kết luận đó SAI, vì lúc đó đang tin nhầm vào "result" cache JS thay vì công thức Excel thật tính
+lại) — Dũng tắt/mở lại trình duyệt (buộc Excel/bản xem trước tính lại công thức từ đầu, không dùng
+cache cũ) rồi báo: **D17 (Tổng thụ lý XX) = 57**, đã xét xử D22=1 → theo công thức `D84=D17-D22-
+D52-D70` phải ra 56, nhưng **D84 thực (RPC ground truth) = 52** — lệch 4, y hệt lớp bug vừa sửa ở
+TT (D281) nhưng ở 1 VỊ TRÍ KHÁC.
+
+**Root cause**: D17/D18 (Biểu 3) tham chiếu THẲNG tới B10's **C60/C61** ("Tổng thụ lý XX") — khác
+TT's D280/D281 (ledger độc lập trong Biểu 2). C60/C61 có 2 nơi tính SONG SONG, ĐÃ TỪNG LỆCH NHAU
+từ lâu mà không ai phát hiện vì luôn so bằng "result" cache JS (vốn đúng) thay vì công thức Excel
+thật:
+- **JS** (`tinhBieu10`, biến `C60`/`C61`) — từ fix `cf1a34b` (2026-08-30, mục "KHÉP chuỗi tồn cuối
+  kỳ XX") đã có `− vuCoD(xx.traDi, D)` / `− bcCoD(xx.traDi, D)` (trừ "Toà trả hồ sơ về TT").
+- **Excel** (`mkThuLyVu`/`mkThuLyBc`, dùng danh sách sheet trừ trong `RA_THULY_GD.xet_xu`) — CHỈ
+  có `["DS nhập vụ XX", "DS chuyển đi XX"]`, KHÔNG BAO GIỜ có "DS XX trả TT" — fix `cf1a34b` lúc đó
+  chỉ sửa đúng biến JS, quên đối chiếu lại `B10_FORMULA`/`RA_THULY_GD` sinh chuỗi công thức Excel
+  (đúng bài học "sửa JS không đủ, phải sửa cả formula" đã ghi rất nhiều lần trong file này — tái
+  phạm sau gần 1 tháng).
+
+**Kiểm chứng số liệu khớp chính xác nguyên nhân**: `countVu('DS XX trả TT')` = 4 (đúng bằng
+57−53, với 53 = giá trị JS "result" cache ĐÚNG đã tính từ trước); `countBc('DS XX trả TT')` = 12
+(đúng bằng lệch phía bị can, D18 cache=325, Excel thật sẽ ra 337 nếu không sửa).
+
+**Đã sửa**: thêm `"DS XX trả TT"` vào `RA_THULY_GD.xet_xu` (mảng sheet bị trừ khi sinh công thức
+`mkThuLyVu`/`mkThuLyBc` cho C60/C61) — TT/ĐT không cần sửa gì (TT không có khoản trừ tương tự,
+"TT trả ĐT" được xử lý khác hẳn qua D278/D279 trong chính Biểu 2, không qua Tổng thụ lý B10).
+
+**Kiểm chứng bằng Excel export mới (tab trình duyệt SẠCH, đóng hẳn tab cũ mở tab mới để tránh
+`ERR_INSUFFICIENT_RESOURCES` gặp phải giữa chừng — môi trường kiểm chứng, không phải lỗi ứng
+dụng)**: đọc THẲNG chuỗi công thức từng ô `BU{r}` (B10, per-tội-danh) xác nhận đã có thêm
+`-SUMIF('DS XX trả TT'!$B:$B,$A{r},'DS XX trả TT'!$A:$A)`. Tự tái tạo tay tổng `BU3:BU51` từ dữ
+liệu thô 10 sheet liên quan (không dùng bất kỳ cache nào): vụ = tồn trước(50) + vào(7, "DS chuyển
+đến XX") − ra(0+0+4) = **53**; bị can = tồn trước(328) + vào(9) − ra(0+0+12) = **325** — khớp
+CHÍNH XÁC "result" cache cũ (chứng minh JS luôn đúng, chỉ Excel formula sai). `D84 = 53−1−0−0 =
+52 = D84 (RPC)`; `D86 = 325−1−0−0 = 324 = D86 (RPC)` — khớp TUYỆT ĐỐI cả 2 phía.
+
+Đã commit + push `main` (`8bcf833`) + deploy `qlahs-sup.web.app` rồi `qlahsp2.web.app`.
+
+**Bài học rút ra**: mục ngay dưới đây ("HOÀN TẤT D346 TT...") đã kết luận nhầm "Biểu 3/XX hiện
+KHÔNG lỗi" chỉ dựa trên `cell.result` (cache JS) — ĐÚNG với "result" nhưng SAI với thứ Dũng thực sự
+xem (Excel thật, luôn tính lại công thức, bỏ qua cache khi mở file mới/F9). Từ nay, khi kiểm chứng
+bất kỳ ô Biểu 2/3/B10 nào, PHẢI đọc `cell.formula` và tự tái tạo tay từ dữ liệu thô — không chỉ tin
+`cell.result` dù đã nhiều lần ghi rõ điều này trong file — đây là bằng chứng nó vẫn có thể bị bỏ
+sót nếu không tự giác đọc lại `formula` ở MỌI ô liên quan, không chỉ ô đang sửa trực tiếp.
+
 ## ✅ HOÀN TẤT — D346 (TT) khớp TUYỆT ĐỐI kỳ 08/2026 (lệch 0) — bug thật D281 thiếu term "bổ sung bị can", đã kiểm tra Biểu 3/XX (hiện KHÔNG lỗi) (2026-09-06, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
 
 Tiếp theo mục "HOÀN TẤT — D154/D156... ĐT" ngay dưới đây — sau khi ĐT khớp tuyệt đối, Dũng gửi 2 báo
