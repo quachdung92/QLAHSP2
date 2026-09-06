@@ -2,6 +2,52 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Sửa gap "Kỳ mới" của vụ TÁCH RA + ghi chú tự động tách/nhập vụ (2026-09-06, `qlahs-sup.html`, nhánh `phan-cong-bao-cao-chi-tiet`)
+
+Dũng hỏi: vụ tách ra không có "kỳ mới" hiển thị ở cột nào — hệ thống đang dùng kỳ nào để tính báo
+cáo/lưu lịch sử? Trả lời: sự kiện `tach_vu` VẪN có `kyThongKe` đầy đủ (hỏi qua `ModalXacNhanKy` lúc
+tách) và **báo cáo/B10 đã tính đúng theo kỳ đó từ trước** (`tinhBaoCaoKyTuLog`/`fetchKyKhoiToVu`) —
+chỉ có **cột "Kỳ mới" ở Danh sách vụ án/Xuất Excel bị BỎ SÓT** vì 2 lý do cộng dồn: (1)
+`tinhKyTheoVuAn`/`timSuKienKyTheoVuAn` chỉ đọc sự kiện `khoi_to_vu`, không đọc `tach_vu`; (2) ngay
+cả nếu đọc, sự kiện `tach_vu` ghi `maVuAn` = **vụ GỐC** (nơi sự kiện xảy ra), vụ MỚI thật sự nằm ở
+field riêng `vuTachRa` — query tải log theo `maVuAn IN [id đang hiển thị]` sẽ không bao giờ khớp
+tới sự kiện đó cho đúng dòng vụ con, trừ khi vụ gốc TÌNH CỜ cũng đang hiển thị cùng lúc.
+
+**Đã sửa (chỉ hiển thị, không đụng số liệu báo cáo — vốn đã đúng từ trước)**:
+- `tinhKyTheoVuAn` (dùng cho Xuất Excel ở Danh sách vụ án) + `timSuKienKyTheoVuAn` (dùng cho cột
+  bấm-sửa-được ở bảng) — thêm nhánh `loaiSuKien === "tach_vu"` → gán kỳ vào `vuTachRa`, không phải
+  `maVuAn`.
+- `DanhSachPanel`'s effect tải `logKyTheoVu` — thêm 1 truy vấn riêng `vuTachRa IN [ids đang hiển
+  thị]` (cùng pattern `fetchKyKhoiToVu`/`fetchKyVaoGiaiDoanTonHienTai` đã có), song song với truy
+  vấn `maVuAn IN [...]` cũ — nếu không, vụ con không lấy được sự kiện `tach_vu` của chính nó khi
+  vụ gốc không nằm trong cùng trang/bộ lọc hiển thị.
+- `xuatExcel` (module Xuất Excel ở Danh sách vụ án) — thêm `"tach_vu"` vào mệnh đề
+  `where("loaiSuKien","in",[...])` đang tải (trước chỉ có `khoi_to_vu`/`hoan_thanh`).
+- UI: cột "Kỳ mới" hiện thêm dòng phụ **"🔀 Tách vụ án"** (màu tím, không phải cảnh báo — phân biệt
+  với "↩ Trả bổ sung" màu hổ phách đã có) khi `suKienMoi[v.id]?.loaiSuKien === "tach_vu"`.
+
+**Ghi chú tự động "tách/nhập từ vụ nào, mã nào" (theo yêu cầu Dũng, để tiện tra cứu)** — trước đây
+field `vuGoc`/`nhapVaoVu` có lưu liên kết nhưng KHÔNG hiển thị ở đâu trong UI thường (chỉ dùng làm
+guard nội bộ), và `vuan.ghiChu` của vụ liên quan luôn để trống/không đụng tới:
+- `tachVuAn()` — vụ MỚI tách ra giờ có `ghiChu` tự động: `Tách từ vụ <mã> — "<tên vụ gốc>".`
+  (trước đây hardcode `ghiChu: ""`). Áp dụng cho CẢ 2 luồng dùng chung hàm này (nút "Tách vụ án"
+  thủ công VÀ tách tự động khi Hoàn thành TĐC/ĐC chỉ áp dụng 1 phần bị can).
+- `NhapVuModal` — **cả 2 vụ liên quan** đều được NỐI THÊM (không ghi đè, giữ ghi chú cũ nếu có)
+  1 dòng ghi chú mới: vụ NGUỒN (đã nhập đi) → `Đã nhập vào vụ <mã đích> — "<tên đích>".`; vụ ĐÍCH
+  (nhận nhập) → `Nhận nhập vụ <mã nguồn> — "<tên nguồn>" (KSV: ...).` (đúng câu chữ đã dùng sẵn ở
+  sự kiện log `duoc_nhap_vu` từ trước, chỉ thêm việc PERSIST câu đó vào field `ghiChu` của chính
+  `vuan` để thấy ngay ở panel chi tiết/Sửa thông tin vụ án, không cần mở tab Lịch sử). `dichMa`/
+  `dichGhiChuHienTai` (state mới trong `NhapVuModal`) chụp sẵn lúc chọn vụ đích trong danh sách
+  ứng viên (`dsUngVien` đã có đủ field, không cần đọc lại) để dùng ở `luu()`.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` toàn file — sạch.
+**CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật** (không có tài khoản đăng nhập trong
+phiên này) — Dũng nên tự thử trên `qlahs-sup.web.app`: (1) tách 1 vụ, xác nhận cột "Kỳ mới" của vụ
+con hiện đúng kỳ + dòng phụ "🔀 Tách vụ án", và ghi chú của vụ con có đúng "Tách từ vụ ..."; (2)
+nhập 1 vụ vào vụ khác, xác nhận CẢ 2 vụ (nguồn đã "Đã nhập vào vụ khác" và đích) đều có ghi chú
+tham chiếu lẫn nhau; (3) xuất Excel ở Danh sách vụ án, xác nhận cột "Kỳ mới" của vụ tách ra không
+còn rỗng.
+
 ## ✅ ĐÃ MERGE `phan-cong-bao-cao-chi-tiet` VÀO `main` + ĐÃ DEPLOY `qlahsp2.web.app` (2026-09-05, theo yêu cầu Dũng "deloy site chính và merge main")
 
 Merge `--no-ff` vào `main` (commit `130bb1d`, không xung đột), push `main`, `./deploy.sh prod` —

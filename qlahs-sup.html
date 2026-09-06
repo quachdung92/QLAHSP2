@@ -1205,16 +1205,21 @@ function giaiDoanTruoc(gd) {
 
 // Điền sẵn các field mặc định (null) của 1 dòng log — mỗi nơi ghi log chỉ cần
 // truyền phần khác mặc định, tránh lặp lại 14 field mỗi lần.
-// Tính "kỳ mới" (kỳ của sự kiện khoi_to_vu) và "kỳ giải quyết" (kỳ của sự kiện hoan_thanh gần
-// nhất — vụ có thể phục hồi rồi giải quyết lại nên có thể có nhiều lần) cho từng vụ án, dùng
-// chung cho cột hiển thị ở Danh sách vụ án và khi xuất Excel. Vụ tách ra từ vụ khác không có
-// sự kiện khoi_to_vu riêng (đúng theo thiết kế — không tính là vụ mới), nên sẽ không có "kỳ mới".
+// Tính "kỳ mới" (kỳ của sự kiện khoi_to_vu HOẶC tach_vu) và "kỳ giải quyết" (kỳ của sự kiện
+// hoan_thanh gần nhất — vụ có thể phục hồi rồi giải quyết lại nên có thể có nhiều lần) cho từng
+// vụ án, dùng chung cho cột hiển thị ở Danh sách vụ án và khi xuất Excel.
+// Vụ TÁCH RA không có sự kiện khoi_to_vu riêng — "kỳ mới" của nó lấy từ CHÍNH sự kiện tach_vu
+// (ghi trên vụ GỐC, nhưng field vuTachRa mới là id vụ MỚI thật sự phát sinh — xem
+// idVuThatCuaLog/fetchKyKhoiToVu, cùng nguyên tắc). Trước đây bỏ sót nhánh này khiến cột "Kỳ mới"
+// của vụ tách ra luôn hiện "—" dù kỳ vẫn được lưu đầy đủ trên log — SỬA 2026-09-06.
 function tinhKyTheoVuAn(logEvents, kyTenTheoId) {
   const kyMoi = {};
   const hoanThanhGanNhat = {};
   for (const l of logEvents) {
     if (l.loaiSuKien === "khoi_to_vu") {
       kyMoi[l.maVuAn] = kyTenTheoId[l.kyThongKe] || null;
+    } else if (l.loaiSuKien === "tach_vu" && l.vuTachRa) {
+      kyMoi[l.vuTachRa] = kyTenTheoId[l.kyThongKe] || null;
     } else if (l.loaiSuKien === "hoan_thanh") {
       const t = l.thoiDiemGhi?.toMillis ? l.thoiDiemGhi.toMillis() : 0;
       if (!hoanThanhGanNhat[l.maVuAn] || t > hoanThanhGanNhat[l.maVuAn].t) {
@@ -1238,6 +1243,9 @@ function tinhKyTheoVuAn(logEvents, kyTenTheoId) {
 // kiện gần nhất; nơi gọi tự phân biệt "trả bổ sung" hay không qua suKien.loaiSuKien === "tra_ho_so".
 // "Trả về Điều tra" là trường hợp riêng (giai đoạn Điều tra chỉ vào được qua khởi tố mới hoặc bị
 // trả hồ sơ — không có "chuyển giai đoạn tới" vì Điều tra là giai đoạn đầu).
+// Vụ TÁCH RA cũng được coi là "kỳ mới" của nó — lấy từ sự kiện tach_vu, khoá theo vuTachRa (id
+// vụ MỚI thật sự), không phải maVuAn (= vụ GỐC ghi sự kiện) — xem ghi chú tinhKyTheoVuAn ở trên,
+// cùng 1 gap được sửa cho cả 2 nơi dùng.
 function timSuKienKyTheoVuAn(logEvents) {
   const moiLoai = () => ({});
   const suKienMoi = moiLoai(), suKienHoanThanh = moiLoai(), suKienVaoTruyTo = moiLoai(),
@@ -1249,6 +1257,7 @@ function timSuKienKyTheoVuAn(logEvents) {
   };
   for (const l of logEvents) {
     if (l.loaiSuKien === "khoi_to_vu") suKienMoi[l.maVuAn] = l;
+    else if (l.loaiSuKien === "tach_vu" && l.vuTachRa) suKienMoi[l.vuTachRa] = l;
     else if (l.loaiSuKien === "hoan_thanh") giuGanNhat(suKienHoanThanh, l);
     else if ((l.loaiSuKien === "chuyen_giai_doan" || l.loaiSuKien === "tra_ho_so") && l.denGiaiDoan === "truy_to") giuGanNhat(suKienVaoTruyTo, l);
     else if (l.loaiSuKien === "chuyen_giai_doan" && l.denGiaiDoan === "xet_xu") giuGanNhat(suKienVaoXetXu, l);
@@ -1309,7 +1318,11 @@ async function tachVuAn({ vuGoc, biCanTachIds, biCanSaoChepIds, biCanList, trang
     coQuanThuLy: vuGoc.coQuanThuLy, trangThai: trangThaiVuMoi,
     noiChuyenDen: "", nhapVaoVu: null, vuGoc: vuGoc.id, soDemTach: 0,
     anDiem: vuGoc.anDiem || false, uyQuyenXetXu: vuGoc.uyQuyenXetXu || "", phienToaRutKN: vuGoc.phienToaRutKN || false,
-    ghiChu: "", ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+    // Ghi rõ tách từ vụ nào/mã nào để tiện tra cứu (2026-09-06, theo yêu cầu Dũng) — trước đây để
+    // trống, không có cách nào biết nguồn gốc vụ tách ra nếu không tự lần theo field vuGoc (không
+    // hiển thị ở đâu trong UI thường).
+    ghiChu: `Tách từ vụ ${hienThiMa(vuGoc)} — "${vuGoc.tenVu || "(chưa đặt tên)"}".`,
+    ngayTao: now, nguoiTao: nguoiThucHien, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
     ...tomTatBiCan(biCanVuMoi),
   });
   // Ghi sentinel "meta/vuAnMoiNhat" ĐÃ BỎ (checklist Supabase mục 5) — useDanhSachDangGiaiQuyet
@@ -5201,6 +5214,11 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   const [ketQua, setKetQua] = useState([]);
   const [dichId, setDichId] = useState(null);
   const [dichTen, setDichTen] = useState("");
+  // dichMa/dichGhiChuHienTai (2026-09-06) — chụp sẵn lúc chọn vụ đích trong danh sách ứng viên
+  // (đã có đủ dữ liệu, không cần đọc lại) để dùng cho ghi chú "nhập từ/vào vụ nào" ở luu() bên
+  // dưới — dichGhiChuHienTai là ghi chú ĐANG CÓ của vụ đích để nối thêm, tránh ghi đè mất.
+  const [dichMa, setDichMa] = useState("");
+  const [dichGhiChuHienTai, setDichGhiChuHienTai] = useState("");
   // dichGD (2026-08-03) — coQuanThuLy của vụ đích, để phát hiện "nhập khác giai đoạn" (VD vụ Điều
   // tra nhập vào vụ Truy tố) — trường hợp này khiến số bị can tồn tính SAI (xem tinhBaoCaoKyTuLog:
   // bị can chuyển giai đoạn nguồn sang giai đoạn đích nhưng không có "vào" tương ứng cho giai đoạn
@@ -5273,9 +5291,22 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
           batch.update(d.ref, { maVuAn: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
         }
       });
+      // Ghi rõ 2 chiều "nhập vào vụ nào/nhận nhập từ vụ nào" vào chính GHI CHÚ của vụ (2026-09-06,
+      // theo yêu cầu Dũng — tương tự vụ tách ra) để tiện tra cứu ngay trên panel chi tiết, không
+      // cần lần theo field nhapVaoVu (không hiển thị ở UI thường) hay mở Lịch sử tìm sự kiện
+      // duoc_nhap_vu. NỐI THÊM (không ghi đè) vì mỗi vụ có thể đã có ghi chú riêng từ trước, và vụ
+      // đích có thể nhận nhập nhiều lần từ nhiều vụ khác nhau qua thời gian.
+      const ghiChuNguonMoi = (vuAn.ghiChu ? vuAn.ghiChu + "\n" : "") +
+        `Đã nhập vào vụ ${dichMa} — "${dichTen || "(chưa đặt tên)"}".`;
+      const ghiChuDichMoi = (dichGhiChuHienTai ? dichGhiChuHienTai + "\n" : "") +
+        `Nhận nhập vụ ${hienThiMa(vuAn)} — "${vuAn.tenVu || "(chưa đặt tên)"}" (KSV: ${vuAn.ksvChinh || "—"}).`;
       batch.update(db.collection("vuan").doc(vuAn.id), {
-        trangThai: "da_nhap", nhapVaoVu: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+        trangThai: "da_nhap", nhapVaoVu: dichId, ghiChu: ghiChuNguonMoi,
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
         ...tomTatBiCan([]),
+      });
+      batch.update(db.collection("vuan").doc(dichId), {
+        ghiChu: ghiChuDichMoi, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
       });
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "nhap_vu", vuNhapVao: dichId, soQuyetDinh: soQuyetDinh.trim(),
@@ -5312,6 +5343,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
           {ketQua.map(v => (
             <button key={v.id} onClick={() => {
               setDichId(v.id); setDichTen(v.tenVu); setDichGD(v.coQuanThuLy);
+              setDichMa(hienThiMa(v)); setDichGhiChuHienTai(v.ghiChu || "");
               setXacNhanKhacGD(false); setTuKhoa(""); setKetQua([]);
             }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50">
               <div className="text-xs text-slate-400">{hienThiMa(v)}</div>
@@ -7385,19 +7417,30 @@ function DanhSachPanel({ selectedId, onSelect }) {
   // đã áp dụng khắp app. KHÔNG lọc loaiSuKien ngay trong query (lý do cũ vẫn đúng: Firestore giới
   // hạn tổng nhánh khi kết hợp 2 mệnh đề "in" — lô 30 id × 4 loại sự kiện = 120 nhánh, vượt giới
   // hạn 30) — lọc ở phía client qua `timSuKienKyTheoVuAn`.
+  // Vụ TÁCH RA không có sự kiện nào ghi maVuAn = chính nó (tach_vu ghi maVuAn = vụ GỐC, vụ MỚI
+  // thật sự nằm ở field vuTachRa — xem fetchKyKhoiToVu/idVuThatCuaLog, cùng 1 gap) — thêm truy vấn
+  // riêng theo vuTachRa, nếu không cột "Kỳ mới" của vụ tách ra sẽ mãi hiện "—" trừ khi vụ gốc TÌNH
+  // CỜ cũng đang hiển thị trong CÙNG idsCanTai (2026-09-06, theo phát hiện của Dũng).
   const [logKyTheoVu, setLogKyTheoVu] = useState({}); // { [vuAnId]: sự_kiện[] }
   useEffect(() => {
     const ids = idsHienTaiKey ? idsHienTaiKey.split(",") : [];
     const idsCanTai = ids.filter(id => !logKyTheoVu[id]);
     if (idsCanTai.length === 0) return;
-    chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", idsCanTai)
-      .then(docs => {
+    Promise.all([
+      chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", idsCanTai),
+      chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "vuTachRa", idsCanTai, q => q.where("loaiSuKien", "==", "tach_vu")),
+    ])
+      .then(([docsThuong, docsTach]) => {
         setLogKyTheoVu(cu => {
           const moi = { ...cu };
           idsCanTai.forEach(id => { moi[id] = []; });
-          docs.forEach(d => {
+          docsThuong.forEach(d => {
             const ev = { id: d.id, ...d.data() };
             (moi[ev.maVuAn] = moi[ev.maVuAn] || []).push(ev);
+          });
+          docsTach.forEach(d => {
+            const ev = { id: d.id, ...d.data() };
+            if (ev.vuTachRa) (moi[ev.vuTachRa] = moi[ev.vuTachRa] || []).push(ev);
           });
           return moi;
         });
@@ -7627,6 +7670,9 @@ function DanhSachPanel({ selectedId, onSelect }) {
                 {!cotAn.has("kyMoi") && (
                   <td className="px-3 py-2 align-top text-xs whitespace-nowrap text-slate-600">
                     <OKy suKien={suKienMoi[v.id]} kyTenTheoId={kyTenTheoId} onSua={setDangSuaKy} />
+                    {suKienMoi[v.id]?.loaiSuKien === "tach_vu" && (
+                      <div className="mt-0.5 text-[11px] text-violet-500">🔀 Tách vụ án</div>
+                    )}
                     {suKienTraVeDieuTra[v.id] && (
                       <button onClick={e => { e.stopPropagation(); setDangSuaKy(suKienTraVeDieuTra[v.id]); }}
                               className="block mt-0.5 text-[11px] text-amber-600 hover:text-amber-700 hover:underline text-left">
@@ -8542,7 +8588,7 @@ async function xuatExcel(setDangXuat, setLoiXuat) {
     const [vuSnap, bcSnap, kySnap, logSnap] = await Promise.all([
       db.collection("vuan").get(), db.collection("bican").get(),
       db.collection("kybaocao").get(),
-      db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "in", ["khoi_to_vu", "hoan_thanh"]).get(),
+      db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "in", ["khoi_to_vu", "tach_vu", "hoan_thanh"]).get(),
     ]);
     // Loại vụ đã "Đưa vào thùng rác" khỏi file xuất (lọc client — xem ghi chú ở tinhSnapTonTheoTD).
     const vuList = vuSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(v => !v.daXoa);
