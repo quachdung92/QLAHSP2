@@ -10471,11 +10471,26 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   // cho sheet Excel "DS bổ sung BC ĐT (C7-C24)" (addSheetBoSungBiCan) — cán bộ đối chiếu bằng mắt
   // đúng danh sách bị can nào bị tính là "bổ sung". dt_boSungBcRaw là dạng BỊ CAN THUẦN (kèm
   // _namKTVA) để dùng trong công thức C7-C24 (getDL/demTuoi/demField), cùng shape bcCoD/bcTatCa.
+  // Bug thật (2026-09-06, phát hiện qua đối chiếu D79 với D156/RPC lệch 2 — kỳ 08/2026) — vụ "trả
+  // về"/"phục hồi"/"nhận lại" tại ĐÚNG kỳ này đã có _soBiCan tính ĐỦ (kể cả bị can vừa thêm cùng
+  // kỳ) qua D66/D69 — vuKyKhoiToMap (chỉ đọc khoi_to_vu/tach_vu) KHÔNG loại được nhóm vụ này khỏi
+  // vòng quét "bổ sung" (kỳ khởi tố GỐC của vụ vẫn là kỳ cũ), nên bị can vừa thêm vào 1 vụ đang
+  // được trả về/phục hồi trong CÙNG kỳ bị đếm ĐÚP: 1 lần qua D66/D69, 1 lần qua dt_boSungBc. Kiểm
+  // chứng thật: 2 bị can (Đặng Quốc Thịnh — vụ QLVA_E01.53_2602_0034, Ngô Thị Cẩm Vân — vụ
+  // QLVA_E01.53_2410_0138) nằm trong CẢ "DS trả về ĐT" LẪN "DS bổ sung BC ĐT (C7-C24)" — đúng khớp
+  // mức lệch D79-D86-D141=2 so D156 (RPC) ở kỳ 08/2026.
+  const _vuVaoKyNayIds = new Set([
+    ...(baoCao.dieu_tra.ds.traVe || []).map(v => v.id),
+    ...(baoCao.dieu_tra.ds.phucHoi || []).map(v => v.id),
+    ...(baoCao.dieu_tra.ds.nhanLai || []).map(v => v.id),
+  ]);
   const dt_boSungBc = [];
   {
     const idsDaThem = new Set();
     for (const vu of allVuDT) {
-      if (_kyIdSet.has(vuKyKhoiToMap.get(vu.id))) continue; // vụ mở đúng kỳ này = "mới", đã tính riêng
+      // vụ mở đúng kỳ này (khoi_to_vu/tach_vu) HOẶC vừa trả về/phục hồi/nhận lại đúng kỳ này = đã
+      // tính "vào" riêng, KHÔNG quét bổ sung nữa (tránh đếm đúp — xem ghi chú bug ở trên)
+      if (_kyIdSet.has(vuKyKhoiToMap.get(vu.id)) || _vuVaoKyNayIds.has(vu.id)) continue;
       for (const bc of (biCanByVu[vu.id] || [])) {
         if (idsDaThem.has(bc.id)) continue;
         if (!_kyIdSet.has(bcKyKhoiToMap.get(bc.id))) continue;

@@ -2,6 +2,56 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ HOÀN TẤT — D154/D156 khớp TUYỆT ĐỐI kỳ 08/2026 ĐT (lệch 0) — sửa data vụ thiếu điều luật + bug `dt_boSungBc` đếm đúp bị can "trả về ↔ bổ sung" (2026-09-06, `qlahs-sup.html` + Supabase, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`)
+
+Tiếp theo 2 mục ngay dưới đây (fix double-count "khởi tố mới ↔ phục hồi" + phát hiện "vụ thiếu điều
+luật rơi khỏi D71") — Dũng yêu cầu tự sửa nốt, không cần hỏi lại, và kiểm tra kỹ luôn cả dòng bị can
+bằng cách đối chiếu danh sách bị can thực tế.
+
+**1. Sửa DATA (không phải code) — vụ `QLVA_E01.53_2511_0051`** ("Nguyễn Thị Hoa Vinh bị LĐCĐTS",
+0 bị can, tạo rồi nhập vào vụ khác trong 8 phút) — `UPDATE "vuan" SET "dieuLuat" = 'Tội lừa đảo
+chiếm đoạt tài sản' WHERE id = 'QLVA_E01.53_2511_0051'` (khớp đúng pattern các vụ LĐCĐTS khác của
+cùng đợt tin báo). Chạy qua Session pooler, `nguoiCapNhatCuoi = 'he-thong:fix-vu-thieu-dieuluat-
+2026-09-06'`. Kết quả: `vuPrimaryDL`/tổng B10 (K52) từ 27 → **28** (đúng bằng raw count "khởi tố
+mới" 2 nguồn), D71 = 28.
+
+**2. Sửa CODE — bug MỚI phát hiện qua đối chiếu danh sách bị can thực tế: `dt_boSungBc` (nuôi D72/
+tongC7) đếm ĐÚP bị can khi 1 vụ vừa "trả về ĐT" (`tra_ho_so`) VỪA được thêm bị can mới NGAY TRONG
+CÙNG KỲ.** Phát hiện bằng cách so sánh trực tiếp danh sách tên bị can giữa sheet "DS trả về ĐT" và
+"DS bổ sung BC ĐT (C7-C24)" trong file Excel thật (đọc `getCell(13)`+`getCell(3)` từng dòng, không
+tin số liệu tổng) — tìm ra CHÍNH XÁC 2 bị can trùng cả 2 sheet: **Đặng Quốc Thịnh** (vụ
+`QLVA_E01.53_2602_0034`) và **Ngô Thị Cẩm Vân** (vụ `QLVA_E01.53_2410_0138`) — khớp CHÍNH XÁC mức
+lệch D79−D86−D141=2 so D156 (RPC) đã quan sát được.
+
+**Nguyên nhân gốc**: `dt_boSungBc` (trong `tinhBieu10`) chỉ loại vụ khỏi vòng quét "bổ sung" khi
+`vuKyKhoiToMap` (chỉ đọc sự kiện `khoi_to_vu`/`tach_vu`) khớp đúng kỳ báo cáo — nhưng vụ "trả về"
+(`tra_ho_so` đưa vụ VÀO lại Điều tra) không hề được `vuKyKhoiToMap` biết tới (hàm đó không đọc
+`tra_ho_so`), nên kỳ khởi tố GỐC của vụ (từ rất lâu trước) không bao giờ trùng kỳ báo cáo → vụ
+KHÔNG bị loại khỏi vòng quét bổ sung, dù bị can của nó ĐÃ được đếm đủ (kể cả người vừa thêm cùng kỳ)
+qua `_soBiCan` của chính sự kiện "trả về" (D66/D69). Kết quả: bị can vừa thêm vào 1 vụ đang trả về/
+phục hồi/nhận lại trong CÙNG kỳ bị đếm 2 LẦN — 1 lần qua D66/D69, 1 lần qua `dt_boSungBc`/D72.
+
+**Đã sửa**: thêm `_vuVaoKyNayIds` (Set id vụ có mặt trong `baoCao.dieu_tra.ds.traVe`/`phucHoi`/
+`nhanLai` của ĐÚNG kỳ đang tính) — loại các vụ này khỏi vòng quét `dt_boSungBc` NGOÀI điều kiện
+`vuKyKhoiToMap` cũ (không đụng `khoiToTrucTiep`/`tachVu` — 2 nhóm đó đã được `vuKyKhoiToMap` chặn
+đúng từ trước, xác nhận qua kiểm tra 0 overlap).
+
+**Đã kiểm chứng bằng Excel thật, đọc RAW từng ô (không tin bất kỳ "result" cache nào — bài học đã
+ghi nhiều lần trong file này: cache JS có thể lệch với công thức Excel thật tính lại)** — export
+kỳ 08/2026 SAU cả 2 fix, tính lại TOÀN BỘ chuỗi `D57..D79` bằng cách đếm trực tiếp cột A ("Đếm vụ")
+và cột M ("Họ tên BC", loại "(Chưa có BC)") của từng sheet "DS ..." nguồn + đọc `B10!K52`/`L52`:
+- **D77 − D83 − D134 = 380 − 33 − 17 = 330 = D154 (RPC) — LỆCH 0.**
+- **D79 − D86 − D141 = 957 − 159 − 0 = 798 = D156 (RPC) — LỆCH 0.**
+(D72/tongC7 giảm đúng 72→70 sau fix #2, khớp chính xác việc bỏ 2 bị can đếm đúp; D71 tăng đúng
+27→28 sau fix #1.) Cả 2 công thức tự kiểm tra của Biểu 2 ở kỳ 08/2026 — kỳ Dũng yêu cầu PHẢI khớp
+— giờ đóng TUYỆT ĐỐI, không còn dựa vào bất kỳ số liệu bù trừ/xấp xỉ nào.
+
+**Compile-check** qua `@babel/core`+`@babel/preset-react` — sạch. **Đã deploy `qlahs-sup.web.app`**
+qua `./deploy.sh sup`. Chưa kiểm chứng lại kỳ 06/07/09 bằng phương pháp Excel-raw này sau fix #2
+(chỉ kỳ 08 được kiểm đầy đủ theo đúng yêu cầu — kỳ 06 vốn được Dũng xác nhận không bắt buộc khớp,
+kỳ 09 đang làm dở) — nhưng cơ chế fix mang tính TỔNG QUÁT (áp dụng cho MỌI kỳ có cùng pattern "trả
+về + bổ sung bị can cùng kỳ"), không phải patch riêng cho kỳ 08.
+
 ## Kiểm chứng D77 sau khi deploy `qlahs-sup.web.app` — xác nhận đúng fix double-count, PHÁT HIỆN THÊM bug mới "vụ thiếu điều luật bị rơi khỏi D71 (pin vào B10 tổng)" (2026-09-06, cùng ngày với mục ngay dưới)
 
 Ngay sau khi mục dưới đây (double-count "khởi tố mới ↔ phục hồi") được commit+push, Dũng gửi tiếp
