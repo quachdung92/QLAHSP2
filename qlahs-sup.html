@@ -10378,6 +10378,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     Object.keys(rpcTonTheoTD[gd] || {}).forEach(d => { if (d) tatCaDieuLuat.add(d); });
   });
   let allVuDT = []; // giữ lại riêng cho Điều tra — dùng để dựng dt_bcMoiKyToanBo bên dưới (C7-C24)
+  let allVuTT = []; // giữ lại riêng cho Truy tố — dùng để dựng tt_boSungBc bên dưới (Biểu 2 D281)
   // bcBoSungTonTheoGD (2026-08-04, sau khi merge nhánh ds-ton-cuoi-ky — xem CLAUDE.md "Gap #2") —
   // bị can bổ sung vào 1 vụ ĐANG TỒN (không phải vụ mới, không phải vụ đã ra NGAY TRONG kỳ này) —
   // so kỳ khởi tố CỦA CHÍNH bị can (bcKyKhoiToMap) với kỳ báo cáo, KHÔNG phụ thuộc sự kiện
@@ -10398,6 +10399,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       ...Object.values(d.hoanThanh || {}).flat(),
     ];
     if (gd === "dieu_tra") allVuDT = allVu;
+    if (gd === "truy_to") allVuTT = allVu;
     for (const vu of allVu) {
       const bcs = biCanByVu[vu.id] || [];
       if (bcs.length === 0) {
@@ -10500,6 +10502,40 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     }
   }
   const dt_boSungBcRaw = dt_boSungBc.map(v => ({ ...v._bican, _namKTVA: namKTVACuaVu(v) }));
+
+  // tt_boSungBc: bị can Truy tố được THÊM BỔ SUNG vào 1 vụ ĐÃ Ở TT TỪ TRƯỚC (kỳ khởi tố CỦA CHÍNH
+  // bị can == kỳ báo cáo, qua bcKyKhoiToMap) — dùng cho Biểu 2 D281 ("Tổng số bị can VKS thụ lý
+  // giải quyết" TT). Bug thật (2026-09-06, phát hiện qua đối chiếu D281 với D346/RPC lệch 2 ở kỳ
+  // 08/2026): KHÁC ĐT (D72/D79 đã có dt_boSungBc cộng qua tongC7), D281 (TT) KHÔNG HỀ CÓ term nào
+  // cho "bổ sung bị can" — 1 bị can bổ sung vào vụ ĐÃ ở TT (không phải vụ mới/đến TT đúng kỳ này)
+  // hoàn toàn không được cộng "vào" ở đâu trong D281. Nếu vụ đó rời TT (trả về ĐT/chuyển XX/...)
+  // NGAY TRONG CÙNG KỲ, `_soBiCan` của sự kiện "ra" đó (locBiCanTheoKy, lọc theo kỳ-rank ≤ kỳ sự
+  // kiện) VẪN đếm đủ họ — khiến D281 (ledger vào−ra) thiếu đúng phần "vào" tương ứng, tồn cuối kỳ
+  // TT tính HỤT mất người vừa bổ sung vừa rời đi trong kỳ. Kiểm chứng thật (kỳ 08/2026): 2 bị can
+  // (Đặng Quốc Thịnh — vụ QLVA_E01.53_2602_0034, Ngô Thị Cẩm Vân — vụ QLVA_E01.53_2410_0138) bổ
+  // sung vào TT kỳ08 rồi trả về ĐT NGAY kỳ08 — nằm trong "DS TT trả ĐT" (đã trừ ở D279) nhưng
+  // KHÔNG nằm ở BẤT KỲ term "vào" nào của D281 — đúng khớp mức lệch D281−D285−D332=321 so D346
+  // (RPC)=323. `allVuTT` (như allVuDT — gồm CẢ vụ đã "ra") + loại vụ "vào TT đúng kỳ này" (mọi
+  // nguồn: khởi tố trực tiếp/tách/chuyển đến/trả về/phục hồi TĐC/nhận lại — đã tính "vào" riêng
+  // qua các term khác của D281, KHÔNG quét bổ sung nữa để tránh đếm đúp).
+  const _ttVaoKyNayIds = new Set([
+    ...(baoCao.truy_to.ds.khoiToTrucTiep || []), ...(baoCao.truy_to.ds.tachVu || []),
+    ...(baoCao.truy_to.ds.chuyenDen || []), ...(baoCao.truy_to.ds.traVe || []),
+    ...(baoCao.truy_to.ds.phucHoi || []), ...(baoCao.truy_to.ds.nhanLai || []),
+  ].map(v => v.id));
+  const tt_boSungBc = [];
+  {
+    const idsDaThem = new Set();
+    for (const vu of allVuTT) {
+      if (_ttVaoKyNayIds.has(vu.id)) continue;
+      for (const bc of (biCanByVu[vu.id] || [])) {
+        if (idsDaThem.has(bc.id)) continue;
+        if (!_kyIdSet.has(bcKyKhoiToMap.get(bc.id))) continue;
+        idsDaThem.add(bc.id);
+        tt_boSungBc.push({ ...vu, _bican: bc, _log: { kyThongKe: bcKyKhoiToMap.get(bc.id), ngaySuKien: bc.ngayKhoiTo } });
+      }
+    }
+  }
 
   const tatCaDieuLuatChuan = new Set();
   for (const k of tatCaDieuLuat) {
@@ -10808,7 +10844,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     kiemTraHoanChinhNhomBc("Phân tích bị can đã truy tố (Truy tố)", ttTruyToCaNhan, "C43-C47", false);
   }
 
-  return { rows, canhBao, vuChuaDL, dt_boSungBc, boSungTonTheoGD, rpcTonTheoTD };
+  return { rows, canhBao, vuChuaDL, dt_boSungBc, tt_boSungBc, boSungTonTheoGD, rpcTonTheoTD };
 }
 
 // Header 2 dòng cho sheet Biểu B10 — dòng 1: nhóm, dòng 2: chi tiết (88 cột + 2 đầu)
@@ -11495,7 +11531,7 @@ function _mv(m, md) { const v = m.get(md); return v && typeof v === "object" && 
 // hàng Excel md+1, giá trị luôn ở cột C — xem themSheetBieu2Va3's quy ước `Dxx -> C{xx+1}`).
 function _cRef(md) { return `C${md + 1}`; }
 
-function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7, biCanBatTrongKy, b10RefCua) {
+function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, tongC7, biCanBatTrongKy, b10RefCua, ttBoSungBc) {
   const m = new Map();
   const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds;
   const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
@@ -11637,8 +11673,12 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   // chính sheet Biểu 2 (chuỗi thành phần ngành, xem CLAUDE.md item "Nâng cấp: tách đủ dòng...").
   m.set(280, _fc(`${_cRef(260)}+${_cRef(261)}+${_cRef(262)}+${_cRef(263)}-${_cRef(264)}+${_cRef(270)}+${_cRef(272)}+${_cRef(274)}-${_cRef(276)}-${_cRef(278)}`,
     _mv(m,260)+_mv(m,261)+_mv(m,262)+_mv(m,263)-_mv(m,264)+_mv(m,270)+_mv(m,272)+_mv(m,274)-_mv(m,276)-_mv(m,278)));
-  m.set(281, _fc(`${_cRef(265)}+${_cRef(266)}+${_cRef(267)}+${_cRef(268)}-${_cRef(269)}+${_cRef(271)}+${_cRef(273)}+${_cRef(275)}-${_cRef(277)}-${_cRef(279)}`,
-    _mv(m,265)+_mv(m,266)+_mv(m,267)+_mv(m,268)-_mv(m,269)+_mv(m,271)+_mv(m,273)+_mv(m,275)-_mv(m,277)-_mv(m,279)));
+  // D281 "Tổng số bị can VKS thụ lý giải quyết" — thêm term bổ sung bị can (2026-09-06, sửa bug
+  // thật lệch 2 so RPC ở kỳ 08/2026, xem tt_boSungBc ở tinhBieu10) — bị can bổ sung vào 1 vụ ĐÃ Ở
+  // TT từ trước không có term "vào" nào khác đối ứng, phải cộng riêng qua sheet "DS bổ sung BC TT
+  // (D281)" (so kỳ trực tiếp, KHÔNG phụ thuộc sự kiện bo_sung_bican quá thưa).
+  m.set(281, _fc(`${_cRef(265)}+${_cRef(266)}+${_cRef(267)}+${_cRef(268)}-${_cRef(269)}+${_cRef(271)}+${_cRef(273)}+${_cRef(275)}+${demBcSheet("DS bổ sung BC TT (D281)")}-${_cRef(277)}-${_cRef(279)}`,
+    _mv(m,265)+_mv(m,266)+_mv(m,267)+_mv(m,268)-_mv(m,269)+_mv(m,271)+_mv(m,273)+_mv(m,275)+(ttBoSungBc||[]).length-_mv(m,277)-_mv(m,279)));
   // D282/D285 "VKS đã giải quyết (truy tố + đình chỉ)" — BUG THẬT đã sửa, CÙNG LỚP với D83/D86 ở
   // trên (suy ngược từ D344/tồn cuối kỳ TT trước đây) — nay ĐẾM THẲNG.
   m.set(282, _fc(`${_sumSheetA("DS TT chuyển XX")}+${_sumSheetA("DS đình chỉ TT")}`,
@@ -12449,7 +12489,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const _ttLanDauIds = new Set(ttChuyenDi_LanDau.map(v => v.id));
   const _xxKhongLapKyIds = new Set(xxTraDi_KhongLapKy.map(v => v.id));
 
-  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList, ttTraDi_TrucTiep);
+  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, tt_boSungBc: b10TtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList, ttTraDi_TrucTiep);
   // Dòng Tổng
   const b10Tong = Array(B10_HEADER_CHI_TIET.length - 2).fill(0);
   for (const row of b10Rows) { row.vals.forEach((v, i) => { b10Tong[i] = (b10Tong[i] || 0) + v; }); }
@@ -12856,7 +12896,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     const b10RefCua = (n) => (b10ColCuaC[n] ? `'Biểu B10'!${b10ColCuaC[n]}${b10TongRowNum}` : null);
     themSheetBieu2Va3(
       wb,
-      tinhBieu2(baoCao, biCanByVu, b10Tong[7], dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8], biCanBatTrongKy, b10RefCua),
+      tinhBieu2(baoCao, biCanByVu, b10Tong[7], dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8], biCanBatTrongKy, b10RefCua, b10TtBoSungBc),
       tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70], b10RefCua),
       b10RefCua,
       giaTriKyTruoc,
@@ -13720,6 +13760,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // trên (2 nguồn dữ liệu khác nhau, phục vụ 2 mục đích khác nhau — không gộp chung).
     if (gd === "dieu_tra") {
       dsSheetChiTiet.push({ ws: addSheetBoSungBiCan(`DS bổ sung BC ĐT (C7-C24)`, b10DtBoSungBc || []), gd });
+    }
+
+    // Sheet RIÊNG cho Biểu 2 D281 (2026-09-06, sửa bug thật — xem tt_boSungBc ở tinhBieu10) — CHỈ
+    // Truy tố. Nguồn SO KỲ TRỰC TIẾP (kỳ khởi tố bị can == kỳ báo cáo, vụ KHÔNG "vào TT" đúng kỳ
+    // này) — cùng nguyên tắc `dt_boSungBc` ở trên nhưng phạm vi vụ khác (loại "vào TT kỳ này" thay
+    // vì loại "vụ mở đúng kỳ này ở ĐT" — TT không có khái niệm "khởi tố mới" độc lập với "vào TT").
+    if (gd === "truy_to") {
+      dsSheetChiTiet.push({ ws: addSheetBoSungBiCan(`DS bổ sung BC TT (D281)`, b10TtBoSungBc || []), gd });
     }
 
     // Sheet RIÊNG cho "Cân đối số liệu" (2026-08-04, xem bcBoSungTonTheoGD/boSungTonTheoGD ở
