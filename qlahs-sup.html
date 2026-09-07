@@ -12780,8 +12780,20 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   wsB10.addRow(["Mã ĐL", ...B10_HEADER_NHOM, "Tự kiểm tra"]).font = { bold: true };
   wsB10.addRow(["",       ...B10_HEADER_CHI_TIET, "40 quy tắc nội tại (quy_tac_bieu_10.md)"]).font = { bold: true };
   const B10_COT_KIEMTRA = 3 + 88 + 1; // A,B,C + 88 vals + 1 = cột 92 (1-based)
-  // Helper: "Điều 173 BLHS 2025" → "173"
-  const extractSoDieu = (d) => { const m = (d||"").match(/Điều\s+(\d+[a-zA-Z]*)/i); return m ? m[1] : (d||""); };
+  // Helper: "Điều 173 BLHS 2025" → "173". Hậu tố phân biệt bộ luật CŨ trên cột "Số điều" của Biểu 10
+  // (quy ước ngành, theo yêu cầu Dũng 2026-09-07 — file ngành thật đã có dòng mã "101**" được nhận):
+  //   BLHS 2015 / 2025 → "173" (không hậu tố)   ·   BLHS 1999 → "173*"   ·   BLHS 1985 → "173**"
+  // CHỈ đổi cột B (hiển thị / upload ngành). Cột A "Mã ĐL" (khóa SUMIF, = chuỗi "Điều N BLHS YYYY"
+  // đầy đủ) GIỮ NGUYÊN — mọi công thức SUMIF/COUNTIFS vẫn khớp đúng.
+  const extractSoDieu = (d) => {
+    const s = d || "";
+    const m = s.match(/Điều\s+(\d+[a-zA-Z]*)/i);
+    const so = m ? m[1] : s;
+    const nam = (s.match(/BLHS\s*(\d{4})/i) || [])[1];
+    if (nam === "1999") return so + "*";
+    if (nam === "1985") return so + "**";
+    return so;
+  };
   // Helper: chỉ số cột 0-based → chữ cái Excel (A=0, Z=25, AA=26, ...)
   const b10Col = (i) => {
     let s = ""; let n = i + 1;

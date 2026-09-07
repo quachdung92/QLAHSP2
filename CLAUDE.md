@@ -2,6 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Biểu 10 — cột "Số điều" thêm hậu tố phân biệt bộ luật CŨ (2026-09-07, `qlahs-sup.html`, nhánh `main`)
+
+Theo yêu cầu Dũng (quy ước ngành — file B10 thật đã nhập lên ngành có dòng mã "101**" được chấp nhận):
+cột **B ("Số điều")** của sheet "Biểu B10" giờ ghi hậu tố theo năm bộ luật của `row.D`:
+- BLHS **2015 / 2025** → `"174"` (không hậu tố)
+- BLHS **1999** → `"174*"`
+- BLHS **1985** → `"174**"`
+
+**Chỉ sửa `extractSoDieu` (hàm cục bộ trong `xuatBaoCaoThangExcel`, ~dòng 12784)** — regex bắt
+`BLHS\s*(\d{4})` trong chuỗi `d`, append `*`/`**` cho 1999/1985. **Cột A "Mã ĐL"** (khóa SUMIF/
+COUNTIFS, = chuỗi `"Điều N BLHS YYYY"` đầy đủ) + mọi công thức Excel **GIỮ NGUYÊN** — đây là thay
+đổi THUẦN HIỂN THỊ ở cột B (cột con người đọc / upload lên phần mềm ngành), 0 rủi ro cho số liệu.
+Test cô lập 10/10 PASS. Compile-check `@babel/preset-react` sạch. **CHƯA mở Excel thật** — Dũng
+xác nhận cột "Số điều" hiện đúng hậu tố với 1 kỳ có vụ BLHS 1999.
+
+**Ghi chú message 5 (bị can vụ tách "chỉ tính khi lưu ở cả 2 vụ") — CHƯA thực thi.** Dũng làm rõ lại
+qua `AskUserQuestion`: *"Bị can tách tồn ở vụ nào thì tính vụ đó, chứ ko phải tách thêm mới, kiểm
+tra lại nếu lệch số tồn thực tế thì lệch ở đâu"* — tức KHÔNG áp bộ lọc `nhomBiCanId` (bộ lọc đó sẽ
+bỏ 4 bị can "chuyển hẳn" khỏi D67 → phá vỡ D79=C4=D156(RPC) vừa khớp tuyệt đối ở commit `04e72b8`).
+Hành vi HIỆN TẠI (đếm mọi bị can vụ tách có sự kiện `khoi_to_bican`, khớp RPC) là đúng ý Dũng. Việc
+còn lại: đối chiếu D79/C4/D156 với RPC qua nhiều kỳ (cần login `qlahs-sup.web.app` hoặc mật khẩu DB
+— phiên này không có) và tìm nguyên nhân nếu còn lệch.
+
 ## Toggle "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" (bảng thống kê Kỳ báo cáo + Excel Biểu 2/3/10) + bộ đếm số lần trả ĐTBS (2026-09-07, `qlahs-sup.html`, nhánh `main`, commit `bf1c099`, ĐÃ push + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` — mới compile-check + test cô lập, CHƯA kiểm chứng UI/Excel thật)
 
 Theo yêu cầu Dũng (3 lượt): (1) 1 vụ vừa bị 1 giai đoạn TRẢ HỒ SƠ điều tra bổ sung (`tra_ho_so`)
