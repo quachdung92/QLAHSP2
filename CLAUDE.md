@@ -2,6 +2,56 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Toggle "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" (bảng thống kê Kỳ báo cáo + Excel Biểu 2/3/10) + bộ đếm số lần trả ĐTBS (2026-09-07, `qlahs-sup.html`, nhánh `main`, CHƯA merge/deploy — mới compile-check + test cô lập)
+
+Theo yêu cầu Dũng (3 lượt): (1) 1 vụ vừa bị 1 giai đoạn TRẢ HỒ SƠ điều tra bổ sung (`tra_ho_so`)
+rồi QUAY LẠI đúng giai đoạn cũ NGAY TRONG CÙNG KỲ (VD Toà trả Viện T8, Viện lại chuyển lên Toà cũng
+T8 — HOẶC Công an KTĐT T8, Viện trả lại CA T8) → công thức "vào"/"ra" mặc định vẫn đếm cả 2 chiều,
+làm phồng "Tổng số mới"/"Đã giải quyết". Thêm `CongTac` (mặc định TẮT) đầu `BangBaoCaoChiTiet` — BẬT
+= loại các vụ quay vòng khỏi CẢ 2 chiều. (2) **Áp dụng cả cho file Excel** xuất ra. (3) Thêm **bộ
+đếm SỐ LẦN trả điều tra bổ sung từng giai đoạn**.
+
+**3 hàm THUẦN mới (trước `BangBaoCaoChiTiet`, dùng lại `THU_TU_GIAI_DOAN`/`HOAN_THANH_TRUONG_TONG`)**:
+- `_idVuTraDTBSQuayVong(src)` — `Set` id vụ quay vòng của 1 giai đoạn. Điều kiện: (a) vào qua
+  `traVe` rồi lại `chuyenDi`/`traDi` trong kỳ, HOẶC ra qua `traDi` rồi lại `chuyenDen`/`traVe` trong
+  kỳ (bắt được CẢ chiều Toà↔Viện LẪN Viện↔CQĐT, bất kể thứ tự sự kiện); VÀ (b) **số lần "vào" == số
+  lần "ra"** của vụ đó trong kỳ (net = 0, tính cả `hoanThanh.*` + `nhapVu`). (b) đảm bảo đẳng thức
+  `tồn đầu + mới − ra = tồn cuối` + mọi đẳng thức "tồn = thụ lý − giải quyết − TĐC" của Biểu 2/3/10
+  VẪN KHỚP sau khi BẬT (D77↓ và D83↓ cùng lượng, D280↓ và D282↓ cùng lượng…).
+- `demVuTraDTBSQuayVong(baoCao)` — đếm distinct xuyên 3 giai đoạn (nhãn "Có N vụ...").
+- `locBoTraDTBSQuayVongCungKy(baoCao)` — `baoCao` mới đã lọc. **Trừ DELTA** (không recompute từ đầu)
+  để an toàn cho CẢ báo cáo 1 kỳ LẪN tổng hợp nhiều kỳ (`soMoi`/`ds` bản tổng hợp thiếu
+  `phucHoi`/`nhanLai` — mọi phép trừ bọc `if ("field" in soMoi)` + `demBo(ds[k]||[])`). Giai đoạn
+  không có vụ quay vòng → trả nguyên tham chiếu `src`.
+
+**Excel** — `KyChiTietModal`/`TongHopNhieuKyModal` giờ SỞ HỮU state `boQuayVong` (truyền xuống
+`BangBaoCaoChiTiet` qua `boQuayVong`/`onDoiBoQuayVong` — component thành controlled, vẫn giữ state
+nội bộ dự phòng nếu không truyền). Nút "Xuất Excel" xuất `boQuayVong ? locBoTraDTBSQuayVongCungKy(baoCao)
+: baoCao`. **KHÔNG sửa `xuatBaoCaoThangExcel`** — mọi sheet "DS ..." + Biểu 2/3/10 (result cache +
+công thức SUM/COUNTIFS trên sheet) đều dựng TỪ `baoCao[gd].ds.*`, nên truyền baoCao đã lọc là đủ để
+lan nhất quán. RPC tồn (`layTonTheoKyRPC`, D154/D344/D17/D84) độc lập + net-0 với quay vòng nên
+KHÔNG đổi — các đẳng thức kiểm tra liên biểu vẫn ✓.
+
+**Bộ đếm số lần trả ĐTBS** — `tinhBaoCaoKyTuLog` thêm `baoCao[gd].traDTBSVaoLan` (= `traVeSnap.size`,
+số sự kiện `tra_ho_so` den=gd: ĐT=Viện trả CQĐT, TT=Toà trả Viện, XX=0) + `traDTBSRaLan` (=
+`traDi.size`, tu=gd: TT=Viện trả CQĐT, XX=Toà trả Viện, ĐT=0). Là SỐ LẦN (không dedup vụ, KHÁC
+`traDi`/`soMoi.traVeTu`). Dữ kiện cố định của kỳ — `...src` trong hàm lọc giữ nguyên, KHÔNG đổi theo
+toggle. `tinhBaoCaoTongHopNhieuKy` cộng dồn 2 field này. Hiển thị: khối mới trong `BangBaoCaoChiTiet`
+("Trả hồ sơ điều tra bổ sung (số LẦN trong kỳ)" — 2 dòng vào/ra + 1 dòng "trong đó quay vòng & xử
+lý xong trong kỳ (số vụ)" tính từ `_idVuTraDTBSQuayVong` trên baoCao GỐC) + 3 dòng tương ứng trong
+sheet Excel "Tổng hợp báo cáo" (`_thRow`, cột bc để trống).
+
+**Toggle KHÔNG persist** (mặc định TẮT mỗi lần mở — số chính thức là bản chưa lọc).
+
+**Đã kiểm chứng**: compile-check `@babel/preset-react` sạch. Test cô lập 34/34 PASS (`scratchpad`,
+không commit): ví dụ Dũng (Toà↔Viện + Viện↔CQĐT cùng kỳ) loại đúng 2 chiều + tồn không đổi + mọi
+case "sau lọc" vẫn cân đối `tồn đầu + mới − ra = tồn cuối`; tiến 1 bước thật (ĐT→TT→XX không
+`tra_ho_so`) KHÔNG bị loại; quay vòng LỆCH KỲ (net≠0) KHÔNG bị loại; vào qua `traVe` rồi ĐÌNH CHỈ
+cùng kỳ KHÔNG bị loại; nhiều vụ lẫn lộn 1 giai đoạn tách đúng; shape tổng hợp không throw.
+**CHƯA kiểm chứng bằng UI/dữ liệu Supabase thật + CHƯA mở Excel thật** — Dũng nên mở 1 kỳ có vụ
+Toà↔Viện / Viện↔CQĐT quay vòng thật, bật toggle, đối chiếu số trên bảng VÀ tải Excel mở bằng Excel
+2016+ xác nhận Biểu 2/3/10 không phát sinh "✗" mới.
+
 ## ✅ HOÀN TẤT — Đóng nốt "4-unit gap" C4 vs D79 kỳ 08/2026 — bug thật "vụ tách vô hình" ở CẤP BỊ CAN (KHÔNG phải phục hồi điều tra) (2026-09-07, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app`)
 
 Tiếp theo mục "HOÀN TẤT — Tổng thụ lý Biểu 2 khớp Biểu 10..." ngay dưới đây — mục đó để lại 1 khoảng

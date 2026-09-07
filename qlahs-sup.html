@@ -9256,6 +9256,13 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       tonDauKy, tonDauBiCan, soMoi, chuyenDi: chuyenDi.size, traDi: traDi.size,
       hoanThanhTheoGD, soNhapVu, tonCuoiKy, tonCuoiBiCanKy,
       soVuTon, soBiCanTon,
+      // Bộ đếm "trả hồ sơ điều tra bổ sung" — SỐ LẦN (số sự kiện `tra_ho_so`, KHÔNG dedup theo vụ,
+      // KHÁC `traDi`/`soMoi.traVeTu` là số VỤ đã dedup). Là dữ kiện cố định của kỳ, KHÔNG bị toggle
+      // "Bỏ vụ trả ĐTBS quay vòng" ở BangBaoCaoChiTiet ảnh hưởng (locBoTraDTBSQuayVongCungKy giữ
+      // nguyên qua `...src`). Vào = giai đoạn SAU trả hồ sơ về giai đoạn này (ĐT: Viện trả CQĐT;
+      // TT: Toà trả Viện; XX: 0). Ra = giai đoạn này trả hồ sơ về giai đoạn TRƯỚC (TT: Viện trả
+      // CQĐT; XX: Toà trả Viện; ĐT: 0).
+      traDTBSVaoLan: traVeSnap.size, traDTBSRaLan: traDi.size,
       ds: {
         khoiToTrucTiep: dsKhoiToTrucTiep,
         tachVu: dsTachVuArr,
@@ -9414,7 +9421,7 @@ async function tinhBaoCaoTongHopNhieuKy(dsKyChonThoDai) {
   for (const gd of THU_TU_GIAI_DOAN) {
     const soMoi = Object.fromEntries(SO_MOI_TRUONG_TONG.map(k => [k, 0]));
     const hoanThanhTheoGD = Object.fromEntries(HOAN_THANH_TRUONG_TONG.map(k => [k, 0]));
-    let chuyenDi = 0, traDi = 0, soNhapVu = 0;
+    let chuyenDi = 0, traDi = 0, soNhapVu = 0, traDTBSVaoLan = 0, traDTBSRaLan = 0;
     const ds = {
       khoiToTrucTiep: [], tachVu: [], chuyenDen: [], traVe: [], chuyenDi: [], traDi: [], nhapVu: [],
       hoanThanh: Object.fromEntries(HOAN_THANH_TRUONG_TONG.map(k => [k, []])),
@@ -9424,6 +9431,7 @@ async function tinhBaoCaoTongHopNhieuKy(dsKyChonThoDai) {
       for (const k of SO_MOI_TRUONG_TONG) soMoi[k] += b.soMoi[k] || 0;
       for (const k of HOAN_THANH_TRUONG_TONG) hoanThanhTheoGD[k] += b.hoanThanhTheoGD[k] || 0;
       chuyenDi += b.chuyenDi; traDi += b.traDi; soNhapVu += b.soNhapVu;
+      traDTBSVaoLan += b.traDTBSVaoLan || 0; traDTBSRaLan += b.traDTBSRaLan || 0;
       ds.khoiToTrucTiep.push(...b.ds.khoiToTrucTiep);
       ds.tachVu.push(...b.ds.tachVu);
       ds.chuyenDen.push(...b.ds.chuyenDen);
@@ -9442,6 +9450,7 @@ async function tinhBaoCaoTongHopNhieuKy(dsKyChonThoDai) {
       // NHẤT giống hệt tonCuoiKy (đã tự đúng theo RPC nhờ cuoiKy đến từ tinhBaoCaoKy, xem đó).
       tonCuoiBiCanKy: cuoiKy.tonCuoiBiCanKy,
       soMoi, chuyenDi, traDi, hoanThanhTheoGD, soNhapVu,
+      traDTBSVaoLan, traDTBSRaLan,
       soVuTon: cuoiKy.soVuTon, soBiCanTon: cuoiKy.soBiCanTon,
       ds: { ...ds, tonHienTai: cuoiKy.ds.tonHienTai },
     };
@@ -9953,20 +9962,148 @@ function HangBaoCao({ nhan, data, lay, layDs, layBiCan, damNet, onMoChiTiet }) {
   );
 }
 
+// ── Toggle "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" (yêu cầu Dũng 2026-09-07) ──────────────────
+// Bối cảnh: 1 vụ vừa bị 1 giai đoạn TRẢ HỒ SƠ điều tra bổ sung (tra_ho_so) rồi QUAY LẠI đúng giai
+// đoạn cũ NGAY TRONG CÙNG KỲ — VD Toà trả Viện tháng 8, Viện lại chuyển hồ sơ lên Toà cũng tháng 8.
+// Bản chất giai đoạn đó KHÔNG phát sinh xử lý thực chất trong kỳ, nhưng công thức "vào"/"ra" mặc
+// định vẫn đếm cả 2 chiều → phồng "Tổng số mới" và "Đã giải quyết". Toggle BẬT: loại các vụ quay
+// vòng này khỏi CẢ 2 chiều.
+//   - Chỉ loại khi số lần "vào" == số lần "ra" của vụ đó trong kỳ (net = 0) ⇒ "Tồn đầu + Số mới −
+//     Đã giải quyết = Tồn cuối" (và mọi đẳng thức "tồn = thụ lý − giải quyết − TĐC" của Biểu 2/3/10)
+//     vẫn khớp cả khi BẬT (vụ nào net ≠ 0 — VD quay vòng lệch kỳ, hoặc tiến 1 bước thực sự — KHÔNG
+//     bị loại).
+//   - "Tồn đầu/cuối kỳ" (từ RPC, vốn đã net-0 với quay vòng) KHÔNG đổi.
+//   - Áp dụng cho CẢ bảng hiển thị này LẪN file Excel: `KyChiTietModal`/`TongHopNhieuKyModal` sở
+//     hữu state `boQuayVong`, truyền xuống đây (controlled) VÀ xuất Excel với `baoCao` đã lọc khi
+//     BẬT. `xuatBaoCaoThangExcel` KHÔNG sửa — mọi sheet "DS ..." + Biểu 2/3/10 dựng từ `baoCao.ds.*`
+//     nên tự lan nhất quán. Hàm THUẦN, không mutate baoCao gốc.
+const NHOM_VAO_BAO_CAO = ["khoiToTrucTiep", "tachVu", "chuyenDen", "traVe", "phucHoi", "nhanLai"];
+const NHOM_RA_BAO_CAO = ["chuyenDi", "traDi", "nhapVu"]; // hoanThanh.* xử lý riêng bên dưới
+
+function _idVuTraDTBSQuayVong(src) {
+  const ds = src?.ds || {};
+  const setId = (arr) => new Set((arr || []).map(v => v.id));
+  const idTraVe = setId(ds.traVe), idTraDi = setId(ds.traDi);
+  const idChuyenDi = setId(ds.chuyenDi), idChuyenDen = setId(ds.chuyenDen);
+  // Đếm tổng lần "vào" / "ra" của từng vụ trong kỳ (gồm cả hoàn thành + nhập vụ) để chỉ loại khi
+  // net = 0 — giữ cân đối "tồn đầu + mới − ra = tồn cuối".
+  const demVao = new Map(), demRa = new Map();
+  const cong = (m, id) => m.set(id, (m.get(id) || 0) + 1);
+  NHOM_VAO_BAO_CAO.forEach(k => (ds[k] || []).forEach(v => cong(demVao, v.id)));
+  NHOM_RA_BAO_CAO.forEach(k => (ds[k] || []).forEach(v => cong(demRa, v.id)));
+  HOAN_THANH_TRUONG_TONG.forEach(ht => (ds.hoanThanh?.[ht] || []).forEach(v => cong(demRa, v.id)));
+  const bo = new Set();
+  const xet = (id) => {
+    const nv = demVao.get(id) || 0, nr = demRa.get(id) || 0;
+    if (nv > 0 && nv === nr) bo.add(id);
+  };
+  // vào qua "traVe" (giai đoạn sau trả hồ sơ về đây) rồi lại đi tiếp trong kỳ
+  idTraVe.forEach(id => { if (idChuyenDi.has(id) || idTraDi.has(id)) xet(id); });
+  // "ra" qua "traDi" (giai đoạn này trả hồ sơ đi) rồi lại quay vào trong kỳ
+  idTraDi.forEach(id => { if (idChuyenDen.has(id) || idTraVe.has(id)) xet(id); });
+  return bo;
+}
+
+function demVuTraDTBSQuayVong(baoCao) {
+  const ids = new Set();
+  for (const gd of THU_TU_GIAI_DOAN) _idVuTraDTBSQuayVong(baoCao[gd]).forEach(id => ids.add(id));
+  return ids.size;
+}
+
+function locBoTraDTBSQuayVongCungKy(baoCao) {
+  const kq = {};
+  for (const gd of THU_TU_GIAI_DOAN) {
+    const src = baoCao[gd];
+    if (!src) { kq[gd] = src; continue; }
+    const boId = _idVuTraDTBSQuayVong(src);
+    if (!boId.size) { kq[gd] = src; continue; }
+    const ds = src.ds || {};
+    const laBo = (v) => boId.has(v.id);
+    const demBo = (arr) => (arr || []).filter(laBo).length;
+    const locBo = (arr) => (arr || []).filter(v => !laBo(v));
+
+    const dsMoi = { ...ds };
+    for (const k of [...NHOM_VAO_BAO_CAO, ...NHOM_RA_BAO_CAO]) {
+      if (Array.isArray(ds[k])) dsMoi[k] = locBo(ds[k]);
+    }
+    dsMoi.hoanThanh = {};
+    for (const ht of HOAN_THANH_TRUONG_TONG) dsMoi.hoanThanh[ht] = locBo(ds.hoanThanh?.[ht]);
+
+    // Trừ các con số dẫn xuất theo ĐÚNG số entry đã loại ở từng mảng (delta) — KHÔNG recompute từ
+    // đầu, để an toàn cho cả báo cáo 1 kỳ LẪN báo cáo tổng hợp nhiều kỳ (bản tổng hợp có soMoi/ds
+    // thiếu vài field như phucHoi/nhanLai). Vì boId chỉ gồm vụ có "số lần vào == số lần ra" trong
+    // kỳ (net = 0), tổng entry loại ở phía "vào" == tổng loại ở phía "ra" ⇒ đẳng thức "tồn đầu +
+    // mới − ra = tồn cuối" vẫn khớp sau khi BẬT toggle.
+    const soMoi = { ...src.soMoi };
+    soMoi.tong = (soMoi.tong || 0) - NHOM_VAO_BAO_CAO.reduce((s, k) => s + demBo(ds[k]), 0);
+    if ("chuyenDenTu" in soMoi) soMoi.chuyenDenTu -= demBo(ds.chuyenDen);
+    if ("traVeTu" in soMoi) soMoi.traVeTu -= demBo(ds.traVe);
+    if ("tachVu" in soMoi) soMoi.tachVu -= demBo(ds.tachVu);
+    if ("phucHoi" in soMoi) soMoi.phucHoi -= demBo(ds.phucHoi);
+    if ("nhanLai" in soMoi) soMoi.nhanLai -= demBo(ds.nhanLai);
+    if ("khoiTaoTrucTiep" in soMoi) soMoi.khoiTaoTrucTiep -= demBo(ds.khoiToTrucTiep);
+    for (const ng of ["an_khoi_to_moi", "tin_bao_khoi_to_len", "an_noi_khac_chuyen_den", "phuc_hoi_dieu_tra"]) {
+      if (ng in soMoi) soMoi[ng] -= (ds.khoiToTrucTiep || []).filter(v => laBo(v) && v.nguon === ng).length;
+    }
+
+    const hoanThanhTheoGD = { ...src.hoanThanhTheoGD };
+    for (const ht of HOAN_THANH_TRUONG_TONG) {
+      hoanThanhTheoGD[ht] = (hoanThanhTheoGD[ht] || 0) - demBo(ds.hoanThanh?.[ht]);
+    }
+
+    kq[gd] = {
+      ...src, soMoi, hoanThanhTheoGD, ds: dsMoi,
+      chuyenDi: (src.chuyenDi || 0) - demBo(ds.chuyenDi),
+      traDi: (src.traDi || 0) - demBo(ds.traDi),
+      soNhapVu: (src.soNhapVu || 0) - demBo(ds.nhapVu),
+    };
+  }
+  return kq;
+}
+
 // Bảng báo cáo chi tiết theo giai đoạn — dùng chung cho báo cáo 1 kỳ (KyChiTietModal) VÀ báo
 // cáo tổng hợp nhiều kỳ (TongHopNhieuKyModal). Bấm vào ô số → mở chi tiết vụ theo tội danh.
-function BangBaoCaoChiTiet({ baoCao }) {
+// `boQuayVong`/`onDoiBoQuayVong` do CHA quản lý (để nút "Xuất Excel" ở cha dùng ĐÚNG cùng trạng
+// thái toggle — xuất file đã lọc khi BẬT). Không truyền → tự giữ state nội bộ (dự phòng).
+function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong }) {
   const [chiTiet, setChiTiet] = useState(null); // { nhan, ds }
+  const [boQuayVongNoi, setBoQuayVongNoi] = useState(false);
+  const dieuKhien = typeof onDoiBoQuayVong === "function";
+  const boQuayVong = dieuKhien ? !!boQuayVongProp : boQuayVongNoi;
+  const setBoQuayVong = dieuKhien ? onDoiBoQuayVong : setBoQuayVongNoi;
+
+  const soVuQuayVong = useMemo(() => demVuTraDTBSQuayVong(baoCao), [baoCao]);
+  // Số vụ quay vòng ĐTBS trọn vẹn trong kỳ theo TỪNG giai đoạn — luôn tính từ baoCao GỐC (kể cả
+  // khi toggle BẬT, để hàng "trong đó quay vòng" vẫn hiện đúng con số của kỳ).
+  const quayVongTheoGd = useMemo(
+    () => Object.fromEntries(THU_TU_GIAI_DOAN.map(gd => [gd, _idVuTraDTBSQuayVong(baoCao[gd]).size])),
+    [baoCao]
+  );
+  const bc = useMemo(
+    () => (boQuayVong ? locBoTraDTBSQuayVongCungKy(baoCao) : baoCao),
+    [baoCao, boQuayVong]
+  );
 
   const H = ({ nhan, lay, layDs, layBiCan, damNet }) => (
     <HangBaoCao
-      nhan={nhan} data={baoCao} lay={lay} layDs={layDs} layBiCan={layBiCan} damNet={damNet}
+      nhan={nhan} data={bc} lay={lay} layDs={layDs} layBiCan={layBiCan} damNet={damNet}
       onMoChiTiet={layDs ? (nhanGD, ds) => setChiTiet({ nhan: nhanGD, ds }) : null}
     />
   );
 
   return (
     <>
+      <div className="flex items-start gap-3 mb-2">
+        <CongTac checked={boQuayVong} onChange={setBoQuayVong}
+          nhan="Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" />
+        <span className="text-xs text-slate-500 leading-snug">
+          {boQuayVong
+            ? `Đang loại ${soVuQuayVong} vụ bị trả hồ sơ điều tra bổ sung rồi quay lại đúng giai đoạn cũ ngay trong kỳ (Toà↔Viện hoặc Viện↔CQĐT) — không tính vào "Số mới"/"Đã giải quyết". Tồn đầu/cuối kỳ không đổi. Bấm "Xuất Excel" sẽ ra file ĐÃ lọc theo đúng trạng thái này.`
+            : (soVuQuayVong > 0
+                ? `Có ${soVuQuayVong} vụ trả hồ sơ ĐTBS quay vòng trọn vẹn trong kỳ (VD: Toà trả Viện rồi Viện chuyển lại Toà cùng kỳ; hoặc Viện trả CQĐT rồi CQĐT kết thúc điều tra chuyển lại Viện cùng kỳ). Bật để không tính 2 chiều "vào"/"ra" — áp dụng cho cả bảng này lẫn file Excel xuất ra.`
+                : "Không có vụ trả hồ sơ ĐTBS nào quay vòng trọn vẹn trong kỳ này.")}
+        </span>
+      </div>
       <div className="border border-slate-200 rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-100 text-slate-600">
@@ -10039,6 +10176,15 @@ function BangBaoCaoChiTiet({ baoCao }) {
             <H nhan="— Án huỷ" lay={b => b.hoanThanhTheoGD.an_huy} layDs={b => b.ds?.hoanThanh?.an_huy} />
             <H nhan="— Nhập vào vụ khác" lay={b => b.soNhapVu} layDs={b => b.ds?.nhapVu} />
             <H nhan="Tồn cuối kỳ" lay={b => b.tonCuoiKy} layBiCan={b => b.tonCuoiBiCanKy} damNet />
+            <HangBaoCaoTieuDe nhan="Trả hồ sơ điều tra bổ sung (số LẦN trong kỳ — không phụ thuộc toggle)" />
+            <H nhan="— Nhận hồ sơ trả ĐTBS (giai đoạn sau trả về đây)" lay={b => b.traDTBSVaoLan} />
+            <H nhan="— Trả hồ sơ ĐTBS đi (trả cho giai đoạn trước)" lay={b => b.traDTBSRaLan} />
+            <tr className="border-t border-slate-100">
+              <td className="p-2 text-slate-600">— Trong đó: quay vòng &amp; xử lý xong trong kỳ (số vụ)</td>
+              {THU_TU_GIAI_DOAN.map(gd => (
+                <td key={gd} className="p-2 text-right tabular-nums">{quayVongTheoGd[gd] || 0}</td>
+              ))}
+            </tr>
             <HangBaoCaoTieuDe nhan="Số tồn hiện tại (tại thời điểm xem)" />
             {/* 1 dòng duy nhất — layDs đã tự tính đủ "X vụ / Y BC" (xem HangBaoCao dòng ~7205),
                 bỏ dòng "— Số bị can" riêng trước đây (trùng lặp con số soBiCanTon với chính dòng
@@ -13302,6 +13448,12 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     }),
     // ── Tồn cuối kỳ: snapshot chốt CHÍNH KỲ NÀY (không phải danh sách sự kiện) — giữ JS.
     _thRow("Tồn cuối kỳ (as-of cuối kỳ này, ưu tiên RPC)", gd => ({ vu: baoCao[gd].tonCuoiKy, bc: baoCao[gd].tonCuoiBiCanKy ?? 0 })),
+    // ── Trả hồ sơ điều tra bổ sung: SỐ LẦN (số sự kiện tra_ho_so, không dedup theo vụ). Dữ kiện
+    // cố định của kỳ, KHÔNG đổi theo toggle "Bỏ vụ trả ĐTBS quay vòng" (giữ nguyên qua `...src`
+    // trong locBoTraDTBSQuayVongCungKy). Cột "bc" để trống — đây là "số lần", không phải số bị can.
+    _thBlank("Trả hồ sơ điều tra bổ sung (số LẦN trong kỳ)"),
+    _thRow("— Nhận hồ sơ trả ĐTBS (giai đoạn sau trả về đây)", gd => ({ vu: baoCao[gd].traDTBSVaoLan ?? 0, bc: "" })),
+    _thRow("— Trả hồ sơ ĐTBS đi (trả cho giai đoạn trước)", gd => ({ vu: baoCao[gd].traDTBSRaLan ?? 0, bc: "" })),
     _thBlank("Số tồn hiện tại (tại thời điểm xuất — không phải snapshot, luôn live)"),
     // Có DS sheet ("DS tồn ĐT/TT/XX") — trước đây bị bỏ sót, đọc JS trực tiếp dù có sheet sẵn.
     _thRow("— Số tồn hiện tại", gd => {
@@ -14020,6 +14172,7 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
   const [loi, setLoi] = useState("");
   const [dangXuat, setDangXuat] = useState(false);
   const [loiXuat, setLoiXuat] = useState("");
+  const [boQuayVong, setBoQuayVong] = useState(false);
 
   useEffect(() => {
     let huy = false;
@@ -14033,7 +14186,10 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
     setDangXuat(true);
     setLoiXuat("");
     try {
-      await xuatBaoCaoThangExcel(ky, baoCao, kyTruoc);
+      // Toggle BẬT → xuất file ĐÃ lọc vụ trả ĐTBS quay vòng trọn vẹn trong kỳ (net = 0, mọi đẳng
+      // thức "tồn = thụ lý − giải quyết" của Biểu 2/3/10 vẫn khớp — xem locBoTraDTBSQuayVongCungKy).
+      const bcXuat = boQuayVong ? locBoTraDTBSQuayVongCungKy(baoCao) : baoCao;
+      await xuatBaoCaoThangExcel(ky, bcXuat, kyTruoc);
     } catch (err) {
       console.error(err);
       setLoiXuat("Lỗi khi xuất Excel: " + err.message);
@@ -14060,7 +14216,7 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
         </div>
         {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
         {dangTai && <div className="text-sm text-slate-400">Đang tính toán số liệu (có thể mất vài giây)...</div>}
-        {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} />}
+        {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} boQuayVong={boQuayVong} onDoiBoQuayVong={setBoQuayVong} />}
         {!dangTai && ky.trangThai === "dang_mo" && (
           <div className="text-xs text-slate-400 mt-3">
             Kỳ đang mở — "Tồn đầu/cuối kỳ" tính as-of trực tiếp qua RPC (không phụ thuộc chuỗi cộng
@@ -14092,6 +14248,7 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
   const [loi, setLoi] = useState("");
   const [dangXuat, setDangXuat] = useState(false);
   const [loiXuat, setLoiXuat] = useState("");
+  const [boQuayVong, setBoQuayVong] = useState(false);
 
   useEffect(() => {
     let huy = false;
@@ -14111,7 +14268,8 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
       // kyTruoc cho Biểu B10 (cột "tồn kỳ trước") lấy đúng kỳ liền trước kỳ SỚM NHẤT trong nhóm
       // chọn — cùng quy ước "Tồn đầu kỳ" của bảng tổng hợp đã dùng (dsKyChon xưa -> mới). Thiếu
       // dòng này thì tinhBieu10 nhận kyTruoc=null, B10 luôn hiện 0 ở mọi cột "tồn kỳ trước".
-      await xuatBaoCaoThangExcel({ tenKy: `Tong hop ${tenGop}` }, baoCao, dsKyChon[0]?.kyTruoc || null,
+      const bcXuat = boQuayVong ? locBoTraDTBSQuayVongCungKy(baoCao) : baoCao;
+      await xuatBaoCaoThangExcel({ tenKy: `Tong hop ${tenGop}` }, bcXuat, dsKyChon[0]?.kyTruoc || null,
         dsKyChon.map(k => k.ky));
     } catch (err) {
       console.error(err);
@@ -14142,7 +14300,7 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
         </div>
         {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
         {dangTai && <div className="text-sm text-slate-400">Đang tính toán số liệu (có thể mất vài giây)...</div>}
-        {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} />}
+        {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} boQuayVong={boQuayVong} onDoiBoQuayVong={setBoQuayVong} />}
         {!dangTai && baoCao && (
           <div className="text-xs text-slate-400 mt-3">
             "Tồn đầu kỳ" lấy từ kỳ sớm nhất được chọn ({dsKyChon[0].ky.tenKy}), "Tồn cuối kỳ" lấy từ kỳ muộn nhất
