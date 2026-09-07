@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Toggle "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" (bảng thống kê Kỳ báo cáo + Excel Biểu 2/3/10) + bộ đếm số lần trả ĐTBS (2026-09-07, `qlahs-sup.html`, nhánh `main`, CHƯA merge/deploy — mới compile-check + test cô lập)
+## Toggle "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" (bảng thống kê Kỳ báo cáo + Excel Biểu 2/3/10) + bộ đếm số lần trả ĐTBS (2026-09-07, `qlahs-sup.html`, nhánh `main`, commit `bf1c099`, ĐÃ push + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` — mới compile-check + test cô lập, CHƯA kiểm chứng UI/Excel thật)
 
 Theo yêu cầu Dũng (3 lượt): (1) 1 vụ vừa bị 1 giai đoạn TRẢ HỒ SƠ điều tra bổ sung (`tra_ho_so`)
 rồi QUAY LẠI đúng giai đoạn cũ NGAY TRONG CÙNG KỲ (VD Toà trả Viện T8, Viện lại chuyển lên Toà cũng
