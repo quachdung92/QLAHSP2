@@ -2,6 +2,51 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Biểu 4 — sheet mới "Thống kê kết quả xét xử sơ thẩm hình sự đối với các bị cáo" (mẫu ngành B04) trong Xuất Excel báo cáo tháng (2026-09-08, `qlahs-sup.html`, nhánh `main`)
+
+Theo yêu cầu Dũng (`@Import_template_Bieu_10302.xlsx` = mẫu ngành B04): thêm sheet **"Biểu 4"** vào
+`xuatBaoCaoThangExcel`, đặt NGAY SAU "Biểu B10", TRƯỚC "Biểu 2 & Biểu 3" (chèn ở ~dòng 13187, giữa
+khối cảnh báo cuối B10 và block `themSheetBieu2Va3`). Ràng buộc cứng của Dũng: *"số này phải khớp
+cột 63-64 của biểu 10 (cột tổng số vụ, bị can đã xét xử trong kỳ)"* → cột **C "Tổng số bị cáo đã
+xét xử"** dùng ĐÚNG công thức của B10 C64 (`COUNTIFS('DS đã xét xử XX'!$V:$V,"<row.D>")`), cột **D
+"Số bị cáo là pháp nhân"** = B10 C65 (`...+$X:$X,"phap_nhan"`) — khác B10 ở chỗ tiêu chí điều luật
+là **chuỗi literal** `row.D` nhúng thẳng thay vì `$A{r}` (B10 để ở cột A), 2 cách cho **kết quả
+GIỐNG HỆT** vì Excel COUNTIFS coi criteria = giá trị chuỗi.
+
+**Cấu trúc 32 cột A..AF khớp mẫu ngành** (`B4_LEAF` = 28 nhãn lá cột E..AF, chép nguyên văn từ dump
+template `sheet1.xml` rows 5-7). Header 3 tầng merge: dòng 3 (nhóm) / dòng 4 (nhóm con) / dòng 5
+(lá) — merge y hệt template (A3:A5, B3:B5, C3:C5, D3:D5, E3:H4, I3:Z3, AA3:AF3, I4:S4, T4:Z4,
+AA4:AC4, AD4:AF4). Data từ dòng 6, 1 dòng/điều luật (ĐỒNG BỘ thứ tự `b10Rows`). Cột A "Số điều"
+mang hậu tố `*`/`**` phân biệt bộ luật cũ (dùng lại `extractSoDieu`, xem mục dưới).
+
+**Cột E..AF (hình phạt)** — hệ thống chỉ TỰ điền được 9 loại qua công thức
+`COUNTIFS('DS đã xét xử XX'!$V:$V,"<row.D>",'DS đã xét xử XX'!$AJ:$AJ,"<mã>")`:
+- J=`phat_tien_cn`, M=`an_treo`, N=`tu_le3` (≤3 năm), O=`tu_3_7`, P=`tu_7_15`, Q=`tu_tren15`,
+  R=`chung_than`, S=`tu_hinh` (bị cáo cá nhân); AA=`phat_tien_pn` (pháp nhân).
+- Mã lấy từ hàm THUẦN mới **`phanLoaiBiCanBieu4(bc)`** (module-level, cạnh `tinhThoiHanBaoQuanVu`
+  ~dòng 4749) — đọc `bc.mucAnLoai`/`mucAnNam`/`mucAnThang` (mức án TỔNG HỢP của bị can, tự tính từ
+  `hinhPhatChiTiet` lúc lưu tab "Đã xét xử"). Mốc tù: `y = năm + tháng/12`; `y<=3`→tu_le3,
+  `<=7`→tu_3_7, `<=15`→tu_7_15, else tu_tren15. Test cô lập 16/16 PASS.
+- Nguồn cột `$AJ` = cột phụ **"Cột Biểu 4"** MỚI trên sheet "DS đã xét xử XX" (chỉ giai đoạn Xét
+  xử) — thêm qua `add(\`DS đã xét xử ${gs}\`, ..., gd === "xet_xu" ? ["Cột Biểu 4"] : undefined,
+  gd === "xet_xu" ? (bc => [phanLoaiBiCanBieu4(bc)]) : undefined)` (~dòng 14284). Rơi vào **AJ**
+  (extraHeaders = Kỳ TK=AG + Ngày XXT=AH + Số bản án=AI) — AJ CÒN TRỐNG ở sheet này (khác "DS TT
+  chuyển XX"), KHÔNG cột `B10_FORMULA` nào tham chiếu `'DS đã xét xử XX'!$AJ` nên an toàn tuyệt đối.
+- Các cột còn lại (E-I, K, L "quyết định khác"/cảnh cáo/cải tạo KGG/trục xuất; T-Z hình phạt bổ
+  sung cá nhân; AB-AF pháp nhân đình chỉ + bổ sung) hệ thống CHƯA thu thập → ghi `0`, NHẬP TAY.
+  Ô tự điền tô nền xanh nhạt (`FFECFDF5`), ô nhập tay để trắng; 3 dòng ghi chú cuối sheet liệt kê rõ.
+
+**Result cache** (`b4Tally`) đếm THEO CÙNG cách công thức đếm: quét mọi bị can của vụ
+`baoCao.xet_xu.ds.hoanThanh.da_xet_xu`, key = `_tkGetDL(bc)` (= cột V), tally theo
+`phanLoaiBiCanBieu4(bc)`. C/D dùng thẳng `row.vals[73]`/`row.vals[74]` (số B10 C64/C65 chuẩn).
+
+**Đã kiểm chứng**: compile-check `@babel/preset-react` sạch; test cô lập `phanLoaiBiCanBieu4` 16/16;
+dựng sheet thật bằng package `exceljs` (scratchpad) rồi `xlsx.load` đọc lại — 32 cột / 13 merge
+đúng vị trí, C/D/M/S ra đúng công thức COUNTIFS + result, hậu tố `173*` đúng, dòng TỔNG `SUM(C6:C8)`.
+**CHƯA mở Excel THẬT** (không có login/dữ liệu phiên này) — Dũng cần: xuất 1 kỳ có vụ đã xét xử,
+mở bằng Excel, xác nhận **TỔNG cột C của Biểu 4 = TỔNG C64 của Biểu B10** (số bị cáo đã xét xử), và
+các cột J/M/N-S/AA cộng lại ≤ cột C mỗi dòng.
+
 ## Biểu 10 — cột "Số điều" thêm hậu tố phân biệt bộ luật CŨ (2026-09-07, `qlahs-sup.html`, nhánh `main`)
 
 Theo yêu cầu Dũng (quy ước ngành — file B10 thật đã nhập lên ngành có dòng mã "101**" được chấp nhận):

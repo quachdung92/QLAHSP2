@@ -4746,6 +4746,33 @@ function tinhThoiHanBaoQuanVu(vuAn) {
   return null;
 }
 
+// phanLoaiBiCanBieu4(bc) — mã cột "Hình phạt chính" của Biểu 4 (thống kê kết quả xét xử sơ thẩm)
+// theo MỨC ÁN TỔNG HỢP của bị can (bc.mucAnLoai/mucAnNam/mucAnThang — tự tính từ hinhPhatChiTiet lúc
+// lưu ở tab "Đã xét xử"). Chỉ phủ các cột hệ thống TỰ điền được:
+//   phat_tien_cn (J), an_treo (M), tu_le3 (N), tu_3_7 (O), tu_7_15 (P), tu_tren15 (Q),
+//   chung_than (R), tu_hinh (S)  — bị cáo cá nhân
+//   phat_tien_pn (AA) — bị cáo pháp nhân
+// Các cột khác của Biểu 4 (không phạm tội, miễn TNHS, miễn hình phạt, trường giáo dưỡng, cảnh cáo,
+// cải tạo KGG, trục xuất, MỌI hình phạt bổ sung, pháp nhân đình chỉ hoạt động...) hệ thống CHƯA
+// theo dõi → nhập tay. Trả "" nếu bị can chưa nhập mức án (không khớp cột nào).
+// Mốc tù theo mẫu ngành: "3 năm tù trở xuống" (≤3) / "Trên 3 đến 7" / "Trên 7 đến 15" / "Trên 15".
+function phanLoaiBiCanBieu4(bc) {
+  const loai = bc && bc.mucAnLoai;
+  if (!loai) return "";
+  if (loai === "tu_hinh") return "tu_hinh";
+  if (loai === "chung_than") return "chung_than";
+  if (loai === "an_treo") return "an_treo";
+  if (loai === "phat_tien") return bc.loaiBiCan === "phap_nhan" ? "phat_tien_pn" : "phat_tien_cn";
+  if (loai === "nam") {
+    const y = (Number(bc.mucAnNam) || 0) + (Number(bc.mucAnThang) || 0) / 12;
+    if (y <= 3) return "tu_le3";
+    if (y <= 7) return "tu_3_7";
+    if (y <= 15) return "tu_7_15";
+    return "tu_tren15";
+  }
+  return "";
+}
+
 // ---- Mức án TỪNG bị can (2026-07-21) ----
 // Ghi chú thiết kế: mức án cấp VỤ (mucAnLoai/mucAnNam/mucAnThang trên vuAn, xem
 // tinhThoiHanBaoQuanVu ở trên) đã có sẵn từ trước, nhập ở Giao nhận hồ sơ lúc nộp lưu trữ, dùng
@@ -13157,6 +13184,130 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     }
   }
 
+  // ---- Sheet: Biểu 4 — Thống kê kết quả xét xử sơ thẩm hình sự đối với các bị cáo (mẫu ngành B04) ----
+  // 1 dòng = 1 điều luật (ĐỒNG BỘ thứ tự b10Rows). Cột "Tổng số bị cáo đã xét xử" DÙNG ĐÚNG công
+  // thức của B10 C64 (COUNTIFS 'DS đã xét xử XX'!$V:$V) — khớp TUYỆT ĐỐI "cột 63-64 của Biểu 10"
+  // (số bị can đã xét xử trong kỳ) theo yêu cầu Dũng. "Số bị cáo là pháp nhân" = B10 C65. Các cột
+  // "Hình phạt chính": COUNTIFS thêm theo cột phụ "Cột Biểu 4" (AJ) của sheet "DS đã xét xử XX" cho
+  // 9 loại hệ thống tự phân được (án treo / phạt tiền / các mốc tù / chung thân / tử hình); phần
+  // còn lại (quyết định khác, hình phạt bổ sung, pháp nhân đình chỉ...) hệ thống CHƯA theo dõi — để
+  // 0, nhập tay (ghi chú cuối sheet). Cột A "Số điều" mang hậu tố */** phân biệt bộ luật cũ như B10.
+  {
+    const wsB4 = wb.addWorksheet("Biểu 4");
+    wsB4.views = [{ state: "frozen", xSplit: 2, ySplit: 5 }];
+    const B4_NCOL = 32; // A..AF theo mẫu ngành
+    // Nhãn lá (dòng header thứ 3), index 0 = cột E (5) ... index 27 = cột AF (32)
+    const B4_LEAF = [
+      "Tòa án tuyên không phạm tội", "Miễn trách nhiệm hình sự", "Miễn hình phạt",
+      "Đưa vào trường giáo dưỡng", "Cảnh cáo", "Phạt tiền", "Cải tạo không giam giữ", "Trục xuất",
+      "Phạt tù cho hưởng án treo", "3 năm tù trở xuống", "Trên 3 năm đến 7 năm tù",
+      "Trên 7 năm đến 15 năm tù", "Trên 15 năm tù", "Tù chung thân", "Tử hình",
+      "Cấm đảm nhiệm chức vụ, cấm hành nghề hoặc làm công việc nhất định", "Cấm cư trú", "Quản chế",
+      "Tước một số quyền công dân", "Tịch thu tài sản", "Phạt tiền", "Trục xuất",
+      "Phạt tiền", "Đình chỉ hoạt động có thời hạn", "Đình chỉ hoạt động vĩnh viễn",
+      "Cấm kinh doanh, cấm hoạt động trong một số lĩnh vực nhất định", "Cấm huy động vốn", "Phạt tiền",
+    ];
+    // Cột (1-based) → mã hình phạt (khớp phanLoaiBiCanBieu4 / cột phụ "Cột Biểu 4" AJ của "DS đã xét xử XX")
+    const B4_CODE = { 10: "phat_tien_cn", 13: "an_treo", 14: "tu_le3", 15: "tu_3_7", 16: "tu_7_15",
+      17: "tu_tren15", 18: "chung_than", 19: "tu_hinh", 27: "phat_tien_pn" };
+    const qB4 = s => `"${String(s).replace(/"/g, '""')}"`;
+    // Không kèm dấu "=" — đồng bộ B10_FORMULA (ExcelJS {formula} nhận chuỗi công thức thuần).
+    const cfB4 = (D, extraCol, extraVal) => "COUNTIFS('DS đã xét xử XX'!$V:$V," + qB4(D)
+      + (extraCol ? `,'DS đã xét xử XX'!$${extraCol}:$${extraCol},${qB4(extraVal)}` : ``) + ")";
+
+    // Result cache cho các cột hình phạt — đếm THEO CÙNG cách công thức đếm (mọi bị can của vụ
+    // da_xet_xu, key = _tkGetDL(bc) = cột V "Mã ĐL BC"), để preview khớp công thức Excel.
+    const b4Tally = {};
+    for (const vu of (baoCao.xet_xu?.ds?.hoanThanh?.da_xet_xu || [])) {
+      for (const bc of (biCanByVu[vu.id] || [])) {
+        const code = phanLoaiBiCanBieu4(bc);
+        if (!code) continue;
+        const dl = _tkGetDL(bc);
+        const t = b4Tally[dl] || (b4Tally[dl] = {});
+        t[code] = (t[code] || 0) + 1;
+      }
+    }
+
+    wsB4.mergeCells(1, 1, 1, B4_NCOL);
+    const b4t = wsB4.getCell(1, 1);
+    b4t.value = "THỐNG KÊ KẾT QUẢ XÉT XỬ SƠ THẨM HÌNH SỰ ĐỐI VỚI CÁC BỊ CÁO";
+    b4t.font = { bold: true, size: 13 };
+    b4t.alignment = { horizontal: "center" };
+    wsB4.mergeCells(2, 1, 2, B4_NCOL);
+    const b4k = wsB4.getCell(2, 1);
+    b4k.value = dsKyGop
+      ? "Tổng hợp các kỳ: " + dsKyGop.map(k => k.tenKy).join(", ")
+      : "Kỳ thống kê: " + (ky.tenKy || "");
+    b4k.font = { italic: true };
+    b4k.alignment = { horizontal: "center" };
+    // Header 3 tầng (dòng 3 = nhóm, dòng 4 = nhóm con, dòng 5 = lá)
+    wsB4.mergeCells(3, 1, 5, 1); wsB4.getCell(3, 1).value = "ĐIỀU LUẬT";
+    wsB4.mergeCells(3, 2, 5, 2); wsB4.getCell(3, 2).value = "TỘI DANH";
+    wsB4.mergeCells(3, 3, 5, 3); wsB4.getCell(3, 3).value = "Tổng số bị cáo đã xét xử";
+    wsB4.mergeCells(3, 4, 5, 4); wsB4.getCell(3, 4).value = "Tr/đó: Số bị cáo là pháp nhân";
+    wsB4.mergeCells(3, 5, 4, 8); wsB4.getCell(3, 5).value = "Quyết định khác (Chung cho cá nhân và pháp nhân)";
+    wsB4.mergeCells(3, 9, 3, 26); wsB4.getCell(3, 9).value = "Bị cáo là cá nhân";
+    wsB4.mergeCells(3, 27, 3, 32); wsB4.getCell(3, 27).value = "Bị cáo là pháp nhân";
+    wsB4.mergeCells(4, 9, 4, 19); wsB4.getCell(4, 9).value = "Hình phạt chính";
+    wsB4.mergeCells(4, 20, 4, 26); wsB4.getCell(4, 20).value = "Hình phạt bổ sung";
+    wsB4.mergeCells(4, 27, 4, 29); wsB4.getCell(4, 27).value = "Hình phạt chính";
+    wsB4.mergeCells(4, 30, 4, 32); wsB4.getCell(4, 30).value = "Hình phạt bổ sung";
+    B4_LEAF.forEach((lbl, i) => { wsB4.getCell(5, 5 + i).value = lbl; });
+    for (let rr = 3; rr <= 5; rr++) for (let cc = 1; cc <= B4_NCOL; cc++) {
+      const c = wsB4.getCell(rr, cc);
+      c.font = { bold: true, size: 9 };
+      c.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
+    }
+
+    const B4_R0 = 6;
+    const FILL_AUTO = { type: "pattern", pattern: "solid", fgColor: { argb: "FFECFDF5" } };
+    const B4_AUTO_COLS = [3, 4, ...Object.keys(B4_CODE).map(Number)];
+    b10Rows.forEach((row, idx) => {
+      const r = B4_R0 + idx;
+      const cells = new Array(B4_NCOL).fill(0);
+      cells[0] = extractSoDieu(row.D);
+      cells[1] = row.tenToiDanh;
+      cells[2] = { formula: cfB4(row.D), result: row.vals[73] };                    // C = B10 C64
+      cells[3] = { formula: cfB4(row.D, "X", "phap_nhan"), result: row.vals[74] };  // D = B10 C65
+      for (let cc = 5; cc <= B4_NCOL; cc++) {
+        const code = B4_CODE[cc];
+        if (code) cells[cc - 1] = { formula: cfB4(row.D, "AJ", code), result: (b4Tally[row.D] && b4Tally[row.D][code]) || 0 };
+      }
+      const xr = wsB4.addRow(cells);
+      B4_AUTO_COLS.forEach(cc => { xr.getCell(cc).fill = FILL_AUTO; });
+      xr.getCell(1).alignment = { horizontal: "center" };
+    });
+
+    const b4LastR = B4_R0 + b10Rows.length - 1;
+    const tongCells = new Array(B4_NCOL).fill(null);
+    tongCells[0] = "TỔNG";
+    for (let cc = 3; cc <= B4_NCOL; cc++) {
+      const col = b10Col(cc - 1);
+      tongCells[cc - 1] = { formula: `SUM(${col}${B4_R0}:${col}${b4LastR})` };
+    }
+    const b4TongRow = wsB4.addRow(tongCells);
+    b4TongRow.font = { bold: true };
+    b4TongRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } };
+
+    wsB4.addRow([]);
+    [
+      "Ghi chú:",
+      "• Cột 'Tổng số bị cáo đã xét xử' = cột C64 Biểu B10 (COUNTIFS trên sheet ẩn 'DS đã xét xử XX'). Cột 'Số bị cáo là pháp nhân' = cột C65 Biểu B10.",
+      "• Hệ thống TỰ điền (ô nền xanh): Phạt tiền (cá nhân), Phạt tù cho hưởng án treo, các mốc tù có thời hạn (≤3 năm / trên 3-7 / trên 7-15 / trên 15 năm), Tù chung thân, Tử hình, Phạt tiền (pháp nhân) — theo mức án tổng hợp của TỪNG bị cáo (tab 'Đã xét xử').",
+      "• CẦN NHẬP TAY (ô nền trắng): Tòa án tuyên không phạm tội, Miễn TNHS, Miễn hình phạt, Đưa vào trường giáo dưỡng, Cảnh cáo, Cải tạo không giam giữ, Trục xuất; TOÀN BỘ hình phạt bổ sung (cá nhân & pháp nhân); Đình chỉ hoạt động (pháp nhân) — hệ thống chưa thu thập các dữ liệu này.",
+    ].forEach((t, i) => {
+      const rr = wsB4.addRow([t]);
+      rr.getCell(1).font = { italic: i !== 0, bold: i === 0, color: { argb: i === 0 ? "FF000000" : "FF6B7280" } };
+    });
+
+    wsB4.getColumn(1).width = 10;
+    wsB4.getColumn(2).width = 34;
+    wsB4.getColumn(3).width = 9;
+    wsB4.getColumn(4).width = 9;
+    for (let cc = 5; cc <= B4_NCOL; cc++) wsB4.getColumn(cc).width = 7;
+  }
+
   // ---- Sheet: Biểu 2 & Biểu 3 (mẫu thống kê ngành, đặt cạnh Biểu 10) ----
   // Port từ nhánh feature/tong-ke-dong (2026-08-06), thích ứng kiến trúc "tồn theo kỳ thống kê"
   // hiện tại. 396 dòng Biểu 2 + 150 dòng Biểu 3 — dòng nào tính được từ `baoCao` thì tự tính
@@ -14131,8 +14282,15 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     }
 
     // ── RA: hoàn thành (kết thúc thụ lý) ──
+    // "DS đã xét xử XX" — thêm cột phụ "Cột Biểu 4" (2026-09, CHỈ Xét xử, rơi vào AJ vì extraHeaders
+    // = Kỳ TK(AG) + Ngày XXT(AH) + Số bản án(AI)) — mã hình phạt chính của TỪNG bị cáo theo mức án
+    // tổng hợp (phanLoaiBiCanBieu4). Sheet "Biểu 4" (thống kê kết quả xét xử) COUNTIFS vào $V:$V +
+    // $AJ:$AJ để đếm bị cáo theo từng loại hình phạt. AJ ở đây CÒN TRỐNG (khác "DS TT chuyển XX"),
+    // không đụng B10_FORMULA (không cột nào tham chiếu 'DS đã xét xử XX'!$AJ).
     add(`DS đã xét xử ${gs}`,
-      d.hoanThanh?.da_xet_xu||[], ["Ngày XXT", "Số bản án"], _ngaySoQD);
+      d.hoanThanh?.da_xet_xu||[], ["Ngày XXT", "Số bản án"], _ngaySoQD,
+      gd === "xet_xu" ? ["Cột Biểu 4"] : undefined,
+      gd === "xet_xu" ? (bc => [phanLoaiBiCanBieu4(bc)]) : undefined);
 
     // "DS chuyển đi TT" — thêm cột phụ "Mức độ NT (BC)" (2026-09-06, CHỈ Truy tố, cùng vị trí AJ
     // như "DS TT chuyển XX" — extraHeaders cùng đếm 2 cột "Ngày CĐ"/"Số QĐ" nên cột phụ rơi đúng
