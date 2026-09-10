@@ -1149,6 +1149,7 @@ const NHAN_SU_KIEN = {
   tach_vu: "Tách vụ", nhap_vu: "Nhập vụ", duoc_nhap_vu: "Nhận nhập vụ",
   giao_nhan_ho_so: "Giao nhận hồ sơ", nhan_lai_chuyen_di: "Nhận lại (đã Chuyển đi)",
   bo_sung_bican: "Bổ sung bị can vào vụ đã có",
+  huy_dieu_tra_lai: "Huỷ án — điều tra lại",
 };
 
 // Nhãn hiển thị 1 sự kiện log trong "Lịch sử"/"Nhật ký thao tác" — hầu hết tra thẳng NHAN_SU_KIEN,
@@ -4639,6 +4640,92 @@ function NhanLaiChuyenDiModal({ vuAn, onDong, onXong }) {
       <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định tiếp nhận lại</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
+      <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
+        <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
+        </button>
+      </div>
+      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+    </KhungModalHanhDong>
+  );
+}
+
+// "Huỷ án — điều tra lại" (2026-09-10) — vụ đã có KẾT QUẢ giải quyết (Đã xét xử / Chuyển đi / Đình
+// chỉ / Án huỷ) bị Toà án cấp trên (giám đốc thẩm / tái thẩm) HUỶ bản án/quyết định ĐỂ ĐIỀU TRA
+// LẠI. Vụ quay lại hệ thống ở giai đoạn ĐIỀU TRA (LUÔN cố định — đúng nghĩa "điều tra lại", KHÁC
+// NhanLaiChuyenDiModal cho chọn giai đoạn). Ghi sự kiện loaiSuKien="huy_dieu_tra_lai"
+// (denGiaiDoan="dieu_tra", tuGiaiDoan = giai đoạn vụ đang có lúc bị huỷ) — cần thêm vào RPC
+// layTrangThaiVuTaiKy (xem supabase/add_huy_dieu_tra_lai_2026-09-10.sql) để vụ được coi là tồn ở
+// Điều tra. KHÔNG xoá sự kiện hoan_thanh gốc (giữ nguyên làm lịch sử — vụ đã THẬT SỰ được xét xử/
+// giải quyết trước khi bị huỷ; khác công cụ sửa sai sót XoaHinhThucGiaiQuyetModal).
+// Xoá các field "kết quả giải quyết" trên vuan (ngayQuyetDinh/kyHoanThanh/số QĐ...) để vụ không
+// còn "trông như đã xong" khi đọc live — chi tiết bản án cũ vẫn tra được ở sự kiện hoan_thanh
+// trong Lịch sử. Tự tính "Hạn điều tra" mới theo Điều 172 khoản 1 BLHS 2025 (điều tra lại từ đầu,
+// tính từ Ngày huỷ án), cho sửa tay.
+function HuyDieuTraLaiModal({ vuAn, onDong, onXong }) {
+  const hd = useHanhDongVuAn();
+  const [ngay, setNgay] = useState("");
+  const [soQuyetDinh, setSoQuyetDinh] = useState("");
+  const [ghiChu, setGhiChu] = useState("");
+  const [hanDieuTraMoi, setHanDieuTraMoi] = useState("");
+  const [hanDaSua, setHanDaSua] = useState(false);
+  useEffect(() => {
+    if (!ngay || hanDaSua) return;
+    const soThang = THANG_DIEU_TRA_CO_BAN[vuAn.mucDoNghiemTrong];
+    if (!soThang) return;
+    setHanDieuTraMoi(toInputDate(congThangTheoLuat(fromInputDate(ngay), soThang)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ngay, vuAn.mucDoNghiemTrong, hanDaSua]);
+
+  const fieldSoQd = fieldSoQuyetDinhTrenVuAn(vuAn.trangThai);
+
+  const luu = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày huỷ án."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const giaiDoanCu = vuAn.coQuanThuLy || null;
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), {
+        trangThai: "dang_giai_quyet", coQuanThuLy: "dieu_tra",
+        ngayQuyetDinh: null, kyHoanThanh: null, ngayQuyetDinhUocTinh: false, noiChuyenDen: "",
+        ...(fieldSoQd ? { [fieldSoQd]: "" } : {}),
+        ...(hanDieuTraMoi ? { hanDieuTra: fromInputDate(hanDieuTraMoi) } : {}),
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "huy_dieu_tra_lai",
+        tuGiaiDoan: giaiDoanCu, denGiaiDoan: "dieu_tra",
+        soQuyetDinh: soQuyetDinh.trim(), ngaySuKien: fromInputDate(ngay), kyThongKe: kyId,
+        ghiChu, nguoiThucHien, thoiDiemGhi: now,
+      }));
+      await batch.commit();
+      onXong();
+    });
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Huỷ án — điều tra lại">
+      {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mb-4">
+        Vụ án <b>{NHAN_TRANG_THAI[vuAn.trangThai] || vuAn.trangThai}</b> (giai đoạn {NHAN_GIAI_DOAN[vuAn.coQuanThuLy] || vuAn.coQuanThuLy}) bị
+        Toà án cấp trên <b>huỷ bản án/quyết định để điều tra lại</b>. Vụ sẽ quay về <b>giai đoạn Điều
+        tra</b>, trạng thái <b>"Đang giải quyết"</b>. Sự kiện "Hoàn thành" cũ vẫn giữ trong Lịch sử
+        (tra chi tiết bản án bị huỷ ở đó). Số liệu kỳ tự tính lại từ log.
+      </div>
+      <label className="text-xs text-slate-500 block mb-1">Ngày huỷ án (QĐ giám đốc thẩm / tái thẩm)</label>
+      <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Số quyết định huỷ án</label>
+      <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
+      <label className="text-xs text-slate-500 block mb-1">Hạn điều tra mới</label>
+      <NhapNgay value={hanDieuTraMoi} onChange={e => { setHanDieuTraMoi(e.target.value); setHanDaSua(true); }} className={oInput + " mb-1"} />
+      {vuAn.mucDoNghiemTrong && !hanDaSua && hanDieuTraMoi
+        ? <p className="text-[10px] text-slate-400 mb-3">Tự tính theo Điều 172 khoản 1 BLHS 2025 (điều tra lại từ đầu, tính từ Ngày huỷ án), có thể sửa lại.</p>
+        : <div className="mb-3" />}
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -8220,6 +8307,15 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
             {vuAn.trangThai === "chuyen_di" && (
               <NutHanhDong nhan="↩ Nhận lại vụ" onClick={() => setModalMo("nhan_lai_chuyen_di")} />
             )}
+            {/* "Huỷ án — điều tra lại" (2026-09-10) — vụ đã có KẾT QUẢ giải quyết bị Toà cấp trên
+                huỷ bản án/QĐ để điều tra lại → về giai đoạn Điều tra. Áp dụng cho Đã xét xử /
+                Chuyển đi / Đình chỉ / Án huỷ (KHÔNG áp dụng Tạm đình chỉ — vụ đó dùng "Phục hồi").
+                KHÁC "Nhận lại vụ" (bản án chưa bị huỷ, đơn vị khác trả lại để xử lý tiếp) và
+                "Xoá hình thức giải quyết" (sửa sai sót, xoá luôn sự kiện hoan_thanh). Xem
+                HuyDieuTraLaiModal. */}
+            {["da_xet_xu", "chuyen_di", "dinh_chi", "an_huy"].includes(vuAn.trangThai) && (
+              <NutHanhDong nhan="↩ Huỷ án — điều tra lại" onClick={() => setModalMo("huy_dieu_tra_lai")} />
+            )}
             {/* Sửa lỗi chọn NHẦM hình thức giải quyết (VD "Đã xét xử" nhưng đúng ra là "Tạm đình
                 chỉ") — chỉ hiện cho 5 trạng thái do "Hoàn thành vụ án" tạo ra (FIELD_SO_QD_HOAN_THANH
                 có key tương ứng), KHÔNG áp dụng cho "Đã nhập vào vụ khác" (khác luồng, không có
@@ -8390,6 +8486,9 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
       )}
       {modalMo === "nhan_lai_chuyen_di" && (
         <NhanLaiChuyenDiModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
+      )}
+      {modalMo === "huy_dieu_tra_lai" && (
+        <HuyDieuTraLaiModal vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
       )}
       {modalMo === "hoan_thanh" && (
         <HoanThanhVuAnModal vuAnId={vuAn.id} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
@@ -9141,13 +9240,17 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     // truy vấn ở đây, khiến kỳ có phục hồi thiếu "vào" tương ứng, Cân đối số liệu có thể lệch nhẹ)
     // và "nhan_lai_chuyen_di" (NhanLaiChuyenDiModal, nhận lại vụ đã Chuyển đi — sự kiện HOÀN TOÀN
     // MỚI). Cả 2 đều lọc theo denGiaiDoan như tachVu/chuyenDen/traVe.
-    const [khoiToTrucTiepSnap, tachVuSnap, chuyenDenSnap, traVeSnap, phucHoiSnap, nhanLaiSnap, boSungBiCanSnap] = await Promise.all([
+    const [khoiToTrucTiepSnap, tachVuSnap, chuyenDenSnap, traVeSnap, phucHoiSnap, nhanLaiSnap, huyDieuTraLaiSnap, boSungBiCanSnap] = await Promise.all([
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "khoi_to_vu").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "tach_vu").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "chuyen_giai_doan").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "tra_ho_so").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "phuc_hoi").where("denGiaiDoan", "==", gd).get(),
       db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "nhan_lai_chuyen_di").where("denGiaiDoan", "==", gd).get(),
+      // "huy_dieu_tra_lai" (2026-09-10, HuyDieuTraLaiModal) — vụ đã có kết quả giải quyết bị Toà
+      // cấp trên huỷ để điều tra lại → luôn denGiaiDoan="dieu_tra". Cùng mẫu "vào" như phuc_hoi/
+      // nhan_lai_chuyen_di (đã thêm vào RPC layTrangThaiVuTaiKy — xem add_huy_dieu_tra_lai_2026-09-10.sql).
+      db.collection("lichsuChuyenGiaiDoan").where("kyThongKe", "==", ky.id).where("loaiSuKien", "==", "huy_dieu_tra_lai").where("denGiaiDoan", "==", gd).get(),
       // "bo_sung_bican" (2026-08-03) — bị can THÊM SAU vào 1 vụ ĐÃ TỪNG "vào" giai đoạn này từ
       // trước (ThemBiCanForm) — CHỈ cộng vào bcMoi (bị can), KHÔNG cộng vào soMoi.tong (không phải
       // 1 vụ mới) — xem add_bo_sung_bican_2026-08-03.sql.
@@ -9165,6 +9268,7 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     let dsTraVeArr = await vuAnTuLogDocs(traVeSnap.docs, kyRankMap);
     let dsPhucHoiArr = await vuAnTuLogDocs(phucHoiSnap.docs, kyRankMap);
     const dsNhanLaiArr = await vuAnTuLogDocs(nhanLaiSnap.docs, kyRankMap);
+    const dsHuyDieuTraLaiArr = await vuAnTuLogDocs(huyDieuTraLaiSnap.docs, kyRankMap);
 
     // Sửa triệt để double-count/thiếu sót "vào" khi 1 vụ có CẢ sự kiện khởi tố mới/tách/chuyển đến/
     // trả về LẪN sự kiện "phục hồi" (phuc_hoi) cùng kỳ + cùng giai đoạn — dữ liệu backfill án cũ
@@ -9206,9 +9310,10 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       // vụ mới, chỉ là bị can bổ sung cho vụ đã đếm rồi — xem bcMoi bên dưới, nơi DUY NHẤT cộng
       // boSungBiCan, và chỉ cộng vào tổng BỊ CAN).
       tong: dsKhoiToTrucTiep.length + dsTachVuArr.length + dsChuyenDenArr.length + dsTraVeArr.length
-          + dsPhucHoiArr.length + dsNhanLaiArr.length,
+          + dsPhucHoiArr.length + dsNhanLaiArr.length + dsHuyDieuTraLaiArr.length,
       chuyenDenTu: dsChuyenDenArr.length, traVeTu: dsTraVeArr.length, tachVu: dsTachVuArr.length,
-      phucHoi: dsPhucHoiArr.length, nhanLai: dsNhanLaiArr.length, boSungBiCan: boSungBiCanSnap.size,
+      phucHoi: dsPhucHoiArr.length, nhanLai: dsNhanLaiArr.length,
+      huyDieuTraLai: dsHuyDieuTraLaiArr.length, boSungBiCan: boSungBiCanSnap.size,
       ...(gd === "dieu_tra" ? nguonDem : { khoiTaoTrucTiep: dsKhoiToTrucTiep.length }),
     };
 
@@ -9297,6 +9402,7 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
         traVe: dsTraVeArr,
         phucHoi: dsPhucHoiArr,
         nhanLai: dsNhanLaiArr,
+        huyDieuTraLai: dsHuyDieuTraLaiArr,
         chuyenDi: dsChuyenDiArr,
         traDi: dsTraDiArr,
         hoanThanh: dsHoanThanhTheoGD,
@@ -10004,7 +10110,7 @@ function HangBaoCao({ nhan, data, lay, layDs, layBiCan, damNet, onMoChiTiet }) {
 //     hữu state `boQuayVong`, truyền xuống đây (controlled) VÀ xuất Excel với `baoCao` đã lọc khi
 //     BẬT. `xuatBaoCaoThangExcel` KHÔNG sửa — mọi sheet "DS ..." + Biểu 2/3/10 dựng từ `baoCao.ds.*`
 //     nên tự lan nhất quán. Hàm THUẦN, không mutate baoCao gốc.
-const NHOM_VAO_BAO_CAO = ["khoiToTrucTiep", "tachVu", "chuyenDen", "traVe", "phucHoi", "nhanLai"];
+const NHOM_VAO_BAO_CAO = ["khoiToTrucTiep", "tachVu", "chuyenDen", "traVe", "phucHoi", "nhanLai", "huyDieuTraLai"];
 const NHOM_RA_BAO_CAO = ["chuyenDi", "traDi", "nhapVu"]; // hoanThanh.* xử lý riêng bên dưới
 
 function _idVuTraDTBSQuayVong(src) {
@@ -10068,6 +10174,7 @@ function locBoTraDTBSQuayVongCungKy(baoCao) {
     if ("tachVu" in soMoi) soMoi.tachVu -= demBo(ds.tachVu);
     if ("phucHoi" in soMoi) soMoi.phucHoi -= demBo(ds.phucHoi);
     if ("nhanLai" in soMoi) soMoi.nhanLai -= demBo(ds.nhanLai);
+    if ("huyDieuTraLai" in soMoi) soMoi.huyDieuTraLai -= demBo(ds.huyDieuTraLai);
     if ("khoiTaoTrucTiep" in soMoi) soMoi.khoiTaoTrucTiep -= demBo(ds.khoiToTrucTiep);
     for (const ng of ["an_khoi_to_moi", "tin_bao_khoi_to_len", "an_noi_khac_chuyen_den", "phuc_hoi_dieu_tra"]) {
       if (ng in soMoi) soMoi[ng] -= (ds.khoiToTrucTiep || []).filter(v => laBo(v) && v.nguon === ng).length;
@@ -10172,6 +10279,9 @@ function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong
             <H nhan="— Nhận lại (đã Chuyển đi)"
               lay={b => b.soMoi.nhanLai}
               layDs={b => b.ds?.nhanLai} />
+            <H nhan="— Huỷ án điều tra lại (Toà cấp trên huỷ)"
+              lay={b => b.soMoi.huyDieuTraLai}
+              layDs={b => b.ds?.huyDieuTraLai} />
             {/* Bị can bổ sung vào vụ ĐÃ CÓ (2026-08-03) — KHÁC hẳn các dòng trên: không có "vụ"
                 tương ứng (0 vụ mới — vụ đã được đếm "vào" từ trước rồi), chỉ cộng thêm bị can. Xem
                 add_bo_sung_bican_2026-08-03.sql. layDs để trống (không click mở chi tiết được vì
@@ -10189,7 +10299,7 @@ function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong
               lay={b => b.soMoi.tong}
               layDs={b => [
                 ...(b.ds?.khoiToTrucTiep||[]), ...(b.ds?.tachVu||[]), ...(b.ds?.chuyenDen||[]),
-                ...(b.ds?.traVe||[]), ...(b.ds?.phucHoi||[]), ...(b.ds?.nhanLai||[]),
+                ...(b.ds?.traVe||[]), ...(b.ds?.phucHoi||[]), ...(b.ds?.nhanLai||[]), ...(b.ds?.huyDieuTraLai||[]),
                 ...(b.ds?.boSungBiCan||[]).map(v => ({ ...v, _soBiCan: 1 })),
               ]}
               damNet />
@@ -10232,7 +10342,7 @@ function collectVuIdsFromBaoCao(baoCao) {
   const ids = new Set();
   for (const gd of THU_TU_GIAI_DOAN) {
     const d = baoCao[gd]?.ds || {};
-    ["khoiToTrucTiep","tachVu","chuyenDen","traVe","phucHoi","nhanLai","chuyenDi","traDi","nhapVu","tonHienTai","boSungBiCan"]
+    ["khoiToTrucTiep","tachVu","chuyenDen","traVe","phucHoi","nhanLai","huyDieuTraLai","chuyenDi","traDi","nhapVu","tonHienTai","boSungBiCan"]
       .forEach(k => (d[k] || []).forEach(v => ids.add(v.id)));
     for (const ht of HOAN_THANH_TRUONG_TONG) (d.hoanThanh?.[ht] || []).forEach(v => ids.add(v.id));
   }
@@ -10629,7 +10739,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     {
       const moiIds = new Set([
         ...(d.khoiToTrucTiep || []), ...(d.tachVu || []), ...(d.chuyenDen || []), ...(d.traVe || []),
-        ...(d.phucHoi || []), ...(d.nhanLai || []),
+        ...(d.phucHoi || []), ...(d.nhanLai || []), ...(d.huyDieuTraLai || []),
       ].map(v => v.id));
       const raIds = new Set([
         ...(d.chuyenDi || []), ...(d.traDi || []), ...(d.nhapVu || []),
@@ -10692,6 +10802,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     ...(baoCao.dieu_tra.ds.traVe || []).map(v => v.id),
     ...(baoCao.dieu_tra.ds.phucHoi || []).map(v => v.id),
     ...(baoCao.dieu_tra.ds.nhanLai || []).map(v => v.id),
+    ...(baoCao.dieu_tra.ds.huyDieuTraLai || []).map(v => v.id),
   ]);
   const dt_boSungBc = [];
   {
@@ -10729,6 +10840,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     ...(baoCao.truy_to.ds.khoiToTrucTiep || []), ...(baoCao.truy_to.ds.tachVu || []),
     ...(baoCao.truy_to.ds.chuyenDen || []), ...(baoCao.truy_to.ds.traVe || []),
     ...(baoCao.truy_to.ds.phucHoi || []), ...(baoCao.truy_to.ds.nhanLai || []),
+    ...(baoCao.truy_to.ds.huyDieuTraLai || []),
   ].map(v => v.id));
   const tt_boSungBc = [];
   {
@@ -10768,13 +10880,15 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const thuTu = dm?.thuTuHienThi ?? 10000;
 
     const dt = baoCao.dieu_tra.ds, tt = baoCao.truy_to.ds, xx = baoCao.xet_xu.ds;
-    // + dt/tt/xx.phucHoi/nhanLai (2026-08-01) — 2 nguồn "vào" bổ sung (Phục hồi TĐC + Nhận lại vụ
-    // Chuyển đi, xem tinhBaoCaoKyTuLog), chỉ ảnh hưởng C3/C33/C60 "Tổng thụ lý" qua *_moi ở đây —
-    // KHÔNG đụng C6/C7 "Khởi tố mới" (vẫn chỉ dùng riêng dt.khoiToTrucTiep, xem dưới), giữ đúng 4
-    // nguồn cố định theo mẫu ngành B10 (bieu_B10_mo_ta.md mục 3.1).
-    const dt_moi = [...(dt.khoiToTrucTiep||[]),...(dt.tachVu||[]),...(dt.chuyenDen||[]),...(dt.traVe||[]),...(dt.phucHoi||[]),...(dt.nhanLai||[])];
-    const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...(tt.chuyenDen||[]),...(tt.traVe||[]),...(tt.phucHoi||[]),...(tt.nhanLai||[])];
-    const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...(xx.chuyenDen||[]),...(xx.traVe||[]),...(xx.phucHoi||[]),...(xx.nhanLai||[])];
+    // + dt/tt/xx.phucHoi/nhanLai (2026-08-01) + dt.huyDieuTraLai (2026-09-10) — nguồn "vào" bổ sung
+    // (Phục hồi TĐC + Nhận lại vụ Chuyển đi + Huỷ án điều tra lại, xem tinhBaoCaoKyTuLog), chỉ ảnh
+    // hưởng C3/C33/C60 "Tổng thụ lý" qua *_moi ở đây — KHÔNG đụng C6/C7 "Khởi tố mới" (vẫn chỉ dùng
+    // riêng dt.khoiToTrucTiep, xem dưới), giữ đúng 4 nguồn cố định theo mẫu ngành B10
+    // (bieu_B10_mo_ta.md mục 3.1). huyDieuTraLai luôn denGiaiDoan="dieu_tra" nên chỉ có ở dt_moi
+    // (tt/xx thêm cho đối xứng, luôn rỗng).
+    const dt_moi = [...(dt.khoiToTrucTiep||[]),...(dt.tachVu||[]),...(dt.chuyenDen||[]),...(dt.traVe||[]),...(dt.phucHoi||[]),...(dt.nhanLai||[]),...(dt.huyDieuTraLai||[])];
+    const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...(tt.chuyenDen||[]),...(tt.traVe||[]),...(tt.phucHoi||[]),...(tt.nhanLai||[]),...(tt.huyDieuTraLai||[])];
+    const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...(xx.chuyenDen||[]),...(xx.traVe||[]),...(xx.phucHoi||[]),...(xx.nhanLai||[]),...(xx.huyDieuTraLai||[])];
 
     // ── Tồn kỳ trước / kỳ này (2026-08-28) — CHỈ từ RPC as-of, base 100% kyThongKe (xem đầu hàm).
     // rpcTonList luôn có (caller throw nếu RPC lỗi); rpcTonTruocList = null ⇒ kỳ đầu tiên → tồn kỳ
@@ -11832,8 +11946,16 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   // khỏi D59/D60/D71/D73 để không đếm đúp. `dt.khoiToTrucTiep`/`dt.tachVu`/`dt.traVe`/`dt.chuyenDen`
   // ĐÃ được loại các vụ này từ nguồn (cùng chỗ dedup), nên sheet "DS khởi tố ĐT" cũng tự động không
   // còn các vụ này — công thức Excel B10 C6/C7 (SUMIFS trên sheet đó) tự đúng, không cần sửa riêng.
-  m.set(62, _fc(_sumSheetA("DS phục hồi TĐC ĐT"), (dt.phucHoi || []).length));
-  m.set(69, _fc(demBcSheet("DS phục hồi TĐC ĐT"), soBc(dt.phucHoi)));
+  // D62/D69 (2026-09-10): GỘP thêm "DS huỷ ĐT lại ĐT" (HuyDieuTraLaiModal — vụ đã có kết quả bị Toà
+  // cấp trên huỷ để điều tra lại → quay lại tồn Điều tra). Cùng bản chất "vụ tồn cũ quay lại xử lý
+  // điều tra" mà D62 đã là bucket catch-all (xem ghi chú trên). BẮT BUỘC gộp ở đây: D154 (tồn cuối
+  // ĐT) đọc thẳng RPC "DS tồn cuối kỳ ĐT" nên +N khi có huỷ-ĐT-lại; nếu D77 (= ...+D62+...) không
+  // +N tương ứng thì đẳng thức kiểm tra `D154=D77-D83-D134` báo ✗ giả. Khi Dũng wire dòng D-code
+  // riêng cho "Toà cấp trên huỷ án" theo mẫu ngành → tách khoản này ra khỏi D62 để không đếm đúp.
+  m.set(62, _fc(`${_sumSheetA("DS phục hồi TĐC ĐT")}+${_sumSheetA("DS huỷ ĐT lại ĐT")}`,
+    (dt.phucHoi || []).length + (dt.huyDieuTraLai || []).length));
+  m.set(69, _fc(`${demBcSheet("DS phục hồi TĐC ĐT")}+${demBcSheet("DS huỷ ĐT lại ĐT")}`,
+    soBc(dt.phucHoi) + soBc(dt.huyDieuTraLai)));
   const dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
   // D71/D72 "Số vụ/bị can CQĐT khởi tố mới" — TRỎ THẲNG vào ô TỔNG cột C6/C7 trên sheet "Biểu B10"
   // (qua b10RefCua, cùng cơ chế đã dùng cho cột "Kiểm tra" liên biểu) thay vì ghi số JS tĩnh —
@@ -12627,7 +12749,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const vuGQMap  = new Map();   // vụ "ra" trong kỳ (giải quyết / chuyển đi / trả đi)
   for (const gd of THU_TU_GIAI_DOAN) {
     const d = baoCao[gd].ds;
-    [...(d.khoiToTrucTiep||[]),...(d.tachVu||[]),...(d.chuyenDen||[]),...(d.traVe||[]),...(d.phucHoi||[]),...(d.nhanLai||[])]
+    [...(d.khoiToTrucTiep||[]),...(d.tachVu||[]),...(d.chuyenDen||[]),...(d.traVe||[]),...(d.phucHoi||[]),...(d.nhanLai||[]),...(d.huyDieuTraLai||[])]
       .forEach(v => { if (!vuMoiMap.has(v.id)) vuMoiMap.set(v.id, {...v, _gdMoi: gd}); });
     (d.tonHienTai||[]).forEach(v => { if (!vuTonMap.has(v.id)) vuTonMap.set(v.id, {...v, _gd: gd}); });
     [...(d.chuyenDi||[]),...(d.traDi||[]),...(d.nhapVu||[]),
@@ -12896,9 +13018,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // liệu" ở dưới) để "Tổng thụ lý" (C3/C33/C60) và "Cân đối số liệu" luôn tính TRÊN CÙNG 1 tập
   // nguồn, không lệch nhau. "DS bổ sung BC" (2026-08-03) — CHỈ ảnh hưởng tổng BỊ CAN (cột "Đếm vụ"
   // của sheet đó luôn rỗng nên mkSfVu/SUM cột A vẫn ra 0 cho phần Vụ, không đụng Tổng thụ lý — Vụ).
-  const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT"];
-  const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT"];
-  const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX"];
+  const DT_VAO = ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS huỷ ĐT lại ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT"];
+  const TT_VAO = ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS huỷ ĐT lại TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT"];
+  const XX_VAO = ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS huỷ ĐT lại XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX"];
   // Bug đã sửa (2026-08-04, 3 vòng) — C7-C24 trước đây chỉ dò "DS khởi tố ĐT"/"DS phục hồi ĐT" nên
   // bỏ sót bị can mới khởi tố lần đầu nhưng vào 1 vụ đã mở từ trước. Vòng 1 định vá bằng "DS bổ
   // sung BC ĐT" (dò theo sự kiện riêng "bo_sung_bican") — Dũng chỉ ra sự kiện đó CHỈ mới có từ
@@ -13542,6 +13664,16 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
         bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
       };
     }),
+    // Huỷ án — điều tra lại (2026-09-10, HuyDieuTraLaiModal) — vụ đã có kết quả bị Toà cấp trên
+    // huỷ để điều tra lại → luôn "vào" giai đoạn Điều tra.
+    _thRow("— Huỷ án điều tra lại (Toà cấp trên huỷ)", gd => {
+      const sn = `DS huỷ ĐT lại ${_thGs(gd)}`;
+      const vuArr = baoCao[gd].ds.huyDieuTraLai || [];
+      return {
+        vu: { formula: _thSumA(sn), result: baoCao[gd].soMoi.huyDieuTraLai ?? 0 },
+        bc: { formula: demBcSheetM([sn]), result: bcCountVuArr(vuArr) },
+      };
+    }),
     // Bị can bổ sung vào vụ ĐÃ CÓ (2026-08-03) — KHÁC HẲN các dòng trên: không có "Vụ" tương ứng
     // (vu luôn 0 — không phải 1 vụ mới "vào"), chỉ cộng vào cột Bị can. Đếm trực tiếp .length (mỗi
     // entry ĐÚNG 1 bị can, không đi qua bcCountVuArr vì không có _soBiCan/vụ — xem vuBiCanTuLogDocs).
@@ -13557,14 +13689,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       const gs = _thGs(gd);
       const khoiToSheets = [`DS khởi tố ${gs}`, `DS phục hồi ${gs}`];
       const khacSheets = [
-        `DS phục hồi TĐC ${gs}`, `DS nhận lại CĐ ${gs}`,
+        `DS phục hồi TĐC ${gs}`, `DS nhận lại CĐ ${gs}`, `DS huỷ ĐT lại ${gs}`,
         `DS vụ tách ${gs}`,
         ...(gd !== "dieu_tra" ? [`DS chuyển đến ${gs}`] : []),
         ...(gd !== "xet_xu" ? [`DS trả về ${gs}`] : []),
         `DS bổ sung BC ${gs}`,
       ];
       const khoiToArr = baoCao[gd].ds.khoiToTrucTiep || [];
-      const khacArr = [...(baoCao[gd].ds.phucHoi||[]), ...(baoCao[gd].ds.nhanLai||[]), ...(baoCao[gd].ds.tachVu||[]), ...(baoCao[gd].ds.chuyenDen||[]), ...(baoCao[gd].ds.traVe||[])];
+      const khacArr = [...(baoCao[gd].ds.phucHoi||[]), ...(baoCao[gd].ds.nhanLai||[]), ...(baoCao[gd].ds.huyDieuTraLai||[]), ...(baoCao[gd].ds.tachVu||[]), ...(baoCao[gd].ds.chuyenDen||[]), ...(baoCao[gd].ds.traVe||[])];
       const khoiToBcF = gd === "dieu_tra" ? demBcSheetKy(khoiToSheets, dsKyTenTrongBaoCao) : demBcSheetM(khoiToSheets);
       const khoiToBcR = gd === "dieu_tra" ? bcCountVuArrKy(khoiToArr) : bcCountVuArr(khoiToArr);
       const boSungBcR = (baoCao[gd].ds.boSungBiCan || []).length;
@@ -13855,9 +13987,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // đã ĐỔI sang SUMIF trực tiếp "DS tồn cuối kỳ {gs}" từ 2026-08-06 (xem TEN_SHEET_TON_NAY_GD),
     // không còn dùng VAO_SHEETS_GD/hằng số song song VAO_TON_GD (đã bỏ hẳn) nữa.
     const VAO_SHEETS_GD = {
-      dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT (tồn)"],
-      truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT (tồn)"],
-      xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX (tồn)"],
+      dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS huỷ ĐT lại ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT (tồn)"],
+      truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS huỷ ĐT lại TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT","DS bổ sung BC TT (tồn)"],
+      xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS huỷ ĐT lại XX","DS vụ tách XX","DS chuyển đến XX","DS bổ sung BC XX (tồn)"],
     };
     const RA_SHEETS_GD = {
       dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
@@ -13875,7 +14007,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
       const arrs = [
         (d.khoiToTrucTiep||[]).filter(v => v.nguon !== "phuc_hoi_dieu_tra"),
         (d.khoiToTrucTiep||[]).filter(v => v.nguon === "phuc_hoi_dieu_tra"),
-        d.phucHoi||[], d.nhanLai||[],
+        d.phucHoi||[], d.nhanLai||[], d.huyDieuTraLai||[],
         d.tachVu||[],
       ];
       if (gd !== "dieu_tra") arrs.push(d.chuyenDen||[]);
@@ -14192,6 +14324,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // chọn tay lúc TẠO vụ mới, còn đây là sự kiện log thật khi TÁI KÍCH HOẠT 1 vụ đã có sẵn).
     add(`DS phục hồi TĐC ${gs}`, d.phucHoi||[], ["Ngày phục hồi", "Số QĐ"], _ngaySoQD);
     add(`DS nhận lại CĐ ${gs}`, d.nhanLai||[], ["Ngày nhận lại", "Số QĐ"], _ngaySoQD);
+    // "DS huỷ ĐT lại {gs}" (2026-09-10, HuyDieuTraLaiModal) — vụ đã có kết quả bị Toà cấp trên huỷ
+    // bản án/QĐ để điều tra lại. LUÔN denGiaiDoan="dieu_tra" nên chỉ "DS huỷ ĐT lại ĐT" có dữ liệu
+    // (TT/XX tạo cho đối xứng, luôn rỗng). Cột "Từ GĐ" = giai đoạn vụ đang có LÚC BỊ HUỶ (đọc
+    // _log.tuGiaiDoan) — để tiện đối chiếu tay dòng "Toà cấp trên huỷ" của Biểu 2/Biểu 3 (chưa wire
+    // công thức D-code — theo yêu cầu Dũng, dùng sheet này theo dõi thủ công).
+    add(`DS huỷ ĐT lại ${gs}`, d.huyDieuTraLai||[], ["Ngày huỷ án", "Số QĐ huỷ", "Từ GĐ"],
+      v => [fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || "",
+            NHAN_GIAI_DOAN[v._log?.tuGiaiDoan] || v._log?.tuGiaiDoan || ""]);
 
     // Vụ tách ra trong kỳ, đếm vụ tách = số dòng (mỗi dòng là 1 vụ mới xuất hiện)
     add(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);
@@ -18675,6 +18815,7 @@ async function tinhPhanCongTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
       gomTheoKsv(moi, d.traVe);
       gomTheoKsv(moi, d.phucHoi);
       gomTheoKsv(moi, d.nhanLai);
+      gomTheoKsv(moi, d.huyDieuTraLai);
       gomTheoKsv(moi, d.boSungBiCan, true); // chỉ +1 BC, không tính "1 vụ mới"
 
       gomTheoKsv(giaiQuyet, d.chuyenDi);

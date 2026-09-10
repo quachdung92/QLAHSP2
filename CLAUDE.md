@@ -2,6 +2,84 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Trường hợp mới "Huỷ án — điều tra lại" (vụ đã xét xử/chuyển đi/đình chỉ/án huỷ bị Toà cấp trên huỷ để điều tra lại) (2026-09-10, `qlahs-sup.html` + Supabase, nhánh `main`, RPC + CHECK constraint ĐÃ CHẠY lên Supabase thật — JS CHƯA commit/deploy)
+
+Theo yêu cầu Dũng: thêm 1 trường hợp mới, áp dụng cho vụ án ĐÃ có kết quả giải quyết bị Toà án cấp
+trên (giám đốc thẩm/tái thẩm) **huỷ bản án/quyết định ĐỂ ĐIỀU TRA LẠI** → vụ quay lại giai đoạn
+**Điều tra** (LUÔN cố định — Dũng chốt qua `AskUserQuestion`, KHÁC `NhanLaiChuyenDiModal` cho chọn
+giai đoạn). Phạm vi trạng thái áp dụng (Dũng chọn): **`da_xet_xu` / `chuyen_di` / `dinh_chi` /
+`an_huy`** (KHÔNG `tam_dinh_chi` — vụ đó dùng "Phục hồi"). Biểu 2/3: Dũng nói *"biểu 2 biểu 3 đã có
+dòng này, tạm thời chưa hoàn thiện biểu, tôi cần sheet riêng để tiện theo dõi"* → KHÔNG wire công
+thức D-code riêng lần này, chỉ tạo **sheet Excel riêng** + giữ Biểu 2 cân đối (xem D62/D69 dưới).
+
+**Sự kiện log MỚI `loaiSuKien="huy_dieu_tra_lai"`** — `denGiaiDoan="dieu_tra"` (luôn),
+`tuGiaiDoan` = giai đoạn vụ đang có lúc bị huỷ, `soQuyetDinh` = số QĐ giám đốc thẩm/tái thẩm huỷ án.
+KHÔNG xoá sự kiện `hoan_thanh` gốc (vụ THẬT SỰ đã được xét xử — giữ lịch sử; khác
+`XoaHinhThucGiaiQuyetModal` xoá luôn `hoan_thanh`).
+
+**SQL migration `supabase/add_huy_dieu_tra_lai_2026-09-10.sql` — ĐÃ CHẠY THẬT lên Supabase** (project
+`eutatszoaseixchvjbtg`, qua Session pooler, mật khẩu chỉ qua env var, script tạm trong scratchpad đã
+gỡ; KHÔNG backup được vì `gh` không có trong môi trường phiên này — migration chỉ nới CHECK
+constraint + `create or replace` 1 hàm SQL `stable` thuần đọc, 0 mutation dữ liệu, và có backup theo
+lịch hằng đêm):
+1. Nới `lichsuChuyenGiaiDoan_loaiSuKien_check` — thêm `'huy_dieu_tra_lai'`. **PHÁT HIỆN QUAN TRỌNG**:
+   CHECK constraint THẬT trên Supabase có thêm giá trị `'bo_sung_bican_hoi_to'` KHÔNG có trong bất
+   kỳ file migration nào của repo (1 phiên khác đã thêm, 0 dòng dữ liệu dùng) — đã GIỮ LẠI trong
+   danh sách mới để không phá phiên đó.
+2. `create or replace function "layTrangThaiVuTaiKy"` — thêm `'huy_dieu_tra_lai'` vào mệnh đề
+   `where l."loaiSuKien" in (...)` của CTE `log_loc` (bản gốc = `fix_tach_vu_vutachra_2026-09-06.sql`,
+   giữ nguyên fix `vuTachRa`). BẮT BUỘC: không thêm thì RPC coi `hoan_thanh` là mới nhất → vụ
+   huỷ-điều-tra-lại HOÀN TOÀN VÔ HÌNH trong "tồn" (RPC = nguồn tồn DUY NHẤT). `layTrangThaiBiCanTaiKy`
+   KHÔNG đổi (chỉ giao vu_ton với bị can có `khoi_to_bican` — vụ đã xét xử thì bị can đã có sẵn).
+   **Kiểm chứng round-trip trên Supabase thật (kỳ 09/2026)**: INSERT 1 sự kiện `huy_dieu_tra_lai`
+   test cho 1 vụ `da_xet_xu` (`QLVA_E01.53_2309_0010`) → RPC đổi đúng `dangTon=true,
+   giaiDoan='dieu_tra', loaiSuKienCuoi='huy_dieu_tra_lai'`, tồn ĐT 334→335, `layTrangThaiBiCanTaiKy`
+   trả 1 bị can của vụ đó; DELETE sự kiện test → về đúng 334, 0 sót. KHÔNG đụng bản ghi `vuan`.
+
+**JS `qlahs-sup.html` (CHƯA commit/deploy)** — mirror y hệt `nhanLai` (`nhan_lai_chuyen_di`) ở MỌI
+nơi, thêm 1 key `huyDieuTraLai` song song:
+- `NHAN_SU_KIEN.huy_dieu_tra_lai = "Huỷ án — điều tra lại"`.
+- `HuyDieuTraLaiModal` (đặt sau `NhanLaiChuyenDiModal`) — Ngày huỷ án / Số QĐ huỷ / Hạn điều tra mới
+  (tự tính Điều 172.1 từ Ngày huỷ, sửa tay) / Ghi chú. `batch.update(vuan)`: `trangThai:
+  "dang_giai_quyet"`, `coQuanThuLy: "dieu_tra"`, xoá `ngayQuyetDinh`/`kyHoanThanh`/`ngayQuyetDinhUocTinh`/
+  `noiChuyenDen` + field `FIELD_SO_QD_HOAN_THANH[trangThai]` (giống `XoaHinhThucGiaiQuyetModal`).
+  Nút "↩ Huỷ án — điều tra lại" trong `ChiTietPanel` cho 4 trạng thái ở trên.
+- `tinhBaoCaoKyTuLog`: query `huy_dieu_tra_lai` (denGiaiDoan=gd) → `dsHuyDieuTraLaiArr` →
+  `soMoi.tong` + `soMoi.huyDieuTraLai` + `ds.huyDieuTraLai`. `_soBiCan` tính qua `vuAnTuLogDocs`.
+- `NHOM_VAO_BAO_CAO` + `collectVuIdsFromBaoCao` keys + `locBoTraDTBSQuayVongCungKy` (delta line) +
+  `BangBaoCaoChiTiet` (dòng "— Huỷ án điều tra lại (Toà cấp trên huỷ)") + "Tổng số mới" layDs.
+- `tinhBieu10`: `dt_moi`/`tt_moi`/`xx_moi` += `d.huyDieuTraLai` (chỉ ĐT có dữ liệu — huỷ-ĐT-lại luôn
+  denGiaiDoan=dieu_tra; TT/XX thêm cho đối xứng, luôn rỗng) → chỉ ảnh hưởng C3/C33/C60 "Tổng thụ lý",
+  KHÔNG đụng C6/C7 "Khởi tố mới". `_vuVaoKyNayIds`/`_ttVaoKyNayIds`/`moiIds` (dt_boSungBc scoping) +=
+  huyDieuTraLai.
+- **`tinhBieu2` D62/D69** — GỘP thêm `_sumSheetA("DS huỷ ĐT lại ĐT")` / `demBcSheet(...)` vào công
+  thức + result. LÝ DO BẮT BUỘC: D154/D156 (tồn cuối ĐT) đọc thẳng RPC `"DS tồn cuối kỳ ĐT"` nên +N
+  khi có huỷ-ĐT-lại; D77 (= ...+D62+...) phải +N tương ứng nếu không đẳng thức kiểm tra
+  `D154=D77-D83-D134` báo ✗ giả. D62 vốn ĐÃ là bucket catch-all "vụ tồn cũ quay lại xử lý điều tra"
+  (đã gộp `phuc_hoi` TĐC + nguồn `phuc_hoi_dieu_tra`). **Khi Dũng wire dòng D-code riêng "Toà cấp
+  trên huỷ án" theo mẫu ngành → phải TÁCH khoản này ra khỏi D62 để không đếm đúp.** `tinhBieu3` (XX)
+  KHÔNG đụng — vụ đã rời XX ở kỳ trước (đã tính đã xét xử), kỳ này không có chuyển động XX nào.
+- Excel: sheet mới **"DS huỷ ĐT lại {ĐT/TT/XX}"** (`d.huyDieuTraLai`, cột phụ "Ngày huỷ án"/"Số QĐ
+  huỷ"/"Từ GĐ" — "Từ GĐ" = `_log.tuGiaiDoan` để đối chiếu tay dòng Biểu 3). Thêm vào `DT_VAO`/
+  `TT_VAO`/`XX_VAO` (Tổng thụ lý C3/C4 + TK tội danh `ALL_VAO` tự ăn theo), `VAO_SHEETS_GD` (Cân đối
+  số liệu), `vaoArraysGd`, `THVao` (qua DT_VAO), `_thRow` "— Huỷ án điều tra lại (Toà cấp trên huỷ)"
+  + `khacSheets`/`khacArr` của "Tổng số mới" trong sheet "Tổng hợp báo cáo".
+- `PhanCong` `gomTheoKsv(moi, d.huyDieuTraLai)`.
+- `tinhBaoCaoTongHopNhieuKy`: KHÔNG aggregate `ds.huyDieuTraLai`/`soMoi.huyDieuTraLai` riêng (giống
+  gap có sẵn của `phucHoi`/`nhanLai` — chỉ `soMoi.tong` được cộng dồn qua `SO_MOI_TRUONG_TONG`, đủ
+  để "Tổng số mới"/"Tồn cuối kỳ" cân đối; báo cáo tổng hợp nhiều kỳ sẽ thiếu dòng chi tiết
+  "Huỷ án điều tra lại" — cùng TODO với phucHoi/nhanLai).
+
+**Đã kiểm chứng**: compile-check `@babel/preset-react` sạch (1 block, 1.31M ký tự). Test cô lập 6/6
+(`_idVuTraDTBSQuayVong` KHÔNG đánh dấu vụ huỷ-ĐT-lại là quay vòng; `locBoTraDTBSQuayVongCungKy` giữ
+nguyên; soMoi.tong + tổng BC mới cộng đúng; quay vòng traVe→chuyenDi net-0 vẫn hoạt động). RPC
+round-trip trên Supabase thật (ở trên). **CHƯA kiểm chứng qua UI thật / Excel thật** (phiên này
+không có login) — Dũng cần: (1) mở 1 vụ Đã xét xử trên `qlahs-sup.web.app`, bấm "↩ Huỷ án — điều tra
+lại", xác nhận vụ về Điều tra/Đang giải quyết + Lịch sử có sự kiện mới + sự kiện "Hoàn thành" cũ vẫn
+còn; (2) xuất Excel kỳ đó, xác nhận sheet "DS huỷ ĐT lại ĐT" có đúng vụ đó, "Cân đối số liệu" ĐT
+Chênh lệch = 0, Biểu 2 cột "Kiểm tra" KHÔNG phát sinh "✗" mới ở D154/D156/D77/D79; (3) đối chiếu
+"Tồn cuối kỳ" ĐT trên màn hình Kỳ báo cáo tăng đúng +1/vụ huỷ-ĐT-lại.
+
 ## Biểu 4 — sheet mới "Thống kê kết quả xét xử sơ thẩm hình sự đối với các bị cáo" (mẫu ngành B04) trong Xuất Excel báo cáo tháng (2026-09-08, `qlahs-sup.html`, nhánh `main`)
 
 Theo yêu cầu Dũng (`@Import_template_Bieu_10302.xlsx` = mẫu ngành B04): thêm sheet **"Biểu 4"** vào

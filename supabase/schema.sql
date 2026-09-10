@@ -282,7 +282,8 @@ create table "lichsuChuyenGiaiDoan" (
                              'khoi_to_vu','khoi_to_bican','chuyen_giai_doan','tra_ho_so',
                              'gia_han_dieu_tra','phuc_hoi','hoan_thanh','tach_vu','nhap_vu',
                              'duoc_nhap_vu','giao_nhan_ho_so','sua_thong_tin',
-                             'nhan_lai_chuyen_di','bo_sung_bican'
+                             'nhan_lai_chuyen_di','bo_sung_bican','bo_sung_bican_hoi_to',
+                             'huy_dieu_tra_lai'
                              -- 'nhan_lai_chuyen_di' (2026-08-01): NhanLaiChuyenDiModal — nhận lại
                              -- 1 vụ đã "Chuyển đi" (hoan_thanh/chuyen_di), chọn lại giai đoạn tiếp
                              -- tục xử lý qua field denGiaiDoan đã có sẵn ở cột dưới.
@@ -291,6 +292,14 @@ create table "lichsuChuyenGiaiDoan" (
                              -- khác) cần ghi thêm 1 "vào" riêng ở tầng Tổng thụ lý/Cân đối số liệu,
                              -- tránh lệch âm thầm khi vụ sau đó rời giai đoạn (xem
                              -- add_bo_sung_bican_2026-08-03.sql để biết đầy đủ bối cảnh).
+                             -- 'bo_sung_bican_hoi_to': 1 phiên làm việc khác thêm vào CHECK
+                             -- constraint THẬT trên Supabase (KHÔNG có file migration trong repo,
+                             -- phát hiện 2026-09-10) — giữ lại để không phá phiên đó.
+                             -- 'huy_dieu_tra_lai' (2026-09-10): HuyDieuTraLaiModal — vụ đã có kết
+                             -- quả giải quyết bị Toà cấp trên (giám đốc thẩm/tái thẩm) HUỶ bản án/
+                             -- QĐ để ĐIỀU TRA LẠI → về giai đoạn Điều tra. denGiaiDoan luôn
+                             -- 'dieu_tra', tuGiaiDoan = giai đoạn lúc bị huỷ. Đã thêm vào RPC
+                             -- layTrangThaiVuTaiKy (add_huy_dieu_tra_lai_2026-09-10.sql).
                              -- 'ket_luan_dieu_tra'/'ket_luan_dieu_tra_bo_sung'/'cao_trang'/
                              -- 'cao_trang_bo_sung' CỐ Ý KHÔNG đưa vào — dead code, chưa từng
                              -- được ghi bởi code thật (đã xác nhận qua audit toàn bộ write-site)
