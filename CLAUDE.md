@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## ✅ HOÀN TẤT — Sửa bug thật: D293/D297 Biểu 2 (Kết thúc truy tố) dùng tiêu chí "lần đầu" khác D93/D96 (2026-09-18, `qlahs-sup.html`, nhánh `main`, CHƯA commit/deploy)
+## ✅ HOÀN TẤT — Sửa bug thật: D293/D297 Biểu 2 (Kết thúc truy tố) dùng tiêu chí "lần đầu" khác D93/D96 (2026-09-18, `qlahs-sup.html`, nhánh `main`, commit `2bd4cb0`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
 
 Dũng hỏi rà cấu trúc "Trong đó — trả hồ sơ ĐTBS kỳ trước" giữa "Kết thúc điều tra" (D92-99, ĐT→TT)
 và "Kết thúc truy tố" (D292-299, TT→XX) — xác nhận cấu trúc ĐÃ tồn tại đối xứng ở cả 2 (cùng cơ chế
@@ -38,8 +38,11 @@ hệ thống — nếu có vụ cụ thể cần ghi nhận việc này, phải 
 cáo (lưu ý: dòng phản ánh đúng ý "VKS cấp trên phân công VKS cấp dưới" là **D294/D298**, KHÔNG phải
 D293/D297 — xem mục "Biểu 2 TT: vụ 'chuyển đi' tính là truy tố..." 2026-09-06).
 
-Compile-check qua `@babel/core`+`@babel/preset-react` — sạch. **Chưa commit/deploy** — chờ Dũng xác
-nhận sau khi đọc kết quả kiểm chứng ở trên.
+Compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Đã commit + push `main` (`2bd4cb0`)
+theo yêu cầu Dũng, rồi deploy `qlahs-sup.web.app` (HTTP 200) và `qlahsp2.web.app` production (HTTP
+200) — smoke test cả 2 URL sau deploy đều tải sạch. Chưa xuất Excel thật để đối chiếu D293/D297
+qua UI (không có tài khoản đăng nhập trong phiên này) — theo kiểm chứng SQL ở trên, không kỳ vọng
+số liệu đổi ở dữ liệu hiện có.
 
 ## Trường hợp mới "Huỷ án — điều tra lại" (vụ đã xét xử/chuyển đi/đình chỉ/án huỷ bị Toà cấp trên huỷ để điều tra lại) (2026-09-10, `qlahs-sup.html` + Supabase, nhánh `main`, RPC + CHECK constraint ĐÃ CHẠY lên Supabase thật — JS CHƯA commit/deploy)
 
