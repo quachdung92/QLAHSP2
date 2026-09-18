@@ -12896,12 +12896,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   } catch (e) { console.warn("Biểu 2/3 + B10 C58/C59: không tải được lịch sử chuyển/trả giai đoạn —", e.message); }
   const _tLog = (vu) => { const t = vu._log?.thoiDiemGhi; if (!t) return 0; const ms = t.toMillis ? t.toMillis() : new Date(t).getTime(); return isNaN(ms) ? 0 : ms; };
   const _laLanDauChuyenToi = (vu, denGD) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); return !ls.some(e => e.loaiSuKien === "chuyen_giai_doan" && e.denGiaiDoan === denGD && e._t < t); };
-  const _chuaTungTraVeDT = (vu) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); return !ls.some(e => e.loaiSuKien === "tra_ho_so" && e.denGiaiDoan === "dieu_tra" && e._t < t); };
   const _laTrucTiepVaoTT = (vu) => { const ls = lichSuCTMap.get(vu.id) || []; const t = _tLog(vu); let g = null; for (const e of ls) { if (e._t < t && (!g || e._t > g._t)) g = e; } if (!g) return true; return !(g.loaiSuKien === "tra_ho_so" && g.denGiaiDoan === "truy_to"); };
   const _dtCDIds = new Set((baoCao.dieu_tra.ds.chuyenDi || []).map(v => v.id));
   const _ttCDIds = new Set((baoCao.truy_to.ds.chuyenDi || []).map(v => v.id));
   const dtChuyenDi_LanDau = (baoCao.dieu_tra.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "truy_to"));
-  const ttChuyenDi_LanDau = (baoCao.truy_to.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "xet_xu") && _chuaTungTraVeDT(vu) && !vu.uyQuyenXetXu);
+  // Bug đã sửa (2026-09-18, Dũng xác nhận có vụ "Uỷ quyền xét xử" thật đang bị tính nhầm): trước đây
+  // lọc thêm `_chuaTungTraVeDT(vu) && !vu.uyQuyenXetXu` — 2 điều kiện này vốn viết cho C36/C37 CŨ
+  // của Biểu B10 (`588bd84`, "loại vụ uỷ quyền xét xử"), nhưng B10 đã đổi hẳn sang công thức khác
+  // (`tt_truToVu`, 2026-09-06) không còn dùng tới nữa — chỉ còn sót lại ở đây, làm D293/D297 (Biểu 2,
+  // "Trong đó — đã truy tố ở kỳ trước do trả hồ sơ ĐTBS") tính SAI: mọi vụ từng bị trả về Điều tra
+  // (ở BẤT KỲ thời điểm nào trước đó, không liên quan gì tới lần chuyển Xét xử này) hoặc có ghi chú
+  // "Uỷ quyền xét xử" đều bị loại khỏi "lần đầu" và gộp nhầm vào D293/D297, dù chưa từng trải qua
+  // round-trip TT→XX thật. Đã bỏ 2 điều kiện thừa, chỉ còn ĐÚNG 1 tiêu chí — khớp khuôn `dtChuyenDi_
+  // LanDau` (D93/D96, ĐT→TT) ở trên: có tồn tại 1 sự kiện `chuyen_giai_doan` tới Xét xử TRƯỚC lần
+  // này hay không.
+  const ttChuyenDi_LanDau = (baoCao.truy_to.ds.chuyenDi || []).filter(vu => _laLanDauChuyenToi(vu, "xet_xu"));
   const ttTraDi_TrucTiep = (baoCao.truy_to.ds.traDi || []).filter(vu => !_dtCDIds.has(vu.id) && _laTrucTiepVaoTT(vu));
   const xxTraDi_KhongLapKy = (baoCao.xet_xu.ds.traDi || []).filter(vu => !_ttCDIds.has(vu.id));
   const _ttTraDiTrucTiepIds = new Set(ttTraDi_TrucTiep.map(v => v.id));
@@ -13436,7 +13445,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   // (xanh, "✓ Tự động tính"); dòng "❓ Cần xác nhận công thức" (vàng — có manh mối nhưng chưa chắc);
   // còn lại "⚠ Chưa có dữ liệu — cần bổ sung tính năng" (xám — chờ nhập tay / làm tính năng sau).
   {
-    // `lichSuCTMap` + `_tLog`/`_laLanDauChuyenToi`/`_chuaTungTraVeDT`/`_laTrucTiepVaoTT` +
+    // `lichSuCTMap` + `_tLog`/`_laLanDauChuyenToi`/`_laTrucTiepVaoTT` +
     // `dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/`ttTraDi_TrucTiep`/`xxTraDi_KhongLapKy` ĐÃ dời LÊN
     // TRƯỚC lời gọi `tinhBieu10` (2026-08-30) — dùng chung cho B10 C58/C59. Ở đây chỉ dùng lại.
 

@@ -2,6 +2,45 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ✅ HOÀN TẤT — Sửa bug thật: D293/D297 Biểu 2 (Kết thúc truy tố) dùng tiêu chí "lần đầu" khác D93/D96 (2026-09-18, `qlahs-sup.html`, nhánh `main`, CHƯA commit/deploy)
+
+Dũng hỏi rà cấu trúc "Trong đó — trả hồ sơ ĐTBS kỳ trước" giữa "Kết thúc điều tra" (D92-99, ĐT→TT)
+và "Kết thúc truy tố" (D292-299, TT→XX) — xác nhận cấu trúc ĐÃ tồn tại đối xứng ở cả 2 (cùng cơ chế
+cột phụ "Lần đầu?" trên sheet nguồn), nhưng đào sâu công thức phát hiện `ttChuyenDi_LanDau` (nuôi
+D293/D297) có THÊM 2 điều kiện loại trừ mà `dtChuyenDi_LanDau` (D93/D96) không có: `_chuaTungTraVeDT`
+(vụ từng bị trả về Điều tra ở BẤT KỲ thời điểm nào trước đó, không liên quan gì tới lần chuyển Xét xử
+đang xét) và `!vu.uyQuyenXetXu` (loại vụ có ghi "Uỷ quyền xét xử").
+
+**Truy vết git blame**: 2 điều kiện này vốn viết cho C36/C37 CŨ của Biểu B10 (`588bd84`, nhánh
+`feature/tong-ke-dong`, "C36-C37 thêm loại vụ uỷ quyền xét xử") — nhưng B10 đã đổi hẳn sang công
+thức khác (`tt_truToVu`, xem mục "Sửa Tổng thụ lý Biểu 10..." 2026-09-06) không còn dùng tới nữa;
+chỉ còn SÓT LẠI ở `ttChuyenDi_LanDau` khi Biểu 2 được port sang hệ thống hiện tại (`0b4234b`), làm
+D293/D297 tính SAI — gộp nhầm vụ CHƯA TỪNG round-trip TT→XX vào bucket "trả hồ sơ ĐTBS" chỉ vì nó
+từng bị trả về Điều tra ở 1 giai đoạn hoàn toàn khác trong quá khứ, hoặc có ghi "Uỷ quyền xét xử".
+
+**Đã sửa**: bỏ 2 điều kiện thừa — `ttChuyenDi_LanDau` giờ chỉ còn ĐÚNG 1 tiêu chí, khớp khuôn
+`dtChuyenDi_LanDau`: có tồn tại 1 sự kiện `chuyen_giai_doan` tới Xét xử TRƯỚC lần này hay không. Xoá
+luôn hàm `_chuaTungTraVeDT` (không còn nơi nào dùng sau khi sửa).
+
+**Đã kiểm chứng bằng dữ liệu Supabase THẬT** (project `eutatszoaseixchvjbtg`, Session pooler, chỉ
+đọc — Dũng cấp mật khẩu DB trực tiếp trong chat, dùng qua biến môi trường lúc chạy script tạm trong
+scratchpad, không ghi vào file nào, gỡ sạch script sau khi xong). Không có tài khoản đăng nhập UI
+trong phiên này nên KHÔNG xuất được Excel thật — thay bằng tái tạo TAY chính xác logic
+`_laLanDauChuyenToi`/`_chuaTungTraVeDT` bằng SQL trên toàn bộ `lichsuChuyenGiaiDoan` thật, cho cả 3
+kỳ đang mở (07/2026, 08/2026, 09/2026): xác nhận **0/2242 vụ án hiện có `uyQuyenXetXu` khác rỗng**,
+và **0 vụ nào đổi phân loại "lần đầu"** giữa công thức CŨ và MỚI ở cả 3 kỳ — nghĩa là fix này HIỆN
+KHÔNG đổi bất kỳ số nào trên báo cáo đã xuất trước đó (an toàn tuyệt đối, không có rủi ro số liệu
+nhảy khi deploy), nhưng dọn đúng 1 rule sai/chết sẽ lộ ra ngay khi có vụ đầu tiên dùng ô "Uỷ quyền
+xét xử" hoặc từng bị trả hồ sơ về Điều tra trước khi lên Xét xử.
+
+**Lưu ý cho Dũng**: ô "Uỷ quyền xét xử" (ở "Sửa thông tin vụ án") hiện TRỐNG cho TOÀN BỘ vụ án trong
+hệ thống — nếu có vụ cụ thể cần ghi nhận việc này, phải nhập vào đúng ô đó thì mới phản ánh vào báo
+cáo (lưu ý: dòng phản ánh đúng ý "VKS cấp trên phân công VKS cấp dưới" là **D294/D298**, KHÔNG phải
+D293/D297 — xem mục "Biểu 2 TT: vụ 'chuyển đi' tính là truy tố..." 2026-09-06).
+
+Compile-check qua `@babel/core`+`@babel/preset-react` — sạch. **Chưa commit/deploy** — chờ Dũng xác
+nhận sau khi đọc kết quả kiểm chứng ở trên.
+
 ## Trường hợp mới "Huỷ án — điều tra lại" (vụ đã xét xử/chuyển đi/đình chỉ/án huỷ bị Toà cấp trên huỷ để điều tra lại) (2026-09-10, `qlahs-sup.html` + Supabase, nhánh `main`, RPC + CHECK constraint ĐÃ CHẠY lên Supabase thật — JS CHƯA commit/deploy)
 
 Theo yêu cầu Dũng: thêm 1 trường hợp mới, áp dụng cho vụ án ĐÃ có kết quả giải quyết bị Toà án cấp
