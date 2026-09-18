@@ -10199,12 +10199,20 @@ function locBoTraDTBSQuayVongCungKy(baoCao) {
 // cáo tổng hợp nhiều kỳ (TongHopNhieuKyModal). Bấm vào ô số → mở chi tiết vụ theo tội danh.
 // `boQuayVong`/`onDoiBoQuayVong` do CHA quản lý (để nút "Xuất Excel" ở cha dùng ĐÚNG cùng trạng
 // thái toggle — xuất file đã lọc khi BẬT). Không truyền → tự giữ state nội bộ (dự phòng).
-function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong }) {
+// `chiTinhLanDauB10`/`onDoiChiTinhLanDauB10` (2026-09-18, công tắc MỚI, riêng — xem CLAUDE.md mục
+// dự kiến B10 "lần đầu") — CÙNG pattern controlled/uncontrolled, nhưng KHÔNG ảnh hưởng bảng TRÊN
+// MÀN HÌNH này (`bc`, dựng từ baoCao/boQuayVong như cũ) — chỉ ảnh hưởng sheet "Biểu B10" khi cha
+// gọi `xuatBaoCaoThangExcel` với cờ này, vì `tinhBaoCaoKy`/on-screen table không tính B10.
+function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong, chiTinhLanDauB10: chiTinhLanDauB10Prop, onDoiChiTinhLanDauB10 }) {
   const [chiTiet, setChiTiet] = useState(null); // { nhan, ds }
   const [boQuayVongNoi, setBoQuayVongNoi] = useState(false);
   const dieuKhien = typeof onDoiBoQuayVong === "function";
   const boQuayVong = dieuKhien ? !!boQuayVongProp : boQuayVongNoi;
   const setBoQuayVong = dieuKhien ? onDoiBoQuayVong : setBoQuayVongNoi;
+  const [chiTinhLanDauB10Noi, setChiTinhLanDauB10Noi] = useState(false);
+  const dieuKhienLanDau = typeof onDoiChiTinhLanDauB10 === "function";
+  const chiTinhLanDauB10 = dieuKhienLanDau ? !!chiTinhLanDauB10Prop : chiTinhLanDauB10Noi;
+  const setChiTinhLanDauB10 = dieuKhienLanDau ? onDoiChiTinhLanDauB10 : setChiTinhLanDauB10Noi;
 
   const soVuQuayVong = useMemo(() => demVuTraDTBSQuayVong(baoCao), [baoCao]);
   // Số vụ quay vòng ĐTBS trọn vẹn trong kỳ theo TỪNG giai đoạn — luôn tính từ baoCao GỐC (kể cả
@@ -10236,6 +10244,18 @@ function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong
             : (soVuQuayVong > 0
                 ? `Có ${soVuQuayVong} vụ trả hồ sơ ĐTBS quay vòng trọn vẹn trong kỳ (VD: Toà trả Viện rồi Viện chuyển lại Toà cùng kỳ; hoặc Viện trả CQĐT rồi CQĐT kết thúc điều tra chuyển lại Viện cùng kỳ). Bật để không tính 2 chiều "vào"/"ra" — áp dụng cho cả bảng này lẫn file Excel xuất ra.`
                 : "Không có vụ trả hồ sơ ĐTBS nào quay vòng trọn vẹn trong kỳ này.")}
+        </span>
+      </div>
+      <div className="flex items-start gap-3 mb-2">
+        <CongTac checked={chiTinhLanDauB10} onChange={setChiTinhLanDauB10}
+          nhan="Biểu B10: chỉ tính 'lần đầu' (dự kiến)" mauBat="bg-indigo-600" />
+        <span className="text-xs text-slate-500 leading-snug">
+          Công tắc RIÊNG, KHÁC hẳn công tắc trên (chỉ nét-0 quay vòng CÙNG kỳ) — bật thì sheet
+          "Biểu B10" trong file Excel xuất ra (C25-27/C36-52 + Tổng thụ lý C3-5/C33-35/C60-62) loại
+          HẲN mọi vụ từng bị trả hồ sơ điều tra bổ sung (round-trip), bất kể quay lại cùng kỳ hay
+          khác kỳ — không tính vào "Đề nghị truy tố"/"Truy tố" cho tới khi vụ ĐẾN ĐÚNG giai đoạn đó
+          LẦN ĐẦU. KHÔNG ảnh hưởng bảng trên màn hình này (chỉ Excel), KHÔNG ảnh hưởng Biểu 2/3 hay
+          "Cân đối số liệu"/số tồn RPC. Dự kiến — Dũng chưa quyết dùng chế độ nào, mặc định TẮT.
         </span>
       </div>
       <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -10534,7 +10554,7 @@ function hangDsVuAn(v) {
 // vuChuaDL: { dieu_tra, truy_to, xet_xu } — mảng vụ trong tồn hiện tại chưa xác định được điều luật
 // (nguyên nhân gây lệch âm giữa B10 và báo cáo). Lệch dương = đúng thiết kế (1 vụ nhiều tội).
 // canhBao: chỉ cảnh báo khi có vụ chưa có điều luật (lệch âm thực sự), không cảnh báo lệch dương.
-function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new Map(), kyIdSetTrongBaoCao = null, vuKyKhoiToMap = new Map(), rpcTonList = null, rpcTonTruocList = null, ttTraDi_TrucTiep = null) {
+function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new Map(), kyIdSetTrongBaoCao = null, vuKyKhoiToMap = new Map(), rpcTonList = null, rpcTonTruocList = null, ttTraDi_TrucTiep = null, dtChuyenDi_LanDau = null, ttChuyenDi_LanDau = null, chiTinhLanDauB10 = false) {
   // Mặc định (không truyền) = báo cáo 1 kỳ, coi "trong kỳ này" = đúng ky.id. Báo cáo tổng hợp
   // nhiều kỳ (TongHopNhieuKyModal) truyền set đầy đủ id các kỳ đã gộp — xem xuatBaoCaoThangExcel.
   const _kyIdSet = kyIdSetTrongBaoCao || new Set([ky.id]);
@@ -10874,6 +10894,37 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   const NGUON_MOI_THAT_B10 = new Set(["an_khoi_to_moi", "tin_bao_khoi_to_len"]);
   const dtKhoiToMoiThat_b10 = (baoCao.dieu_tra.ds.khoiToTrucTiep || []).filter(v => NGUON_MOI_THAT_B10.has(v.nguon));
 
+  // ── Chế độ "lần đầu" (2026-09-18, toggle MỚI riêng B10 — dự kiến, KHÁC hẳn "Bỏ vụ trả ĐTBS quay
+  // vòng trong cùng kỳ" đã có: toggle đó chỉ nét-0 round-trip CÙNG kỳ, toggle này loại HẲN mọi vụ
+  // từng round-trip, bất kể kỳ nào). Khi bật: C25-27 (ĐT→TT)/C36-52 (TT→XX + breakdown) + Tổng thụ
+  // lý (C3/4/5, C33/34/35, C60/61/62) chỉ tính vụ "lần đầu" tới ĐÚNG giai đoạn đích đang xét — dùng
+  // LẠI đúng 2 tập `dtChuyenDi_LanDau`/`ttChuyenDi_LanDau` (per-stage-arrival, giống D93/96/293/297
+  // Biểu 2 vừa sửa hôm nay) — KHÔNG phải "chưa từng round-trip ở bất kỳ giai đoạn nào trong toàn bộ
+  // vòng đời vụ": 1 vụ từng bị trả về Điều tra (TT→ĐT) nhưng CHƯA TỪNG sang Xét xử thì khi sang Xét
+  // xử lần đầu vẫn tính "lần đầu" cho C36-52 (dù KHÔNG tính "lần đầu" cho C25-27 nếu nó round-trip
+  // ở ĐÚNG chặng ĐT→TT).
+  // "Trả về" (dt.traVe/tt.traVe) LUÔN LÀ round-trip theo định nghĩa (không có khái niệm "trả về lần
+  // đầu" — trả về nghĩa là đã từng rời đi trước đó) → loại HẲN khỏi "vào" của Tổng thụ lý. "Chuyển
+  // đến" (tt.chuyenDen/xx.chuyenDen, tức ĐT→TT/TT→XX qua chuyển giai đoạn) lọc còn đúng tập LanDau
+  // tương ứng (có thể là lần 2+ nếu vụ đã round-trip trả về rồi tiến lại).
+  const _dtLanDauIdsB10 = dtChuyenDi_LanDau ? new Set(dtChuyenDi_LanDau.map(v => v.id)) : null;
+  const _ttLanDauIdsB10 = ttChuyenDi_LanDau ? new Set(ttChuyenDi_LanDau.map(v => v.id)) : null;
+  const _dsDT_B10 = baoCao.dieu_tra.ds, _dsTT_B10 = baoCao.truy_to.ds, _dsXX_B10 = baoCao.xet_xu.ds;
+  // C25-27 (Đề nghị truy tố, ĐT→TT) — dân số nguồn thay bằng bản đã lọc lần đầu khi bật toggle.
+  const dt_dntt_NguonB10 = (chiTinhLanDauB10 && _dtLanDauIdsB10)
+    ? (_dsDT_B10.chuyenDi || []).filter(vu => _dtLanDauIdsB10.has(vu.id)) : (_dsDT_B10.chuyenDi || []);
+  // C36-52 (Truy tố, TT→XX) — phần `tt.hoanThanh.chuyen_di` ("VKS cấp trên phân công") GIỮ NGUYÊN
+  // đủ (không có khái niệm round-trip riêng, xem ghi chú tt_truToVu/tt_truToBc bên dưới).
+  const tt_chuyenDi_DungB10 = (chiTinhLanDauB10 && _ttLanDauIdsB10)
+    ? (_dsTT_B10.chuyenDi || []).filter(vu => _ttLanDauIdsB10.has(vu.id)) : (_dsTT_B10.chuyenDi || []);
+  // Tổng thụ lý (C3/4/5, C33/34/35, C60/61/62) — "vào" điều chỉnh theo toggle.
+  const dt_traVe_ThuLyB10 = chiTinhLanDauB10 ? [] : (_dsDT_B10.traVe || []);
+  const tt_chuyenDen_ThuLyB10 = (chiTinhLanDauB10 && _dtLanDauIdsB10)
+    ? (_dsTT_B10.chuyenDen || []).filter(vu => _dtLanDauIdsB10.has(vu.id)) : (_dsTT_B10.chuyenDen || []);
+  const tt_traVe_ThuLyB10 = chiTinhLanDauB10 ? [] : (_dsTT_B10.traVe || []);
+  const xx_chuyenDen_ThuLyB10 = (chiTinhLanDauB10 && _ttLanDauIdsB10)
+    ? (_dsXX_B10.chuyenDen || []).filter(vu => _ttLanDauIdsB10.has(vu.id)) : (_dsXX_B10.chuyenDen || []);
+
   for (const D of tatCaDieuLuatChuan) {
     if (!D) continue;
     const dm = danhMucMap[D];
@@ -10886,9 +10937,12 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // riêng dt.khoiToTrucTiep, xem dưới), giữ đúng 4 nguồn cố định theo mẫu ngành B10
     // (bieu_B10_mo_ta.md mục 3.1). huyDieuTraLai luôn denGiaiDoan="dieu_tra" nên chỉ có ở dt_moi
     // (tt/xx thêm cho đối xứng, luôn rỗng).
-    const dt_moi = [...(dt.khoiToTrucTiep||[]),...(dt.tachVu||[]),...(dt.chuyenDen||[]),...(dt.traVe||[]),...(dt.phucHoi||[]),...(dt.nhanLai||[]),...(dt.huyDieuTraLai||[])];
-    const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...(tt.chuyenDen||[]),...(tt.traVe||[]),...(tt.phucHoi||[]),...(tt.nhanLai||[]),...(tt.huyDieuTraLai||[])];
-    const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...(xx.chuyenDen||[]),...(xx.traVe||[]),...(xx.phucHoi||[]),...(xx.nhanLai||[]),...(xx.huyDieuTraLai||[])];
+    // dt_traVe_ThuLyB10/tt_chuyenDen_ThuLyB10/tt_traVe_ThuLyB10/xx_chuyenDen_ThuLyB10 (2026-09-18,
+    // toggle "lần đầu") thay thế đúng 4 thành phần round-trip-nhạy-cảm — khi tắt, y hệt dt.traVe/
+    // tt.chuyenDen/tt.traVe/xx.chuyenDen như trước (không đổi hành vi mặc định).
+    const dt_moi = [...(dt.khoiToTrucTiep||[]),...(dt.tachVu||[]),...(dt.chuyenDen||[]),...dt_traVe_ThuLyB10,...(dt.phucHoi||[]),...(dt.nhanLai||[]),...(dt.huyDieuTraLai||[])];
+    const tt_moi = [...(tt.khoiToTrucTiep||[]),...(tt.tachVu||[]),...tt_chuyenDen_ThuLyB10,...tt_traVe_ThuLyB10,...(tt.phucHoi||[]),...(tt.nhanLai||[]),...(tt.huyDieuTraLai||[])];
+    const xx_moi = [...(xx.khoiToTrucTiep||[]),...(xx.tachVu||[]),...xx_chuyenDen_ThuLyB10,...(xx.traVe||[]),...(xx.phucHoi||[]),...(xx.nhanLai||[]),...(xx.huyDieuTraLai||[])];
 
     // ── Tồn kỳ trước / kỳ này (2026-08-28) — CHỈ từ RPC as-of, base 100% kyThongKe (xem đầu hàm).
     // rpcTonList luôn có (caller throw nếu RPC lỗi); rpcTonTruocList = null ⇒ kỳ đầu tiên → tồn kỳ
@@ -10958,8 +11012,8 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const C23 = dt_ktBcMoiKy.filter(bc => bc.loaiBiCan !== "phap_nhan" && bc.quocTich && bc.quocTich !== "Việt Nam").length;
     const C24 = dt_ktBcMoiKy.filter(bc => bc.loaiBiCan !== "phap_nhan" && bc.taiPham && bc.taiPham !== "khong").length;
 
-    const dt_dnttBc = bcCoD(dt.chuyenDi || [], D);
-    const C25 = vuCoD(dt.chuyenDi || [], D).length;
+    const dt_dnttBc = bcCoD(dt_dntt_NguonB10, D);
+    const C25 = vuCoD(dt_dntt_NguonB10, D).length;
     const C26 = dt_dnttBc.length;
     const C27 = dt_dnttBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
@@ -11001,7 +11055,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // THQCT, KSXX sơ thẩm") giờ CŨNG tính là "đã truy tố" (xem Biểu 2 D292/D296 ở tinhBieu2) — gộp
     // thêm vào đây để giữ đúng liên biểu `D292_10238-D293_10238=C36`/`D296_10238-D297_10238=C37`
     // (quy_tac_bieu_10.md) không bị lệch do D292/D296 tăng mà C36/C37 không đổi.
-    const _ttTruToNguon = [...(tt.chuyenDi || []), ...(tt.hoanThanh?.chuyen_di || [])];
+    const _ttTruToNguon = [...tt_chuyenDi_DungB10, ...(tt.hoanThanh?.chuyen_di || [])];
     const tt_truToBc = bcCoD(_ttTruToNguon, D);
     const tt_truToVu = vuCoD(_ttTruToNguon, D);
     const C36 = tt_truToVu.length;
@@ -12684,7 +12738,7 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
 // dsKyGop: chỉ truyền khi xuất báo cáo TỔNG HỢP NHIỀU KỲ (TongHopNhieuKyModal) — mảng các kỳ
 // {id, tenKy} thật đã gộp vào báo cáo này, để biết "bị can khởi tố mới TRONG (các) kỳ này" đúng
 // cho khối C7-C24. Không truyền (mặc định) = báo cáo 1 kỳ, tự dùng đúng [ky].
-async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) {
+async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, chiTinhLanDauB10 = false) {
   const wb = new ExcelJS.Workbook();
   const dsKyTrongBaoCao = dsKyGop || [ky];
   const kyIdSetTrongBaoCao = new Set(dsKyTrongBaoCao.map(k => k.id));
@@ -12920,7 +12974,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
   const _ttLanDauIds = new Set(ttChuyenDi_LanDau.map(v => v.id));
   const _xxKhongLapKyIds = new Set(xxTraDi_KhongLapKy.map(v => v.id));
 
-  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, tt_boSungBc: b10TtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList, ttTraDi_TrucTiep);
+  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, tt_boSungBc: b10TtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList, ttTraDi_TrucTiep, dtChuyenDi_LanDau, ttChuyenDi_LanDau, chiTinhLanDauB10);
   // Dòng Tổng
   const b10Tong = Array(B10_HEADER_CHI_TIET.length - 2).fill(0);
   for (const row of b10Rows) { row.vals.forEach((v, i) => { b10Tong[i] = (b10Tong[i] || 0) + v; }); }
@@ -12997,6 +13051,29 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     return f + `)`;
   }
   function mkCfBcM(sheets, r, ...extra) { return sheets.map(sn => mkCfBc(sn, r, ...extra)).join("+") || "0"; }
+  // mkSfVuX: giống mkSfVu nhưng chấp nhận thêm tiêu chí phụ (SUMIFS thay SUMIF) — dùng cho toggle
+  // "lần đầu" (2026-09-18, xem VAO_GD_LANDAU/mkSfVuLanDau bên dưới) khi cần lọc thêm cột "Lần đầu?".
+  function mkSfVuX(sn, r, ...extra) {
+    let f = `SUMIFS('${sn}'!$A:$A,'${sn}'!$B:$B,$A${r}`;
+    for (let i = 0; i < extra.length; i += 2) f += `,'${sn}'!$${extra[i]}:$${extra[i]},"${extra[i+1]}"`;
+    return f + `)`;
+  }
+  // mkSfVuLanDau/mkCfBcLanDau/mkCfBcMLanDau (2026-09-18, toggle "lần đầu" MỚI, mặc định TẮT — xem
+  // CLAUDE.md mục dự kiến B10 lần đầu): khi `chiTinhLanDauB10` bật, thêm tiêu chí "<col>"="x" (cột
+  // phụ "Lần đầu?" đã có sẵn trên "DS ĐT chuyển TT"/"DS TT chuyển XX" từ trước — xem addSheetVuKy
+  // postExtra — và MỚI thêm cho "DS chuyển đến TT"/"DS chuyển đến XX", xem dưới); khi TẮT, y hệt
+  // mkSfVu/mkCfBc/mkCfBcM cũ — KHÔNG đổi hành vi mặc định.
+  function mkSfVuLanDau(sn, r, col) {
+    return chiTinhLanDauB10 ? mkSfVuX(sn, r, col, "x") : mkSfVu(sn, r);
+  }
+  function mkCfBcLanDau(sn, r, col, ...extra) {
+    return chiTinhLanDauB10 ? mkCfBc(sn, r, ...extra, col, "x") : mkCfBc(sn, r, ...extra);
+  }
+  // mkCfBcMLanDau: như mkCfBcM nhưng CHỈ sheet `lanDauSheet` (sheet DUY NHẤT trong nhóm có cột "Lần
+  // đầu?" — sheet còn lại, VD "DS chuyển đi TT", không có khái niệm round-trip nên luôn tính đủ).
+  function mkCfBcMLanDau(sheets, r, lanDauSheet, lanDauCol, ...extra) {
+    return sheets.map(sn => sn === lanDauSheet ? mkCfBcLanDau(sn, r, lanDauCol, ...extra) : mkCfBc(sn, r, ...extra)).join("+") || "0";
+  }
   // mkCfBcKy: giống mkCfBcM nhưng OR thêm theo cột AF (Kỳ TK riêng của BC) khớp BẤT KỲ kỳ nào
   // trong dsKyTen (thường chỉ 1 kỳ; báo cáo tổng hợp nhiều kỳ thì nhiều) — dùng cho khối C7-C24
   // ĐT khởi tố BC, xem lý do bỏ tiêu chí loaiKhoiTo ở tinhBieu10.
@@ -13075,18 +13152,41 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     xet_xu:   ["DS nhập vụ XX", "DS chuyển đi XX", "DS XX trả TT"],
   };
   const VAO_GD = { dieu_tra: DT_VAO, truy_to: TT_VAO, xet_xu: XX_VAO };
+  // VAO_GD_LANDAU (2026-09-18, toggle "lần đầu" MỚI) — bản "vào" đã điều chỉnh round-trip cho
+  // Tổng thụ lý (C3/4/5, C33/34/35, C60/61/62) khi bật chế độ này. Mỗi phần tử là TÊN sheet thường
+  // (không có khái niệm round-trip, tính đủ như cũ) HOẶC `{sheet, col}` (cần lọc thêm "<col>"="x" —
+  // cột "Lần đầu?" MỚI thêm cho "DS chuyển đến TT"/"DS chuyển đến XX", xem addSheetVuKy bên dưới,
+  // vị trí AJ ở cả 2 sheet đó vì không có "Mức độ NT (BC)" chen giữa như "DS ĐT chuyển TT"). "DS
+  // trả về ĐT"/"DS trả về TT" LOẠI HẲN khỏi danh sách — MỌI dòng ở đó là round-trip theo định nghĩa
+  // (không có khái niệm "trả về lần đầu" — trả về nghĩa là đã từng rời đi trước đó rồi).
+  const VAO_GD_LANDAU = {
+    dieu_tra: DT_VAO.filter(s => s !== "DS trả về ĐT"),
+    truy_to: TT_VAO.filter(s => s !== "DS trả về TT").map(s => s === "DS chuyển đến TT" ? { sheet: s, col: "AJ" } : s),
+    xet_xu: XX_VAO.map(s => s === "DS chuyển đến XX" ? { sheet: s, col: "AJ" } : s),
+  };
+  const _mkSfVuVaoItem = (item, r) => typeof item === "string" ? mkSfVu(item, r) : mkSfVuX(item.sheet, r, item.col, "x");
+  const _mkCfBcVaoItem = (item, r, ...extra) => typeof item === "string" ? mkCfBc(item, r, ...extra) : mkCfBc(item.sheet, r, ...extra, item.col, "x");
+  // mkCfBcMVao: giống mkCfBcM nhưng nhận theo TÊN giai đoạn (gd), tự chọn VAO_GD hay VAO_GD_LANDAU
+  // theo `chiTinhLanDauB10` — dùng cho C5/C35/C62 (pháp nhân breakdown của "mới") để LUÔN đồng bộ
+  // đúng cùng dân số với mkThuLyBc (C4/C34/C61), tránh 2 công thức lệch nhau khi bật toggle.
+  function mkCfBcMVao(gd, r, ...extra) {
+    const list = chiTinhLanDauB10 ? VAO_GD_LANDAU[gd] : VAO_GD[gd];
+    return list.map(item => _mkCfBcVaoItem(item, r, ...extra)).join("+") || "0";
+  }
   // Vị trí (0-based, trong vals[]) của "Tồn kỳ trước — Vụ" mỗi giai đoạn — cột "BC" luôn ngay cột
   // KẾ TIẾP (xem layout vals[]: [tp_vu, tp_bc, tn_vu, tn_bc, ...] lặp lại đầu mỗi khối giai đoạn).
   const IDX_TON_TRUOC_VU = { dieu_tra: 0, truy_to: 34, xet_xu: 65 };
   function mkThuLyVu(gd, r) {
     const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 3); // +3: bù cột A(Mã ĐL)/B(Số điều)/C(Tên)
-    const vaoF = VAO_GD[gd].map(s => mkSfVu(s, r)).join("+");
+    const vaoList = chiTinhLanDauB10 ? VAO_GD_LANDAU[gd] : VAO_GD[gd];
+    const vaoF = vaoList.map(item => _mkSfVuVaoItem(item, r)).join("+");
     const raF = RA_THULY_GD[gd].map(s => mkSfVu(s, r)).join("-");
     return `${tonTruocCol}${r}+${vaoF}-${raF}`;
   }
   function mkThuLyBc(gd, r) {
     const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 1 + 3); // +1: cột BC ngay sau cột Vụ
-    const vaoF = VAO_GD[gd].map(s => mkCfBc(s, r)).join("+");
+    const vaoList = chiTinhLanDauB10 ? VAO_GD_LANDAU[gd] : VAO_GD[gd];
+    const vaoF = vaoList.map(item => _mkCfBcVaoItem(item, r)).join("+");
     const raF = RA_THULY_GD[gd].map(s => mkCfBc(s, r)).join("-");
     return `${tonTruocCol}${r}+${vaoF}-${raF}`;
   }
@@ -13131,13 +13231,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     70: r => mkThuLyBc("xet_xu", r),    // C61 Tổng thụ lý XX — Bị can
     // ── VỤ-level SUMIF (SUMIF cột A × cột B Mã ĐL vụ) ──
     7:  r => `SUMIFS('DS khởi tố ĐT'!$A:$A,'DS khởi tố ĐT'!$B:$B,$A${r},'DS khởi tố ĐT'!$AH:$AH,"Án khởi tố mới")+SUMIFS('DS khởi tố ĐT'!$A:$A,'DS khởi tố ĐT'!$B:$B,$A${r},'DS khởi tố ĐT'!$AH:$AH,"Tin báo khởi tố lên")`,  // C6 ĐT khởi tố mới (CHỈ 2 nguồn, khớp D71_10238)
-    26: r => mkSfVu("DS chuyển đến TT",r),   // C25 ĐT → TT vụ
+    26: r => mkSfVuLanDau("DS chuyển đến TT", r, "AJ"),   // C25 ĐT → TT vụ
     29: r => mkSfVu("DS đình chỉ ĐT",r),     // C28 ĐT đình chỉ vụ
     32: r => mkSfVu("DS tạm đình chỉ ĐT",r), // C31 ĐT TĐC vụ
     // C36/C37/C38/C43-C52 (2026-09-06) — cộng thêm "DS chuyển đi TT" (nay tính là truy tố, xem
     // tt_truToVu/tt_truToBc + Biểu 2 D292/D296) vào bên cạnh "DS chuyển đến XX"/"DS TT chuyển XX"
     // (2 tên sheet khác nhau nhưng CÙNG 1 dữ liệu, 2 góc nhìn — xem CLAUDE.md).
-    41: r => `${mkSfVu("DS chuyển đến XX",r)}+${mkSfVu("DS chuyển đi TT",r)}`,   // C36 TT truy tố vụ
+    41: r => `${mkSfVuLanDau("DS chuyển đến XX", r, "AJ")}+${mkSfVu("DS chuyển đi TT",r)}`,   // C36 TT truy tố vụ
     58: r => mkSfVu("DS đình chỉ TT",r),     // C53 TT đình chỉ vụ
     61: r => mkSfVu("DS tạm đình chỉ TT",r), // C56 TT TĐC vụ
     63: r => `SUMIFS('DS TT trả ĐT'!$A:$A,'DS TT trả ĐT'!$B:$B,$A${r},'DS TT trả ĐT'!$AJ:$AJ,"x")`, // C58 TT trả ĐT TRỰC TIẾP vụ (khớp Biểu 2 D361)
@@ -13154,16 +13254,16 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // can dòng đó (bcExtraFn ở "DS TT chuyển XX", KHÔNG còn là mức độ bị can đại diện của vụ). ──
     // C39-C42 cộng thêm COUNTIFS trên "DS chuyển đi TT" (cột "Mức độ NT (BC)" đã thêm ở AJ, cùng vị
     // trí "DS TT chuyển XX" — xem addSheetVuKy's lời gọi `add("DS chuyển đi ${gs}", ...)`).
-    44: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Ít nghiêm trọng")+COUNTIFS('DS chuyển đi TT'!$V:$V,$A${r},'DS chuyển đi TT'!$AJ:$AJ,"Ít nghiêm trọng")`,
-    45: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Nghiêm trọng")+COUNTIFS('DS chuyển đi TT'!$V:$V,$A${r},'DS chuyển đi TT'!$AJ:$AJ,"Nghiêm trọng")`,
-    46: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Rất nghiêm trọng")+COUNTIFS('DS chuyển đi TT'!$V:$V,$A${r},'DS chuyển đi TT'!$AJ:$AJ,"Rất nghiêm trọng")`,
-    47: r => `COUNTIFS('DS TT chuyển XX'!$V:$V,$A${r},'DS TT chuyển XX'!$AJ:$AJ,"Đặc biệt nghiêm trọng")+COUNTIFS('DS chuyển đi TT'!$V:$V,$A${r},'DS chuyển đi TT'!$AJ:$AJ,"Đặc biệt nghiêm trọng")`,
+    44: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "AJ","Ít nghiêm trọng"),
+    45: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "AJ","Nghiêm trọng"),
+    46: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "AJ","Rất nghiêm trọng"),
+    47: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "AJ","Đặc biệt nghiêm trọng"),
     // ── BC-level COUNTIFS (cột V=Mã ĐL BC + criteria phụ) ──
     // Cột criteria BC: W=Loại KTBC, X=Pháp nhân, Y=Nhóm tuổi, Z=Trình độ,
     //   AA=Giới tính nữ, AB=Dân tộc KK, T=Đảng viên(x), AC=Giữ chức vụ, AD=Quốc tịch NN, AE=Tái phạm,
     //   AF=Kỳ TK riêng BC (dùng cho C7-C24 — xem mkCfBcKy, KHÔNG dùng W/loaiKhoiTo nữa)
     // ĐT
-    6:  r => mkCfBcM(DT_VAO, r, "X","phap_nhan"),              // C5 pháp nhân ĐT mới
+    6:  r => mkCfBcMVao("dieu_tra", r, "X","phap_nhan"),       // C5 pháp nhân ĐT mới
     8:  r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao),                // C7 ĐT khởi tố BC mới trong kỳ (hẹp đúng 2 nguồn, khớp C6)
     9:  r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"X","phap_nhan"),// C8 pháp nhân trong C7
     10: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"Y","14_16"),    // C9-C13 tuổi
@@ -13182,32 +13282,32 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     23: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"AC","có"),      // C22 giữ chức vụ
     24: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"AD","có"),      // C23 quốc tịch NN
     25: r => mkCfBcKyMoi(r, dsKyTenTrongBaoCao,"AE","có"),      // C24 tái phạm
-    27: r => mkCfBcM(["DS ĐT chuyển TT"], r),                  // C26 ĐT→TT BC
-    28: r => mkCfBcM(["DS ĐT chuyển TT"], r, "X","phap_nhan"), // C27
+    27: r => mkCfBcLanDau("DS ĐT chuyển TT", r, "AK"),                  // C26 ĐT→TT BC
+    28: r => mkCfBcLanDau("DS ĐT chuyển TT", r, "AK", "X","phap_nhan"), // C27
     30: r => mkCfBcM(["DS đình chỉ ĐT"], r),                   // C29 đình chỉ BC
     31: r => mkCfBcM(["DS đình chỉ ĐT"], r, "X","phap_nhan"),  // C30
     33: r => mkCfBcM(["DS tạm đình chỉ ĐT"], r),               // C32 TĐC BC
     // TT
-    40: r => mkCfBcM(TT_VAO, r, "X","phap_nhan"),              // C35 pháp nhân TT mới
+    40: r => mkCfBcMVao("truy_to", r, "X","phap_nhan"),        // C35 pháp nhân TT mới
     // C37/C38/C43-C52 (2026-09-06) — cộng thêm "DS chuyển đi TT" (xem C36 ở trên).
-    42: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r),                  // C37 TT→XX BC
-    43: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "X","phap_nhan"), // C38
-    48: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y","14_16"),     // C43-C47 tuổi TT truy tố BC
-    49: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y","16_18"),
-    50: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y","18_30"),
-    51: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y","30_70"),
-    52: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "Y",">70"),
-    53: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "AA","nữ"),       // C48
-    54: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "AB","có"),       // C49 dân tộc KK
-    55: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "T","x"),         // C50 đảng viên
-    56: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "AC","có"),       // C51 giữ chức vụ
-    57: r => mkCfBcM(["DS TT chuyển XX", "DS chuyển đi TT"], r, "AD","có"),       // C52 quốc tịch NN
+    42: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK"),                  // C37 TT→XX BC
+    43: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "X","phap_nhan"), // C38
+    48: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "Y","14_16"),     // C43-C47 tuổi TT truy tố BC
+    49: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "Y","16_18"),
+    50: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "Y","18_30"),
+    51: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "Y","30_70"),
+    52: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "Y",">70"),
+    53: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "AA","nữ"),       // C48
+    54: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "AB","có"),       // C49 dân tộc KK
+    55: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "T","x"),         // C50 đảng viên
+    56: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "AC","có"),       // C51 giữ chức vụ
+    57: r => mkCfBcMLanDau(["DS TT chuyển XX", "DS chuyển đi TT"], r, "DS TT chuyển XX", "AK", "AD","có"),       // C52 quốc tịch NN
     59: r => mkCfBcM(["DS đình chỉ TT"], r),                   // C54 đình chỉ TT BC
     60: r => mkCfBcM(["DS đình chỉ TT"], r, "X","phap_nhan"),
     62: r => mkCfBcM(["DS tạm đình chỉ TT"], r),              // C57 TĐC TT BC
     64: r => mkCfBcM(["DS TT trả ĐT"], r, "AJ", "x"),         // C59 TT trả ĐT TRỰC TIẾP BC (khớp Biểu 2 D368)
     // XX
-    71: r => mkCfBcM(XX_VAO, r, "X","phap_nhan"),             // C62 pháp nhân XX mới
+    71: r => mkCfBcMVao("xet_xu", r, "X","phap_nhan"),         // C62 pháp nhân XX mới
     73: r => mkCfBcM(["DS đã xét xử XX"], r),                 // C64 XX xét xử BC
     74: r => mkCfBcM(["DS đã xét xử XX"], r, "X","phap_nhan"),
     76: r => mkCfBcM(["DS đình chỉ XX"], r),                  // C67 đình chỉ XX BC
@@ -14345,9 +14445,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null) 
     // Vụ tách ra trong kỳ, đếm vụ tách = số dòng (mỗi dòng là 1 vụ mới xuất hiện)
     add(`DS vụ tách ${gs}`, d.tachVu||[], ["Ngày tách"], _ngaySK);
 
-    // Chuyển đến từ giai đoạn trước (ĐT là giai đoạn đầu, không có chuyển đến)
+    // Chuyển đến từ giai đoạn trước (ĐT là giai đoạn đầu, không có chuyển đến). Cột phụ "Lần đầu?"
+    // (2026-09-18, AJ — không có "Mức độ NT (BC)" chen giữa như "DS ĐT chuyển TT"/"DS TT chuyển
+    // XX" nên KHÁC vị trí AK ở 2 sheet đó) — dùng cho toggle "lần đầu" MỚI (C25/C36 vụ, xem
+    // mkSfVuLanDau/VAO_GD_LANDAU) — cùng bộ LanDauIds đã tính sẵn cho Biểu 2 D93/96/293/297.
     if (gd !== "dieu_tra") {
-      add(`DS chuyển đến ${gs}`, d.chuyenDen||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD);
+      const lanDauIdsVao = gd === "truy_to" ? _dtLanDauIds : _ttLanDauIds;
+      add(`DS chuyển đến ${gs}`, d.chuyenDen||[], ["Ngày chuyển", "Số QĐ"], _ngaySoQD,
+        undefined, undefined, ["Lần đầu?"], (vu) => [lanDauIdsVao.has(vu.id) ? "x" : ""]);
     }
 
     // Trả hồ sơ trở về (XX là giai đoạn cuối, không bị trả về)
@@ -14492,6 +14597,7 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
   const [dangXuat, setDangXuat] = useState(false);
   const [loiXuat, setLoiXuat] = useState("");
   const [boQuayVong, setBoQuayVong] = useState(false);
+  const [chiTinhLanDauB10, setChiTinhLanDauB10] = useState(false);
 
   useEffect(() => {
     let huy = false;
@@ -14508,7 +14614,7 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
       // Toggle BẬT → xuất file ĐÃ lọc vụ trả ĐTBS quay vòng trọn vẹn trong kỳ (net = 0, mọi đẳng
       // thức "tồn = thụ lý − giải quyết" của Biểu 2/3/10 vẫn khớp — xem locBoTraDTBSQuayVongCungKy).
       const bcXuat = boQuayVong ? locBoTraDTBSQuayVongCungKy(baoCao) : baoCao;
-      await xuatBaoCaoThangExcel(ky, bcXuat, kyTruoc);
+      await xuatBaoCaoThangExcel(ky, bcXuat, kyTruoc, null, chiTinhLanDauB10);
     } catch (err) {
       console.error(err);
       setLoiXuat("Lỗi khi xuất Excel: " + err.message);
@@ -14535,7 +14641,8 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
         </div>
         {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
         {dangTai && <div className="text-sm text-slate-400">Đang tính toán số liệu (có thể mất vài giây)...</div>}
-        {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} boQuayVong={boQuayVong} onDoiBoQuayVong={setBoQuayVong} />}
+        {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} boQuayVong={boQuayVong} onDoiBoQuayVong={setBoQuayVong}
+          chiTinhLanDauB10={chiTinhLanDauB10} onDoiChiTinhLanDauB10={setChiTinhLanDauB10} />}
         {!dangTai && ky.trangThai === "dang_mo" && (
           <div className="text-xs text-slate-400 mt-3">
             Kỳ đang mở — "Tồn đầu/cuối kỳ" tính as-of trực tiếp qua RPC (không phụ thuộc chuỗi cộng
@@ -14568,6 +14675,7 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
   const [dangXuat, setDangXuat] = useState(false);
   const [loiXuat, setLoiXuat] = useState("");
   const [boQuayVong, setBoQuayVong] = useState(false);
+  const [chiTinhLanDauB10, setChiTinhLanDauB10] = useState(false);
 
   useEffect(() => {
     let huy = false;
@@ -14589,7 +14697,7 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
       // dòng này thì tinhBieu10 nhận kyTruoc=null, B10 luôn hiện 0 ở mọi cột "tồn kỳ trước".
       const bcXuat = boQuayVong ? locBoTraDTBSQuayVongCungKy(baoCao) : baoCao;
       await xuatBaoCaoThangExcel({ tenKy: `Tong hop ${tenGop}` }, bcXuat, dsKyChon[0]?.kyTruoc || null,
-        dsKyChon.map(k => k.ky));
+        dsKyChon.map(k => k.ky), chiTinhLanDauB10);
     } catch (err) {
       console.error(err);
       setLoiXuat("Lỗi khi xuất Excel: " + err.message);
@@ -14619,7 +14727,8 @@ function TongHopNhieuKyModal({ dsKyChon, onDong }) {
         </div>
         {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{loi}</div>}
         {dangTai && <div className="text-sm text-slate-400">Đang tính toán số liệu (có thể mất vài giây)...</div>}
-        {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} boQuayVong={boQuayVong} onDoiBoQuayVong={setBoQuayVong} />}
+        {baoCao && <BangBaoCaoChiTiet baoCao={baoCao} boQuayVong={boQuayVong} onDoiBoQuayVong={setBoQuayVong}
+          chiTinhLanDauB10={chiTinhLanDauB10} onDoiChiTinhLanDauB10={setChiTinhLanDauB10} />}
         {!dangTai && baoCao && (
           <div className="text-xs text-slate-400 mt-3">
             "Tồn đầu kỳ" lấy từ kỳ sớm nhất được chọn ({dsKyChon[0].ky.tenKy}), "Tồn cuối kỳ" lấy từ kỳ muộn nhất

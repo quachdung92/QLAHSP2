@@ -2,6 +2,104 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Toggle mới "Biểu B10: chỉ tính 'lần đầu'" — dự kiến, mặc định TẮT (2026-09-18, `qlahs-sup.html`, nhánh `main`, CHƯA commit/deploy — chỉ compile-check)
+
+Ngay sau mục sửa D293/D297 ngay dưới đây — Dũng: *"dự kiến biểu 10 (ở truy tố, xét xử) sẽ không
+tính kết quả số vụ/bị can trả điều tra bổ sung mà chỉ tính số vụ/bị can kết ĐT; truy tố lần đầu
+(cần làm rõ vụ trả điều tra ở viện kiểm sát chưa từng sang toà, thì khi sang toà vẫn là lần đầu).
+Cần có công tắc để chuẩn bị cho 2 chế độ, sau này tôi sẽ quyết theo chế độ nào"* — tức đây là 1
+chế độ THAY THẾ hoàn toàn khác cách tính "ngành-chính-thức" hiện có (gộp cả round-trip), KHÔNG phải
+sửa bug — cần 1 công tắc HOÀN TOÀN MỚI, tách biệt "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" đã có
+(toggle cũ chỉ nét-0 round-trip xảy ra và kết thúc trọn vẹn CÙNG 1 kỳ; toggle mới loại HẲN mọi vụ
+từng round-trip, bất kể bao nhiêu kỳ đã trôi qua). Đã hỏi rõ 3 quyết định phạm vi qua
+`AskUserQuestion` trước khi code:
+1. **Phạm vi cột**: "C25-27 + C36-38, và cả breakdown theo sau" — không chỉ 2 cột tổng (C25/26 ĐT→
+   TT, C36/37 TT→XX) mà cả mọi cột breakdown tính từ CÙNG dân số đó (C27/C38 pháp nhân, C39-52 mức
+   độ nghiêm trọng/tuổi/giới tính/dân tộc/đảng viên/quốc tịch) — tránh lặp lại đúng lớp bug "tổng
+   không khớp chi tiết" đã gặp nhiều lần trong lịch sử file này.
+2. **Tổng thụ lý (C3/C4, C33/C34, C60/C61)**: "cũng trừ round-trip khi bật chế độ mới" — dù đây là
+   1 khái niệm khác hẳn ("vừa hoàn thành"/"vừa chuyển giai đoạn"), Dũng muốn 1 vụ rời-rồi-quay-lại
+   chỉ tính 1 lần trong "Tổng thụ lý", không được cộng lại lần 2 khi nó quay lại.
+3. **Công tắc mới hay dùng chung**: "Đúng, công tắc mới riêng cho B10" — xác nhận không tái dùng
+   `boQuayVong`.
+
+**Ngữ nghĩa "lần đầu" ĐÚNG theo yêu cầu Dũng — PER-STAGE-ARRIVAL, không phải "chưa từng round-trip
+ở bất kỳ đâu trong toàn bộ vòng đời vụ".** Ví dụ Dũng nêu: 1 vụ từng bị trả về Điều tra (round-trip
+ở chặng ĐT↔TT) nhưng CHƯA TỪNG sang Xét xử — khi nó LẦN ĐẦU sang Xét xử, vẫn phải tính "lần đầu" cho
+C36-52 (dù KHÔNG tính "lần đầu" cho C25-27 vì nó đã round-trip ở đúng chặng ĐT→TT). Đây CHÍNH XÁC
+là ngữ nghĩa `_laLanDauChuyenToi(vu, denGD)` đã dùng để sửa D93/D96/D293/D297 Biểu 2 hôm nay (mục
+ngay dưới) — không cần phát minh tiêu chí mới, chỉ cần TÁI SỬ DỤNG đúng 2 tập đã tính sẵn
+(`dtChuyenDi_LanDau` cho ĐT→TT, `ttChuyenDi_LanDau` cho TT→XX) và lan rộng ra B10.
+
+**Phát hiện quan trọng lúc phân tích** (giải toả rủi ro lớn nhất tưởng có trước khi code) — "Tồn kỳ
+trước"/"Tồn kỳ này" của B10 (idx vals[] 0-3/34-37/65-68) hoàn toàn TÁCH BIỆT với "Tổng thụ lý" (C3/
+C4/C33/C34/C60/C61): "Tồn" đọc RPC as-of qua 2 sheet ẩn "DS tồn cuối kỳ (trước) {gs}" (nguồn sự
+thật tuyệt đối, dùng cho "Cân đối số liệu" + mọi self-check `=`), còn "Tổng thụ lý" là 1 ledger
+ĐỘC LẬP (`tồn trước + vào − ra`, qua `mkThuLyVu`/`mkThuLyBc`/`RA_THULY_GD`/`VAO_GD`) — Tổng thụ lý
+KHÔNG bắt buộc bằng "tồn cuối" (nó gồm cả vụ đã vào-rồi-ra trong kỳ). Nghĩa là sửa "vào" của Tổng
+thụ lý theo toggle này **HOÀN TOÀN AN TOÀN** với ledger tồn RPC — không đụng gì tới "Cân đối số
+liệu"/số tồn RPC ground-truth đã được kiểm chứng cực kỹ trước đây, xoá tan lo ngại ban đầu về việc
+phá vỡ tính tự cân đối `tồn đầu + mới − ra = tồn cuối` của hệ thống.
+
+**Thiết kế "trừ round-trip" cho Tổng thụ lý — chỉ cần loại "trả về" khỏi "vào", KHÔNG cần đụng "ra"
+(RA_THULY_GD giữ nguyên)**: `RA_THULY_GD` (nhập vụ + chuyển đi nơi khác) CHƯA BAO GIỜ trừ khoản
+"tiến lên giai đoạn sau" khỏi Tổng thụ lý (1 vụ chuyển ĐT→TT KHÔNG bị trừ khỏi Tổng thụ lý ĐT — nó
+vẫn được coi là "đã thụ lý trong kỳ" dù đã rời đi) — nên "round-trip" CHỈ len vào qua phía "vào":
+1 vụ trả về (VD TT→ĐT) rồi lại tiến lên (ĐT→TT lần 2) được cộng "vào" Tổng thụ lý ĐT ĐÚNG 1 lần
+nữa dù đã từng được tính từ trước. Chỉ cần loại HẲN "DS trả về ĐT"/"DS trả về TT" (mọi dòng ở đó
+LUÔN LÀ round-trip theo định nghĩa — "trả về" nghĩa là đã từng rời đi trước đó, không có khái niệm
+"trả về lần đầu") + lọc "DS chuyển đến TT"/"DS chuyển đến XX" (arrival qua chuyển giai đoạn — CÓ
+THỂ là lần 2+ nếu vụ đã round-trip trả về rồi tiến lại) xuống đúng tập LanDau tương ứng.
+
+**Đã code đầy đủ cả JS lẫn Excel formula (2 lớp, đồng bộ)**:
+- **JS** (`tinhBieu10`, nhận thêm 3 tham số `dtChuyenDi_LanDau`/`ttChuyenDi_LanDau`/
+  `chiTinhLanDauB10`, mặc định `null`/`null`/`false`) — dựng `_dtLanDauIdsB10`/`_ttLanDauIdsB10` +
+  4 biến "vào" điều chỉnh (`dt_traVe_ThuLyB10=[]`, `tt_chuyenDen_ThuLyB10`=lọc theo
+  `_dtLanDauIdsB10`, `tt_traVe_ThuLyB10=[]`, `xx_chuyenDen_ThuLyB10`=lọc theo `_ttLanDauIdsB10` —
+  khi TẮT thì y hệt `dt.traVe`/`tt.chuyenDen`/`tt.traVe`/`xx.chuyenDen` cũ, không đổi hành vi mặc
+  định) thay thế đúng 4 thành phần trong `dt_moi`/`tt_moi`/`xx_moi` (nuôi C3/C4/C33/C34/C60/C61).
+  `dt_dntt_NguonB10`/`tt_chuyenDi_DungB10` (dân số nguồn C25 và `_ttTruToNguon`) lọc tương tự.
+- **Excel** (`xuatBaoCaoThangExcel` nhận thêm tham số 5 `chiTinhLanDauB10 = false`) — tái dùng
+  ĐÚNG cột phụ **"Lần đầu?"** đã có sẵn từ đợt sửa D293/D297 hôm nay trên "DS ĐT chuyển TT"/"DS TT
+  chuyển XX" (vị trí AK — sau "Mức độ NT (BC)"=AJ), và **THÊM MỚI** cột "Lần đầu?" (postExtra) cho
+  "DS chuyển đến TT"/"DS chuyển đến XX" (vị trí AJ — không có "Mức độ NT (BC)" chen giữa như 2
+  sheet kia) — CHÈN Ở CUỐI, không xê dịch cột nào đã có. Helper mới: `mkSfVuX` (SUMIFS đa tiêu chí
+  cho Vụ, trước đây chỉ có `mkCfBc` hỗ trợ đa tiêu chí), `mkSfVuLanDau`/`mkCfBcLanDau`/
+  `mkCfBcMLanDau` (bọc `mkSfVu`/`mkCfBc`/`mkCfBcM`, TOGGLE TẮT ⇒ SINH RA CHUỖI CÔNG THỨC Y HỆT bản
+  gốc — đã tự kiểm chứng bằng tay từng trường hợp, đảm bảo KHÔNG đổi bất kỳ số nào khi toggle tắt),
+  `VAO_GD_LANDAU`/`mkCfBcMVao` (bản "vào" đã trừ round-trip dùng chung cho `mkThuLyVu`/`mkThuLyBc`
+  VÀ C5/C35/C62 — pháp nhân breakdown của "mới", để LUÔN đồng bộ đúng cùng dân số với C4/C34/C61,
+  tránh lệch nhau khi bật toggle).
+- **26 ô B10_FORMULA đã sửa** để dùng các helper mới: C25(idx26)/C26(27)/C27(28)/C36(41)/C37(42)/
+  C38(43)/C39-42(44-47)/C43-47(48-52)/C48-52(53-57) (breakdown "lần đầu") + C5(6)/C35(40)/C62(71)
+  (pháp nhân "mới", nay dùng `mkCfBcMVao` — TOGGLE TẮT sinh CHUỖI CÔNG THỨC Y HỆT `mkCfBcM(DT_VAO/
+  TT_VAO/XX_VAO,...)` cũ) + `mkThuLyVu`/`mkThuLyBc` (C3/4/33/34/60/61, không đổi B10_FORMULA nào —
+  chỉ đổi THÂN 2 hàm này).
+
+**UI — công tắc mới "Biểu B10: chỉ tính 'lần đầu' (dự kiến)"** (`BangBaoCaoChiTiet`, màu chàm
+`bg-indigo-600` — phân biệt trực quan với công tắc "Bỏ vụ trả ĐTBS quay vòng..." màu xanh lá đã
+có) — pattern controlled/uncontrolled y hệt `boQuayVong` (`chiTinhLanDauB10`/
+`onDoiChiTinhLanDauB10`), state sở hữu bởi `KyChiTietModal`/`TongHopNhieuKyModal`, truyền vào nút
+"Xuất Excel" của cả 2 màn. **CHỈ ảnh hưởng file Excel xuất ra** (sheet "Biểu B10"), KHÔNG ảnh hưởng
+bảng xem trước TRÊN MÀN HÌNH của modal đó (bảng đó không tính B10) — đã ghi rõ trong chú thích cạnh
+công tắc. Mặc định TẮT ở cả 2 nơi (giữ nguyên số liệu ngành-chính-thức đã kiểm chứng, không có rủi
+ro số liệu nhảy khi mở lại app).
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` — sạch. Đã tự rà bằng tay
+(không chỉ tin tưởng) CHÍNH XÁC 6 helper mới khi `chiTinhLanDauB10=false` đều sinh CHUỖI CÔNG THỨC
+BYTE-IDENTICAL với bản gốc trước khi sửa (an toàn tuyệt đối cho trạng thái mặc định — không có
+nguy cơ số liệu ngành-chính-thức đổi khi chưa bật toggle). **CHƯA kiểm chứng bằng Excel thật/dữ
+liệu Supabase thật** (không có tài khoản đăng nhập trong phiên này) — khi có tài khoản, Dũng nên:
+(1) xuất 1 kỳ có vụ ĐT↔TT round-trip thật, BẬT công tắc, xác nhận C25/C26 (ĐT→TT) giảm đúng bằng số
+vụ round-trip, và các cột breakdown (tuổi/giới tính...) của C36-52 vẫn cộng đúng ra bằng C37/C38 y
+hệt lúc tắt (không "rơi" bị can nào khỏi breakdown); (2) đọc THẲNG `cell.formula` (không chỉ
+`result`) của vài ô C25/C36/C39 để xác nhận đúng tham chiếu cột AJ/AK "Lần đầu?" — đúng bài học đã
+ghi rất nhiều lần trong file này: Excel thật luôn tính lại theo formula, ExcelJS đọc lại không tự
+tính; (3) xác nhận "Cân đối số liệu"/số tồn RPC hoàn toàn KHÔNG đổi dù bật/tắt toggle (đúng theo
+phân tích ở trên — Tổng thụ lý tách biệt "tồn"). **CHƯA commit/push/deploy** — chờ Dũng xác nhận số
+liệu đúng ý qua Excel thật trước khi coi đây là sẵn sàng, và trước khi Dũng quyết định có dùng chế
+độ này thay chế độ ngành-chính-thức hay không.
+
 ## ✅ HOÀN TẤT — Sửa bug thật: D293/D297 Biểu 2 (Kết thúc truy tố) dùng tiêu chí "lần đầu" khác D93/D96 (2026-09-18, `qlahs-sup.html`, nhánh `main`, commit `2bd4cb0`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
 
 Dũng hỏi rà cấu trúc "Trong đó — trả hồ sơ ĐTBS kỳ trước" giữa "Kết thúc điều tra" (D92-99, ĐT→TT)
