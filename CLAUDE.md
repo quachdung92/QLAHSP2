@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Toggle mới "Biểu B10: chỉ tính 'lần đầu'" — dự kiến, mặc định TẮT (2026-09-18, `qlahs-sup.html`, nhánh `main`, CHƯA commit/deploy — chỉ compile-check)
+## Toggle mới "Biểu B10: chỉ tính 'lần đầu'" — dự kiến, mặc định TẮT (2026-09-18, `qlahs-sup.html`, nhánh `main`, commit `2b58a12`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` — chỉ compile-check, CHƯA kiểm chứng Excel/Supabase thật)
 
 Ngay sau mục sửa D293/D297 ngay dưới đây — Dũng: *"dự kiến biểu 10 (ở truy tố, xét xử) sẽ không
 tính kết quả số vụ/bị can trả điều tra bổ sung mà chỉ tính số vụ/bị can kết ĐT; truy tố lần đầu
@@ -96,9 +96,10 @@ hệt lúc tắt (không "rơi" bị can nào khỏi breakdown); (2) đọc TH�
 `result`) của vài ô C25/C36/C39 để xác nhận đúng tham chiếu cột AJ/AK "Lần đầu?" — đúng bài học đã
 ghi rất nhiều lần trong file này: Excel thật luôn tính lại theo formula, ExcelJS đọc lại không tự
 tính; (3) xác nhận "Cân đối số liệu"/số tồn RPC hoàn toàn KHÔNG đổi dù bật/tắt toggle (đúng theo
-phân tích ở trên — Tổng thụ lý tách biệt "tồn"). **CHƯA commit/push/deploy** — chờ Dũng xác nhận số
-liệu đúng ý qua Excel thật trước khi coi đây là sẵn sàng, và trước khi Dũng quyết định có dùng chế
-độ này thay chế độ ngành-chính-thức hay không.
+phân tích ở trên — Tổng thụ lý tách biệt "tồn"). Đã commit + push `main` (`2b58a12`) và deploy CẢ
+`qlahs-sup.web.app` LẪN `qlahsp2.web.app` (production) theo yêu cầu Dũng — an toàn vì toggle mặc
+định TẮT, không đổi số liệu ngành-chính-thức hiện có cho tới khi Dũng tự bật lên và xác nhận đúng
+qua Excel thật trước khi quyết định có dùng chế độ này thay chế độ ngành-chính-thức hay không.
 
 ## ✅ HOÀN TẤT — Sửa bug thật: D293/D297 Biểu 2 (Kết thúc truy tố) dùng tiêu chí "lần đầu" khác D93/D96 (2026-09-18, `qlahs-sup.html`, nhánh `main`, commit `2bd4cb0`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
 
