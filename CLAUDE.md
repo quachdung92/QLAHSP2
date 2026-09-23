@@ -25,9 +25,31 @@ ghi toàn bộ) + bật Realtime publication (bắt buộc để `onSnapshot()` 
 lần tải đầu — xem `supabase/README.md`). Module CHỈ dùng `.doc(id).set()/.update()` (upsert 1 dòng),
 KHÔNG dùng `db.batch()` nên KHÔNG cần sửa whitelist bảng của RPC `batch_commit`.
 
-**Phạm vi tự động tính** (`tinhBaoCaoTuan(tuNgay, denNgay)`, lọc `lichsuChuyenGiaiDoan` theo
-`ngaySuKien` THẬT trong khoảng đã chọn — KHÁC mọi công thức theo kỳ tháng vốn lọc theo `kyThongKe`,
-vì tuần không có khái niệm "kỳ thống kê" riêng để gắn vào sự kiện log):
+**Chống đếm đúp khi 2 tuần chồng lấn ngày (2026-09-23, cùng ngày, theo yêu cầu Dũng "vụ nào đã tính
+tuần này rồi thì ko tính tuần sau, tránh nếu tính theo ngày sáng tính rồi chiều phát sinh vụ mới
+thì vẫn cùng ngày")** — vì mỗi tuần là 1 khoảng [Từ ngày, Đến ngày] TỰ DO (không phải slot lịch cố
+định không thể chồng lấn như "kỳ báo cáo" tháng), 2 tuần có thể vô tình/cố ý cùng phủ 1 ngày (VD
+"tuần sau" được tạo bắt đầu từ HÔM NAY trong khi "tuần này" cũng kết thúc HÔM NAY vì chưa kịp chốt
+— cán bộ xem số "tuần này" buổi sáng rồi buổi chiều có vụ mới phát sinh cùng ngày, nếu không xử lý
+sẽ có nguy cơ vụ đó lọt vào cả "tuần sau" nếu 2 khoảng ngày giao nhau). Đã thêm 2 hàm thuần
+`chuanHoaDsTuan`/`tuanChiemNgay` (đặt cạnh `tinhBaoCaoTuan`): với 1 ngày sự kiện, tìm tuần "Từ
+ngày" SỚM NHẤT trong số các tuần có khoảng phủ tới ngày đó — CHỈ tuần đó được tính, mọi tuần khác
+(kể cả có Từ/Đến ngày cũng phủ tới) đều loại sự kiện đó ra. **`tinhBaoCaoTuan` đổi chữ ký** từ
+`(tuNgay, denNgay)` sang `(tuanId, dsTuanChuan)` — nhận ID tuần đang tính + TOÀN BỘ danh sách tuần
+đã qua `chuanHoaDsTuan` (không chỉ đúng 2 mốc ngày của riêng nó) để áp dụng đúng quy tắc trên. KHÔNG
+lưu cờ "đã tính" nào riêng (persist flag) — hàm chỉ phụ thuộc danh sách tuần HIỆN CÓ, nên thêm/sửa/
+xoá 1 tuần bất kỳ (kể cả bù thêm 1 tuần CŨ HƠN mọi tuần đã có) đều tự động tính lại đúng "ai chiếm
+ngày nào" ở lần gọi kế tiếp — không có cờ cũ nào có thể lệch/quên dọn, đúng nguyên tắc "log/hiện
+trạng là nguồn sự thật duy nhất" xuyên suốt dự án. `BaoCaoTuanModule`: mọi lần TẬP HỢP id tuần thay
+đổi (thêm/xoá — dùng chuỗi id đã sort làm dep, không phải tham chiếu mảng, để KHÔNG tính lại khi chỉ
+sửa 1 ô nhập tay) sẽ tính lại TOÀN BỘ tuần (không chỉ tuần mới), vì 1 tuần mới có thể "chiếm" lại
+vài ngày trước đó đang thuộc tuần khác. Thêm nút "🔄 Tính lại tất cả" (dùng khi có vụ mới phát sinh
+giữa ngày, cần làm mới thủ công) + cảnh báo (không chặn) trong `ThemTuanBaoCaoModal` khi khoảng
+ngày vừa chọn chồng lấn 1 tuần đã có, nêu rõ tuần nào sẽ "thắng".
+
+**Phạm vi tự động tính** (`tinhBaoCaoTuan`, lọc `lichsuChuyenGiaiDoan` theo `ngaySuKien` THẬT trong
+khoảng đã chọn rồi áp thêm `tuanChiemNgay` ở trên — KHÁC mọi công thức theo kỳ tháng vốn lọc theo
+`kyThongKe`, vì tuần không có khái niệm "kỳ thống kê" riêng để gắn vào sự kiện log):
 - **Mục I "Tình hình tội phạm"**: chỉ 2 dòng TỔNG (Số vụ/bị can khởi tố mới, qua sự kiện
   `khoi_to_vu`/`khoi_to_bican`) — KHÔNG tự tính được phần chia theo CHƯƠNG Bộ luật hình sự (hệ
   thống chỉ có "điều luật" cụ thể qua `DANH_MUC_TOI_DANH_MAM`, không có field phân loại theo
@@ -64,7 +86,11 @@ Có badge "🚧 Mới — cần kiểm chứng" cạnh tiêu đề (theo đúng 
 gỡ ngay sau) toàn bộ file — sạch, 0 lỗi cú pháp. Test cô lập riêng `BAO_CAO_TUAN_ROWS` (trích nguyên
 mảng từ file thật qua `vm.runInContext`, không viết lại) — đúng 94 dòng (7 section + 87 dữ liệu),
 42 dòng auto chạy đúng với `kq` giả lập đủ field (không lỗi tham chiếu sai tên field), 45 dòng
-manual, không trùng `id` nào.
+manual, không trùng `id` nào. Test cô lập riêng cơ chế chống đếm đúp (`chuanHoaDsTuan`/
+`tuanChiemNgay`, trích nguyên hàm) — 7/7 PASS: 2 tuần không chồng lấn thì mỗi ngày về đúng tuần của
+nó; 2 tuần chồng lấn 1 ngày thì ngày đó luôn về tuần có "Từ ngày" sớm hơn; thêm 1 tuần thứ 3 có "Từ
+ngày" sớm hơn CẢ 2 tuần đã có (mô phỏng bù dữ liệu cũ) thì tuần đó tự động "đòi" lại đúng phần ngày
+nó phủ tới, không cần sửa gì thêm ở 2 tuần cũ.
 
 **CHƯA kiểm chứng bằng dữ liệu Supabase thật** (không có tài khoản đăng nhập trong phiên viết tính
 năng này) — Dũng cần: (1) chạy migration `supabase/add_bao_cao_tuan_2026-09-23.sql` qua Session

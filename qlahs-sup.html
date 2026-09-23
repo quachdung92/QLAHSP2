@@ -18848,6 +18848,16 @@ function NopLuuKhoModule() {
 //     "baoCaoTuan.duLieuNhapTay", giống quy ước "⚠ Chưa có dữ liệu — cần bổ sung tính năng" đã
 //     dùng ở Biểu 2/Biểu 4).
 //
+// CHỐNG ĐẾM ĐÚP KHI 2 TUẦN CHỒNG LẤN NGÀY (2026-09-23, theo yêu cầu Dũng "vụ nào đã tính tuần này
+// rồi thì ko tính tuần sau, tránh nếu tính theo ngày sáng tính rồi chiều phát sinh vụ mới thì vẫn
+// cùng ngày") — vì mỗi tuần là 1 khoảng [Từ ngày, Đến ngày] TỰ DO (không phải slot lịch cố định
+// không thể chồng lấn như "kỳ báo cáo" tháng), 2 tuần có thể vô tình/cố ý cùng phủ 1 ngày (VD "tuần
+// sau" được tạo bắt đầu từ HÔM NAY trong khi "tuần này" cũng kết thúc HÔM NAY vì chưa kịp chốt). Cơ
+// chế "tuanChiemNgay" (đặt cạnh "tinhBaoCaoTuan") đảm bảo 1 sự kiện log chỉ tính vào ĐÚNG 1 tuần —
+// tuần có "Từ ngày" SỚM HƠN luôn thắng, tuần sau tự động loại bỏ sự kiện đó dù ngày của nó vẫn nằm
+// trong khoảng đã chọn. KHÔNG lưu cờ "đã tính" riêng — hàm chỉ dựa vào danh sách tuần HIỆN CÓ nên
+// luôn tự đúng lại khi thêm/sửa/xoá 1 tuần bất kỳ (không có cờ cũ nào có thể bị quên dọn/lệch).
+//
 // CHƯA KIỂM CHỨNG bằng dữ liệu Supabase thật (không có tài khoản đăng nhập trong phiên viết tính
 // năng này) — Dũng cần: (1) chạy migration add_bao_cao_tuan_2026-09-23.sql; (2) thử thêm 1 tuần
 // báo cáo thật, đối chiếu vài dòng tự động tính (đặc biệt "Số vụ án CQĐT/VKS/Toà đã giải quyết")
@@ -18961,21 +18971,60 @@ const BAO_CAO_TUAN_ROWS = [
   { id: "vks_rut_qdtt", label: "Số vụ VKS rút QĐ truy tố (một phần và toàn bộ)" },
 ];
 
-// Tính các dòng TỰ ĐỘNG của "Báo cáo tuần" cho khoảng [tuNgay, denNgay] (2 Date, denNgay nên đã set
-// giờ 23:59:59.999 để bao trọn ngày cuối) — lọc "lichsuChuyenGiaiDoan" theo "ngaySuKien" THẬT (khác
-// mọi công thức theo "kỳ báo cáo" tháng, vốn lọc theo "kyThongKe" — tuần không phải kỳ tháng, không
-// có "kyThongKe" cấp tuần để dùng). Tái dùng "vuAnTuLogDocs"/"tinhTonHienTaiTheoGD" đã có sẵn cho
-// Kỳ báo cáo — truyền kyRankMap=null cho "vuAnTuLogDocs" (locBiCanTheoKy tự bỏ qua lọc theo kỳ khi
-// không có kyRankMap, trả về ĐỦ bị can HIỆN CÓ của vụ — chấp nhận là số LIVE, không phải số "tại
-// đúng thời điểm sự kiện", vì hệ thống chưa có cơ chế snapshot bị can theo ngày tự do).
-async function tinhBaoCaoTuan(tuNgay, denNgay) {
+// Chuẩn hoá "dsTuan" (đọc từ Firestore/Supabase, tuNgay/denNgay còn là chuỗi/Timestamp thô) thành
+// mảng {id, tuNgay:Date, denNgayCuoiNgay:Date} SẮP XẾP THEO "tuNgay" TĂNG DẦN — dùng cho
+// "tuanChiemNgay" bên dưới để giải quyết chồng lấn ngày giữa các tuần.
+function chuanHoaDsTuan(dsTuan) {
+  return dsTuan
+    .map(t => ({ id: t.id, tuNgay: new Date(t.tuNgay), denNgayCuoiNgay: cuoiNgay(new Date(t.denNgay)) }))
+    .sort((a, b) => a.tuNgay - b.tuNgay);
+}
+
+// Tuần ĐẦU TIÊN (tuNgay sớm nhất, dsTuanChuan đã sort tăng dần) có khoảng ngày chứa "d" — trả null
+// nếu không tuần nào phủ tới. Cơ chế chống đếm đúp (2026-09-23, theo yêu cầu Dũng "vụ nào đã tính
+// tuần này rồi thì ko tính tuần sau"): 2 tuần liền kề có thể VÔ TÌNH chồng lấn ngày (nhập tay sai
+// Từ/Đến ngày, hoặc CỐ Ý — VD muốn xem số "tuần này" sống trong lúc "tuần sau" đã bắt đầu tính từ
+// hôm nay dù tuần này chưa khép) — 1 sự kiện log rơi vào cả 2 khoảng thì CHỈ được tính ĐÚNG 1 LẦN,
+// vào tuần có "tuNgay" sớm hơn ("tuần này" luôn thắng "tuần sau"). KHÔNG cần lưu "đã tính" riêng
+// (persist flag) vì hàm này CHỈ phụ thuộc danh sách tuần hiện có — thêm/xoá/sửa 1 tuần tự động tính
+// lại đúng "ai chiếm ngày nào" ở lần gọi kế tiếp, không có cờ cũ nào có thể bị lệch/quên dọn (đúng
+// nguyên tắc "log/hiện trạng là nguồn sự thật duy nhất" đã áp dụng xuyên suốt dự án).
+function tuanChiemNgay(d, dsTuanChuan) {
+  for (const t of dsTuanChuan) {
+    if (d >= t.tuNgay && d <= t.denNgayCuoiNgay) return t.id;
+  }
+  return null;
+}
+
+// Tính các dòng TỰ ĐỘNG của "Báo cáo tuần" cho ĐÚNG 1 tuần (tuanId) — lọc "lichsuChuyenGiaiDoan"
+// theo "ngaySuKien" THẬT (khác mọi công thức theo "kỳ báo cáo" tháng, vốn lọc theo "kyThongKe" —
+// tuần không phải kỳ tháng, không có "kyThongKe" cấp tuần để dùng). "dsTuanChuan" = TOÀN BỘ tuần
+// hiện có (kể cả chính tuanId), đã qua "chuanHoaDsTuan" — dùng để loại các sự kiện đã bị 1 tuần
+// KHÁC có "tuNgay" sớm hơn "chiếm" mất (xem "tuanChiemNgay"), tránh đếm đúp khi 2 tuần chồng lấn
+// ngày. Tái dùng "vuAnTuLogDocs"/"tinhTonHienTaiTheoGD" đã có sẵn cho Kỳ báo cáo — truyền
+// kyRankMap=null cho "vuAnTuLogDocs" (locBiCanTheoKy tự bỏ qua lọc theo kỳ khi không có kyRankMap,
+// trả về ĐỦ bị can HIỆN CÓ của vụ — chấp nhận là số LIVE, không phải số "tại đúng thời điểm sự
+// kiện", vì hệ thống chưa có cơ chế snapshot bị can theo ngày tự do).
+async function tinhBaoCaoTuan(tuanId, dsTuanChuan) {
+  const tuanHienTai = dsTuanChuan.find(t => t.id === tuanId);
+  if (!tuanHienTai) throw new Error("Không tìm thấy tuần " + tuanId + " trong danh sách đã chuẩn hoá.");
+  const tuNgay = tuanHienTai.tuNgay, denNgay = tuanHienTai.denNgayCuoiNgay;
+
+  // Chỉ giữ lại doc log mà tuần ĐANG TÍNH thật sự "chiếm" (tuNgay sớm nhất trong các tuần phủ tới
+  // ngày sự kiện đó) — loại bỏ doc đã thuộc về 1 tuần KHÁC ra đời/khai báo sớm hơn.
+  const locDungTuan = (docs) => docs.filter(d => {
+    const l = d.data();
+    const ngay = l.ngaySuKien ? new Date(l.ngaySuKien) : null;
+    return ngay && !isNaN(ngay) && tuanChiemNgay(ngay, dsTuanChuan) === tuanId;
+  });
+
   const layTheoLoai = async (loaiSuKien) => {
     const snap = await db.collection("lichsuChuyenGiaiDoan")
       .where("loaiSuKien", "==", loaiSuKien)
       .where("ngaySuKien", ">=", tuNgay)
       .where("ngaySuKien", "<=", denNgay)
       .get();
-    return vuAnTuLogDocs(snap.docs, null);
+    return vuAnTuLogDocs(locDungTuan(snap.docs), null);
   };
   const [dsKhoiToVu, dsChuyenGD, dsTraHoSo, dsHoanThanh, khoiToBcSnap] = await Promise.all([
     layTheoLoai("khoi_to_vu"),
@@ -18989,7 +19038,7 @@ async function tinhBaoCaoTuan(tuNgay, denNgay) {
   const soBc = (arr) => arr.reduce((s, v) => s + v._soBiCan, 0);
   const locTheo = (arr, field, gd) => arr.filter(v => v._log[field] === gd);
 
-  const kq = { bcKhoiToMoiGlobal: khoiToBcSnap.size };
+  const kq = { bcKhoiToMoiGlobal: locDungTuan(khoiToBcSnap.docs).length };
   for (const gd of THU_TU_GIAI_DOAN) {
     // "vuMoi" ở Điều tra = khởi tố trực tiếp vào ĐT; ở Truy tố/Xét xử = chuyển đến từ giai đoạn
     // trước (denGiaiDoan trên CHÍNH sự kiện chuyen_giai_doan == tuGiaiDoan của giai đoạn trước —
@@ -19064,6 +19113,20 @@ function ThemTuanBaoCaoModal({ dsTuan, onDong, onXong }) {
     setNhan(nhanTuanTuNgay(fromInputDate(tuNgay), fromInputDate(denNgay)));
   }, [tuNgay, denNgay, nhanDaSua]);
 
+  // Cảnh báo (không chặn) nếu khoảng ngày vừa chọn CHỒNG LẤN với 1 tuần đã có — theo cơ chế
+  // "tuanChiemNgay", ngày trùng lặp sẽ luôn thuộc về tuần có "Từ ngày" SỚM HƠN (1 vụ không bao giờ
+  // bị đếm 2 lần), nhưng cán bộ nên biết trước để tránh nhầm tưởng tuần mới sẽ có đủ số liệu của cả
+  // những ngày đã bị tuần cũ "chiếm" mất.
+  const tuanChongLan = (() => {
+    if (!tuNgay || !denNgay) return [];
+    const d1 = fromInputDate(tuNgay), d2 = cuoiNgay(fromInputDate(denNgay));
+    if (d2 < d1) return [];
+    return dsTuan.filter(t => {
+      const tt = new Date(t.tuNgay), td = cuoiNgay(new Date(t.denNgay));
+      return d1 <= td && d2 >= tt;
+    });
+  })();
+
   const luu = async () => {
     setLoi("");
     if (!tuNgay || !denNgay) { setLoi("Cần chọn đủ Từ ngày/Đến ngày."); return; }
@@ -19107,6 +19170,13 @@ function ThemTuanBaoCaoModal({ dsTuan, onDong, onXong }) {
         Khoảng ngày này dùng để tự tính các dòng "thụ lý mới"/"đã giải quyết" theo ngày sự kiện thật
         (không phải kỳ báo cáo tháng) — tự do chọn, không bắt buộc đúng 7 ngày.
       </div>
+      {tuanChongLan.length > 0 && (
+        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+          ⚠ Khoảng ngày này chồng lấn với {tuanChongLan.length === 1 ? "tuần" : `${tuanChongLan.length} tuần`}
+          {" "}đã có ({tuanChongLan.map(t => `"${t.nhanTuan}"`).join(", ")}) — vẫn thêm được, nhưng những
+          ngày trùng nhau chỉ được tính vào tuần có "Từ ngày" SỚM HƠN (không đếm đúp 1 vụ 2 lần).
+        </div>
+      )}
       {loi && <div className="text-xs text-red-600 mt-2">{loi}</div>}
       <div className="flex justify-end gap-2 mt-5">
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-500 hover:bg-slate-100">Huỷ</button>
@@ -19189,20 +19259,29 @@ function BaoCaoTuanModule() {
     );
   }, []);
 
+  // "dsTuanChuan" LUÔN tính lại từ "dsTuan" NGAY LÚC GỌI (không cache) — đảm bảo cơ chế chống đếm
+  // đúp ở "tuanChiemNgay" luôn dùng đúng bức tranh tuần MỚI NHẤT (vừa thêm/xoá 1 tuần khác cũng
+  // ảnh hưởng ai "chiếm" ngày nào, xem ghi chú ở tinhBaoCaoTuan).
   const tinhLaiTuan = (t) => {
+    const dsTuanChuan = chuanHoaDsTuan(dsTuan);
     setTinhToan(s => ({ ...s, [t.id]: "dang_tinh" }));
-    tinhBaoCaoTuan(new Date(t.tuNgay), cuoiNgay(new Date(t.denNgay)))
+    tinhBaoCaoTuan(t.id, dsTuanChuan)
       .then(kq => setTinhToan(s => ({ ...s, [t.id]: kq })))
       .catch(err => { console.error(err); setTinhToan(s => ({ ...s, [t.id]: "loi" })); addToast("Lỗi tính số liệu tuần " + t.nhanTuan + ": " + err.message, "error"); });
   };
+  const tinhLaiTatCa = () => dsTuan.forEach(t => tinhLaiTuan(t));
 
-  // Tự tính cho tuần nào chưa có trong "tinhToan" (mount lần đầu / vừa thêm tuần mới) — không đưa
-  // "tinhToan" vào deps để tránh vòng lặp (đọc closure hơi cũ 1 nhịp, chấp nhận được — cùng pattern
-  // đã dùng ở "logKyTheoVu"/DanhSachPanel).
+  // Tự tính lại TOÀN BỘ (không chỉ tuần "chưa có") mỗi khi TẬP HỢP tuần thay đổi (thêm/xoá) — bắt
+  // buộc vì thêm 1 tuần MỚI có thể "chiếm" lại vài ngày trước đó đang thuộc về 1 tuần khác (xem
+  // "tuanChiemNgay"), khiến số liệu ĐÃ TÍNH của các tuần còn lại không còn đúng nếu chỉ tính bù
+  // riêng tuần mới. Dùng chuỗi id (không phải tham chiếu mảng) làm dep để KHÔNG chạy lại khi chỉ 1
+  // field khác (VD nhãn/duLieuNhapTay) của tuần đã có bị sửa — tránh tính lại toàn bộ không cần
+  // thiết mỗi lần gõ 1 ô nhập tay.
+  const idsTuanKey = dsTuan.map(t => t.id).sort().join(",");
   useEffect(() => {
-    dsTuan.forEach(t => { if (tinhToan[t.id] === undefined) tinhLaiTuan(t); });
+    dsTuan.forEach(t => tinhLaiTuan(t));
     // eslint-disable-next-line
-  }, [dsTuan]);
+  }, [idsTuanKey]);
 
   const suaThuCong = async (tuan, rowId, raw) => {
     const soMoi = raw === "" ? null : Number(raw);
@@ -19258,6 +19337,11 @@ function BaoCaoTuanModule() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={tinhLaiTatCa} disabled={!dsTuan.length}
+            title="Tính lại toàn bộ tuần — dùng khi có vụ án mới phát sinh cùng ngày với 1 tuần đã tính trước đó."
+            className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+            🔄 Tính lại tất cả
+          </button>
           <button onClick={() => xuatBaoCaoTuanExcel(dsTuan, tinhToan)} disabled={!dsTuan.length}
             className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
             ⬇ Xuất Excel
