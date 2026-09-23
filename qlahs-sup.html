@@ -18858,10 +18858,33 @@ function NopLuuKhoModule() {
 // trong khoảng đã chọn. KHÔNG lưu cờ "đã tính" riêng — hàm chỉ dựa vào danh sách tuần HIỆN CÓ nên
 // luôn tự đúng lại khi thêm/sửa/xoá 1 tuần bất kỳ (không có cờ cũ nào có thể bị quên dọn/lệch).
 //
-// CHƯA KIỂM CHỨNG bằng dữ liệu Supabase thật (không có tài khoản đăng nhập trong phiên viết tính
-// năng này) — Dũng cần: (1) chạy migration add_bao_cao_tuan_2026-09-23.sql; (2) thử thêm 1 tuần
-// báo cáo thật, đối chiếu vài dòng tự động tính (đặc biệt "Số vụ án CQĐT/VKS/Toà đã giải quyết")
-// với số liệu đã biết ở Kỳ báo cáo cho cùng khoảng ngày; (3) xuất Excel thử.
+// PANEL "DANH SÁCH VỤ ÁN" + NÚT "TÍNH BÁO CÁO TUẦN TỪ ĐÂY" (2026-09-23, cùng ngày, theo yêu cầu
+// Dũng) — cách THỨ 2 để tạo 1 tuần, thay cho gõ tay Từ/Đến ngày: panel "DanhSachVuMoiTuanPanel"
+// (cạnh bảng báo cáo) liệt kê MỌI vụ án, sắp MỚI NHẬP LÊN TRƯỚC (giống tab "Tất cả" của Danh sách
+// vụ án) — cán bộ cuộn tìm đúng vụ ĐẦU TIÊN của tuần rồi bấm 📌, hệ thống tự tạo 1 tuần: "Từ ngày"
+// = ĐÚNG "ngayTao" của vụ đó (giữ nguyên giờ/phút/giây), "Đến ngày" = ĐÚNG thời điểm bấm nút. Vì lý
+// do này, "Số vụ án/bị can mới khởi tố" (mục I + mục IV, riêng Điều tra) đổi hẳn sang tính theo
+// "vuan.ngayTao" (thời điểm NHẬP vào hệ thống) thay vì "ngaySuKien" của sự kiện khoi_to_vu/
+// khoi_to_bican như trước — "ngayTao" gán 1 lần lúc tạo, có đủ giờ/phút/giây, tự nhiên né được
+// đúng tình huống "cùng ngày" mà "ngaySuKien" (người dùng gõ tay, thường chỉ có ngày) hay gặp. Áp
+// dụng THỐNG NHẤT cho MỌI tuần (kể cả tạo bằng gõ tay Từ/Đến ngày), không phân biệt "tuần tạo kiểu
+// gì" — 1 dòng chỉ có ĐÚNG 1 công thức. Các dòng khác (giải quyết/chuyển giai đoạn/tồn) KHÔNG đổi,
+// vẫn theo "ngaySuKien"/live như cũ. ⚠ Giới hạn đã biết: không loại được vụ khởi tố TRỰC TIẾP vào
+// Truy tố/Xét xử (án cũ nhập lại, hiếm) khỏi "vụ mới Điều tra" nếu ngayTao rơi đúng khoảng.
+//
+// ĐÃ CHẠY migration `add_bao_cao_tuan_2026-09-23.sql` lên Supabase thật (2026-09-23, Dũng cấp mật
+// khẩu DB qua chat — chỉ dùng qua biến môi trường lúc chạy script tạm trong scratchpad, không ghi
+// vào file nào, gỡ sạch ngay sau khi chạy). Đã kiểm chứng: bảng "baoCaoTuan" + RLS + Realtime +
+// index đều đúng qua kết nối Postgres trực tiếp, VÀ qua đúng đường REST API app dùng (anon key,
+// HTTP 200 — hết lỗi "relation does not exist"/schema cache).
+//
+// CHƯA KIỂM CHỨNG bằng thao tác qua UI thật (không có tài khoản đăng nhập trong phiên viết tính
+// năng này, chỉ chạy được migration qua kết nối DB trực tiếp) — Dũng cần: (1) mở tab, xác nhận panel
+// "Danh sách vụ án" hiện đúng, thử bấm 📌 ở 1 vụ, xác nhận tuần mới tạo đúng + số liệu hợp lý; (2)
+// thử tạo thêm 1 tuần bằng "+ Thêm tuần báo cáo" (gõ tay ngày), đối chiếu vài dòng tự động tính
+// (đặc biệt "Số vụ án CQĐT/VKS/Toà đã giải quyết") với số liệu đã biết ở Kỳ báo cáo cho cùng khoảng
+// ngày; (3) thử tạo 2 tuần chồng lấn ngày (cả bằng gõ tay lẫn bằng nút 📌), xác nhận không bị đếm
+// đúp; (4) xuất Excel thử.
 // ====================================================================
 
 // 87 dòng tiêu chí — copy NGUYÊN VĂN nhãn từ file mẫu "PL THỐNG KÊ CÔNG TÁC TUẦN.xlsx" (kể cả các
@@ -18973,10 +18996,14 @@ const BAO_CAO_TUAN_ROWS = [
 
 // Chuẩn hoá "dsTuan" (đọc từ Firestore/Supabase, tuNgay/denNgay còn là chuỗi/Timestamp thô) thành
 // mảng {id, tuNgay:Date, denNgayCuoiNgay:Date} SẮP XẾP THEO "tuNgay" TĂNG DẦN — dùng cho
-// "tuanChiemNgay" bên dưới để giải quyết chồng lấn ngày giữa các tuần.
+// "tuanChiemNgay" bên dưới để giải quyết chồng lấn ngày giữa các tuần. KHÔNG tự ép "denNgay" về
+// cuối ngày ở đây nữa (bản đầu có làm, đã bỏ) — "denNgay" LƯU TRONG DB đã LÀ mốc cắt cuối cùng
+// chính xác rồi (`ThemTuanBaoCaoModal` tự `cuoiNgay()` hoá TRƯỚC khi ghi cho tuần nhập tay ngày;
+// tuần tạo qua nút "Tính báo cáo tuần từ đây" ở panel Danh sách vụ án lưu ĐÚNG thời điểm bấm nút,
+// không làm tròn) — ép lại ở đây sẽ phá mất độ chính xác tới giờ/phút/giây cần có cho cơ chế đó.
 function chuanHoaDsTuan(dsTuan) {
   return dsTuan
-    .map(t => ({ id: t.id, tuNgay: new Date(t.tuNgay), denNgayCuoiNgay: cuoiNgay(new Date(t.denNgay)) }))
+    .map(t => ({ id: t.id, tuNgay: new Date(t.tuNgay), denNgayCuoiNgay: new Date(t.denNgay) }))
     .sort((a, b) => a.tuNgay - b.tuNgay);
 }
 
@@ -19010,13 +19037,14 @@ async function tinhBaoCaoTuan(tuanId, dsTuanChuan) {
   if (!tuanHienTai) throw new Error("Không tìm thấy tuần " + tuanId + " trong danh sách đã chuẩn hoá.");
   const tuNgay = tuanHienTai.tuNgay, denNgay = tuanHienTai.denNgayCuoiNgay;
 
-  // Chỉ giữ lại doc log mà tuần ĐANG TÍNH thật sự "chiếm" (tuNgay sớm nhất trong các tuần phủ tới
-  // ngày sự kiện đó) — loại bỏ doc đã thuộc về 1 tuần KHÁC ra đời/khai báo sớm hơn.
-  const locDungTuan = (docs) => docs.filter(d => {
-    const l = d.data();
-    const ngay = l.ngaySuKien ? new Date(l.ngaySuKien) : null;
+  // Chỉ giữ lại doc mà tuần ĐANG TÍNH thật sự "chiếm" (tuNgay sớm nhất trong các tuần phủ tới ngày
+  // đang xét) — loại bỏ doc đã thuộc về 1 tuần KHÁC ra đời/khai báo sớm hơn. "layNgay" cho phép
+  // dùng CHUNG hàm này cho cả log event (ngaySuKien) LẪN chính "vuan" (ngayTao, xem khối bên dưới).
+  const locDungTuan = (docs, layNgay) => docs.filter(d => {
+    const ngay = layNgay(d.data());
     return ngay && !isNaN(ngay) && tuanChiemNgay(ngay, dsTuanChuan) === tuanId;
   });
+  const layNgaySuKien = (l) => l.ngaySuKien ? new Date(l.ngaySuKien) : null;
 
   const layTheoLoai = async (loaiSuKien) => {
     const snap = await db.collection("lichsuChuyenGiaiDoan")
@@ -19024,28 +19052,47 @@ async function tinhBaoCaoTuan(tuanId, dsTuanChuan) {
       .where("ngaySuKien", ">=", tuNgay)
       .where("ngaySuKien", "<=", denNgay)
       .get();
-    return vuAnTuLogDocs(locDungTuan(snap.docs), null);
+    return vuAnTuLogDocs(locDungTuan(snap.docs, layNgaySuKien), null);
   };
-  const [dsKhoiToVu, dsChuyenGD, dsTraHoSo, dsHoanThanh, khoiToBcSnap] = await Promise.all([
-    layTheoLoai("khoi_to_vu"),
+
+  // "Số vụ án/bị can mới khởi tố" (mục I + IV, Điều tra) — tính theo "vuan.ngayTao" (thời điểm vụ
+  // được NHẬP vào hệ thống), KHÔNG theo "ngaySuKien" của sự kiện khoi_to_vu/khoi_to_bican như mọi
+  // dòng khác (2026-09-23, theo yêu cầu Dũng — xem panel "Danh sách vụ án" cạnh bảng báo cáo, nút
+  // "Tính báo cáo tuần từ đây": đếm theo VỊ TRÍ trong danh sách sắp mới-nhập-trước, tức chính là
+  // ngayTao). "ngayTao" gán 1 LẦN DUY NHẤT lúc tạo (không sửa được sau) và có đủ giờ/phút/giây —
+  // né hẳn tình huống "sáng tính rồi chiều phát sinh vụ mới vẫn cùng ngày" (ngaySuKien do người
+  // dùng gõ tay, thường chỉ có ngày, dễ trùng). Áp dụng "tuanChiemNgay" giống mọi nguồn khác.
+  // Dùng thẳng "soBiCan" đã cache sẵn trên "vuan" (Tối ưu Firestore Đợt 3), không cần đọc "bican".
+  // ⚠ Giới hạn đã biết: không loại được vụ khởi tố TRỰC TIẾP vào Truy tố/Xét xử (án cũ nhập lại,
+  // hiếm) — vẫn bị tính vào "vụ mới Điều tra" nếu ngayTao rơi đúng khoảng. Chấp nhận được cho 1
+  // báo cáo tuần không chính thức (không phải Biểu B10/Kỳ báo cáo chính thức).
+  // KHÔNG cần lọc thêm "ngayTao != null" — Postgres tự loại NULL khỏi kết quả khi so sánh >=/<=
+  // (NULL >= x luôn ra NULL, không phải TRUE, nên WHERE tự động bỏ qua) — thêm "!=null" tường minh
+  // sẽ VỠ RUNTIME vì shim dịch "!=" thành ".neq()", PostgREST không hiểu "neq.null" là NULL, cố ép
+  // kiểu chuỗi "null" sang timestamptz → lỗi 400 "invalid input syntax" (đã kiểm chứng thật qua
+  // REST API trước khi viết dòng này).
+  const layNgayTao = (l) => l.ngayTao ? new Date(l.ngayTao) : null;
+  const vuMoiTheoNgayTaoSnap = await db.collection("vuan")
+    .where("ngayTao", ">=", tuNgay).where("ngayTao", "<=", denNgay).get();
+  const vuMoiKhoiToDT = locDungTuan(vuMoiTheoNgayTaoSnap.docs, layNgayTao).map(d => ({ id: d.id, ...d.data() }));
+  const bcKhoiToMoiGlobal = vuMoiKhoiToDT.reduce((s, v) => s + (v.soBiCan || 0), 0);
+
+  const [dsChuyenGD, dsTraHoSo, dsHoanThanh] = await Promise.all([
     layTheoLoai("chuyen_giai_doan"),
     layTheoLoai("tra_ho_so"),
     layTheoLoai("hoan_thanh"),
-    db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "==", "khoi_to_bican")
-      .where("ngaySuKien", ">=", tuNgay).where("ngaySuKien", "<=", denNgay).get(),
   ]);
 
   const soBc = (arr) => arr.reduce((s, v) => s + v._soBiCan, 0);
   const locTheo = (arr, field, gd) => arr.filter(v => v._log[field] === gd);
 
-  const kq = { bcKhoiToMoiGlobal: locDungTuan(khoiToBcSnap.docs).length };
+  const kq = { bcKhoiToMoiGlobal };
   for (const gd of THU_TU_GIAI_DOAN) {
-    // "vuMoi" ở Điều tra = khởi tố trực tiếp vào ĐT; ở Truy tố/Xét xử = chuyển đến từ giai đoạn
-    // trước (denGiaiDoan trên CHÍNH sự kiện chuyen_giai_doan == tuGiaiDoan của giai đoạn trước —
-    // cùng 1 tập sự kiện, tự nhiên khớp tuyệt đối, không cần đối chiếu chéo giữa 2 giai đoạn).
-    const vuMoiArr = gd === "dieu_tra"
-      ? locTheo(dsKhoiToVu, "denGiaiDoan", gd)
-      : locTheo(dsChuyenGD, "denGiaiDoan", gd);
+    // "vuMoi" ở Điều tra = mảng tính riêng ở trên (theo ngayTao); ở Truy tố/Xét xử = chuyển đến từ
+    // giai đoạn trước (denGiaiDoan trên CHÍNH sự kiện chuyen_giai_doan == tuGiaiDoan của giai đoạn
+    // trước — cùng 1 tập sự kiện, tự nhiên khớp tuyệt đối, không cần đối chiếu chéo giữa 2 giai đoạn).
+    const vuMoiArr = gd === "dieu_tra" ? vuMoiKhoiToDT : locTheo(dsChuyenGD, "denGiaiDoan", gd);
+    const bcMoi = gd === "dieu_tra" ? bcKhoiToMoiGlobal : soBc(vuMoiArr);
     const raChuyenArr = locTheo(dsChuyenGD, "tuGiaiDoan", gd); // "giải quyết -> chuyển tiếp" (rỗng ở Xét xử, không có giai đoạn sau)
     const traDiArr = locTheo(dsTraHoSo, "tuGiaiDoan", gd);     // trả về giai đoạn trước (rỗng ở Điều tra)
     // "hoan_thanh" không lưu giai đoạn xảy ra — lọc qua coQuanThuLy HIỆN TẠI của vụ (không đổi sau
@@ -19058,7 +19105,7 @@ async function tinhBaoCaoTuan(tuanId, dsTuanChuan) {
     const ton = await tinhTonHienTaiTheoGD(gd);
 
     kq[gd] = {
-      vuMoi: vuMoiArr.length, bcMoi: soBc(vuMoiArr),
+      vuMoi: vuMoiArr.length, bcMoi,
       vuRaChuyen: raChuyenArr.length, bcRaChuyen: soBc(raChuyenArr),
       vuDinhChi: dinhChiArr.length, bcDinhChi: soBc(dinhChiArr),
       vuTamDinhChi: tamDinhChiArr.length, bcTamDinhChi: soBc(tamDinhChiArr),
@@ -19079,6 +19126,90 @@ function cuoiNgay(d) {
   const dt = new Date(d);
   dt.setHours(23, 59, 59, 999);
   return dt;
+}
+
+// Panel "Danh sách vụ án" cạnh bảng Báo cáo tuần (2026-09-23, theo yêu cầu Dũng) — cho cán bộ tự
+// cuộn tìm đúng vụ ĐẦU TIÊN của "tuần này" trong danh sách LUÔN sắp mới-nhập-trước (giống tab "Tất
+// cả" của Danh sách vụ án), rồi bấm 📌 ngay tại đúng vụ đó. Mọi vụ TỪ ĐÓ TRỞ LÊN (mới hơn, tức
+// "ngayTao" >= vụ đã chọn) được tính là "Số vụ án/bị can mới khởi tố" của 1 tuần MỚI (xem
+// "tinhBaoCaoTuan" — đếm theo "vuan.ngayTao", KHÔNG theo "ngaySuKien" như mọi dòng khác) — né hẳn
+// việc phải gõ ngày tay, và né đúng tình huống "sáng tính rồi chiều phát sinh vụ mới vẫn cùng
+// ngày" vì "ngayTao" có sẵn đủ giờ/phút/giây, không chỉ ngày.
+function DanhSachVuMoiTuanPanel({ onTaoTuanTuMoc }) {
+  const [list, setList] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [gioiHan, setGioiHan] = useState(150);
+
+  useEffect(() => {
+    setDangTai(true);
+    // Mốc "ngày 0" (1970) thay cho lọc "ngayTao != null" — vụ cũ di trú thiếu hẳn field này (NULL)
+    // tự động KHÔNG thoả ">= mốc" (so sánh với NULL trong SQL luôn ra NULL, không phải TRUE) nên bị
+    // loại đúng ý, mà không cần toán tử "IS NOT NULL" (shim hiện chỉ hỗ trợ ==/!=/>/</>=/<=/in — thử
+    // "!=null" sẽ vỡ runtime vì PostgREST không hiểu "neq.null", xem ghi chú ở tinhBaoCaoTuan). Nếu
+    // lọc theo NULL thật sự cần thiết ở nơi khác sau này, cân nhắc thêm operator "is"/"not.is" vào
+    // "_buildPgQuery" thay vì lặp lại mẹo này.
+    return db.collection("vuan").where("ngayTao", ">=", new Date(0))
+      .orderBy("ngayTao", "desc").limit(gioiHan).onSnapshot(
+        snap => { setList(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+        err => { console.error(err); setDangTai(false); addToast("Lỗi tải danh sách vụ án: " + err.message, "error"); }
+      );
+  }, [gioiHan]);
+
+  return (
+    <div className="w-[360px] shrink-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0 max-h-[75vh]">
+      <div className="p-3 border-b border-slate-100">
+        <div className="text-sm font-semibold text-slate-700">Danh sách vụ án</div>
+        <div className="text-xs text-slate-400 mt-0.5">
+          Mới nhập trước — cuộn tìm đúng vụ đầu tuần rồi bấm 📌 để tính "Số vụ án/bị can mới khởi tố".
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto">
+        {dangTai ? (
+          <div className="p-3 text-xs text-slate-400">Đang tải...</div>
+        ) : !list.length ? (
+          <div className="p-3 text-xs text-slate-400">Không có vụ án nào.</div>
+        ) : (
+          <table className="text-xs w-full">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200 sticky top-0">
+                <th className="p-2 text-left font-semibold text-slate-500">Tên vụ / KSV</th>
+                <th className="p-2 text-right font-semibold text-slate-500">Bị can</th>
+                <th className="p-2 text-left font-semibold text-slate-500">Giai đoạn</th>
+                <th className="p-2 w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map(v => (
+                <tr key={v.id} className="border-b border-slate-50 hover:bg-indigo-50/40">
+                  <td className="p-2">
+                    <div className="text-slate-700 truncate max-w-[160px]">{v.tenVu || "(chưa đặt tên)"}</div>
+                    <div className="text-slate-400">{v.ksvChinh || "—"}</div>
+                  </td>
+                  <td className="p-2 text-right text-slate-600">{v.soBiCan ?? 0}</td>
+                  <td className="p-2 text-slate-600">
+                    {NHAN_GIAI_DOAN[v.coQuanThuLy] || "—"}
+                    {v.trangThai !== "dang_giai_quyet" && (
+                      <div className="text-slate-400">({NHAN_TRANG_THAI[v.trangThai] || v.trangThai})</div>
+                    )}
+                  </td>
+                  <td className="p-2 text-center">
+                    <button onClick={() => onTaoTuanTuMoc(v, list)} title="Tính báo cáo tuần từ đây"
+                      className="text-slate-400 hover:text-indigo-600">📌</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {list.length >= gioiHan && (
+        <div className="p-2 border-t border-slate-100 text-center">
+          <button onClick={() => setGioiHan(n => n + 150)}
+            className="text-xs text-indigo-600 hover:underline">Tải thêm 150</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Ô số nhập tay — local state riêng (giống pattern NhapNgay) để gõ mượt, chỉ commit lúc rời ô.
@@ -19121,8 +19252,11 @@ function ThemTuanBaoCaoModal({ dsTuan, onDong, onXong }) {
     if (!tuNgay || !denNgay) return [];
     const d1 = fromInputDate(tuNgay), d2 = cuoiNgay(fromInputDate(denNgay));
     if (d2 < d1) return [];
+    // "denNgay" của tuần ĐÃ CÓ đọc trong DB đã LÀ mốc cắt cuối cùng (đã cuoiNgay() hoá lúc lưu,
+    // hoặc là thời điểm bấm nút "Tính báo cáo tuần từ đây" chính xác tới giây) — dùng thẳng, không
+    // ép lại lần 2 (xem ghi chú ở "chuanHoaDsTuan").
     return dsTuan.filter(t => {
-      const tt = new Date(t.tuNgay), td = cuoiNgay(new Date(t.denNgay));
+      const tt = new Date(t.tuNgay), td = new Date(t.denNgay);
       return d1 <= td && d2 >= tt;
     });
   })();
@@ -19136,8 +19270,11 @@ function ThemTuanBaoCaoModal({ dsTuan, onDong, onXong }) {
     try {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
+      // "denNgay" ép về cuối ngày (23:59:59.999) NGAY LÚC LƯU (không phải lúc tính) — để giá trị
+      // lưu trong DB LUÔN LÀ mốc cắt cuối cùng chính xác, dùng thẳng được ở mọi nơi (xem
+      // "chuanHoaDsTuan"/"tuanChongLan") mà không cần đoán lại "đây là ngày thô hay đã final".
       await db.collection("baoCaoTuan").doc().set({
-        tuNgay: d1, denNgay: d2, nhanTuan: nhan.trim() || nhanTuanTuNgay(d1, d2),
+        tuNgay: d1, denNgay: cuoiNgay(d2), nhanTuan: nhan.trim() || nhanTuanTuNgay(d1, d2),
         duLieuNhapTay: {}, ngayTao: now, nguoiTao: nguoiThucHien,
         ngayCapNhat: now, nguoiCapNhat: nguoiThucHien,
       });
@@ -19310,6 +19447,35 @@ function BaoCaoTuanModule() {
     }
   };
 
+  // Bấm 📌 ở panel "Danh sách vụ án" (DanhSachVuMoiTuanPanel) — tự tạo 1 tuần MỚI, "Từ ngày" = ĐÚNG
+  // "ngayTao" của vụ đã chọn (không làm tròn — giữ nguyên giờ/phút/giây), "Đến ngày" = ĐÚNG thời
+  // điểm bấm nút (cũng không làm tròn về cuối ngày, khác tuần nhập tay qua "+ Thêm tuần báo cáo") —
+  // để "tinhBaoCaoTuan" đếm "Số vụ án/bị can mới khởi tố" (theo vuan.ngayTao) ra ĐÚNG bằng số vụ từ
+  // vị trí đã chọn (bao gồm) lên tới đầu danh sách, không hơn không kém.
+  const taoTuanTuMoc = async (vuMoc, listDaTai) => {
+    if (!vuMoc.ngayTao) { addToast("Vụ này thiếu ngày nhập (ngayTao) — không dùng làm mốc được.", "error"); return; }
+    const idx = listDaTai.findIndex(v => v.id === vuMoc.id);
+    const soVuDuKien = idx >= 0 ? idx + 1 : null;
+    if (!window.confirm(
+      `Tạo 1 tuần báo cáo mới, tính "Số vụ án/bị can mới khởi tố" là TẤT CẢ vụ từ ` +
+      `"${vuMoc.tenVu || "(chưa đặt tên)"}" trở lên (mới hơn) trong danh sách${soVuDuKien ? ` — dự kiến ${soVuDuKien} vụ` : ""}. Tiếp tục?`
+    )) return;
+    const tuNgay = new Date(vuMoc.ngayTao), denNgay = new Date();
+    try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      await db.collection("baoCaoTuan").doc().set({
+        tuNgay, denNgay, nhanTuan: nhanTuanTuNgay(tuNgay, denNgay) + " (từ vụ đã chọn)",
+        duLieuNhapTay: {}, ngayTao: now, nguoiTao: nguoiThucHien,
+        ngayCapNhat: now, nguoiCapNhat: nguoiThucHien,
+      });
+      addToast("Đã tạo tuần mới từ vụ đã chọn.");
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi khi tạo tuần: " + err.message, "error");
+    }
+  };
+
   const giaTriODong = (row, tuan) => {
     if (row.auto) {
       const kq = tinhToan[tuan.id];
@@ -19353,68 +19519,74 @@ function BaoCaoTuanModule() {
         </div>
       </div>
 
-      {dangTai ? (
-        <div className="text-sm text-slate-400">Đang tải...</div>
-      ) : !dsTuan.length ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-400">
-          Chưa có tuần báo cáo nào — bấm "+ Thêm tuần báo cáo" để bắt đầu.
-        </div>
-      ) : (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
-          <table className="text-xs w-full">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="p-2 text-left font-semibold text-slate-600 sticky left-0 bg-slate-50 min-w-[280px]">Tiêu chí</th>
-                <th className="p-2 text-right font-semibold text-slate-600 min-w-[60px]">Tổng</th>
-                {dsTuan.map(t => (
-                  <th key={t.id} className="p-2 text-right font-semibold text-slate-600 min-w-[80px]">
-                    <div>{t.nhanTuan}</div>
-                    <div className="flex items-center justify-end gap-1 mt-1 font-normal">
-                      <button onClick={() => tinhLaiTuan(t)} title="Tính lại số liệu tự động"
-                        className="text-slate-400 hover:text-indigo-600">🔄</button>
-                      <button onClick={() => xoaTuan(t)} title="Xoá tuần này"
-                        className="text-slate-400 hover:text-red-600">🗑</button>
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {BAO_CAO_TUAN_ROWS.map(row => {
-                if (row.type === "section") {
-                  return (
-                    <tr key={row.id} className={row.level === 0 ? "bg-slate-200" : "bg-indigo-50"}>
-                      <td colSpan={2 + dsTuan.length} className="p-2 font-semibold text-slate-700 sticky left-0"
-                          style={{ background: row.level === 0 ? "#e2e8f0" : "#eef2ff" }}>
-                        {row.label}
-                      </td>
-                    </tr>
-                  );
-                }
-                return (
-                  <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className={`p-2 text-slate-700 sticky left-0 bg-white ${row.indent ? "pl-6 text-slate-500" : ""}`}>
-                      {row.label}
-                    </td>
-                    <td className="p-2 text-right font-semibold text-slate-700">{tongODong(row) || ""}</td>
-                    {dsTuan.map(t => {
-                      if (row.auto) {
-                        const { hienThi } = giaTriODong(row, t);
-                        return <td key={t.id} className="p-2 text-right text-slate-600">{hienThi}</td>;
-                      }
-                      return (
-                        <td key={t.id} className="p-1.5 text-right">
-                          <OSoNhapTay value={t.duLieuNhapTay?.[row.id]} onCommit={raw => suaThuCong(t, row.id, raw)} />
-                        </td>
-                      );
-                    })}
+      <div className="flex gap-4 items-start">
+        <div className="flex-1 min-w-0">
+          {dangTai ? (
+            <div className="text-sm text-slate-400">Đang tải...</div>
+          ) : !dsTuan.length ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-400">
+              Chưa có tuần báo cáo nào — bấm "+ Thêm tuần báo cáo" hoặc chọn 1 vụ ở panel bên phải để bắt đầu.
+            </div>
+          ) : (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+              <table className="text-xs w-full">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="p-2 text-left font-semibold text-slate-600 sticky left-0 bg-slate-50 min-w-[280px]">Tiêu chí</th>
+                    <th className="p-2 text-right font-semibold text-slate-600 min-w-[60px]">Tổng</th>
+                    {dsTuan.map(t => (
+                      <th key={t.id} className="p-2 text-right font-semibold text-slate-600 min-w-[80px]">
+                        <div>{t.nhanTuan}</div>
+                        <div className="flex items-center justify-end gap-1 mt-1 font-normal">
+                          <button onClick={() => tinhLaiTuan(t)} title="Tính lại số liệu tự động"
+                            className="text-slate-400 hover:text-indigo-600">🔄</button>
+                          <button onClick={() => xoaTuan(t)} title="Xoá tuần này"
+                            className="text-slate-400 hover:text-red-600">🗑</button>
+                        </div>
+                      </th>
+                    ))}
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {BAO_CAO_TUAN_ROWS.map(row => {
+                    if (row.type === "section") {
+                      return (
+                        <tr key={row.id} className={row.level === 0 ? "bg-slate-200" : "bg-indigo-50"}>
+                          <td colSpan={2 + dsTuan.length} className="p-2 font-semibold text-slate-700 sticky left-0"
+                              style={{ background: row.level === 0 ? "#e2e8f0" : "#eef2ff" }}>
+                            {row.label}
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return (
+                      <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className={`p-2 text-slate-700 sticky left-0 bg-white ${row.indent ? "pl-6 text-slate-500" : ""}`}>
+                          {row.label}
+                        </td>
+                        <td className="p-2 text-right font-semibold text-slate-700">{tongODong(row) || ""}</td>
+                        {dsTuan.map(t => {
+                          if (row.auto) {
+                            const { hienThi } = giaTriODong(row, t);
+                            return <td key={t.id} className="p-2 text-right text-slate-600">{hienThi}</td>;
+                          }
+                          return (
+                            <td key={t.id} className="p-1.5 text-right">
+                              <OSoNhapTay value={t.duLieuNhapTay?.[row.id]} onCommit={raw => suaThuCong(t, row.id, raw)} />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      )}
+
+        <DanhSachVuMoiTuanPanel onTaoTuanTuMoc={taoTuanTuMoc} />
+      </div>
 
       {hienThem && (
         <ThemTuanBaoCaoModal dsTuan={dsTuan} onDong={() => setHienThem(false)}

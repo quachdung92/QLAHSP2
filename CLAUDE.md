@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Module mới "Báo cáo tuần" (2026-09-23, `qlahs-sup.html`, nhánh `bao-cao-tuan`, SQL migration ĐÃ VIẾT — CHƯA CHẠY lên Supabase, cần Dũng cấp mật khẩu DB — CHƯA merge/deploy)
+## Module mới "Báo cáo tuần" (2026-09-23, `qlahs-sup.html`, nhánh `bao-cao-tuan`, migration ĐÃ CHẠY lên Supabase thật — CHƯA merge/deploy, CHƯA kiểm chứng qua UI thật)
 
 Theo yêu cầu Dũng, gửi kèm file mẫu `PL THỐNG KÊ CÔNG TÁC TUẦN.xlsx` (Phụ lục thống kê công tác
 tuần, sheet duy nhất "PL HS ST" — 87 dòng tiêu chí chia section "A. HÌNH SỰ" + 6 mục I-VI, mỗi tuần
@@ -17,7 +17,8 @@ tắc #2 CLAUDE.md — "cán bộ thống kê tự quyết định ngày chốt 
 CHỌN (Từ ngày/Đến ngày tự do), không phải tuần lịch cứng nhắc. Thiết kế theo đúng phát hiện này,
 KHÔNG hardcode "tuần luôn 7 ngày Thứ 2→Chủ nhật".
 
-**Bảng Supabase mới `baoCaoTuan`** (`supabase/add_bao_cao_tuan_2026-09-23.sql`, CHƯA CHẠY) — mỗi
+**Bảng Supabase mới `baoCaoTuan`** (`supabase/add_bao_cao_tuan_2026-09-23.sql`, ĐÃ CHẠY — xem cuối
+mục) — mỗi
 dòng là 1 "tuần báo cáo" tự chọn: `tuNgay`/`denNgay` (khoảng ngày), `nhanTuan` (nhãn hiển thị, VD
 "10/6-16/6", tự gợi ý từ ngày nhưng sửa tay được), `duLieuNhapTay` (jsonb `{rowId: number}` — CHỈ
 lưu các dòng KHÔNG tự tính được, xem dưới). RLS mirror đúng mô hình hiện tại (`authenticated` đọc/
@@ -47,14 +48,52 @@ vài ngày trước đó đang thuộc tuần khác. Thêm nút "🔄 Tính lạ
 giữa ngày, cần làm mới thủ công) + cảnh báo (không chặn) trong `ThemTuanBaoCaoModal` khi khoảng
 ngày vừa chọn chồng lấn 1 tuần đã có, nêu rõ tuần nào sẽ "thắng".
 
-**Phạm vi tự động tính** (`tinhBaoCaoTuan`, lọc `lichsuChuyenGiaiDoan` theo `ngaySuKien` THẬT trong
-khoảng đã chọn rồi áp thêm `tuanChiemNgay` ở trên — KHÁC mọi công thức theo kỳ tháng vốn lọc theo
-`kyThongKe`, vì tuần không có khái niệm "kỳ thống kê" riêng để gắn vào sự kiện log):
-- **Mục I "Tình hình tội phạm"**: chỉ 2 dòng TỔNG (Số vụ/bị can khởi tố mới, qua sự kiện
-  `khoi_to_vu`/`khoi_to_bican`) — KHÔNG tự tính được phần chia theo CHƯƠNG Bộ luật hình sự (hệ
-  thống chỉ có "điều luật" cụ thể qua `DANH_MUC_TOI_DANH_MAM`, không có field phân loại theo
-  chương) → 6 dòng "Tr.đó" mỗi bên (Vụ/BC) để NHẬP TAY.
-- **Mục IV/V/VI (Điều tra/Truy tố/Xét xử)**: "Thụ lý mới" (`khoi_to_vu` denGiaiDoan=ĐT, hoặc
+**Panel "Danh sách vụ án" + nút "Tính báo cáo tuần từ đây" (2026-09-23, cùng ngày, theo yêu cầu Dũng
+sau khi xác nhận 2 lựa chọn qua `AskUserQuestion`)** — cách THỨ 2 để tạo 1 tuần, thay cho gõ tay
+Từ/Đến ngày, tận dụng việc "Danh sách vụ án đã sắp xếp theo thứ tự (nhập mới nhất lên trên cùng)"
+có sẵn từ trước. `DanhSachVuMoiTuanPanel` (đặt cạnh bảng báo cáo, cột `flex-1`/panel `w-[360px]`) —
+liệt kê MỌI vụ án (mọi giai đoạn/trạng thái, KHÔNG lọc gì), sắp `ngayTao` giảm dần, 3 cột "Tên vụ /
+KSV" | "Bị can" (đọc thẳng `v.soBiCan` cache sẵn — vẫn còn từ đợt "Tối ưu Firestore Đợt 3", carry
+sang Supabase) | "Giai đoạn". Bấm 📌 ở 1 dòng → `taoTuanTuMoc` tự tạo 1 tuần MỚI: "Từ ngày" = ĐÚNG
+`ngayTao` của vụ đó (giữ nguyên giờ/phút/giây, KHÔNG làm tròn), "Đến ngày" = ĐÚNG thời điểm bấm nút
+(cũng không làm tròn) — để "Số vụ án/bị can mới khởi tố" tính ra ĐÚNG BẰNG số vụ từ vị trí đã chọn
+(bao gồm) lên tới đầu danh sách, không hơn không kém.
+
+**Vì lý do trên, "Số vụ án/bị can mới khởi tố" (mục I + mục IV, riêng Điều tra) đổi hẳn nguồn tính
+từ `ngaySuKien` (sự kiện `khoi_to_vu`/`khoi_to_bican`) sang `vuan.ngayTao`** (thời điểm vụ được
+NHẬP vào hệ thống) — áp dụng THỐNG NHẤT cho MỌI tuần (kể cả tạo bằng gõ tay Từ/Đến ngày qua
+`ThemTuanBaoCaoModal`, không phân biệt "tuần tạo kiểu gì", 1 dòng chỉ có ĐÚNG 1 công thức).
+`ngayTao` gán 1 LẦN DUY NHẤT lúc tạo, có đủ giờ/phút/giây — né hẳn tình huống "sáng tính rồi chiều
+phát sinh vụ mới vẫn cùng ngày" mà `ngaySuKien` (người dùng gõ tay, thường chỉ có ngày) hay gặp, và
+là ĐÚNG field mà panel "Danh sách vụ án" đang sắp xếp theo (không cần suy diễn gì thêm — vị trí
+trong danh sách CHÍNH LÀ kết quả của phép so sánh này). Vẫn áp dụng `tuanChiemNgay` như mọi nguồn
+khác để chống đếm đúp khi 2 tuần chồng lấn. Các dòng khác (giải quyết/chuyển giai đoạn/trả ĐTBS/
+tồn) KHÔNG đổi, vẫn theo `ngaySuKien`/live như trước. **⚠ Giới hạn đã biết**: không loại được vụ
+khởi tố TRỰC TIẾP vào Truy tố/Xét xử (án cũ nhập lại, hiếm) khỏi "vụ mới Điều tra" nếu `ngayTao`
+rơi đúng khoảng — chấp nhận được cho 1 báo cáo tuần không chính thức, không phải Biểu B10/Kỳ báo
+cáo chính thức.
+
+**Bug thật phát hiện + sửa trong lúc code (không phải giả thuyết) — `.where(field, "!=", null)`
+VỠ RUNTIME**: dự định lọc "vụ thiếu `ngayTao`" (dữ liệu cũ di trú) bằng `.where("ngayTao","!=",
+null)` — kiểm chứng qua REST API thật (`curl` với `ngayTao=neq.null`) xác nhận PostgREST trả về
+`HTTP 400 — "invalid input syntax for type timestamp with time zone: 'null'"` (shim dịch `"!="`
+thành `.neq()`, PostgREST không hiểu `neq.null` là NULL, cố ép kiểu chuỗi `"null"` sang
+`timestamptz`; cú pháp đúng phải là `not.is.null`, shim hiện KHÔNG hỗ trợ toán tử `is`). Đã sửa 2
+chỗ theo 2 cách khác nhau tuỳ ngữ cảnh: (1) trong `tinhBaoCaoTuan`, bỏ hẳn mệnh đề thừa đó — so
+sánh `>=`/`<=` với 1 khoảng ngày đã TỰ ĐỘNG loại NULL rồi (`NULL >= x` luôn ra NULL, không phải
+TRUE, nên WHERE tự bỏ qua — không cần "IS NOT NULL" tường minh); (2) trong `DanhSachVuMoiTuanPanel`
+(không có khoảng ngày để tận dụng), dùng mẹo `.where("ngayTao", ">=", new Date(0))` (mốc 1970) —
+mọi `ngayTao` thật đều thoả, NULL thì không, đạt hiệu quả loại NULL mà không cần toán tử `is` nào
+(0 rủi ro sửa `_buildPgQuery`, hạ tầng dùng chung toàn app).
+
+**Phạm vi tự động tính** (`tinhBaoCaoTuan`, lọc theo `ngaySuKien`/`ngayTao` THẬT trong khoảng đã
+chọn rồi áp `tuanChiemNgay` — KHÁC mọi công thức theo kỳ tháng vốn lọc theo `kyThongKe`, vì tuần
+không có khái niệm "kỳ thống kê" riêng để gắn vào sự kiện log):
+- **Mục I "Tình hình tội phạm"**: chỉ 2 dòng TỔNG (Số vụ/bị can khởi tố mới, qua `vuan.ngayTao` —
+  xem 2 mục ngay trên) — KHÔNG tự tính được phần chia theo CHƯƠNG Bộ luật hình sự (hệ thống chỉ có
+  "điều luật" cụ thể qua `DANH_MUC_TOI_DANH_MAM`, không có field phân loại theo chương) → 6 dòng
+  "Tr.đó" mỗi bên (Vụ/BC) để NHẬP TAY.
+- **Mục IV/V/VI (Điều tra/Truy tố/Xét xử)**: "Thụ lý mới" (ĐT = `vuan.ngayTao`; TT/XX =
   `chuyen_giai_doan` denGiaiDoan=TT/XX — tự nhiên khớp tuyệt đối với "giải quyết → chuyển tiếp" của
   giai đoạn liền trước vì cùng 1 tập sự kiện, không cần đối chiếu chéo), "Đã giải quyết" (breakdown
   Đề nghị truy tố/Truy tố/Xét xử qua `chuyen_giai_doan`.tuGiaiDoan + Đình chỉ/Tạm đình chỉ qua
@@ -83,23 +122,46 @@ cho "Xuất Excel báo cáo tháng"), mirror cấu trúc trên màn hình (secti
 Có badge "🚧 Mới — cần kiểm chứng" cạnh tiêu đề (theo đúng quy ước `KyBaoCaoModule`).
 
 **Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong scratchpad,
-gỡ ngay sau) toàn bộ file — sạch, 0 lỗi cú pháp. Test cô lập riêng `BAO_CAO_TUAN_ROWS` (trích nguyên
-mảng từ file thật qua `vm.runInContext`, không viết lại) — đúng 94 dòng (7 section + 87 dữ liệu),
-42 dòng auto chạy đúng với `kq` giả lập đủ field (không lỗi tham chiếu sai tên field), 45 dòng
-manual, không trùng `id` nào. Test cô lập riêng cơ chế chống đếm đúp (`chuanHoaDsTuan`/
-`tuanChiemNgay`, trích nguyên hàm) — 7/7 PASS: 2 tuần không chồng lấn thì mỗi ngày về đúng tuần của
-nó; 2 tuần chồng lấn 1 ngày thì ngày đó luôn về tuần có "Từ ngày" sớm hơn; thêm 1 tuần thứ 3 có "Từ
-ngày" sớm hơn CẢ 2 tuần đã có (mô phỏng bù dữ liệu cũ) thì tuần đó tự động "đòi" lại đúng phần ngày
-nó phủ tới, không cần sửa gì thêm ở 2 tuần cũ.
+gỡ ngay sau) toàn bộ file, nhiều vòng sau mỗi lần sửa — sạch, 0 lỗi cú pháp. Test cô lập
+`BAO_CAO_TUAN_ROWS` (trích nguyên mảng từ file thật qua `vm.runInContext`) — 94 dòng (7 section +
+87 dữ liệu), 42 dòng auto chạy đúng với `kq` giả lập đủ field, 45 dòng manual, không trùng `id`.
+Test cô lập cơ chế chống đếm đúp (`chuanHoaDsTuan`/`tuanChiemNgay`, trích nguyên hàm) — 7/7 PASS:
+2 tuần không chồng lấn thì mỗi ngày về đúng tuần của nó; 2 tuần chồng lấn 1 ngày thì ngày đó luôn về
+tuần có "Từ ngày" sớm hơn; thêm 1 tuần thứ 3 có "Từ ngày" sớm hơn CẢ 2 tuần đã có (mô phỏng bù dữ
+liệu cũ) thì tuần đó tự động "đòi" lại đúng phần ngày nó phủ tới. Test tích hợp riêng
+`tinhBaoCaoTuan` (trích nguyên hàm thật qua `vm.runInContext`, mock `db.collection().where().get()`
++ `vuAnTuLogDocs`/`tinhTonHienTaiTheoGD`, KHÔNG viết lại logic) — 7/7 PASS: đếm đúng "vụ/bị can mới
+Điều tra" theo khoảng `ngayTao` của 1 tuần đơn; và kịch bản chồng lấn 2 tuần tạo qua nút 📌 (tuần
+tạo SAU có "Từ ngày" sớm hơn tuần tạo TRƯỚC) — xác nhận tuần "Từ ngày" sớm hơn chiếm ĐÚNG toàn bộ
+vụ, tuần kia tự động về 0 vụ, không đếm đúp con nào.
 
-**CHƯA kiểm chứng bằng dữ liệu Supabase thật** (không có tài khoản đăng nhập trong phiên viết tính
-năng này) — Dũng cần: (1) chạy migration `supabase/add_bao_cao_tuan_2026-09-23.sql` qua Session
-pooler (xem `supabase/README.md`); (2) mở tab "Báo cáo tuần", thêm 1 tuần báo cáo thật, đối chiếu
-vài dòng tự động tính (đặc biệt "Số vụ án CQĐT/VKS/Toà đã giải quyết" + breakdown) với số liệu đã
-biết ở Kỳ báo cáo cho cùng khoảng ngày; (3) thử nhập tay 1 vài dòng manual, tải lại trang xác nhận
-lưu đúng; (4) xuất Excel thử, mở bằng Excel thật xem layout. Nhánh `bao-cao-tuan` CHƯA merge vào
-`main`/CHƯA deploy — chỉ nên deploy sau khi đã chạy migration VÀ kiểm chứng số liệu qua UI thật
-trên `qlahs-sup.web.app` trước khi lên `qlahsp2.web.app` (production, dữ liệu thật).
+**ĐÃ CHẠY migration `add_bao_cao_tuan_2026-09-23.sql` lên Supabase thật** (2026-09-23, Dũng cấp mật
+khẩu DB qua chat — chỉ dùng qua biến môi trường lúc chạy script tạm trong scratchpad dùng package
+`pg`, không ghi vào file nào, gỡ sạch script+package ngay sau khi chạy xong). Đã kiểm chứng qua kết
+nối Postgres trực tiếp: bảng `baoCaoTuan` + 8 cột đúng kiểu, RLS bật + đúng policy
+`authenticated_read_write`, Realtime publication có `baoCaoTuan`, index mới trên
+`lichsuChuyenGiaiDoan.ngaySuKien` đã tạo. Đã kiểm chứng THÊM qua ĐÚNG đường REST API app dùng (anon
+key thật, không phải kết nối superuser) — `GET /rest/v1/baoCaoTuan?select=id&limit=1` → `HTTP 200`
+(hết lỗi "relation does not exist"/schema cache — đây chính là lỗi Dũng gặp lúc mở tab lần đầu,
+trước khi chạy migration này). **⚠ Mật khẩu DB dùng lần này ĐÃ từng bị lộ vào `CLAUDE.md`/git
+history công khai** ở 1 phiên trước (commit `2222e7d`, repo public) — KHÔNG ghi lại giá trị mật
+khẩu ở đây (đã có đủ trong lịch sử git, không cần lặp lại thêm 1 lần nữa trong commit mới). Đã báo
+lại cho Dũng ngay khi phát hiện, nhưng **Dũng chủ động chọn KHÔNG đổi mật khẩu DB ngay** ("phần mềm
+vẫn đang phát triển, tôi sẽ đổi sau 1 thể") — KHÔNG tự ý đổi/nhắc lại việc này nữa trừ khi Dũng chủ
+động hỏi.
+
+**CHƯA kiểm chứng bằng thao tác qua UI thật** (không có tài khoản đăng nhập trong phiên viết tính
+năng này, chỉ chạy được migration qua kết nối DB trực tiếp — không đăng nhập được app) — Dũng cần:
+(1) mở tab "Báo cáo tuần", xác nhận HẾT lỗi "tải danh sách... schema" ban đầu; (2) thử panel "Danh
+sách vụ án" — bấm 📌 ở 1 vụ, xác nhận tuần mới tạo đúng (nhãn có "(từ vụ đã chọn)"), số "Số vụ án/
+bị can mới khởi tố" khớp đúng số vụ đếm từ vị trí đã chọn lên đầu danh sách; (3) thử "+ Thêm tuần
+báo cáo" (gõ tay ngày), đối chiếu vài dòng tự động tính (đặc biệt "Số vụ án CQĐT/VKS/Toà đã giải
+quyết" + breakdown) với số liệu đã biết ở Kỳ báo cáo cho cùng khoảng ngày; (4) thử tạo 2 tuần chồng
+lấn ngày (cả bằng gõ tay lẫn bằng nút 📌 — VD bấm 📌 vào 1 vụ CŨ HƠN vụ đã dùng cho tuần trước đó),
+xác nhận tuần "Từ ngày" sớm hơn giữ đúng số, tuần kia không bị đếm đúp; (5) thử nhập tay 1 vài dòng
+manual, tải lại trang xác nhận lưu đúng; (6) xuất Excel thử, mở bằng Excel thật xem layout. Nhánh
+`bao-cao-tuan` CHƯA merge vào `main`/CHƯA deploy — chỉ nên deploy sau khi đã kiểm chứng số liệu qua
+UI thật trên `qlahs-sup.web.app` trước khi lên `qlahsp2.web.app` (production, dữ liệu thật).
 
 ## Toggle mới "Biểu B10: chỉ tính 'lần đầu'" — dự kiến, mặc định TẮT (2026-09-18, `qlahs-sup.html`, nhánh `main`, commit `2b58a12`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` — chỉ compile-check, CHƯA kiểm chứng Excel/Supabase thật)
 
