@@ -18819,6 +18819,528 @@ function NopLuuKhoModule() {
 }
 
 // ====================================================================
+// MODULE: BÁO CÁO TUẦN (2026-09-23)
+// Theo yêu cầu Dũng, dựa trên file mẫu "PL THỐNG KÊ CÔNG TÁC TUẦN.xlsx" (Phụ lục thống kê công
+// tác tuần, sheet "PL HS ST" — 87 dòng tiêu chí chia section "A. HÌNH SỰ" + 6 mục I-VI, mỗi tuần
+// báo cáo 1 cột). Đối chiếu cột tuần trong file mẫu xác nhận: KHÔNG phải tuần lịch cố định Thứ 2→
+// Chủ nhật (VD cột "29/7-05/8" dài 8 ngày, có khoảng trống 06/8-11/8 không có cột nào, có cột gộp
+// 2 tuần "26/8-09/9") — tức "tuần báo cáo" ở đây GIỐNG HỆT "kỳ báo cáo" tháng đã có (nguyên tắc #2
+// CLAUDE.md), là 1 khoảng thời gian DO CÁN BỘ TỰ CHỌN (Từ ngày/Đến ngày tự do), không phải tuần
+// lịch cứng nhắc — bảng "baoCaoTuan" (xem add_bao_cao_tuan_2026-09-23.sql, CHƯA CHẠY lên Supabase,
+// cần Dũng cấp mật khẩu DB) lưu đúng khoảng ngày này cho mỗi "tuần".
+//
+// PHẠM VI TỰ ĐỘNG TÍNH — chỉ những dòng có thể suy trực tiếp từ "lichsuChuyenGiaiDoan"/trạng thái
+// hiện tại của "vuan" (lọc theo "ngaySuKien" thật trong khoảng Từ ngày/Đến ngày, KHÔNG qua
+// "kyThongKe" vì tuần không phải kỳ tháng):
+//   - Mục I "Tình hình tội phạm": chỉ 2 dòng TỔNG (Số vụ/bị can khởi tố mới) — KHÔNG tự tính được
+//     phần chia theo CHƯƠNG Bộ luật hình sự (hệ thống chỉ có "điều luật" cụ thể, không có trường
+//     phân loại theo chương — xem DANH_MUC_TOI_DANH_MAM, không có field "chuong").
+//   - Mục IV/V/VI (Điều tra/Truy tố/Xét xử): "Thụ lý mới"/"Đã giải quyết" (+ breakdown)/"Còn đang
+//     giải quyết" — tự tính. "Tổng số thụ lý" (= tồn đầu kỳ + mới) KHÔNG tự tính được vì đòi hỏi
+//     trạng thái "tồn" AS-OF 1 NGÀY BẤT KỲ trong quá khứ — hệ thống chỉ hỗ trợ as-of theo KỲ THÁNG
+//     qua RPC (rpc_ton_ky_thong_nhat_2026-08-28.sql), không hỗ trợ as-of theo ngày tự do. "Còn đang
+//     giải quyết" dùng "tinhTonHienTaiTheoGD" — LUÔN LÀ SỐ SỐNG tại thời điểm xem (đúng quy ước đã
+//     áp dụng cho "Số tồn hiện tại" ở Kỳ báo cáo), CHỈ chính xác cho tuần gần nhất/đang diễn ra —
+//     xem tuần đã qua lâu sẽ không phản ánh đúng "tồn cuối tuần đó" trong lịch sử.
+//   - Mục II (tin báo, tố giác), Mục III (biện pháp ngăn chặn), phần chia theo chương BLHS ở mục I,
+//     "Tổng số thụ lý" IV/V/VI, và vài dòng đơn lẻ cuối bảng (TNGT, bị cáo tuyên vô tội, VKS rút
+//     QĐ truy tố...) — hệ thống KHÔNG có dữ liệu nghiệp vụ tương ứng, để NHẬP TAY (lưu vào
+//     "baoCaoTuan.duLieuNhapTay", giống quy ước "⚠ Chưa có dữ liệu — cần bổ sung tính năng" đã
+//     dùng ở Biểu 2/Biểu 4).
+//
+// CHƯA KIỂM CHỨNG bằng dữ liệu Supabase thật (không có tài khoản đăng nhập trong phiên viết tính
+// năng này) — Dũng cần: (1) chạy migration add_bao_cao_tuan_2026-09-23.sql; (2) thử thêm 1 tuần
+// báo cáo thật, đối chiếu vài dòng tự động tính (đặc biệt "Số vụ án CQĐT/VKS/Toà đã giải quyết")
+// với số liệu đã biết ở Kỳ báo cáo cho cùng khoảng ngày; (3) xuất Excel thử.
+// ====================================================================
+
+// 87 dòng tiêu chí — copy NGUYÊN VĂN nhãn từ file mẫu "PL THỐNG KÊ CÔNG TÁC TUẦN.xlsx" (kể cả các
+// chỗ có vẻ là lỗi đánh máy gốc như "(XVI; XVIII; XIV)" ở mục I — KHÔNG tự ý sửa lại nhãn của mẫu
+// báo cáo chính thức). `auto`: hàm (kq) => number nếu tự tính được từ tinhBaoCaoTuan(); không có
+// `auto` = nhập tay. `indent: 1` = dòng "Trong đó/Tr.đó" thụt vào. `type:"section"` = dòng tiêu đề
+// mục lớn (không có dữ liệu).
+const BAO_CAO_TUAN_ROWS = [
+  { id: "sec_a", label: "A. HÌNH SỰ", type: "section", level: 0 },
+  { id: "sec_1", label: "I. Tình hình tội phạm", type: "section", level: 1 },
+  { id: "vu_khoi_to_moi", label: "Số vụ án khởi tố mới", auto: kq => kq.dieu_tra.vuMoi },
+  { id: "vu_ktm_ch13", label: "Tr.đó: - Các tội xâm phạm an ninh quốc gia (Chương XIII)", indent: 1 },
+  { id: "vu_ktm_ttxh", label: "- Tội phạm về trật tự xã hội (Chương XIV; XV, XVII, XXI, XXII)", indent: 1 },
+  { id: "vu_ktm_kt", label: "- Tội phạm về kinh tế, sở hữu, môi trường (XVI; XVIII; XIV)", indent: 1 },
+  { id: "vu_ktm_matuy", label: "- Tội phạm về ma túy (Chương XX)", indent: 1 },
+  { id: "vu_ktm_thamnhung", label: "- Tội phạm về tham nhũng, chức vụ (Chương XXIII)", indent: 1 },
+  { id: "vu_ktm_tuphap", label: "- Tội phạm về xâm phạm hoạt động tư pháp (Chương XXIV)", indent: 1 },
+  { id: "bc_khoi_to_moi", label: "Số bị can khởi tố mới", auto: kq => kq.bcKhoiToMoiGlobal },
+  { id: "bc_ktm_ch13", label: "Tr.đó: - Các tội xâm phạm an ninh quốc gia (Chương XIII)", indent: 1 },
+  { id: "bc_ktm_ttxh", label: "- Tội phạm về trật tự xã hội (Chương XIV; XV, XVII, XXI, XXII)", indent: 1 },
+  { id: "bc_ktm_kt", label: "- Tội phạm về kinh tế, sở hữu, môi trường (XVI; XVIII; XIV)", indent: 1 },
+  { id: "bc_ktm_matuy", label: "- Tội phạm về ma túy (Chương XX)", indent: 1 },
+  { id: "bc_ktm_thamnhung", label: "- Tội phạm về tham nhũng, chức vụ (Chương XXIII)", indent: 1 },
+  { id: "bc_ktm_tuphap", label: "- Tội phạm về xâm phạm hoạt động tư pháp (Chương XXIV)", indent: 1 },
+  { id: "vu_tngt", label: "Số vụ tai nạn giao thông" },
+  { id: "tngt_chet", label: "Trong đó: - Số người chết", indent: 1 },
+  { id: "tngt_thuong", label: "- Số người bị thương", indent: 1 },
+  { id: "vu_tnld", label: "Số vụ tai nạn lao động, cháy nổ" },
+  { id: "tnld_chet", label: "Trong đó: - Số người chết", indent: 1 },
+  { id: "tnld_thuong", label: "- Số người bị thương", indent: 1 },
+  { id: "vipham_khac", label: "Các vi phạm khác (những vụ việc vi phạm nổi cộm, điểm nóng về tranh chấp đất đai, thương mại, khiếu kiện đông người, những vụ việc phức tạp dự báo phát sinh tội phạm nghiêm trọng...)" },
+
+  { id: "sec_2", label: "II. Thực hành quyền công tố, kiểm sát việc tiếp nhận, giải quyết tố giác, tin báo về tội phạm và kiến nghị khởi tố", type: "section", level: 1 },
+  { id: "tinbao_tong", label: "Tổng số" },
+  { id: "tinbao_moi", label: "Số mới" },
+  { id: "tinbao_gq", label: "Số giải quyết" },
+  { id: "tinbao_gq_khoito", label: "Trong đó: - Đã khởi tố", indent: 1 },
+  { id: "tinbao_gq_khongkhoito", label: "- Không khởi tố", indent: 1 },
+  { id: "tinbao_gq_tamdinhchi", label: "- Tạm đình chỉ", indent: 1 },
+  { id: "tinbao_con", label: "Số còn" },
+  { id: "vks_tt_gq_tinbao", label: "VKS trực tiếp giải quyết tin báo, tố giác" },
+  { id: "vu_ycau_khoito", label: "Số vụ yêu cầu khởi tố (CQĐT đã khởi tố)" },
+  { id: "bc_ycau_khoito", label: "Số bị can yêu cầu khởi tố (CQĐT đã khởi tố)" },
+
+  { id: "sec_3", label: "III. Thực hành quyền công tố, quyết định áp dụng, thay đổi, hủy bỏ các biện pháp ngăn chặn", type: "section", level: 1 },
+  { id: "bpnc_khongpc_ghtamgiu", label: "- Không phê chuẩn QĐ gia hạn tạm giữ" },
+  { id: "bpnc_huy_tamgiu", label: "- Hủy bỏ biện pháp tạm giữ" },
+  { id: "bpnc_yeucau", label: "- Yêu cầu (yêu cầu hủy bỏ quyết định tạm giữ, ra lệnh bắt bị can để tạm giam, yêu cầu trả tự do,…)" },
+  { id: "bpnc_gh_tamgiam", label: "- Quyết định gia hạn tạm giam" },
+  { id: "bpnc_huy_tamgiam", label: "- Hủy bỏ biện pháp tạm giam" },
+  { id: "bpnc_khongpc_lenh_tamgiam", label: "- Không phê chuẩn lệnh tạm giam" },
+  { id: "bpnc_khongpc_batTamgiam", label: "- Không phê chuẩn lệnh bắt tạm giam" },
+  { id: "bpnc_khongpc_batkhancap", label: "- Không phê chuẩn lệnh bắt khẩn cấp" },
+
+  { id: "sec_4", label: "IV. Thực hành quyền công tố, kiểm sát điều tra vụ án hình sự (Án tại CQĐT)", type: "section", level: 1 },
+  { id: "dt_tong_vu", label: "Tổng số vụ án thụ lý" },
+  { id: "dt_tong_bc", label: "Tổng số bị can thụ lý" },
+  { id: "dt_vu_moikhoito", label: "Số vụ án mới khởi tố", auto: kq => kq.dieu_tra.vuMoi },
+  { id: "dt_bc_moikhoito", label: "Số bị can mới khởi tố", auto: kq => kq.bcKhoiToMoiGlobal },
+  { id: "dt_vu_giaiquyet", label: "Số vụ án CQĐT đã giải quyết", auto: kq => kq.dieu_tra.vuRaChuyen + kq.dieu_tra.vuDinhChi + kq.dieu_tra.vuTamDinhChi },
+  { id: "dt_vu_dnghitruyto", label: "Trong đó: - Đề nghị truy tố", indent: 1, auto: kq => kq.dieu_tra.vuRaChuyen },
+  { id: "dt_vu_dinhchi", label: "- Đình chỉ", indent: 1, auto: kq => kq.dieu_tra.vuDinhChi },
+  { id: "dt_vu_tamdinhchi", label: "- Tạm đình chỉ", indent: 1, auto: kq => kq.dieu_tra.vuTamDinhChi },
+  { id: "dt_bc_giaiquyet", label: "Số bị can CQĐT đã giải quyết", auto: kq => kq.dieu_tra.bcRaChuyen + kq.dieu_tra.bcDinhChi + kq.dieu_tra.bcTamDinhChi },
+  { id: "dt_bc_dnghitruyto", label: "Trong đó: - Đề nghị truy tố", indent: 1, auto: kq => kq.dieu_tra.bcRaChuyen },
+  { id: "dt_bc_dinhchi", label: "- Đình chỉ", indent: 1, auto: kq => kq.dieu_tra.bcDinhChi },
+  { id: "dt_bc_tamdinhchi", label: "- Tạm đình chỉ", indent: 1, auto: kq => kq.dieu_tra.bcTamDinhChi },
+  { id: "dt_vu_ton", label: "Số vụ án còn đang giải quyết", auto: kq => kq.dieu_tra.vuTon },
+  { id: "dt_bc_ton", label: "Số bị can còn đang giải quyết", auto: kq => kq.dieu_tra.bcTon },
+
+  { id: "sec_5", label: "V. Thực hành quyền công tố và kiểm sát hoạt động tư pháp trong giai đoạn truy tố (Án tại VKS)", type: "section", level: 1 },
+  { id: "tt_tong_vu", label: "Tổng số vụ án VKS thụ lý" },
+  { id: "tt_tong_bc", label: "Tổng số bị can VKS thụ lý" },
+  { id: "tt_vu_moi", label: "Số vụ án VKS thụ lý mới", auto: kq => kq.truy_to.vuMoi },
+  { id: "tt_bc_moi", label: "Số bị can VKS thụ lý mới", auto: kq => kq.truy_to.bcMoi },
+  { id: "tt_vu_giaiquyet", label: "Số vụ án VKS đã giải quyết", auto: kq => kq.truy_to.vuRaChuyen + kq.truy_to.vuDinhChi + kq.truy_to.vuTamDinhChi },
+  { id: "tt_vu_truyto", label: "Trong đó: - Truy tố", indent: 1, auto: kq => kq.truy_to.vuRaChuyen },
+  { id: "tt_vu_dinhchi", label: "- Đình chỉ", indent: 1, auto: kq => kq.truy_to.vuDinhChi },
+  { id: "tt_vu_tamdinhchi", label: "- Tạm đình chỉ", indent: 1, auto: kq => kq.truy_to.vuTamDinhChi },
+  { id: "tt_bc_giaiquyet", label: "Số bị can VKS đã giải quyết", auto: kq => kq.truy_to.bcRaChuyen + kq.truy_to.bcDinhChi + kq.truy_to.bcTamDinhChi },
+  { id: "tt_bc_truyto", label: "Trong đó: - Truy tố", indent: 1, auto: kq => kq.truy_to.bcRaChuyen },
+  { id: "tt_bc_dinhchi", label: "- Đình chỉ", indent: 1, auto: kq => kq.truy_to.bcDinhChi },
+  { id: "tt_bc_tamdinhchi", label: "- Tạm đình chỉ", indent: 1, auto: kq => kq.truy_to.bcTamDinhChi },
+  { id: "tt_vu_ton", label: "Số vụ án còn đang giải quyết", auto: kq => kq.truy_to.vuTon },
+  { id: "tt_bc_ton", label: "Số bị can còn đang giải quyết", auto: kq => kq.truy_to.bcTon },
+  { id: "tt_vu_tradtbs", label: "Số vụ án VKS trả Công an ĐTBS", auto: kq => kq.truy_to.vuTraDi },
+  { id: "tt_bc_tradtbs", label: "Số bị can VKS trả Công an ĐTBS", auto: kq => kq.truy_to.bcTraDi },
+
+  { id: "sec_6", label: "VI. Thực hành quyền công tố và kiểm sát xét xử vụ án hình sự (Án sơ thẩm tại Tòa)", type: "section", level: 1 },
+  { id: "xx_tong_vu", label: "Tổng số vụ án Tòa án thụ lý" },
+  { id: "xx_tong_bc", label: "Tổng số bị cáo Tòa án thụ lý" },
+  { id: "xx_vu_moi", label: "Số vụ án Tòa án thụ lý mới", auto: kq => kq.xet_xu.vuMoi },
+  { id: "xx_bc_moi", label: "Số bị cáo Tòa án thụ lý mới", auto: kq => kq.xet_xu.bcMoi },
+  { id: "xx_vu_giaiquyet", label: "Số vụ án Tòa án đã giải quyết", auto: kq => kq.xet_xu.vuDaXetXu + kq.xet_xu.vuDinhChi + kq.xet_xu.vuTamDinhChi },
+  { id: "xx_vu_xetxu", label: "Trong đó: - Xét xử", indent: 1, auto: kq => kq.xet_xu.vuDaXetXu },
+  { id: "xx_vu_dinhchi", label: "- Đình chỉ", indent: 1, auto: kq => kq.xet_xu.vuDinhChi },
+  { id: "xx_vu_tamdinhchi", label: "- Tạm đình chỉ", indent: 1, auto: kq => kq.xet_xu.vuTamDinhChi },
+  { id: "xx_bc_giaiquyet", label: "Số bị cáo Tòa án đã giải quyết", auto: kq => kq.xet_xu.bcDaXetXu + kq.xet_xu.bcDinhChi + kq.xet_xu.bcTamDinhChi },
+  { id: "xx_bc_xetxu", label: "Trong đó: - Xét xử", indent: 1, auto: kq => kq.xet_xu.bcDaXetXu },
+  { id: "xx_bc_dinhchi", label: "- Đình chỉ", indent: 1, auto: kq => kq.xet_xu.bcDinhChi },
+  { id: "xx_bc_tamdinhchi", label: "- Tạm đình chỉ", indent: 1, auto: kq => kq.xet_xu.bcTamDinhChi },
+  { id: "xx_vu_ton", label: "Số vụ án còn đang giải quyết", auto: kq => kq.xet_xu.vuTon },
+  { id: "xx_bc_ton", label: "Số bị cáo còn đang giải quyết", auto: kq => kq.xet_xu.bcTon },
+  { id: "xx_vu_tradtbs", label: "Số vụ án Tòa trả VKS ĐTBS", auto: kq => kq.xet_xu.vuTraDi },
+  { id: "xx_bc_tradtbs", label: "Số bị can Tòa trả VKS ĐTBS", auto: kq => kq.xet_xu.bcTraDi },
+  { id: "xx_bicao_khongphamtoi", label: "Số bị cáo tòa tuyên không phạm tội" },
+  { id: "vks_rut_qdtt", label: "Số vụ VKS rút QĐ truy tố (một phần và toàn bộ)" },
+];
+
+// Tính các dòng TỰ ĐỘNG của "Báo cáo tuần" cho khoảng [tuNgay, denNgay] (2 Date, denNgay nên đã set
+// giờ 23:59:59.999 để bao trọn ngày cuối) — lọc "lichsuChuyenGiaiDoan" theo "ngaySuKien" THẬT (khác
+// mọi công thức theo "kỳ báo cáo" tháng, vốn lọc theo "kyThongKe" — tuần không phải kỳ tháng, không
+// có "kyThongKe" cấp tuần để dùng). Tái dùng "vuAnTuLogDocs"/"tinhTonHienTaiTheoGD" đã có sẵn cho
+// Kỳ báo cáo — truyền kyRankMap=null cho "vuAnTuLogDocs" (locBiCanTheoKy tự bỏ qua lọc theo kỳ khi
+// không có kyRankMap, trả về ĐỦ bị can HIỆN CÓ của vụ — chấp nhận là số LIVE, không phải số "tại
+// đúng thời điểm sự kiện", vì hệ thống chưa có cơ chế snapshot bị can theo ngày tự do).
+async function tinhBaoCaoTuan(tuNgay, denNgay) {
+  const layTheoLoai = async (loaiSuKien) => {
+    const snap = await db.collection("lichsuChuyenGiaiDoan")
+      .where("loaiSuKien", "==", loaiSuKien)
+      .where("ngaySuKien", ">=", tuNgay)
+      .where("ngaySuKien", "<=", denNgay)
+      .get();
+    return vuAnTuLogDocs(snap.docs, null);
+  };
+  const [dsKhoiToVu, dsChuyenGD, dsTraHoSo, dsHoanThanh, khoiToBcSnap] = await Promise.all([
+    layTheoLoai("khoi_to_vu"),
+    layTheoLoai("chuyen_giai_doan"),
+    layTheoLoai("tra_ho_so"),
+    layTheoLoai("hoan_thanh"),
+    db.collection("lichsuChuyenGiaiDoan").where("loaiSuKien", "==", "khoi_to_bican")
+      .where("ngaySuKien", ">=", tuNgay).where("ngaySuKien", "<=", denNgay).get(),
+  ]);
+
+  const soBc = (arr) => arr.reduce((s, v) => s + v._soBiCan, 0);
+  const locTheo = (arr, field, gd) => arr.filter(v => v._log[field] === gd);
+
+  const kq = { bcKhoiToMoiGlobal: khoiToBcSnap.size };
+  for (const gd of THU_TU_GIAI_DOAN) {
+    // "vuMoi" ở Điều tra = khởi tố trực tiếp vào ĐT; ở Truy tố/Xét xử = chuyển đến từ giai đoạn
+    // trước (denGiaiDoan trên CHÍNH sự kiện chuyen_giai_doan == tuGiaiDoan của giai đoạn trước —
+    // cùng 1 tập sự kiện, tự nhiên khớp tuyệt đối, không cần đối chiếu chéo giữa 2 giai đoạn).
+    const vuMoiArr = gd === "dieu_tra"
+      ? locTheo(dsKhoiToVu, "denGiaiDoan", gd)
+      : locTheo(dsChuyenGD, "denGiaiDoan", gd);
+    const raChuyenArr = locTheo(dsChuyenGD, "tuGiaiDoan", gd); // "giải quyết -> chuyển tiếp" (rỗng ở Xét xử, không có giai đoạn sau)
+    const traDiArr = locTheo(dsTraHoSo, "tuGiaiDoan", gd);     // trả về giai đoạn trước (rỗng ở Điều tra)
+    // "hoan_thanh" không lưu giai đoạn xảy ra — lọc qua coQuanThuLy HIỆN TẠI của vụ (không đổi sau
+    // khi hoàn thành, xem HoanThanhVuAnModal — không update coQuanThuLy khi hoàn thành).
+    const hoanThanhGd = dsHoanThanh.filter(v => v.coQuanThuLy === gd);
+    const layHT = (ht) => hoanThanhGd.filter(v => v._log.hinhThucHoanThanh === ht);
+    const dinhChiArr = layHT("dinh_chi");
+    const tamDinhChiArr = layHT("tam_dinh_chi");
+    const daXetXuArr = layHT("da_xet_xu"); // chỉ có ý nghĩa ở gd=xet_xu (ràng buộc UI đã chặn chọn hình thức này ở ĐT/TT)
+    const ton = await tinhTonHienTaiTheoGD(gd);
+
+    kq[gd] = {
+      vuMoi: vuMoiArr.length, bcMoi: soBc(vuMoiArr),
+      vuRaChuyen: raChuyenArr.length, bcRaChuyen: soBc(raChuyenArr),
+      vuDinhChi: dinhChiArr.length, bcDinhChi: soBc(dinhChiArr),
+      vuTamDinhChi: tamDinhChiArr.length, bcTamDinhChi: soBc(tamDinhChiArr),
+      vuDaXetXu: daXetXuArr.length, bcDaXetXu: soBc(daXetXuArr),
+      vuTraDi: traDiArr.length, bcTraDi: soBc(traDiArr),
+      vuTon: ton.soVuTon, bcTon: ton.soBiCanTon,
+    };
+  }
+  return kq;
+}
+
+function nhanTuanTuNgay(d1, d2) {
+  const f = (d) => `${d.getDate()}/${d.getMonth() + 1}`;
+  return `${f(d1)}-${f(d2)}`;
+}
+
+function cuoiNgay(d) {
+  const dt = new Date(d);
+  dt.setHours(23, 59, 59, 999);
+  return dt;
+}
+
+// Ô số nhập tay — local state riêng (giống pattern NhapNgay) để gõ mượt, chỉ commit lúc rời ô.
+function OSoNhapTay({ value, onCommit, disabled }) {
+  const [raw, setRaw] = useState(value == null ? "" : String(value));
+  const dangGoRef = useRef(false);
+  useEffect(() => { if (!dangGoRef.current) setRaw(value == null ? "" : String(value)); }, [value]);
+  return (
+    <input type="number" value={raw} disabled={disabled}
+      onFocus={() => { dangGoRef.current = true; }}
+      onChange={e => setRaw(e.target.value)}
+      onBlur={() => { dangGoRef.current = false; onCommit(raw); }}
+      className="w-16 text-right text-xs border border-slate-200 rounded px-1.5 py-1 focus:border-indigo-400 focus:outline-none disabled:bg-slate-50" />
+  );
+}
+
+function ThemTuanBaoCaoModal({ dsTuan, onDong, onXong }) {
+  const tuanCuoi = dsTuan.length ? dsTuan[dsTuan.length - 1] : null; // dsTuan đã sort asc theo tuNgay
+  const goiYTuNgay = tuanCuoi
+    ? new Date(new Date(tuanCuoi.denNgay).getTime() + 24 * 3600 * 1000)
+    : (() => { const d = new Date(); d.setDate(d.getDate() - 6); return d; })();
+  const goiYDenNgay = new Date(goiYTuNgay.getTime() + 6 * 24 * 3600 * 1000);
+  const [tuNgay, setTuNgay] = useState(toInputDate(goiYTuNgay));
+  const [denNgay, setDenNgay] = useState(toInputDate(goiYDenNgay));
+  const [nhan, setNhan] = useState(nhanTuanTuNgay(goiYTuNgay, goiYDenNgay));
+  const [nhanDaSua, setNhanDaSua] = useState(false);
+  const [dangLuu, setDangLuu] = useState(false);
+  const [loi, setLoi] = useState("");
+
+  useEffect(() => {
+    if (nhanDaSua || !tuNgay || !denNgay) return;
+    setNhan(nhanTuanTuNgay(fromInputDate(tuNgay), fromInputDate(denNgay)));
+  }, [tuNgay, denNgay, nhanDaSua]);
+
+  const luu = async () => {
+    setLoi("");
+    if (!tuNgay || !denNgay) { setLoi("Cần chọn đủ Từ ngày/Đến ngày."); return; }
+    const d1 = fromInputDate(tuNgay), d2 = fromInputDate(denNgay);
+    if (d2 < d1) { setLoi("Đến ngày phải sau (hoặc bằng) Từ ngày."); return; }
+    setDangLuu(true);
+    try {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      await db.collection("baoCaoTuan").doc().set({
+        tuNgay: d1, denNgay: d2, nhanTuan: nhan.trim() || nhanTuanTuNgay(d1, d2),
+        duLieuNhapTay: {}, ngayTao: now, nguoiTao: nguoiThucHien,
+        ngayCapNhat: now, nguoiCapNhat: nguoiThucHien,
+      });
+      onXong?.();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi lưu: " + err.message);
+    }
+    setDangLuu(false);
+  };
+
+  return (
+    <KhungModalHanhDong tieuDe="Thêm tuần báo cáo">
+      <div className="grid grid-cols-2 gap-3">
+        <Truong nhan="Từ ngày">
+          <input type="date" value={tuNgay} onChange={e => setTuNgay(e.target.value)}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+        </Truong>
+        <Truong nhan="Đến ngày">
+          <input type="date" value={denNgay} onChange={e => setDenNgay(e.target.value)}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+        </Truong>
+        <Truong nhan="Nhãn hiển thị" rong2>
+          <input type="text" value={nhan}
+            onChange={e => { setNhan(e.target.value); setNhanDaSua(true); }}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+        </Truong>
+      </div>
+      <div className="text-xs text-slate-400 mt-2">
+        Khoảng ngày này dùng để tự tính các dòng "thụ lý mới"/"đã giải quyết" theo ngày sự kiện thật
+        (không phải kỳ báo cáo tháng) — tự do chọn, không bắt buộc đúng 7 ngày.
+      </div>
+      {loi && <div className="text-xs text-red-600 mt-2">{loi}</div>}
+      <div className="flex justify-end gap-2 mt-5">
+        <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-slate-500 hover:bg-slate-100">Huỷ</button>
+        <button onClick={luu} disabled={dangLuu}
+          className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50">
+          {dangLuu ? "Đang lưu..." : "Thêm"}
+        </button>
+      </div>
+    </KhungModalHanhDong>
+  );
+}
+
+async function xuatBaoCaoTuanExcel(dsTuan, tinhToan) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("PL HS ST");
+  const tongSoCot = 2 + dsTuan.length; // Tiêu chí + Tổng + mỗi tuần
+  ws.columns = [
+    { width: 62 },
+    { width: 10 },
+    ...dsTuan.map(() => ({ width: 12 })),
+  ];
+
+  const giaTriODong = (row, tuan) => {
+    if (row.auto) {
+      const kq = tinhToan[tuan.id];
+      if (!kq || typeof kq !== "object") return null;
+      try { return row.auto(kq); } catch (e) { return null; }
+    }
+    const v = tuan.duLieuNhapTay?.[row.id];
+    return typeof v === "number" ? v : null;
+  };
+  const tongODong = (row) => dsTuan.reduce((s, t) => {
+    const v = giaTriODong(row, t);
+    return s + (typeof v === "number" ? v : 0);
+  }, 0);
+
+  const rHeader = ws.addRow(["Tiêu chí", "Tổng", ...dsTuan.map(t => t.nhanTuan)]);
+  rHeader.font = { bold: true };
+  rHeader.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } }; c.alignment = { wrapText: true, vertical: "middle" }; });
+
+  BAO_CAO_TUAN_ROWS.forEach(row => {
+    if (row.type === "section") {
+      const r = ws.addRow([row.label]);
+      ws.mergeCells(r.number, 1, r.number, tongSoCot);
+      r.font = { bold: true };
+      r.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: row.level === 0 ? "FFCBD5E1" : "FFEEF2FF" } };
+      return;
+    }
+    const nhan = (row.indent ? "     " : "") + row.label;
+    const r = ws.addRow([nhan, tongODong(row), ...dsTuan.map(t => giaTriODong(row, t))]);
+    r.getCell(1).alignment = { wrapText: true };
+    if (!row.indent) r.getCell(1).font = { bold: false };
+    for (let c = 2; c <= tongSoCot; c++) r.getCell(c).alignment = { horizontal: "right" };
+  });
+
+  ws.getRow(1).height = 40;
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `QLVA_BaoCaoTuan_${toInputDateNhanh(new Date())}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function BaoCaoTuanModule() {
+  const [dsTuan, setDsTuan] = useState([]);
+  const [dangTai, setDangTai] = useState(true);
+  const [tinhToan, setTinhToan] = useState({}); // { [tuanId]: kq | "dang_tinh" | "loi" }
+  const [hienThem, setHienThem] = useState(false);
+
+  useEffect(() => {
+    return db.collection("baoCaoTuan").orderBy("tuNgay", "asc").onSnapshot(
+      snap => { setDsTuan(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setDangTai(false); },
+      err => { console.error(err); setDangTai(false); addToast("Lỗi tải danh sách tuần báo cáo: " + err.message, "error"); }
+    );
+  }, []);
+
+  const tinhLaiTuan = (t) => {
+    setTinhToan(s => ({ ...s, [t.id]: "dang_tinh" }));
+    tinhBaoCaoTuan(new Date(t.tuNgay), cuoiNgay(new Date(t.denNgay)))
+      .then(kq => setTinhToan(s => ({ ...s, [t.id]: kq })))
+      .catch(err => { console.error(err); setTinhToan(s => ({ ...s, [t.id]: "loi" })); addToast("Lỗi tính số liệu tuần " + t.nhanTuan + ": " + err.message, "error"); });
+  };
+
+  // Tự tính cho tuần nào chưa có trong "tinhToan" (mount lần đầu / vừa thêm tuần mới) — không đưa
+  // "tinhToan" vào deps để tránh vòng lặp (đọc closure hơi cũ 1 nhịp, chấp nhận được — cùng pattern
+  // đã dùng ở "logKyTheoVu"/DanhSachPanel).
+  useEffect(() => {
+    dsTuan.forEach(t => { if (tinhToan[t.id] === undefined) tinhLaiTuan(t); });
+    // eslint-disable-next-line
+  }, [dsTuan]);
+
+  const suaThuCong = async (tuan, rowId, raw) => {
+    const soMoi = raw === "" ? null : Number(raw);
+    const duLieuMoi = { ...(tuan.duLieuNhapTay || {}) };
+    if (soMoi === null || isNaN(soMoi)) delete duLieuMoi[rowId];
+    else duLieuMoi[rowId] = soMoi;
+    setDsTuan(s => s.map(t => t.id === tuan.id ? { ...t, duLieuNhapTay: duLieuMoi } : t)); // optimistic
+    try {
+      await db.collection("baoCaoTuan").doc(tuan.id).update({
+        duLieuNhapTay: duLieuMoi, ngayCapNhat: new Date(), nguoiCapNhat: auth.currentUser?.email || "",
+      });
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi lưu: " + err.message, "error");
+    }
+  };
+
+  const xoaTuan = async (tuan) => {
+    if (!window.confirm(`Xoá tuần "${tuan.nhanTuan}"? Không thể hoàn tác (chỉ xoá dòng báo cáo này, không đụng vụ án/bị can nào).`)) return;
+    try {
+      await db.collection("baoCaoTuan").doc(tuan.id).delete();
+      setTinhToan(s => { const c = { ...s }; delete c[tuan.id]; return c; });
+    } catch (err) {
+      console.error(err);
+      addToast("Lỗi xoá: " + err.message, "error");
+    }
+  };
+
+  const giaTriODong = (row, tuan) => {
+    if (row.auto) {
+      const kq = tinhToan[tuan.id];
+      if (kq === "dang_tinh" || kq === undefined) return { hienThi: "…", so: null };
+      if (kq === "loi") return { hienThi: "?", so: null };
+      try { return { hienThi: String(row.auto(kq)), so: row.auto(kq) }; }
+      catch (e) { return { hienThi: "?", so: null }; }
+    }
+    const v = tuan.duLieuNhapTay?.[row.id];
+    return { so: typeof v === "number" ? v : null };
+  };
+  const tongODong = (row) => dsTuan.reduce((s, t) => {
+    const { so } = giaTriODong(row, t);
+    return s + (typeof so === "number" ? so : 0);
+  }, 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold">Báo cáo tuần</h2>
+          <span className="text-xs font-medium text-amber-700 bg-amber-100 border border-amber-200 rounded-full px-2.5 py-0.5"
+                title="Module mới, chỉ tự tính được các dòng có dữ liệu tương ứng trong hệ thống — các dòng còn lại (mục II/III, chia theo chương BLHS...) nhập tay. Chưa kiểm chứng bằng dữ liệu thật.">
+            🚧 Mới — cần kiểm chứng
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => xuatBaoCaoTuanExcel(dsTuan, tinhToan)} disabled={!dsTuan.length}
+            className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+            ⬇ Xuất Excel
+          </button>
+          <button onClick={() => setHienThem(true)}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
+            + Thêm tuần báo cáo
+          </button>
+        </div>
+      </div>
+
+      {dangTai ? (
+        <div className="text-sm text-slate-400">Đang tải...</div>
+      ) : !dsTuan.length ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-400">
+          Chưa có tuần báo cáo nào — bấm "+ Thêm tuần báo cáo" để bắt đầu.
+        </div>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+          <table className="text-xs w-full">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="p-2 text-left font-semibold text-slate-600 sticky left-0 bg-slate-50 min-w-[280px]">Tiêu chí</th>
+                <th className="p-2 text-right font-semibold text-slate-600 min-w-[60px]">Tổng</th>
+                {dsTuan.map(t => (
+                  <th key={t.id} className="p-2 text-right font-semibold text-slate-600 min-w-[80px]">
+                    <div>{t.nhanTuan}</div>
+                    <div className="flex items-center justify-end gap-1 mt-1 font-normal">
+                      <button onClick={() => tinhLaiTuan(t)} title="Tính lại số liệu tự động"
+                        className="text-slate-400 hover:text-indigo-600">🔄</button>
+                      <button onClick={() => xoaTuan(t)} title="Xoá tuần này"
+                        className="text-slate-400 hover:text-red-600">🗑</button>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {BAO_CAO_TUAN_ROWS.map(row => {
+                if (row.type === "section") {
+                  return (
+                    <tr key={row.id} className={row.level === 0 ? "bg-slate-200" : "bg-indigo-50"}>
+                      <td colSpan={2 + dsTuan.length} className="p-2 font-semibold text-slate-700 sticky left-0"
+                          style={{ background: row.level === 0 ? "#e2e8f0" : "#eef2ff" }}>
+                        {row.label}
+                      </td>
+                    </tr>
+                  );
+                }
+                return (
+                  <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className={`p-2 text-slate-700 sticky left-0 bg-white ${row.indent ? "pl-6 text-slate-500" : ""}`}>
+                      {row.label}
+                    </td>
+                    <td className="p-2 text-right font-semibold text-slate-700">{tongODong(row) || ""}</td>
+                    {dsTuan.map(t => {
+                      if (row.auto) {
+                        const { hienThi } = giaTriODong(row, t);
+                        return <td key={t.id} className="p-2 text-right text-slate-600">{hienThi}</td>;
+                      }
+                      return (
+                        <td key={t.id} className="p-1.5 text-right">
+                          <OSoNhapTay value={t.duLieuNhapTay?.[row.id]} onCommit={raw => suaThuCong(t, row.id, raw)} />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {hienThem && (
+        <ThemTuanBaoCaoModal dsTuan={dsTuan} onDong={() => setHienThem(false)}
+          onXong={() => setHienThem(false)} />
+      )}
+    </div>
+  );
+}
+
+// ====================================================================
 // MODULE: DASHBOARD
 // ====================================================================
 function ChartCotChong({ labels, datasets }) {
@@ -21359,6 +21881,7 @@ const MODULES = [
   { id: "giaonhan",    label: "Giao nhận hồ sơ"   },
   { id: "nopluukho",   label: "Nộp lưu kho"        },
   { id: "ky",          label: "Kỳ báo cáo"        },
+  { id: "baocaotuan",  label: "Báo cáo tuần"      },
   { id: "dashboard",   label: "Dashboard"          },
 ];
 
@@ -21870,6 +22393,7 @@ function AppShell({ user }) {
           {tab === "giaonhan"    && <GiaoNhanHoSoModule currentUser={user} />}
           {tab === "nopluukho"   && <NopLuuKhoModule />}
           {tab === "ky"          && <KyBaoCaoModule />}
+          {tab === "baocaotuan"  && <BaoCaoTuanModule />}
           {tab === "dashboard"   && <DashboardModule />}
           {tab === "setting"     && <CaiDatModule />}
         </main>

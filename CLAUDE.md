@@ -2,6 +2,79 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Module mới "Báo cáo tuần" (2026-09-23, `qlahs-sup.html`, nhánh `bao-cao-tuan`, SQL migration ĐÃ VIẾT — CHƯA CHẠY lên Supabase, cần Dũng cấp mật khẩu DB — CHƯA merge/deploy)
+
+Theo yêu cầu Dũng, gửi kèm file mẫu `PL THỐNG KÊ CÔNG TÁC TUẦN.xlsx` (Phụ lục thống kê công tác
+tuần, sheet duy nhất "PL HS ST" — 87 dòng tiêu chí chia section "A. HÌNH SỰ" + 6 mục I-VI, mỗi tuần
+báo cáo 1 cột). Đây là module HOÀN TOÀN MỚI, tab thứ 6 trong sidebar (`baocaotuan`, đặt giữa "Kỳ báo
+cáo" và "Dashboard" trong mảng `MODULES`).
+
+**Phát hiện quan trọng lúc đọc file mẫu (đối chiếu ngày tháng từng cột tiêu đề bằng script Python)**:
+tuần trong file KHÔNG phải tuần lịch cố định Thứ 2→Chủ nhật — có cột dài 8 ngày (VD "29/7-05/8" =
+Thứ 4 29/7 → Thứ 4 5/8), có khoảng trống hoàn toàn không có cột nào (06/8-11/8), có cột gộp 2 tuần
+liền ("26/8-09/9" = 15 ngày). Tức "tuần báo cáo" ở đây **GIỐNG HỆT "kỳ báo cáo" tháng đã có** (nguyên
+tắc #2 CLAUDE.md — "cán bộ thống kê tự quyết định ngày chốt kỳ") — 1 khoảng thời gian DO CÁN BỘ TỰ
+CHỌN (Từ ngày/Đến ngày tự do), không phải tuần lịch cứng nhắc. Thiết kế theo đúng phát hiện này,
+KHÔNG hardcode "tuần luôn 7 ngày Thứ 2→Chủ nhật".
+
+**Bảng Supabase mới `baoCaoTuan`** (`supabase/add_bao_cao_tuan_2026-09-23.sql`, CHƯA CHẠY) — mỗi
+dòng là 1 "tuần báo cáo" tự chọn: `tuNgay`/`denNgay` (khoảng ngày), `nhanTuan` (nhãn hiển thị, VD
+"10/6-16/6", tự gợi ý từ ngày nhưng sửa tay được), `duLieuNhapTay` (jsonb `{rowId: number}` — CHỈ
+lưu các dòng KHÔNG tự tính được, xem dưới). RLS mirror đúng mô hình hiện tại (`authenticated` đọc/
+ghi toàn bộ) + bật Realtime publication (bắt buộc để `onSnapshot()` của lớp shim nhận cập nhật sau
+lần tải đầu — xem `supabase/README.md`). Module CHỈ dùng `.doc(id).set()/.update()` (upsert 1 dòng),
+KHÔNG dùng `db.batch()` nên KHÔNG cần sửa whitelist bảng của RPC `batch_commit`.
+
+**Phạm vi tự động tính** (`tinhBaoCaoTuan(tuNgay, denNgay)`, lọc `lichsuChuyenGiaiDoan` theo
+`ngaySuKien` THẬT trong khoảng đã chọn — KHÁC mọi công thức theo kỳ tháng vốn lọc theo `kyThongKe`,
+vì tuần không có khái niệm "kỳ thống kê" riêng để gắn vào sự kiện log):
+- **Mục I "Tình hình tội phạm"**: chỉ 2 dòng TỔNG (Số vụ/bị can khởi tố mới, qua sự kiện
+  `khoi_to_vu`/`khoi_to_bican`) — KHÔNG tự tính được phần chia theo CHƯƠNG Bộ luật hình sự (hệ
+  thống chỉ có "điều luật" cụ thể qua `DANH_MUC_TOI_DANH_MAM`, không có field phân loại theo
+  chương) → 6 dòng "Tr.đó" mỗi bên (Vụ/BC) để NHẬP TAY.
+- **Mục IV/V/VI (Điều tra/Truy tố/Xét xử)**: "Thụ lý mới" (`khoi_to_vu` denGiaiDoan=ĐT, hoặc
+  `chuyen_giai_doan` denGiaiDoan=TT/XX — tự nhiên khớp tuyệt đối với "giải quyết → chuyển tiếp" của
+  giai đoạn liền trước vì cùng 1 tập sự kiện, không cần đối chiếu chéo), "Đã giải quyết" (breakdown
+  Đề nghị truy tố/Truy tố/Xét xử qua `chuyen_giai_doan`.tuGiaiDoan + Đình chỉ/Tạm đình chỉ qua
+  `hoan_thanh`.hinhThucHoanThanh, lọc theo `vu.coQuanThuLy` HIỆN TẠI vì `hoan_thanh` không lưu giai
+  đoạn xảy ra — an toàn vì `HoanThanhVuAnModal` không đổi `coQuanThuLy` khi hoàn thành), "Trả ĐTBS"
+  (`tra_ho_so`.tuGiaiDoan, TT/XX), "Còn đang giải quyết" (`tinhTonHienTaiTheoGD`, LUÔN LÀ SỐ SỐNG —
+  chỉ chính xác cho tuần gần nhất/đang diễn ra, xem tuần lịch sử lâu sẽ không phản ánh đúng tồn
+  cuối tuần đó trong quá khứ). **"Tổng số thụ lý" IV/V/VI KHÔNG tự tính được** — đòi hỏi trạng thái
+  "tồn" as-of 1 NGÀY BẤT KỲ trong quá khứ, hệ thống chỉ hỗ trợ as-of theo KỲ THÁNG qua RPC
+  (`rpc_ton_ky_thong_nhat_2026-08-28.sql`) — để NHẬP TAY.
+- **Mục II (tin báo, tố giác), Mục III (biện pháp ngăn chặn), TNGT, bị cáo tuyên vô tội, VKS rút QĐ
+  truy tố** — hệ thống KHÔNG có dữ liệu nghiệp vụ tương ứng, NHẬP TAY hoàn toàn (45/87 dòng, đúng
+  quy ước "⚠ Chưa có dữ liệu — cần bổ sung tính năng" đã dùng ở Biểu 2/Biểu 4).
+
+**87 dòng tiêu chí** (`BAO_CAO_TUAN_ROWS`, hằng số dạng metadata giống `BIEU2_ROWS`) copy NGUYÊN
+VĂN nhãn từ file mẫu — kể cả chỗ có vẻ lỗi đánh máy gốc ("(XVI; XVIII; XIV)" lặp "XIV" ở mục I,
+đúng ra có lẽ là "XIX") — KHÔNG tự ý sửa nhãn của mẫu báo cáo chính thức. Mỗi dòng có `auto: kq =>
+number` nếu tự tính được, không có `auto` = nhập tay (component `OSoNhapTay`, commit lúc blur —
+pattern local-state giống `NhapNgay`). 42/87 dòng tự động, 45/87 nhập tay.
+
+**UI**: bảng rộng (cuộn ngang khi nhiều tuần), cột "Tiêu chí" | "Tổng" (tự cộng dồn TẤT CẢ tuần
+đang hiển thị) | mỗi tuần 1 cột (có nút 🔄 tính lại + 🗑 xoá riêng). Nút "+ Thêm tuần báo cáo" mở
+modal chọn Từ ngày/Đến ngày (gợi ý mặc định = 7 ngày ngay sau tuần cuối cùng đã có, hoặc 7 ngày gần
+nhất nếu chưa có tuần nào) + nhãn tự gợi ý sửa được. "⬇ Xuất Excel" dùng ExcelJS (đã có sẵn qua CDN
+cho "Xuất Excel báo cáo tháng"), mirror cấu trúc trên màn hình (section màu, dòng "Tr.đó" thụt lề).
+Có badge "🚧 Mới — cần kiểm chứng" cạnh tiêu đề (theo đúng quy ước `KyBaoCaoModule`).
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong scratchpad,
+gỡ ngay sau) toàn bộ file — sạch, 0 lỗi cú pháp. Test cô lập riêng `BAO_CAO_TUAN_ROWS` (trích nguyên
+mảng từ file thật qua `vm.runInContext`, không viết lại) — đúng 94 dòng (7 section + 87 dữ liệu),
+42 dòng auto chạy đúng với `kq` giả lập đủ field (không lỗi tham chiếu sai tên field), 45 dòng
+manual, không trùng `id` nào.
+
+**CHƯA kiểm chứng bằng dữ liệu Supabase thật** (không có tài khoản đăng nhập trong phiên viết tính
+năng này) — Dũng cần: (1) chạy migration `supabase/add_bao_cao_tuan_2026-09-23.sql` qua Session
+pooler (xem `supabase/README.md`); (2) mở tab "Báo cáo tuần", thêm 1 tuần báo cáo thật, đối chiếu
+vài dòng tự động tính (đặc biệt "Số vụ án CQĐT/VKS/Toà đã giải quyết" + breakdown) với số liệu đã
+biết ở Kỳ báo cáo cho cùng khoảng ngày; (3) thử nhập tay 1 vài dòng manual, tải lại trang xác nhận
+lưu đúng; (4) xuất Excel thử, mở bằng Excel thật xem layout. Nhánh `bao-cao-tuan` CHƯA merge vào
+`main`/CHƯA deploy — chỉ nên deploy sau khi đã chạy migration VÀ kiểm chứng số liệu qua UI thật
+trên `qlahs-sup.web.app` trước khi lên `qlahsp2.web.app` (production, dữ liệu thật).
+
 ## Toggle mới "Biểu B10: chỉ tính 'lần đầu'" — dự kiến, mặc định TẮT (2026-09-18, `qlahs-sup.html`, nhánh `main`, commit `2b58a12`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` — chỉ compile-check, CHƯA kiểm chứng Excel/Supabase thật)
 
 Ngay sau mục sửa D293/D297 ngay dưới đây — Dũng: *"dự kiến biểu 10 (ở truy tố, xét xử) sẽ không
