@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Sửa định nghĩa "quay vòng" của toggle "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" (2026-09-28, `qlahs-sup.html`, nhánh `fix-quay-vong-tra-dtbs` tách từ `main`, ĐÃ commit + push — CHƯA merge/deploy)
+
+Bug thật Dũng phát hiện: vụ Nguyễn Văn Chinh (`QLVA_E01.53_2604_0039`) — TT→XX 07/9 rồi Toà trả về TT
+27/9 (cùng kỳ 09) — bị toggle loại khỏi danh sách. Dũng chốt định nghĩa: "quay vòng" CHỈ là bị trả
+về rồi LẠI CHUYỂN LÊN giai đoạn sau trong cùng kỳ (kết thúc kỳ ở giai đoạn SAU, VD Toà trả Viện →
+Viện chuyển lại Toà). Chuyển lên rồi bị trả về (kết thúc ở giai đoạn TRƯỚC) KHÔNG phải quay vòng —
+tính đủ 2 chiều. `_idVuTraDTBSQuayVong` giờ so thứ tự `_log.thoiDiemGhi` (helper `_tGhiQuayVong`):
+chỉ loại khi `traVe` trước `chuyenDi` (nhìn từ giai đoạn trước) hoặc `traDi` trước `chuyenDen` (nhìn
+từ giai đoạn sau), vẫn giữ điều kiện net = 0; bỏ 2 tổ hợp chéo cũ (traVe+traDi / traDi+traVe); thiếu
+thời gian → không loại. Mô tả cũ ở mục "Toggle 'Bỏ vụ trả ĐTBS quay vòng...'" (2026-09-07, ví dụ
+"Công an KTĐT T8, Viện trả lại CA T8" bị loại) KHÔNG còn đúng. Test cô lập 7/7 + compile-check sạch.
+
 ## Toggle mới "Biểu B10: chỉ tính 'lần đầu'" — dự kiến, mặc định TẮT (2026-09-18, `qlahs-sup.html`, nhánh `main`, commit `2b58a12`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` — chỉ compile-check, CHƯA kiểm chứng Excel/Supabase thật)
 
 Ngay sau mục sửa D293/D297 ngay dưới đây — Dũng: *"dự kiến biểu 10 (ở truy tố, xét xử) sẽ không

@@ -10113,11 +10113,34 @@ function HangBaoCao({ nhan, data, lay, layDs, layBiCan, damNet, onMoChiTiet }) {
 const NHOM_VAO_BAO_CAO = ["khoiToTrucTiep", "tachVu", "chuyenDen", "traVe", "phucHoi", "nhanLai", "huyDieuTraLai"];
 const NHOM_RA_BAO_CAO = ["chuyenDi", "traDi", "nhapVu"]; // hoanThanh.* xử lý riêng bên dưới
 
+// ĐỊNH NGHĨA "quay vòng" (Dũng làm rõ 2026-09-28): bị TRẢ về giai đoạn trước rồi LẠI CHUYỂN lên giai
+// đoạn sau trong cùng kỳ — tức vụ KẾT THÚC kỳ ở giai đoạn SAU (VD Toà trả Viện → Viện chuyển lại Toà).
+// Ngược lại, Viện chuyển Toà → Toà trả về Viện (kết thúc ở giai đoạn TRƯỚC) KHÔNG phải quay vòng,
+// vẫn tính đủ cả 2 chiều. Phân biệt bằng thứ tự thời gian ghi (`_log.thoiDiemGhi`) của 2 sự kiện.
+const _tGhiQuayVong = (v) => {
+  const t = v?._log?.thoiDiemGhi;
+  if (!t) return null;
+  const ms = t.toMillis ? t.toMillis() : new Date(t).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
 function _idVuTraDTBSQuayVong(src) {
   const ds = src?.ds || {};
-  const setId = (arr) => new Set((arr || []).map(v => v.id));
-  const idTraVe = setId(ds.traVe), idTraDi = setId(ds.traDi);
-  const idChuyenDi = setId(ds.chuyenDi), idChuyenDen = setId(ds.chuyenDen);
+  // Map id vụ → mốc thời gian MUỘN NHẤT của loại sự kiện đó trong kỳ (null nếu không xác định).
+  const mocMuonNhat = (arr) => {
+    const m = new Map();
+    (arr || []).forEach(v => {
+      const t = _tGhiQuayVong(v);
+      const cu = m.has(v.id) ? m.get(v.id) : undefined;
+      m.set(v.id, cu === undefined ? t : (t == null || cu == null ? null : Math.max(cu, t)));
+    });
+    return m;
+  };
+  const tTraVe = mocMuonNhat(ds.traVe), tTraDi = mocMuonNhat(ds.traDi);
+  const tChuyenDi = mocMuonNhat(ds.chuyenDi), tChuyenDen = mocMuonNhat(ds.chuyenDen);
+  // true nếu sự kiện "tiến lên" (sau) xảy ra SAU sự kiện "trả về" (truoc) — không xác định được thì
+  // KHÔNG coi là quay vòng (giữ lại, an toàn hơn bỏ sót).
+  const tienSauTra = (tTra, tTien) => tTra != null && tTien != null && tTien > tTra;
   // Đếm tổng lần "vào" / "ra" của từng vụ trong kỳ (gồm cả hoàn thành + nhập vụ) để chỉ loại khi
   // net = 0 — giữ cân đối "tồn đầu + mới − ra = tồn cuối".
   const demVao = new Map(), demRa = new Map();
@@ -10130,10 +10153,10 @@ function _idVuTraDTBSQuayVong(src) {
     const nv = demVao.get(id) || 0, nr = demRa.get(id) || 0;
     if (nv > 0 && nv === nr) bo.add(id);
   };
-  // vào qua "traVe" (giai đoạn sau trả hồ sơ về đây) rồi lại đi tiếp trong kỳ
-  idTraVe.forEach(id => { if (idChuyenDi.has(id) || idTraDi.has(id)) xet(id); });
-  // "ra" qua "traDi" (giai đoạn này trả hồ sơ đi) rồi lại quay vào trong kỳ
-  idTraDi.forEach(id => { if (idChuyenDen.has(id) || idTraVe.has(id)) xet(id); });
+  // Nhìn từ giai đoạn TRƯỚC: giai đoạn sau trả hồ sơ về đây ("traVe") RỒI lại chuyển lên ("chuyenDi").
+  tTraVe.forEach((t, id) => { if (tChuyenDi.has(id) && tienSauTra(t, tChuyenDi.get(id))) xet(id); });
+  // Nhìn từ giai đoạn SAU: trả hồ sơ về giai đoạn trước ("traDi") RỒI lại nhận lên ("chuyenDen").
+  tTraDi.forEach((t, id) => { if (tChuyenDen.has(id) && tienSauTra(t, tChuyenDen.get(id))) xet(id); });
   return bo;
 }
 
