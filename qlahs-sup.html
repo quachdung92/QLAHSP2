@@ -12237,8 +12237,14 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   // D294/D298 "Trong đó: Số vụ/bị can VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ thẩm"
   // (2026-09-06, MỚI — trước đây chưa từng tính) — ĐÚNG BẰNG toàn bộ "DS chuyển đi TT" (không phải
   // 1 phần) — tại đơn vị này, MỌI vụ "chuyển đi" ở Truy tố đều thuộc loại này.
-  m.set(294, _fc(_sumSheetA("DS chuyển đi TT"), (tt.hoanThanh?.chuyen_di || []).length));
-  m.set(298, _fc(demBcSheet("DS chuyển đi TT"), soBc(tt.hoanThanh?.chuyen_di)));
+  // 2026-09-29 (Dũng): vụ "chuyển đi" ở giai đoạn XÉT XỬ (Hoàn thành → Chuyển đi khi vụ đang ở XX)
+  // cũng là VKS cấp trên phân công VKS cấp dưới THQCT, KSXX ⇒ cộng thêm "DS chuyển đi XX" vào D294/D298
+  // (chỉ 2 dòng "Trong đó" này — D292/D296 KHÔNG đổi vì vụ đó đã tính truy tố lúc TT→XX).
+  const _xxCd = baoCao.xet_xu?.ds?.hoanThanh?.chuyen_di || [];
+  m.set(294, _fc(`${_sumSheetA("DS chuyển đi TT")}+${_sumSheetA("DS chuyển đi XX")}`,
+    (tt.hoanThanh?.chuyen_di || []).length + _xxCd.length));
+  m.set(298, _fc(demBcSheetM(["DS chuyển đi TT", "DS chuyển đi XX"]),
+    soBc(tt.hoanThanh?.chuyen_di) + soBc(_xxCd)));
   // D293/D297 — round-trip (KHÔNG lần đầu) của TT→XX, cùng khuôn D93/D96 nhưng trên sheet
   // "DS TT chuyển XX" (cột phụ "Lần đầu?" cũng thêm ở đây, xem addSheetVuKy). KHÔNG gồm "DS chuyển
   // đi TT" — khoản đó không có khái niệm "lần đầu"/round-trip (không đi qua trả hồ sơ ĐTBS).

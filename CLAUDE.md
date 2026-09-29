@@ -5,6 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 
 
+
+## Biểu 2 D294/D298 cộng thêm "DS chuyển đi XX" (2026-09-29, nhánh `tinh-quay-vong-2-chieu`)
+
+Dũng: vụ "chuyển đi" ở giai đoạn Xét xử cũng là "VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ
+thẩm" ⇒ D294 = SUM "DS chuyển đi TT" + "DS chuyển đi XX", D298 = BC 2 sheet đó. D292/D296 KHÔNG đổi
+(vụ đã tính truy tố lúc TT→XX). Rủi ro nhỏ: nếu TT→XX ở kỳ TRƯỚC mà chuyển đi XX ở kỳ này, D294 có thể
+> phần tương ứng trong D292 (quy tắc D292>=D294) — chưa gặp trong dữ liệu. Biểu 3 (D70/D76 chuyển đi)
+không đổi. CHƯA xuất Excel thật.
+
 ## Sửa D86 Biểu 3 kỳ 09 lệch 1 (315 vs công thức 316) — bị can bổ sung ở XX đếm đúp (2026-09-29, nhánh `tinh-quay-vong-2-chieu`)
 
 Vụ `QLVA_E01.53_2606_0026`: TT→XX (chuyen_giai_doan) rồi bổ sung 1 bị can (bo_sung_bican >xet_xu),
