@@ -4,6 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 
 
+
+## Sửa D86 Biểu 3 kỳ 09 lệch 1 (315 vs công thức 316) — bị can bổ sung ở XX đếm đúp (2026-09-29, nhánh `tinh-quay-vong-2-chieu`)
+
+Vụ `QLVA_E01.53_2606_0026`: TT→XX (chuyen_giai_doan) rồi bổ sung 1 bị can (bo_sung_bican >xet_xu),
+cùng kỳ 09. `_soBiCan` của sự kiện chuyển đến đã đếm bị can đó (lọc theo kỳ khởi tố ≤ kỳ, không theo
+giờ trong kỳ) + sheet event "DS bổ sung BC XX" (nằm trong `XX_VAO` → C61 → D18) đếm thêm lần nữa.
+Sửa `tinhBaoCaoKyTuLog`: RIÊNG Xét xử, `ds.boSungBiCan` loại bị can của vụ đã "vào" XX cùng kỳ
+(`_vuVaoGdKyNay`). ĐT/TT cố ý không đụng (đã có cơ chế so-kỳ riêng, D79/D281 đã khớp RPC; áp chung
+sẽ đổi số kỳ 08 đã kiểm chứng). Kỳ 09 chỉ có đúng 1 sự kiện bổ sung ở XX ⇒ D18 −1 ⇒ D86 khớp 315.
+CHƯA xuất Excel thật xác nhận.
+
 ## Định nghĩa "quay vòng" chốt lại lần 2 + đếm số lần trả ĐTBS (2026-09-29, nhánh `tinh-quay-vong-2-chieu` tách từ `huy-an-bican-luu-tru`, CHƯA deploy)
 
 Dũng: *"nếu đang ở điều tra cùng kỳ chuyển sang viện mà lại trả điều tra bổ sung thì ko tính cả kết

@@ -9410,7 +9410,17 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     const dsTraDiArr = await vuAnTuLogDocs(traDi.docs, kyRankMap);
     // "bo_sung_bican" là sự kiện CẤP BỊ CAN (không phải cấp vụ) — dùng vuBiCanTuLogDocs riêng
     // (1 dòng/bị can, kèm vụ để hiển thị) thay vì vuAnTuLogDocs (1 dòng/vụ, gộp _soBiCan).
-    const dsBoSungBiCanArr = await vuBiCanTuLogDocs(boSungBiCanSnap.docs);
+    // 2026-09-29 (lỗi D86 Biểu 3 kỳ 09 lệch 1): vụ VÀO giai đoạn này NGAY TRONG CÙNG KỲ (chuyển đến/
+    // trả về/khởi tố/tách/phục hồi/nhận lại/huỷ-ĐT-lại) rồi mới được bổ sung bị can — _soBiCan của
+    // sự kiện "vào" đã đếm bị can đó rồi (lọc theo kỳ khởi tố ≤ kỳ, không theo giờ trong kỳ) ⇒ bỏ
+    // khỏi "bổ sung" để không đếm đúp (VD QLVA_E01.53_2606_0026: TT→XX rồi bổ sung 1 BC, kỳ 09).
+    const _vuVaoGdKyNay = new Set([dsKhoiToTrucTiep, dsTachVuArr, dsChuyenDenArr, dsTraVeArr,
+      dsPhucHoiArr, dsNhanLaiArr, dsHuyDieuTraLaiArr].flat().map(v => v.id));
+    // CHỈ áp cho Xét xử: D18 Biểu 3 = C61 B10 đọc thẳng sheet event "DS bổ sung BC XX". ĐT/TT đã có
+    // cơ chế riêng (dt_boSungBc/tt_boSungBc loại vụ "vào" cùng kỳ, D79/D281 đã khớp RPC) — không đụng.
+    const dsBoSungBiCanArr = (await vuBiCanTuLogDocs(boSungBiCanSnap.docs))
+      .filter(v => gd !== "xet_xu" || !_vuVaoGdKyNay.has(v.id));
+    soMoi.boSungBiCan = dsBoSungBiCanArr.length;
 
     const { soVuTon, soBiCanTon, dsTon } = await tinhTonHienTaiTheoGD(gd);
 
