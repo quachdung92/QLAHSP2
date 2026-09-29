@@ -2,6 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## "Huỷ án — điều tra lại" → Biểu 2 D58/D65 + tick "Giữ bị can hiện có ở kỳ lưu trữ" (2026-09-29, nhánh `huy-an-bican-luu-tru` tách từ `fix-quay-vong-tra-dtbs`, RPC ĐÃ CHẠY lên Supabase thật, ĐÃ commit/push/deploy)
+
+- Biểu 2: huỷ-ĐT-lại TÁCH khỏi D62/D69, đưa về D58 ("Số vụ án mới nhận để điều tra lại") / D65
+  ("Số bị can mới nhận để điều tra lại"); D77/D79 thêm +D58/+D65 đúng quy tắc ngành.
+- Bug phát hiện: 2 vụ thật (Oh Hyun June `QLVA_E01.53_2401_0010`, Dương Thanh Hải
+  `QLVA_E01.53_2501_0119`, huỷ án kỳ 09/2026) có bị can chỉ khởi tố ở kỳ lưu trữ "Án lưu 2026" ⇒ bị
+  loại khỏi D65 VÀ tồn bị can (strict). Sửa: sự kiện `huy_dieu_tra_lai` ở kỳ thật, cột mới
+  `giuBiCanLuuTru=false` (mặc định) ⇒ bị can của vụ CHỈ khởi tố ở kỳ lưu trữ được coi như vào thống
+  kê từ kỳ huỷ án (lần huỷ sớm nhất). Làm ĐỒNG BỘ 2 nơi: JS `fetchKyKhoiToBiCan` (override kỳ của
+  bị can đó = kỳ huỷ ⇒ mọi ledger/Excel ăn theo) + RPC `layTrangThaiBiCanTaiKy`
+  (`supabase/huy_an_bican_luu_tru_2026-09-29.sql`). `HuyDieuTraLaiModal` thêm checkbox "Giữ bị can
+  hiện có ở kỳ lưu trữ" (tick = không tính lại, dùng khi huỷ án xong chỉ khởi tố thêm bị can mới).
+- Kiểm chứng: RPC kỳ 09 ĐT bị can 703→705 (đúng June + Hải), kỳ 08 không đổi; test cô lập JS PASS;
+  compile sạch. CHƯA xuất Excel thật kiểm D65/D156.
+
 ## Sửa định nghĩa "quay vòng" của toggle "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" (2026-09-28, `qlahs-sup.html`, nhánh `fix-quay-vong-tra-dtbs` tách từ `main`, ĐÃ commit + push — CHƯA merge/deploy)
 
 Bug thật Dũng phát hiện: vụ Nguyễn Văn Chinh (`QLVA_E01.53_2604_0039`) — TT→XX 07/9 rồi Toà trả về TT

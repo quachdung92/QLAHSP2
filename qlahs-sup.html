@@ -4673,6 +4673,11 @@ function HuyDieuTraLaiModal({ vuAn, onDong, onXong }) {
   const [ghiChu, setGhiChu] = useState("");
   const [hanDieuTraMoi, setHanDieuTraMoi] = useState("");
   const [hanDaSua, setHanDaSua] = useState(false);
+  // 2026-09-29 (Dũng): bị can cũ của vụ (thường nhập bù ở kỳ lưu trữ) mặc định được TÍNH LẠI vào
+  // thống kê từ kỳ huỷ án (D65 + tồn bị can Điều tra, xem fetchKyKhoiToBiCan + RPC
+  // layTrangThaiBiCanTaiKy). Tick = giữ nguyên họ ở kỳ lưu trữ (VD huỷ án xong chỉ khởi tố thêm
+  // bị can mới — bị can mới có sự kiện khoi_to_bican riêng nên vẫn được tính bình thường).
+  const [giuBiCanLuuTru, setGiuBiCanLuuTru] = useState(false);
   useEffect(() => {
     if (!ngay || hanDaSua) return;
     const soThang = THANG_DIEU_TRA_CO_BAN[vuAn.mucDoNghiemTrong];
@@ -4701,7 +4706,7 @@ function HuyDieuTraLaiModal({ vuAn, onDong, onXong }) {
         maVuAn: vuAn.id, loaiSuKien: "huy_dieu_tra_lai",
         tuGiaiDoan: giaiDoanCu, denGiaiDoan: "dieu_tra",
         soQuyetDinh: soQuyetDinh.trim(), ngaySuKien: fromInputDate(ngay), kyThongKe: kyId,
-        ghiChu, nguoiThucHien, thoiDiemGhi: now,
+        ghiChu, nguoiThucHien, thoiDiemGhi: now, giuBiCanLuuTru,
       }));
       await batch.commit();
       onXong();
@@ -4726,6 +4731,14 @@ function HuyDieuTraLaiModal({ vuAn, onDong, onXong }) {
       {vuAn.mucDoNghiemTrong && !hanDaSua && hanDieuTraMoi
         ? <p className="text-[10px] text-slate-400 mb-3">Tự tính theo Điều 172 khoản 1 BLHS 2025 (điều tra lại từ đầu, tính từ Ngày huỷ án), có thể sửa lại.</p>
         : <div className="mb-3" />}
+      <label className="flex items-start gap-2 text-sm text-slate-700 mb-1 cursor-pointer">
+        <input type="checkbox" checked={giuBiCanLuuTru} onChange={e => setGiuBiCanLuuTru(e.target.checked)} className="mt-0.5" />
+        <span>Giữ bị can hiện có ở kỳ lưu trữ (không tính lại vào thống kê)</span>
+      </label>
+      <p className="text-[10px] text-slate-400 mb-3">
+        Không tick: bị can đã có của vụ được tính lại vào "Số bị can mới nhận để điều tra lại" và tồn
+        Điều tra từ kỳ này. Tick khi chỉ tính bị can khởi tố thêm sau khi huỷ án.
+      </p>
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -10432,10 +10445,33 @@ async function fetchKyKhoiToBiCan(vuIds) {
   const allIds = gocIds.length ? [...new Set([...vuIds, ...gocIds])] : vuIds;
   const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", allIds,
     q => q.where("loaiSuKien", "==", "khoi_to_bican"));
+  const vuCuaBc = new Map();
   docs.forEach(d => {
     const e = d.data();
-    if (e.maBiCan) map.set(e.maBiCan, e.kyThongKe || null);
+    if (e.maBiCan) { map.set(e.maBiCan, e.kyThongKe || null); vuCuaBc.set(e.maBiCan, e.maVuAn); }
   });
+  // 2026-09-29 (Dũng): "Huỷ án — điều tra lại" (không tick "Giữ bị can hiện có ở kỳ lưu trữ") —
+  // bị can cũ của vụ chỉ khởi tố ở kỳ LƯU TRỮ (án cũ nhập bù) được coi như vào thống kê TỪ KỲ huỷ
+  // án (lấy lần huỷ SỚM NHẤT ở kỳ thật). Phải khớp y hệt RPC layTrangThaiBiCanTaiKy
+  // (supabase/huy_an_bican_luu_tru_2026-09-29.sql) để D65/Tổng thụ lý và tồn bị can cân nhau.
+  const huyDocs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", allIds,
+    q => q.where("loaiSuKien", "==", "huy_dieu_tra_lai"));
+  if (huyDocs.length) {
+    const rankMap = await layKyRankMap();
+    const kyHuyTheoVu = new Map();
+    huyDocs.forEach(d => {
+      const e = d.data();
+      if (e.giuBiCanLuuTru) return;
+      const r = rankMap.get(e.kyThongKe);
+      if (r == null) return;
+      const cu = kyHuyTheoVu.get(e.maVuAn);
+      if (!cu || r < rankMap.get(cu)) kyHuyTheoVu.set(e.maVuAn, e.kyThongKe);
+    });
+    map.forEach((ky, bcId) => {
+      const kyHuy = kyHuyTheoVu.get(vuCuaBc.get(bcId));
+      if (kyHuy && rankMap.get(ky) == null) map.set(bcId, kyHuy);
+    });
+  }
   return map;
 }
 
@@ -12023,16 +12059,19 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   // khỏi D59/D60/D71/D73 để không đếm đúp. `dt.khoiToTrucTiep`/`dt.tachVu`/`dt.traVe`/`dt.chuyenDen`
   // ĐÃ được loại các vụ này từ nguồn (cùng chỗ dedup), nên sheet "DS khởi tố ĐT" cũng tự động không
   // còn các vụ này — công thức Excel B10 C6/C7 (SUMIFS trên sheet đó) tự đúng, không cần sửa riêng.
-  // D62/D69 (2026-09-10): GỘP thêm "DS huỷ ĐT lại ĐT" (HuyDieuTraLaiModal — vụ đã có kết quả bị Toà
+  // [ĐÃ TÁCH RA D58/D65 ngày 2026-09-29 — xem ngay dưới; đoạn sau giữ làm lịch sử] D62/D69 (2026-09-10): GỘP thêm "DS huỷ ĐT lại ĐT" (HuyDieuTraLaiModal — vụ đã có kết quả bị Toà
   // cấp trên huỷ để điều tra lại → quay lại tồn Điều tra). Cùng bản chất "vụ tồn cũ quay lại xử lý
   // điều tra" mà D62 đã là bucket catch-all (xem ghi chú trên). BẮT BUỘC gộp ở đây: D154 (tồn cuối
   // ĐT) đọc thẳng RPC "DS tồn cuối kỳ ĐT" nên +N khi có huỷ-ĐT-lại; nếu D77 (= ...+D62+...) không
   // +N tương ứng thì đẳng thức kiểm tra `D154=D77-D83-D134` báo ✗ giả. Khi Dũng wire dòng D-code
   // riêng cho "Toà cấp trên huỷ án" theo mẫu ngành → tách khoản này ra khỏi D62 để không đếm đúp.
-  m.set(62, _fc(`${_sumSheetA("DS phục hồi TĐC ĐT")}+${_sumSheetA("DS huỷ ĐT lại ĐT")}`,
-    (dt.phucHoi || []).length + (dt.huyDieuTraLai || []).length));
-  m.set(69, _fc(`${demBcSheet("DS phục hồi TĐC ĐT")}+${demBcSheet("DS huỷ ĐT lại ĐT")}`,
-    soBc(dt.phucHoi) + soBc(dt.huyDieuTraLai)));
+  // 2026-09-29 (Dũng): "Huỷ án — điều tra lại" TÁCH khỏi D62/D69, đưa về đúng dòng mẫu ngành
+  // D58 "Số vụ án mới nhận để điều tra lại" / D65 "Số bị can mới nhận để điều tra lại" (D77/D79
+  // đã có sẵn +D58/+D65 theo quy tắc ngành — cộng vào dưới đây nên tổng thụ lý không đổi).
+  m.set(58, _fc(_sumSheetA("DS huỷ ĐT lại ĐT"), (dt.huyDieuTraLai || []).length));
+  m.set(65, _fc(demBcSheet("DS huỷ ĐT lại ĐT"), soBc(dt.huyDieuTraLai)));
+  m.set(62, _fc(_sumSheetA("DS phục hồi TĐC ĐT"), (dt.phucHoi || []).length));
+  m.set(69, _fc(demBcSheet("DS phục hồi TĐC ĐT"), soBc(dt.phucHoi)));
   const dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
   // D71/D72 "Số vụ/bị can CQĐT khởi tố mới" — TRỎ THẲNG vào ô TỔNG cột C6/C7 trên sheet "Biểu B10"
   // (qua b10RefCua, cùng cơ chế đã dùng cho cột "Kiểm tra" liên biểu) thay vì ghi số JS tĩnh —
@@ -12047,10 +12086,10 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   m.set(76, _fc(demBcSheet("DS chuyển đi ĐT"), soBc(dt.hoanThanh?.chuyen_di)));
   // D77/D79 "Tổng số CQĐT thụ lý điều tra" — arithmetic tham chiếu NGAY CÁC Ô KHÁC trong CHÍNH
   // sheet Biểu 2 (không phải sheet DS nào riêng — đã đối chiếu khớp mẫu ngành, xem CLAUDE.md).
-  m.set(77, _fc(`${_cRef(57)}+${_cRef(59)}+${_cRef(60)}+${_cRef(62)}+${_cRef(71)}+${_cRef(73)}-${_cRef(61)}-${_cRef(75)}`,
-    _mv(m,57) + _mv(m,59) + _mv(m,60) + _mv(m,62) + _mv(m,71) + _mv(m,73) - _mv(m,61) - _mv(m,75)));
-  m.set(79, _fc(`${_cRef(64)}+${_cRef(66)}+${_cRef(67)}+${_cRef(69)}+${_cRef(72)}+${_cRef(74)}-${_cRef(68)}-${_cRef(76)}`,
-    _mv(m,64) + _mv(m,66) + _mv(m,67) + _mv(m,69) + _mv(m,72) + _mv(m,74) - _mv(m,68) - _mv(m,76)));
+  m.set(77, _fc(`${_cRef(57)}+${_cRef(58)}+${_cRef(59)}+${_cRef(60)}+${_cRef(62)}+${_cRef(71)}+${_cRef(73)}-${_cRef(61)}-${_cRef(75)}`,
+    _mv(m,57) + _mv(m,58) + _mv(m,59) + _mv(m,60) + _mv(m,62) + _mv(m,71) + _mv(m,73) - _mv(m,61) - _mv(m,75)));
+  m.set(79, _fc(`${_cRef(64)}+${_cRef(65)}+${_cRef(66)}+${_cRef(67)}+${_cRef(69)}+${_cRef(72)}+${_cRef(74)}-${_cRef(68)}-${_cRef(76)}`,
+    _mv(m,64) + _mv(m,65) + _mv(m,66) + _mv(m,67) + _mv(m,69) + _mv(m,72) + _mv(m,74) - _mv(m,68) - _mv(m,76)));
   // D83/D86 "Số vụ/bị can CQĐT đã giải quyết (đề nghị truy tố + đình chỉ)" — BUG THẬT đã sửa
   // (2026-09, Dũng phát hiện qua kỳ 08/2026 thật: D86 ra 224, đúng ra 159 — dư 65). NGUYÊN NHÂN:
   // bản cũ SUY RA từ đẳng thức `D154=D77-D83-D134` (đảo lại D83=D77-D134-D154), D154 lấy từ RPC
