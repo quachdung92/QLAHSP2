@@ -2,6 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+
+## Khớp tồn cuối kỳ 09/2026 với số thực tế (2026-09-29, nhánh `huy-an-bican-luu-tru`, ĐÃ chạy lên Supabase + deploy)
+
+Dũng: kỳ 09 RPC báo ĐT 344/705 nhưng tồn thực tế 343/702 (kỳ 10 chỉ có 2 vụ Toà trả ĐTBS về TT).
+3 nguyên nhân, đã sửa: (1) sự kiện `chuyen_giai_doan` `0be7eba4-...` (vụ Đoàn Văn Hòa
+`QLVA_E01.53_2602_0052`, ĐT→TT 03/9, 4 bị can) lưu `kyThongKe = NULL` → RPC bỏ qua, vụ vẫn tính tồn
+ĐT — đã gán kỳ 09 (kèm `lichSuSuaKy`); (2) sự kiện `hoan_thanh` TĐC năm 2011 (`08c24ac3-...`, vụ
+`QLVA_E01.53_0908_0001`) cũng NULL kỳ — gán kỳ lưu trữ "Án lưu 2026" (không đổi số, chỉ dọn); chỉ có
+đúng 2 sự kiện NULL kỳ toàn hệ thống; (3) bị can Nguyễn Quý Dương (vụ `QLVA_E01.53_2411_0115`, khởi
+tố + TĐC ở kỳ lưu trữ, PHỤC HỒI thật kỳ 09) bị loại khỏi tồn bị can — mở rộng quy tắc "bị can chỉ
+khởi tố ở kỳ lưu trữ được tính lại" (trước chỉ `huy_dieu_tra_lai`) sang cả `phuc_hoi`/
+`nhan_lai_chuyen_di` ở kỳ thật: RPC `supabase/luu_tru_phuc_hoi_bican_2026-09-29.sql` (đã chạy) + JS
+`fetchKyKhoiToBiCan`. Kết quả RPC: kỳ 09 ĐT 343/702, kỳ 10 ĐT/TT/XX = đúng số live (343/702,
+69/380, 24/307), kỳ 08 không đổi (330/798). Nguyên nhân gốc NULL kỳ: `ModalXacNhanKy` cho bấm
+"Xác nhận" khi danh sách kỳ chưa tải xong — nay `disabled` cho tới khi có kỳ được chọn.
+
 ## "Huỷ án — điều tra lại" → Biểu 2 D58/D65 + tick "Giữ bị can hiện có ở kỳ lưu trữ" (2026-09-29, nhánh `huy-an-bican-luu-tru` tách từ `fix-quay-vong-tra-dtbs`, RPC ĐÃ CHẠY lên Supabase thật, ĐÃ commit/push/deploy)
 
 - Biểu 2: huỷ-ĐT-lại TÁCH khỏi D62/D69, đưa về D58 ("Số vụ án mới nhận để điều tra lại") / D65

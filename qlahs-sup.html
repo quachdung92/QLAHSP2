@@ -4282,8 +4282,11 @@ function ModalXacNhanKy({ open, onXacNhan, onHuy }) {
         })()}
         <div className="flex justify-end gap-2">
           <button onClick={onHuy} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
+          {/* 2026-09-29: chặn bấm Xác nhận khi danh sách kỳ chưa tải xong / chưa chọn kỳ — trước đây
+              bấm quá nhanh lưu sự kiện kyThongKe = null, bị mọi báo cáo bỏ qua (lệch tồn cuối kỳ 09). */}
           <button onClick={() => onXacNhan(kyChon || null)}
-                  className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">
+                  disabled={dangTai || (danhSachKy.length > 0 && !kyChon)}
+                  className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium">
             Xác nhận
           </button>
         </div>
@@ -10455,13 +10458,16 @@ async function fetchKyKhoiToBiCan(vuIds) {
   // án (lấy lần huỷ SỚM NHẤT ở kỳ thật). Phải khớp y hệt RPC layTrangThaiBiCanTaiKy
   // (supabase/huy_an_bican_luu_tru_2026-09-29.sql) để D65/Tổng thụ lý và tồn bị can cân nhau.
   const huyDocs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", allIds,
-    q => q.where("loaiSuKien", "==", "huy_dieu_tra_lai"));
+    q => q.where("loaiSuKien", "in", ["huy_dieu_tra_lai", "phuc_hoi", "nhan_lai_chuyen_di"]));
+  // (mở rộng 2026-09-29: phục hồi / nhận lại ở kỳ thật cũng đưa bị can chỉ-khởi-tố-ở-kỳ-lưu-trữ
+  // vào thống kê — VD Nguyễn Quý Dương: khởi tố + TĐC ở kỳ lưu trữ, phục hồi thật ở kỳ 09/2026.
+  // Khớp supabase/luu_tru_phuc_hoi_bican_2026-09-29.sql.)
   if (huyDocs.length) {
     const rankMap = await layKyRankMap();
     const kyHuyTheoVu = new Map();
     huyDocs.forEach(d => {
       const e = d.data();
-      if (e.giuBiCanLuuTru) return;
+      if (e.loaiSuKien === "huy_dieu_tra_lai" && e.giuBiCanLuuTru) return;
       const r = rankMap.get(e.kyThongKe);
       if (r == null) return;
       const cu = kyHuyTheoVu.get(e.maVuAn);
