@@ -14,6 +14,11 @@ net vào = ra). Bỏ `_tGhiQuayVong`. Vẫn nằm sau công tắc "Bỏ vụ tr�
 Tính năng mới đếm số lần trả ĐTBS/vụ: `timSuKienKyTheoVuAn` trả thêm `soLanTraDTBS` → badge
 "↩ ĐTBS ×N" cạnh tên vụ ở Danh sách vụ án (tooltip tách VKS trả CQĐT / Toà trả VKS) + dòng "Số lần
 trả ĐTBS" ở panel chi tiết. Test cô lập 6/6, compile sạch.
+Bổ sung cùng ngày: quyết định loại nay xét THEO RANH GIỚI giai đoạn (`_idVuQuayVongTheoGd`, thay
+`_idVuTraDTBSQuayVong`) — chỉ loại khi net = 0 ở CẢ 2 giai đoạn hai bên, rồi loại ĐỒNG THỜI ở cả 2 —
+tránh lệch liên biểu (Biểu 2 D272/D278 ↔ B10 C33/C36 ↔ Biểu 3 D17) khi 1 bên còn sự kiện khác (VD
+đình chỉ cùng kỳ). Biểu 2/3/10 + mọi sheet "DS ..." ăn theo qua `locBoTraDTBSQuayVongCungKy(baoCao)`
+ở nút Xuất Excel (khi công tắc BẬT). Test cô lập 4/4.
 
 ## Khớp tồn cuối kỳ 09/2026 với số thực tế (2026-09-29, nhánh `huy-an-bican-luu-tru`, ĐÃ chạy lên Supabase + deploy)
 

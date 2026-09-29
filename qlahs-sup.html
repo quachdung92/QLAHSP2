@@ -10155,42 +10155,53 @@ const NHOM_RA_BAO_CAO = ["chuyenDi", "traDi", "nhapVu"]; // hoanThanh.* xử lý
 // rồi bị trả, HAY bị trả rồi chuyển lại) ⇒ KHÔNG tính CẢ "kết thúc/chuyển giai đoạn" LẪN "trả ĐTBS"
 // ở cả 2 giai đoạn liên quan (ĐT↔TT, TT↔XX). VD Nguyễn Văn Chinh: TT→XX 07/9, Toà trả TT 27/9 (kỳ
 // 09) ⇒ bỏ khỏi "Kết thúc truy tố" của TT VÀ khỏi "Toà trả ĐTBS" của XX.
-function _idVuTraDTBSQuayVong(src) {
+// net vào == ra của 1 vụ trong 1 giai đoạn (gồm cả hoàn thành + nhập vụ) — chỉ loại khi net = 0 để giữ
+// cân đối "tồn đầu + mới − ra = tồn cuối".
+function _netBang0QuayVong(src) {
   const ds = src?.ds || {};
-  const ids = (arr) => new Set((arr || []).map(v => v.id));
-  const sTraVe = ids(ds.traVe), sTraDi = ids(ds.traDi);
-  const sChuyenDi = ids(ds.chuyenDi), sChuyenDen = ids(ds.chuyenDen);
-  // Đếm tổng lần "vào" / "ra" của từng vụ trong kỳ (gồm cả hoàn thành + nhập vụ) để chỉ loại khi
-  // net = 0 — giữ cân đối "tồn đầu + mới − ra = tồn cuối".
   const demVao = new Map(), demRa = new Map();
   const cong = (m, id) => m.set(id, (m.get(id) || 0) + 1);
   NHOM_VAO_BAO_CAO.forEach(k => (ds[k] || []).forEach(v => cong(demVao, v.id)));
   NHOM_RA_BAO_CAO.forEach(k => (ds[k] || []).forEach(v => cong(demRa, v.id)));
   HOAN_THANH_TRUONG_TONG.forEach(ht => (ds.hoanThanh?.[ht] || []).forEach(v => cong(demRa, v.id)));
-  const bo = new Set();
-  const xet = (id) => {
-    const nv = demVao.get(id) || 0, nr = demRa.get(id) || 0;
-    if (nv > 0 && nv === nr) bo.add(id);
-  };
-  // Nhìn từ giai đoạn TRƯỚC: chuyển lên ("chuyenDi") + bị trả về ("traVe") trong kỳ.
-  sTraVe.forEach(id => { if (sChuyenDi.has(id)) xet(id); });
-  // Nhìn từ giai đoạn SAU: nhận lên ("chuyenDen") + trả về giai đoạn trước ("traDi") trong kỳ.
-  sTraDi.forEach(id => { if (sChuyenDen.has(id)) xet(id); });
-  return bo;
+  return (id) => { const nv = demVao.get(id) || 0, nr = demRa.get(id) || 0; return nv > 0 && nv === nr; };
+}
+
+// Xét theo TỪNG RANH GIỚI giai đoạn (ĐT↔TT, TT↔XX): vụ có cả "chuyển lên" + "trả về" qua ranh giới đó
+// trong kỳ, và net = 0 ở CẢ 2 giai đoạn hai bên ⇒ loại khỏi CẢ 2 giai đoạn. Quyết định chung cho 2 bên
+// để "kết thúc điều tra" (ĐT) và "nhận từ ĐT" (TT), "trả ĐTBS" 2 phía... luôn đồng bộ — tránh lệch
+// liên biểu (Biểu 2 D272/D278 ↔ B10 C33/C36 ↔ Biểu 3 D17) khi 1 bên còn sự kiện khác (VD đình chỉ).
+function _idVuQuayVongTheoGd(baoCao) {
+  const kq = Object.fromEntries(THU_TU_GIAI_DOAN.map(gd => [gd, new Set()]));
+  const ids = (arr) => new Set((arr || []).map(v => v.id));
+  for (let i = 0; i < THU_TU_GIAI_DOAN.length - 1; i++) {
+    const gdT = THU_TU_GIAI_DOAN[i], gdS = THU_TU_GIAI_DOAN[i + 1];
+    const t = baoCao?.[gdT], sa = baoCao?.[gdS];
+    if (!t || !sa) continue;
+    const dt = t.ds || {}, dsS = sa.ds || {};
+    const ungVien = new Set();
+    const cdi = ids(dt.chuyenDi); ids(dt.traVe).forEach(id => { if (cdi.has(id)) ungVien.add(id); });
+    const cden = ids(dsS.chuyenDen); ids(dsS.traDi).forEach(id => { if (cden.has(id)) ungVien.add(id); });
+    const net0T = _netBang0QuayVong(t), net0S = _netBang0QuayVong(sa);
+    ungVien.forEach(id => { if (net0T(id) && net0S(id)) { kq[gdT].add(id); kq[gdS].add(id); } });
+  }
+  return kq;
 }
 
 function demVuTraDTBSQuayVong(baoCao) {
   const ids = new Set();
-  for (const gd of THU_TU_GIAI_DOAN) _idVuTraDTBSQuayVong(baoCao[gd]).forEach(id => ids.add(id));
+  const theoGd = _idVuQuayVongTheoGd(baoCao);
+  for (const gd of THU_TU_GIAI_DOAN) theoGd[gd].forEach(id => ids.add(id));
   return ids.size;
 }
 
 function locBoTraDTBSQuayVongCungKy(baoCao) {
   const kq = {};
+  const boTheoGd = _idVuQuayVongTheoGd(baoCao);
   for (const gd of THU_TU_GIAI_DOAN) {
     const src = baoCao[gd];
     if (!src) { kq[gd] = src; continue; }
-    const boId = _idVuTraDTBSQuayVong(src);
+    const boId = boTheoGd[gd];
     if (!boId.size) { kq[gd] = src; continue; }
     const ds = src.ds || {};
     const laBo = (v) => boId.has(v.id);
@@ -10260,7 +10271,7 @@ function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong
   // Số vụ quay vòng ĐTBS trọn vẹn trong kỳ theo TỪNG giai đoạn — luôn tính từ baoCao GỐC (kể cả
   // khi toggle BẬT, để hàng "trong đó quay vòng" vẫn hiện đúng con số của kỳ).
   const quayVongTheoGd = useMemo(
-    () => Object.fromEntries(THU_TU_GIAI_DOAN.map(gd => [gd, _idVuTraDTBSQuayVong(baoCao[gd]).size])),
+    () => { const t = _idVuQuayVongTheoGd(baoCao); return Object.fromEntries(THU_TU_GIAI_DOAN.map(gd => [gd, t[gd].size])); },
     [baoCao]
   );
   const bc = useMemo(
