@@ -4680,6 +4680,11 @@ function HuyDieuTraLaiModal({ vuAn, onDong, onXong }) {
   const [ghiChu, setGhiChu] = useState("");
   const [hanDieuTraMoi, setHanDieuTraMoi] = useState("");
   const [hanDaSua, setHanDaSua] = useState(false);
+  // 2026-09-29 (Dũng): bị can cũ của vụ (thường nhập bù ở kỳ lưu trữ) mặc định được TÍNH LẠI vào
+  // thống kê từ kỳ huỷ án (D65 + tồn bị can Điều tra, xem fetchKyKhoiToBiCan + RPC
+  // layTrangThaiBiCanTaiKy). Tick = giữ nguyên họ ở kỳ lưu trữ (VD huỷ án xong chỉ khởi tố thêm
+  // bị can mới — bị can mới có sự kiện khoi_to_bican riêng nên vẫn được tính bình thường).
+  const [giuBiCanLuuTru, setGiuBiCanLuuTru] = useState(false);
   useEffect(() => {
     if (!ngay || hanDaSua) return;
     const soThang = THANG_DIEU_TRA_CO_BAN[vuAn.mucDoNghiemTrong];
@@ -4708,7 +4713,7 @@ function HuyDieuTraLaiModal({ vuAn, onDong, onXong }) {
         maVuAn: vuAn.id, loaiSuKien: "huy_dieu_tra_lai",
         tuGiaiDoan: giaiDoanCu, denGiaiDoan: "dieu_tra",
         soQuyetDinh: soQuyetDinh.trim(), ngaySuKien: fromInputDate(ngay), kyThongKe: kyId,
-        ghiChu, nguoiThucHien, thoiDiemGhi: now,
+        ghiChu, nguoiThucHien, thoiDiemGhi: now, giuBiCanLuuTru,
       }));
       await batch.commit();
       onXong();
@@ -4733,6 +4738,14 @@ function HuyDieuTraLaiModal({ vuAn, onDong, onXong }) {
       {vuAn.mucDoNghiemTrong && !hanDaSua && hanDieuTraMoi
         ? <p className="text-[10px] text-slate-400 mb-3">Tự tính theo Điều 172 khoản 1 BLHS 2025 (điều tra lại từ đầu, tính từ Ngày huỷ án), có thể sửa lại.</p>
         : <div className="mb-3" />}
+      <label className="flex items-start gap-2 text-sm text-slate-700 mb-1 cursor-pointer">
+        <input type="checkbox" checked={giuBiCanLuuTru} onChange={e => setGiuBiCanLuuTru(e.target.checked)} className="mt-0.5" />
+        <span>Giữ bị can hiện có ở kỳ lưu trữ (không tính lại vào thống kê)</span>
+      </label>
+      <p className="text-[10px] text-slate-400 mb-3">
+        Không tick: bị can đã có của vụ được tính lại vào "Số bị can mới nhận để điều tra lại" và tồn
+        Điều tra từ kỳ này. Tick khi chỉ tính bị can khởi tố thêm sau khi huỷ án.
+      </p>
       <label className="text-xs text-slate-500 block mb-1">Ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -10452,10 +10465,33 @@ async function fetchKyKhoiToBiCan(vuIds) {
   const allIds = gocIds.length ? [...new Set([...vuIds, ...gocIds])] : vuIds;
   const docs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", allIds,
     q => q.where("loaiSuKien", "==", "khoi_to_bican"));
+  const vuCuaBc = new Map();
   docs.forEach(d => {
     const e = d.data();
-    if (e.maBiCan) map.set(e.maBiCan, e.kyThongKe || null);
+    if (e.maBiCan) { map.set(e.maBiCan, e.kyThongKe || null); vuCuaBc.set(e.maBiCan, e.maVuAn); }
   });
+  // 2026-09-29 (Dũng): "Huỷ án — điều tra lại" (không tick "Giữ bị can hiện có ở kỳ lưu trữ") —
+  // bị can cũ của vụ chỉ khởi tố ở kỳ LƯU TRỮ (án cũ nhập bù) được coi như vào thống kê TỪ KỲ huỷ
+  // án (lấy lần huỷ SỚM NHẤT ở kỳ thật). Phải khớp y hệt RPC layTrangThaiBiCanTaiKy
+  // (supabase/huy_an_bican_luu_tru_2026-09-29.sql) để D65/Tổng thụ lý và tồn bị can cân nhau.
+  const huyDocs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", allIds,
+    q => q.where("loaiSuKien", "==", "huy_dieu_tra_lai"));
+  if (huyDocs.length) {
+    const rankMap = await layKyRankMap();
+    const kyHuyTheoVu = new Map();
+    huyDocs.forEach(d => {
+      const e = d.data();
+      if (e.giuBiCanLuuTru) return;
+      const r = rankMap.get(e.kyThongKe);
+      if (r == null) return;
+      const cu = kyHuyTheoVu.get(e.maVuAn);
+      if (!cu || r < rankMap.get(cu)) kyHuyTheoVu.set(e.maVuAn, e.kyThongKe);
+    });
+    map.forEach((ky, bcId) => {
+      const kyHuy = kyHuyTheoVu.get(vuCuaBc.get(bcId));
+      if (kyHuy && rankMap.get(ky) == null) map.set(bcId, kyHuy);
+    });
+  }
   return map;
 }
 

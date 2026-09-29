@@ -350,6 +350,9 @@ create table "lichsuChuyenGiaiDoan" (
   -- được thêm bằng ALTER TABLE trực tiếp lên project thật (không phải deploy lại schema.sql từ
   -- đầu) — xem ghi chú CLAUDE.md "Giao nhận hồ sơ: thêm 'Lý do giao nhận'...".
   "lyDoGiaoNhan"          text not null default '',
+  -- 2026-09-29: chỉ có ý nghĩa khi loaiSuKien='huy_dieu_tra_lai' — true = giữ bị can cũ ở kỳ lưu
+  -- trữ, không tính lại vào thống kê. Xem supabase/huy_an_bican_luu_tru_2026-09-29.sql.
+  "giuBiCanLuuTru"        boolean not null default false,
   -- Snapshot bị can của vụ NGUỒN lúc "Nhập vụ" (2026-08-03, chỉ có ý nghĩa khi loaiSuKien=
   -- 'nhap_vu') — bị can bị chuyển hẳn maVuAn sang vụ đích ngay lúc nhập, nên mọi báo cáo xem SAU
   -- đó không còn truy vấn lại được "bican where maVuAn=vụ nguồn". Cột này thêm bằng ALTER TABLE
