@@ -10355,18 +10355,7 @@ function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong
                 : "Không có vụ trả hồ sơ ĐTBS nào quay vòng trọn vẹn trong kỳ này.")}
         </span>
       </div>
-      <div className="flex items-start gap-3 mb-2">
-        <CongTac checked={chiTinhLanDauB10} onChange={setChiTinhLanDauB10}
-          nhan="Biểu B10: chỉ tính 'lần đầu' (dự kiến)" mauBat="bg-indigo-600" />
-        <span className="text-xs text-slate-500 leading-snug">
-          Công tắc RIÊNG, KHÁC hẳn công tắc trên (chỉ nét-0 quay vòng CÙNG kỳ) — bật thì sheet
-          "Biểu B10" trong file Excel xuất ra (C25-27/C36-52 + Tổng thụ lý C3-5/C33-35/C60-62) loại
-          HẲN mọi vụ từng bị trả hồ sơ điều tra bổ sung (round-trip), bất kể quay lại cùng kỳ hay
-          khác kỳ — không tính vào "Đề nghị truy tố"/"Truy tố" cho tới khi vụ ĐẾN ĐÚNG giai đoạn đó
-          LẦN ĐẦU. KHÔNG ảnh hưởng bảng trên màn hình này (chỉ Excel), KHÔNG ảnh hưởng Biểu 2/3 hay
-          "Cân đối số liệu"/số tồn RPC. Dự kiến — Dũng chưa quyết dùng chế độ nào, mặc định TẮT.
-        </span>
-      </div>
+      {/* 2026-09-29: bỏ công tắc 'Biểu B10: chỉ tính lần đầu' — B10 nay LUÔN tính theo đúng quy tắc liên biểu ngành. */}
       <div className="border border-slate-200 rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-100 text-slate-600">
@@ -11049,11 +11038,13 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   const _ttLanDauIdsB10 = ttChuyenDi_LanDau ? new Set(ttChuyenDi_LanDau.map(v => v.id)) : null;
   const _dsDT_B10 = baoCao.dieu_tra.ds, _dsTT_B10 = baoCao.truy_to.ds, _dsXX_B10 = baoCao.xet_xu.ds;
   // C25-27 (Đề nghị truy tố, ĐT→TT) — dân số nguồn thay bằng bản đã lọc lần đầu khi bật toggle.
-  const dt_dntt_NguonB10 = (chiTinhLanDauB10 && _dtLanDauIdsB10)
+  // 2026-09-29: LUÔN chỉ tính "lần đầu" (quy tắc ngành D92−D93=C25, D95−D96=C26, D292−D293=C36,
+  // D296−D297=C37 — xác nhận trên file ngành thật). Công tắc "chỉ tính lần đầu" cũ đã bỏ.
+  const dt_dntt_NguonB10 = (_dtLanDauIdsB10)
     ? (_dsDT_B10.chuyenDi || []).filter(vu => _dtLanDauIdsB10.has(vu.id)) : (_dsDT_B10.chuyenDi || []);
   // C36-52 (Truy tố, TT→XX) — phần `tt.hoanThanh.chuyen_di` ("VKS cấp trên phân công") GIỮ NGUYÊN
   // đủ (không có khái niệm round-trip riêng, xem ghi chú tt_truToVu/tt_truToBc bên dưới).
-  const tt_chuyenDi_DungB10 = (chiTinhLanDauB10 && _ttLanDauIdsB10)
+  const tt_chuyenDi_DungB10 = (_ttLanDauIdsB10)
     ? (_dsTT_B10.chuyenDi || []).filter(vu => _ttLanDauIdsB10.has(vu.id)) : (_dsTT_B10.chuyenDi || []);
   // Tổng thụ lý (C3/4/5, C33/34/35, C60/61/62) — "vào" điều chỉnh theo toggle.
   const dt_traVe_ThuLyB10 = chiTinhLanDauB10 ? [] : (_dsDT_B10.traVe || []);
@@ -11115,9 +11106,19 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // chỉ phủ đúng 2+1 nguồn cố định — bị can vụ nguồn "Phục hồi điều tra" lọt vào C4 nhưng KHÔNG
     // được đếm ở BẤT KỲ đâu trong D79. Đây là quyết định gộp bucket CẦN DŨNG XÁC NHẬN (đã ghi trong
     // CLAUDE.md từ trước), KHÔNG tự ý sửa thêm ở đây — để nguyên phần lệch còn lại này.
-    const C3  = dt_tp_vu + vuCoD(dt_moi, D).length - vuCoD(dt.nhapVu || [], D).length - vuCoD(dt.hoanThanh?.chuyen_di || [], D).length;
-    const C4  = dt_tp_bc + dt_moiBc.length - dt_nhapBc.length - dt_cdNoiBc.length + dt_boSungBcRaw.filter(bc => getDL(bc) === D).length;
-    const C5  = dt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
+    // 2026-09-29 — Tổng thụ lý ĐT theo ĐÚNG quy tắc ngành D77−D59=C3 / D79−D66=C4: bằng từng thành
+    // phần của D77/D79 (Biểu 2) TRỪ phần "trả về ĐT" (VKS trả ĐTBS — ngành không tính vào Tổng thụ
+    // lý B10). Phần bị can "khởi tố mới" dùng CHÍNH C7 (= D72) để khớp tuyệt đối.
+    const _dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
+    const _dtVaoKhac = [..._dtNoiKhac, ...(dt.tachVu||[]), ...(dt.phucHoi||[]), ...(dt.huyDieuTraLai||[])];
+    const _dtVaoKhacBc = bcCoD(_dtVaoKhac, D);
+    const _dtC7 = [
+      ...bcCoD(dtKhoiToMoiThat_b10, D).filter(bc => _kyIdSet.has(bcKyKhoiToMap.get(bc.id))),
+      ...dt_boSungBcRaw.filter(bc => getDL(bc) === D),
+    ];
+    const C3  = dt_tp_vu + vuCoD([...dtKhoiToMoiThat_b10, ..._dtVaoKhac], D).length - vuCoD(dt.nhapVu || [], D).length - vuCoD(dt.hoanThanh?.chuyen_di || [], D).length;
+    const C4  = dt_tp_bc + _dtVaoKhacBc.length + _dtC7.length - dt_nhapBc.length - dt_cdNoiBc.length;
+    const C5  = [..._dtVaoKhacBc, ..._dtC7].filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     // C7-C24 = 2 phần: "mới" (bị can của vụ MỞ đúng kỳ này, lọc theo kỳ khởi tố RIÊNG của từng bị
     // can — bị can bổ sung vào kỳ SAU sẽ không bị đếm nhầm vào đây) + "bổ sung" (dt_boSungBcRaw,
@@ -11163,7 +11164,12 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     const C32 = bcCoD(dt.hoanThanh?.tam_dinh_chi || [], D).length;
 
     // ── Truy tố ──
-    const tt_moiBc = bcCoD(tt_moi, D);
+    // 2026-09-29 — Tổng thụ lý TT theo ĐÚNG quy tắc ngành D280−D262=C33 / D281−D267=C34: thành phần
+    // của D280/D281 TRỪ "Toà trả về TT" (D262/D267). "Vào" = phục hồi TĐC + tách + ĐT chuyển TT (MỌI
+    // lần, = D270+D272) + nơi khác chuyển đến + nhận lại (= D274).
+    const _ttVao = [...(tt.phucHoi||[]), ...(tt.tachVu||[]), ...(dt.chuyenDi||[]),
+      ...(tt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den"), ...(tt.nhanLai||[])];
+    const tt_moiBc = bcCoD(_ttVao, D);
     const tt_nhapBc = bcCoD(tt.nhapVu || [], D);
     const tt_ahBc = bcCoD(tt.hoanThanh?.an_huy || [], D); // chỉ dùng cho cột "Án huỷ" riêng (vals)
     // C33/C34 Tổng thụ lý TT — như C3/C4: KHÔNG trừ "án huỷ" (quy tắc D280_10238−D262_10238=C33).
@@ -11184,9 +11190,9 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
     // trên) — sau khi sửa "TT trả ĐT" vẫn còn lệch 2 (C34=336 vs D281=338 ở kỳ 08/2026), đúng bằng
     // đúng 2 bị can bổ sung (Đặng Quốc Thịnh/Ngô Thị Cẩm Vân, xem ghi chú tt_boSungBc ở trên) mà
     // D281 (qua sheet "DS bổ sung BC TT (D281)") đã cộng nhưng C34 thì chưa.
-    const C33 = tt_tp_vu + vuCoD(tt_moi, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.traDi || [], D).length;
+    const C33 = tt_tp_vu + vuCoD(_ttVao, D).length - vuCoD(tt.nhapVu || [], D).length - vuCoD(tt.traDi || [], D).length;
     const C34 = tt_tp_bc + tt_moiBc.length - tt_nhapBc.length - bcCoD(tt.traDi || [], D).length + tt_boSungBcRaw.filter(bc => getDL(bc) === D).length;
-    const C35 = tt_moiBc.filter(bc => bc.loaiBiCan === "phap_nhan").length;
+    const C35 = [...tt_moiBc, ...tt_boSungBcRaw.filter(bc => getDL(bc) === D)].filter(bc => bc.loaiBiCan === "phap_nhan").length;
 
     // tt_truToVu/tt_truToBc "Truy tố" (C36-C52) — 2026-09-06, theo yêu cầu Dũng: vụ "chuyển đi"
     // phát sinh ở Truy tố (tt.hoanThanh?.chuyen_di, luôn là "VKS cấp trên phân công VKS cấp dưới
@@ -12745,6 +12751,39 @@ const BIEU3_QUY_TAC = BIEU3_QUY_TAC_RAW.map(phanTichQuyTacDong).filter(Boolean);
 // _10238/_10239). 40 quy tắc, đã kiểm chứng đúng trên MỌI dòng điều luật + dòng TỔNG của file B10
 // ngành thật (10173.xlsx). Dùng cho cột "Tự kiểm tra" trên sheet "Biểu B10" — mỗi Cn thay bằng ô
 // <cột Cn><dòng hiện tại> (xem congThucKiemTraB10 trong xuatBaoCaoThangExcel).
+// 29 quy tắc LIÊN BIỂU của quy_tac_bieu_10.md (2026-09-29) — kiểm trên dòng TỔNG của Biểu B10,
+// Dxx_10238 = ô Biểu 2, Dxx_10239 = ô Biểu 3 (cùng file). Đây là các quy tắc phần mềm ngành chạy khi nhập Biểu 10.
+const BIEU10_LIEN_BIEU_RAW = [
+  "D17_10239=C60",
+  "D18_10239=C61",
+  "D76_10239=C70",
+  "D61_10239=C67",
+  "D52_10239=C66",
+  "D35_10239=C64",
+  "D22_10239=C63",
+  "D98_10239=C71",
+  "D113_10239=C72",
+  "D77_10238-D59_10238=C3",
+  "D79_10238-D66_10238=C4",
+  "D100_10238=C28",
+  "D117_10238=C29",
+  "D134_10238=C31",
+  "D141_10238=C32",
+  "D280_10238-D262_10238=C33",
+  "D281_10238-D267_10238=C34",
+  "D292_10238-D293_10238=C36",
+  "D296_10238-D297_10238=C37",
+  "D300_10238=C53",
+  "D310_10238-D311_10238=C54",
+  "D326_10238=C56",
+  "D332_10238=C57",
+  "D92_10238-D93_10238=C25",
+  "D95_10238-D96_10238=C26",
+  "D71_10238=C6",
+  "D72_10238=C7",
+  "D361_10238=C58",
+  "D368_10238=C59",
+];
 const BIEU10_QUY_TAC_RAW = [
   "C3>=C25+C28+C31", "C4>=C26+C29+C32", "C4>=C5", "C7>=C8",
   "C7-C8=C14+C15+C16+C17+C18", "C7-C8=C9+C10+C11+C12+C13",
@@ -13198,7 +13237,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   const _ttLanDauIds = new Set(ttChuyenDi_LanDau.map(v => v.id));
   const _xxKhongLapKyIds = new Set(xxTraDi_KhongLapKy.map(v => v.id));
 
-  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, tt_boSungBc: b10TtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList, ttTraDi_TrucTiep, dtChuyenDi_LanDau, ttChuyenDi_LanDau, chiTinhLanDauB10);
+  const { rows: b10Rows, canhBao: b10CanhBao, vuChuaDL: b10VuChuaDL, dt_boSungBc: b10DtBoSungBc, tt_boSungBc: b10TtBoSungBc, boSungTonTheoGD: b10BoSungTonTheoGD } = tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList, ttTraDi_TrucTiep, dtChuyenDi_LanDau, ttChuyenDi_LanDau, false);
   // Dòng Tổng
   const b10Tong = Array(B10_HEADER_CHI_TIET.length - 2).fill(0);
   for (const row of b10Rows) { row.vals.forEach((v, i) => { b10Tong[i] = (b10Tong[i] || 0) + v; }); }
@@ -13213,8 +13252,8 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   wsB10.views = [{ state: "frozen", xSplit: 3, ySplit: 2 }];
   // Cột A (mới): Mã ĐL — khóa tra cứu cho SUMIF ở các cột "Vụ", cùng chuẩn với cột "Mã ĐL vụ" của sheets danh sách
   // Cột B: Số điều (hiển thị), Cột C: Tên tội danh, Cột D+: giá trị B10 (vals[0..87])
-  wsB10.addRow(["Mã ĐL", ...B10_HEADER_NHOM, "Tự kiểm tra"]).font = { bold: true };
-  wsB10.addRow(["",       ...B10_HEADER_CHI_TIET, "40 quy tắc nội tại (quy_tac_bieu_10.md)"]).font = { bold: true };
+  wsB10.addRow(["Mã ĐL", ...B10_HEADER_NHOM, "Tự kiểm tra", "Kiểm tra liên biểu"]).font = { bold: true };
+  wsB10.addRow(["",       ...B10_HEADER_CHI_TIET, "40 quy tắc nội tại (quy_tac_bieu_10.md)", "29 quy tắc đối chiếu Biểu 2/3 (chỉ dòng TỔNG)"]).font = { bold: true };
   const B10_COT_KIEMTRA = 3 + 88 + 1; // A,B,C + 88 vals + 1 = cột 92 (1-based)
   // Helper: "Điều 173 BLHS 2025" → "173". Hậu tố phân biệt bộ luật CŨ trên cột "Số điều" của Biểu 10
   // (quy ước ngành, theo yêu cầu Dũng 2026-09-07 — file ngành thật đã có dòng mã "101**" được nhận):
@@ -13266,6 +13305,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     for (let k = parts.length - 1; k >= 0; k--) f = `IF(${parts[k].test},"✗ ${parts[k].raw}",${f})`;
     return { formula: "=" + f };
   };
+  // Cột "Kiểm tra liên biểu" (2026-09-29) — CHỈ dòng TỔNG: 29 quy tắc ngành đối chiếu Biểu 2/3
+  // (sheet "Biểu 2"/"Biểu 3" cùng file, mã dòng Dk ở ô C{k+1}). Liệt kê MỌI quy tắc lệch (nối chuỗi),
+  // không lồng IF (Excel giới hạn 64 tầng).
+  const congThucLienBieuB10 = (r) => {
+    const sub = (e) => e
+      .replace(/D(\d+)_10238/g, (_, n) => `'Biểu 2'!C${+n + 1}`)
+      .replace(/D(\d+)_10239/g, (_, n) => `'Biểu 3'!C${+n + 1}`)
+      .replace(/(^|[^0-9A-Z'!])C(\d+)(?![0-9])/g, (_, p, n) => p + (b10ColCuaC[+n] || "IV") + r);
+    const parts = BIEU10_LIEN_BIEU_RAW.map(raw => {
+      const [L, R] = raw.split("=");
+      return `IF(NOT((${sub(L)})=(${sub(R)})),"✗ ${raw}; ","")`;
+    });
+    const all = parts.join("&");
+    return { formula: `=IF(LEN(${all})=0,"✓ khớp ${parts.length} quy tắc liên biểu",${all})` };
+  };
   // B10_FORMULA: mọi cột có công thức, nhận r (số dòng Excel) → trả về chuỗi công thức
   // Helpers: mkSfVu = SUMIF VỤ (cột A×B); mkCfBc = COUNTIFS BC (cột V + extra); mkCfBcM = multi-sheet
   function mkSfVu(sn, r) { return `SUMIF('${sn}'!$B:$B,$A${r},'${sn}'!$A:$A)`; }
@@ -13288,10 +13342,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   // postExtra — và MỚI thêm cho "DS chuyển đến TT"/"DS chuyển đến XX", xem dưới); khi TẮT, y hệt
   // mkSfVu/mkCfBc/mkCfBcM cũ — KHÔNG đổi hành vi mặc định.
   function mkSfVuLanDau(sn, r, col) {
-    return chiTinhLanDauB10 ? mkSfVuX(sn, r, col, "x") : mkSfVu(sn, r);
+    return mkSfVuX(sn, r, col, "x"); // 2026-09-29: LUÔN "lần đầu" theo quy tắc ngành
   }
   function mkCfBcLanDau(sn, r, col, ...extra) {
-    return chiTinhLanDauB10 ? mkCfBc(sn, r, ...extra, col, "x") : mkCfBc(sn, r, ...extra);
+    return mkCfBc(sn, r, ...extra, col, "x"); // 2026-09-29: LUÔN "lần đầu" theo quy tắc ngành
   }
   // mkCfBcMLanDau: như mkCfBcM nhưng CHỈ sheet `lanDauSheet` (sheet DUY NHẤT trong nhóm có cột "Lần
   // đầu?" — sheet còn lại, VD "DS chuyển đi TT", không có khái niệm round-trip nên luôn tính đủ).
@@ -13393,26 +13447,45 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   // mkCfBcMVao: giống mkCfBcM nhưng nhận theo TÊN giai đoạn (gd), tự chọn VAO_GD hay VAO_GD_LANDAU
   // theo `chiTinhLanDauB10` — dùng cho C5/C35/C62 (pháp nhân breakdown của "mới") để LUÔN đồng bộ
   // đúng cùng dân số với mkThuLyBc (C4/C34/C61), tránh 2 công thức lệch nhau khi bật toggle.
-  function mkCfBcMVao(gd, r, ...extra) {
-    const list = chiTinhLanDauB10 ? VAO_GD_LANDAU[gd] : VAO_GD[gd];
-    return list.map(item => _mkCfBcVaoItem(item, r, ...extra)).join("+") || "0";
+  // 2026-09-29 — "Tổng thụ lý" ĐT/TT (C3/C4/C5, C33/C34/C35) theo ĐÚNG quy tắc liên biểu ngành
+  // D77−D59=C3, D79−D66=C4, D280−D262=C33, D281−D267=C34: mỗi dòng điều luật = thành phần của
+  // D77/D79/D280/D281 (Biểu 2) TRỪ "trả về" (D59/D66 VKS trả ĐTBS; D262/D267 Toà trả hồ sơ). Phần
+  // bị can khởi tố mới ĐT dùng CHÍNH công thức C7 (= D72). Xét xử giữ nguyên (C60/C61 = D17/D18).
+  const _NOI_KHAC = NHAN_NGUON.an_noi_khac_chuyen_den;
+  function vaoVuParts(gd, r) {
+    if (gd === "dieu_tra") return [
+      mkSfVuX("DS khởi tố ĐT", r, "AH", "Án khởi tố mới"), mkSfVuX("DS khởi tố ĐT", r, "AH", "Tin báo khởi tố lên"),
+      mkSfVuX("DS khởi tố ĐT", r, "AH", _NOI_KHAC),
+      mkSfVu("DS vụ tách ĐT", r), mkSfVu("DS phục hồi TĐC ĐT", r), mkSfVu("DS huỷ ĐT lại ĐT", r)];
+    if (gd === "truy_to") return [
+      mkSfVu("DS phục hồi TĐC TT", r), mkSfVu("DS vụ tách TT", r), mkSfVu("DS ĐT chuyển TT", r),
+      mkSfVuX("DS khởi tố TT", r, "AH", _NOI_KHAC), mkSfVu("DS nhận lại CĐ TT", r)];
+    return VAO_GD.xet_xu.map(sn => mkSfVu(sn, r));
   }
+  function vaoBcParts(gd, r, ...extra) {
+    if (gd === "dieu_tra") return [
+      mkCfBcKyMoi(r, dsKyTenTrongBaoCao, ...extra),
+      mkCfBc("DS khởi tố ĐT", r, ...extra, "AH", _NOI_KHAC),
+      mkCfBc("DS vụ tách ĐT", r, ...extra), mkCfBc("DS phục hồi TĐC ĐT", r, ...extra), mkCfBc("DS huỷ ĐT lại ĐT", r, ...extra)];
+    if (gd === "truy_to") return [
+      mkCfBc("DS phục hồi TĐC TT", r, ...extra), mkCfBc("DS vụ tách TT", r, ...extra), mkCfBc("DS ĐT chuyển TT", r, ...extra),
+      mkCfBc("DS khởi tố TT", r, ...extra, "AH", _NOI_KHAC), mkCfBc("DS nhận lại CĐ TT", r, ...extra),
+      mkCfBc("DS bổ sung BC TT (D281)", r, ...extra)];
+    return VAO_GD.xet_xu.map(sn => mkCfBc(sn, r, ...extra));
+  }
+  function mkCfBcMVao(gd, r, ...extra) { return vaoBcParts(gd, r, ...extra).join("+") || "0"; }
   // Vị trí (0-based, trong vals[]) của "Tồn kỳ trước — Vụ" mỗi giai đoạn — cột "BC" luôn ngay cột
   // KẾ TIẾP (xem layout vals[]: [tp_vu, tp_bc, tn_vu, tn_bc, ...] lặp lại đầu mỗi khối giai đoạn).
   const IDX_TON_TRUOC_VU = { dieu_tra: 0, truy_to: 34, xet_xu: 65 };
   function mkThuLyVu(gd, r) {
     const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 3); // +3: bù cột A(Mã ĐL)/B(Số điều)/C(Tên)
-    const vaoList = chiTinhLanDauB10 ? VAO_GD_LANDAU[gd] : VAO_GD[gd];
-    const vaoF = vaoList.map(item => _mkSfVuVaoItem(item, r)).join("+");
     const raF = RA_THULY_GD[gd].map(s => mkSfVu(s, r)).join("-");
-    return `${tonTruocCol}${r}+${vaoF}-${raF}`;
+    return `${tonTruocCol}${r}+${vaoVuParts(gd, r).join("+")}-${raF}`;
   }
   function mkThuLyBc(gd, r) {
     const tonTruocCol = b10Col(IDX_TON_TRUOC_VU[gd] + 1 + 3); // +1: cột BC ngay sau cột Vụ
-    const vaoList = chiTinhLanDauB10 ? VAO_GD_LANDAU[gd] : VAO_GD[gd];
-    const vaoF = vaoList.map(item => _mkCfBcVaoItem(item, r)).join("+");
     const raF = RA_THULY_GD[gd].map(s => mkCfBc(s, r)).join("-");
-    return `${tonTruocCol}${r}+${vaoF}-${raF}`;
+    return `${tonTruocCol}${r}+${vaoBcParts(gd, r).join("+")}-${raF}`;
   }
   // "Tồn kỳ trước"/"Tồn kỳ này" (2026-08-06, ĐỔI HẲN sang SUMIF/COUNTIFS trực tiếp vào 2 sheet ẩn
   // "DS tồn cuối kỳ trước {gs}"/"DS tồn cuối kỳ {gs}" — dựng từ RPC as-of, xem
@@ -13562,6 +13635,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   }
   const b10TongR = b10LastR + 1;
   tongCells.push(congThucKiemTraB10(b10TongR)); // "Tự kiểm tra" cho dòng TỔNG
+  tongCells.push(congThucLienBieuB10(b10TongR)); // "Kiểm tra liên biểu" (Biểu 2/3) cho dòng TỔNG
   const tongRow = wsB10.addRow(tongCells);
   tongRow.font = { bold: true };
   tongRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } };
@@ -13580,6 +13654,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   wsB10.getColumn(3).width = 32;  // Tên tội danh
   for (let c = 4; c <= B10_HEADER_CHI_TIET.length + 1; c++) wsB10.getColumn(c).width = 8;
   wsB10.getColumn(B10_COT_KIEMTRA).width = 48; // cột "Tự kiểm tra"
+  wsB10.getColumn(B10_COT_KIEMTRA + 1).width = 60; // cột "Kiểm tra liên biểu"
   wsB10.eachRow(row => { row.eachCell(cell => { cell.alignment = { wrapText: true, vertical: "top" }; }); });
   // Cột Mã ĐL: chữ nhạt + nhỏ — chỉ dùng làm criteria key cho SUMIF, không phải số liệu
   wsB10.getColumn(1).eachCell((cell, ri) => {
@@ -13591,6 +13666,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   // màu này (khác vàng SUMIF thường) để phân biệt rõ đây là nhóm "tồn", không phải nhóm sự kiện
   // vào/ra trong kỳ, dù cả 2 nhóm giờ đều là công thức có thể click-trace.
   const phuCols = [4,5,6,7, 4+34, 5+34, 6+34, 7+34, 4+34+31, 5+34+31, 6+34+31, 7+34+31];
+  // 2026-09-29 (Dũng): TỰ ẨN các cột tồn (tô xanh) để copy sang biểu ngành cho nhanh — dữ liệu vẫn
+  // còn, bấm "Hiện cột" trong Excel để kiểm tra khi cần.
+  phuCols.forEach(c => { wsB10.getColumn(c).hidden = true; });
   // Màu vàng nhạt: cột SUMIF/COUNTIFS khác — tham chiếu sheet DS vào/ra (loại trừ nhóm "tồn" ở trên,
   // dù cũng nằm trong B10_FORMULA, để giữ đúng 2 màu tách biệt theo ý nghĩa, không lẫn lộn).
   const sumifCols = Object.keys(B10_FORMULA)

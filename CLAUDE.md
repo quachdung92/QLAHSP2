@@ -55,6 +55,21 @@ khởi tố ở kỳ lưu trữ được tính lại" (trước chỉ `huy_dieu_
 69/380, 24/307), kỳ 08 không đổi (330/798). Nguyên nhân gốc NULL kỳ: `ModalXacNhanKy` cho bấm
 "Xác nhận" khi danh sách kỳ chưa tải xong — nay `disabled` cho tới khi có kỳ được chọn.
 
+## Biểu 10 khớp 29 quy tắc liên biểu ngành + ẩn cột tồn (2026-09-29, nhánh `tinh-quay-vong-2-chieu`, ĐÃ deploy `qlahs-sup.web.app`)
+
+Đối chiếu `quy_tac_bieu_10.md` (29 quy tắc liên biểu, đã kiểm đúng trên file ngành thật): trước đây
+C3/C4/C33/C34 CỘNG cả "trả về" (VKS trả ĐTBS / Toà trả hồ sơ) và C25-27/C36-52 đếm MỌI lần chuyển
+giai đoạn ⇒ lệch `D77−D59=C3`, `D79−D66=C4`, `D280−D262=C33`, `D281−D267=C34`, `D92−D93=C25`,
+`D95−D96=C26`, `D292−D293=C36`, `D296−D297=C37`. Đã sửa:
+- `mkThuLyVu`/`mkThuLyBc` (+ `vaoVuParts`/`vaoBcParts`, `mkCfBcMVao` cho C5/C35): ĐT/TT = đúng thành
+  phần D77/D79/D280/D281 trừ phần trả về (ĐT BC dùng chính công thức C7 = D72; TT gồm "DS ĐT chuyển
+  TT" mọi lần + nơi khác + nhận lại + "DS bổ sung BC TT (D281)"). XX giữ nguyên. JS `tinhBieu10` đồng bộ.
+- C25-27/C36-52 LUÔN "lần đầu" (`mkSfVuLanDau`/`mkCfBcLanDau` + `dt_dntt_NguonB10`/`tt_chuyenDi_DungB10`).
+  Bỏ công tắc "Biểu B10: chỉ tính lần đầu" (UI) — tinhBieu10 luôn gọi với `false`.
+- Cột mới "Kiểm tra liên biểu" (dòng TỔNG B10, `BIEU10_LIEN_BIEU_RAW`, nối chuỗi mọi quy tắc lệch).
+- Tự ẩn các cột tồn (tô xanh, `phuCols`) theo yêu cầu Dũng để copy nhanh.
+- Chỉ compile-check. CHƯA xuất Excel thật kiểm cột "Kiểm tra liên biểu".
+
 ## Sửa các dòng Biểu 2/3 phần mềm ngành báo lỗi (2026-09-29, nhánh `tinh-quay-vong-2-chieu`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
 
 - **D279/D367/D368 + B10 C59**: VKS trả ĐTBS chỉ tính bị can ĐÃ CÓ lúc trả hồ sơ. Bị can
