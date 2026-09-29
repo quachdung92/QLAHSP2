@@ -13700,6 +13700,21 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
       }
       wsNg.addRow(cells);
     });
+    // Dòng "Tổng số" — mẫu ngành có sẵn dòng này ở cuối; phần mềm ngành đối chiếu liên biểu
+    // (VD D17_10239=C60) theo dòng Tổng. Để trống ⇒ báo lỗi hàng loạt "sai quy tắc logic".
+    {
+      const r1 = 2, r2 = 1 + b10Rows.length;
+      const tong = ["Tổng số", null];
+      for (let c = 3; c <= 72; c++) {
+        let s = 0;
+        const col = b10ColCuaC[c];
+        const ci = col ? wsB10.getColumn(col).number : null;
+        if (ci) b10Rows.forEach(row => { s += +(row.vals[ci - 4] || 0); });
+        const L = wsNg.getColumn(c).letter;
+        tong.push({ formula: `SUM(${L}${r1}:${L}${r2})`, result: s });
+      }
+      wsNg.addRow(tong).font = { bold: true };
+    }
     wsNg.getColumn(1).width = 10; wsNg.getColumn(2).width = 6;
     for (let c = 3; c <= 72; c++) wsNg.getColumn(c).width = 6;
     wsNg.views = [{ state: "frozen", xSplit: 2, ySplit: 1 }];
