@@ -1174,6 +1174,13 @@ function moTaLoaiSuKien(suKien) {
 }
 
 const MAU_GIAI_DOAN = { dieu_tra: "bg-blue-100 text-blue-700", truy_to: "bg-purple-100 text-purple-700", xet_xu: "bg-emerald-100 text-emerald-700" };
+// Nền tiêu đề khối theo giai đoạn ở Danh sách vụ án (3 khối tách riêng, xem DanhSachPanel) — cùng
+// tông màu với MAU_GIAI_DOAN nhưng nhạt hơn (dùng phủ cả 1 dải tiêu đề, không phải 1 badge nhỏ).
+const MAU_KHOI_GD_DS = {
+  dieu_tra: "bg-blue-50 text-blue-800 border-blue-100",
+  truy_to: "bg-purple-50 text-purple-800 border-purple-100",
+  xet_xu: "bg-emerald-50 text-emerald-800 border-emerald-100",
+};
 const MAU_TRANG_THAI = {
   dang_giai_quyet: "bg-green-100 text-green-700", da_xet_xu: "bg-blue-100 text-blue-700", an_huy: "bg-red-100 text-red-700",
   chuyen_di: "bg-slate-200 text-slate-600", tam_dinh_chi: "bg-amber-100 text-amber-700", dinh_chi: "bg-red-100 text-red-700",
@@ -7274,7 +7281,6 @@ function OKy({ suKien, kyTenTheoId, onSua }) {
 // qua localStorage để lần sau mở lại không phải chọn lại.
 const DS_COT_TUY_CHON = [
   { key: "biCan", nhan: "Bị can" },
-  { key: "giaiDoan", nhan: "Giai đoạn" },
   { key: "trangThai", nhan: "Trạng thái" },
   { key: "kyMoi", nhan: "Kỳ mới" },
   { key: "kyTruyTo", nhan: "Kỳ vào Truy tố" },
@@ -7353,7 +7359,6 @@ function LocKsvComboBox({ dsKsv, ksv, onDoi }) {
 function DanhSachPanel({ selectedId, onSelect }) {
   const [list, setList] = useState([]);
   const [dangTai, setDangTai] = useState(true);
-  const [giaiDoan, setGiaiDoan] = useState("tat_ca");
   const [ksv, setKsv] = useState("tat_ca");
   const [tuKhoa, setTuKhoa] = useState("");
   const [chiDangGiaiQuyet, setChiDangGiaiQuyet] = useState(true);
@@ -7587,7 +7592,6 @@ function DanhSachPanel({ selectedId, onSelect }) {
     moi.has(key) ? moi.delete(key) : moi.add(key);
     return moi;
   });
-  const soCotHien = 3 + DS_COT_TUY_CHON.length - cotAn.size;
 
   const toggleMoRongBiCan = (id) => setMoRongBiCan(s => {
     const moi = new Set(s);
@@ -7607,7 +7611,6 @@ function DanhSachPanel({ selectedId, onSelect }) {
 
   const filtered = useMemo(() => nguonDanhSach.filter(v => {
     if (chiDangGiaiQuyet && v.trangThai !== "dang_giai_quyet") return false;
-    if (giaiDoan !== "tat_ca" && v.coQuanThuLy !== giaiDoan) return false;
     if (ksv !== "tat_ca" && !(v.ksvChinh || "").toLowerCase().includes(ksv.trim().toLowerCase())) return false;
     if (tuKhoa.trim()) {
       const k = tuKhoa.trim().toLowerCase();
@@ -7624,7 +7627,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
       if (!hit) return false;
     }
     return true;
-  }), [nguonDanhSach, chiDangGiaiQuyet, giaiDoan, ksv, tuKhoa, bicanTimKiemTheoVu]);
+  }), [nguonDanhSach, chiDangGiaiQuyet, ksv, tuKhoa, bicanTimKiemTheoVu]);
 
   // Sắp xếp theo cột (bấm tiêu đề) — chỉ áp dụng cho cột có giá trị so sánh rõ ràng
   // (mã vụ/ngày). Không sort theo "Kỳ mới"/"Kỳ giải quyết" vì đó là chuỗi hiển thị dạng
@@ -7668,40 +7671,34 @@ function DanhSachPanel({ selectedId, onSelect }) {
     else { setSortCot(cot); setSortChieu("asc"); }
   };
 
-  return (
-    <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
-      <div className="p-3 border-b border-slate-100 space-y-2 bg-slate-50/60">
-        <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)} placeholder="Tìm theo mã vụ, tên vụ, điều luật, số QĐ KTVA hoặc tên bị can..."
-               className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white" />
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex gap-1 w-fit bg-slate-200 rounded-lg p-1">
-            {[[true, "Đang giải quyết"], [false, "Tất cả"]].map(([v, l]) => (
-              <button key={String(v)} onClick={() => setChiDangGiaiQuyet(v)}
-                      className={`text-xs px-3 py-1 rounded-md font-medium ${chiDangGiaiQuyet === v ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
-                {l}
-              </button>
-            ))}
-          </div>
-          <ChonCotHienThi cotAn={cotAn} onDoi={toggleCot} />
-        </div>
-        <div className="flex gap-1">
-          {[["tat_ca", "Tất cả"], ["dieu_tra", "Điều tra"], ["truy_to", "Truy tố"], ["xet_xu", "Xét xử"]].map(([v, l]) => (
-            <button key={v} onClick={() => setGiaiDoan(v)}
-                    className={`flex-1 text-xs rounded-lg py-1.5 font-medium ${giaiDoan === v ? "bg-indigo-600 text-white" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"}`}>
-              {l}
-            </button>
-          ))}
-        </div>
-        <LocKsvComboBox dsKsv={dsKsv} ksv={ksv} onDoi={setKsv} />
+  // Tách danh sách đã lọc/sắp xếp thành 3 khối riêng theo giai đoạn (2026-09-23, theo yêu cầu
+  // Dũng "tách ra 3 giai đoạn cho dễ tính") — thay cho kiểu lọc 1-bảng-đổi-qua-lại cũ (4 nút
+  // Tất cả/Điều tra/Truy tố/Xét xử), giờ hiện LUÔN cả 3 khối cùng lúc, mỗi khối có tiêu đề + số
+  // đếm riêng để không cần bấm qua từng tab mới đếm được. Nhóm lại từ `sorted` (đã áp cùng 1 tiêu
+  // chí sắp xếp) để giữ đúng thứ tự trong mỗi khối, không tính sort riêng cho từng khối.
+  const theoGD = useMemo(() => {
+    const m = { dieu_tra: [], truy_to: [], xet_xu: [] };
+    sorted.forEach(v => { if (m[v.coQuanThuLy]) m[v.coQuanThuLy].push(v); });
+    return m;
+  }, [sorted]);
+
+  // Render 1 khối bảng theo giai đoạn — hàm cục bộ (không dùng hook riêng, chỉ đóng gói JSX) để
+  // dùng thẳng mọi state/handler đã có trong closure của DanhSachPanel (cotAn, moRongBiCan,
+  // suKienMoi...), không phải truyền qua hàng chục prop. Cột "Giai đoạn" bỏ hẳn (đã ngầm hiểu qua
+  // tiêu đề khối), cột "Hạn ĐT" chỉ giữ ở khối Điều tra vì 2 giai đoạn còn lại luôn "—".
+  const renderKhoiGiaiDoan = (gd, nhan, rows) => (
+    <div key={gd} className="flex-1 min-h-[120px] flex flex-col border-b border-slate-200 last:border-b-0">
+      <div className={`shrink-0 flex items-center justify-between px-3 py-1.5 border-b ${MAU_KHOI_GD_DS[gd]}`}>
+        <span className="text-sm font-semibold">{nhan}</span>
+        <span className="text-xs font-medium bg-white/70 rounded-full px-2 py-0.5">{rows.length} vụ</span>
       </div>
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 min-h-0 overflow-auto">
         <table className="w-full text-sm border-collapse">
           <thead className="bg-slate-100 text-slate-500 text-xs sticky top-0 z-10">
             <tr>
               <ThSort nhan="Mã vụ" cot="maVu" sortCot={sortCot} sortChieu={sortChieu} onBam={bamSort} className="hidden md:table-cell" />
               <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Tên vụ / KSV</th>
               {!cotAn.has("biCan") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Bị can</th>}
-              {!cotAn.has("giaiDoan") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Giai đoạn</th>}
               {!cotAn.has("trangThai") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Trạng thái</th>}
               {!cotAn.has("kyMoi") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Kỳ mới</th>}
               {!cotAn.has("kyTruyTo") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Kỳ vào Truy tố</th>}
@@ -7709,24 +7706,21 @@ function DanhSachPanel({ selectedId, onSelect }) {
               {!cotAn.has("kyGiaiQuyet") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Kỳ giải quyết</th>}
               {!cotAn.has("soQdKtva") && <th className="text-left px-3 py-2 border-b border-slate-200 font-medium">Số QĐ KTVA</th>}
               {!cotAn.has("ngayKtva") && <ThSort nhan="Ngày KTVA" cot="ngayKtva" sortCot={sortCot} sortChieu={sortChieu} onBam={bamSort} />}
-              {!cotAn.has("hanDt") && <ThSort nhan="Hạn ĐT" cot="hanDt" sortCot={sortCot} sortChieu={sortChieu} onBam={bamSort} />}
+              {gd === "dieu_tra" && !cotAn.has("hanDt") && <ThSort nhan="Hạn ĐT" cot="hanDt" sortCot={sortCot} sortChieu={sortChieu} onBam={bamSort} />}
               <th className="text-right px-2 py-2 border-b border-slate-200 font-medium"></th>
             </tr>
           </thead>
           <tbody>
-            {dangTai && Array(6).fill(0).map((_, i) => (
+            {dangTai && Array(3).fill(0).map((_, i) => (
               <tr key={`sk${i}`} className="animate-pulse border-b border-slate-100">
                 <td className="hidden md:table-cell px-3 py-3"><div className="h-3 bg-slate-100 rounded w-24" /></td>
-                <td className="px-3 py-3"><div className="h-3 bg-slate-100 rounded" style={{width:`${55+i*7}%`}} /></td>
-                <td colSpan={soCotHien - 2} className="px-3 py-3">
-                  <div className="h-3 bg-slate-100 rounded w-16" />
-                </td>
+                <td className="px-3 py-3" colSpan={12}><div className="h-3 bg-slate-100 rounded" style={{width:`${55+i*7}%`}} /></td>
               </tr>
             ))}
-            {!dangTai && sorted.length === 0 && (
-              <tr><td colSpan={soCotHien} className="p-4 text-slate-400">Không có vụ án nào khớp.</td></tr>
+            {!dangTai && rows.length === 0 && (
+              <tr><td colSpan={12} className="p-3 text-slate-400 text-xs">Không có vụ án nào.</td></tr>
             )}
-            {sorted.map((v, i) => (
+            {rows.map((v, i) => (
               <tr key={v.id} onClick={() => onSelect(v.id)}
                   className={`cursor-pointer border-b border-l-4 border-slate-100 ${
                     selectedId === v.id ? "bg-indigo-50 border-l-indigo-500"
@@ -7775,9 +7769,6 @@ function DanhSachPanel({ selectedId, onSelect }) {
                     })()}
                   </td>
                 )}
-                {!cotAn.has("giaiDoan") && (
-                  <td className="px-3 py-2 align-top"><Badge mau={MAU_GIAI_DOAN[v.coQuanThuLy]}>{NHAN_GIAI_DOAN[v.coQuanThuLy] || v.coQuanThuLy}</Badge></td>
-                )}
                 {!cotAn.has("trangThai") && (
                   <td className="px-3 py-2 align-top"><Badge mau={MAU_TRANG_THAI[v.trangThai]}>{NHAN_TRANG_THAI[v.trangThai] || v.trangThai}</Badge></td>
                 )}
@@ -7819,9 +7810,9 @@ function DanhSachPanel({ selectedId, onSelect }) {
                 {!cotAn.has("ngayKtva") && (
                   <td className="px-3 py-2 align-top text-xs whitespace-nowrap text-slate-600">{fmtDate(v.ngayQdKtva)}</td>
                 )}
-                {!cotAn.has("hanDt") && (
+                {gd === "dieu_tra" && !cotAn.has("hanDt") && (
                   <td className={`px-3 py-2 align-top text-xs whitespace-nowrap ${mauCanhBaoHan(v.hanDieuTra)}`}>
-                    {v.coQuanThuLy === "dieu_tra" ? fmtDate(v.hanDieuTra) : "—"}
+                    {fmtDate(v.hanDieuTra)}
                   </td>
                 )}
                 <td className="px-2 py-2 align-top text-right">
@@ -7831,6 +7822,35 @@ function DanhSachPanel({ selectedId, onSelect }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl flex flex-col min-h-0">
+      <div className="p-3 border-b border-slate-100 space-y-2 bg-slate-50/60">
+        <input value={tuKhoa} onChange={e => setTuKhoa(e.target.value)} placeholder="Tìm theo mã vụ, tên vụ, điều luật, số QĐ KTVA hoặc tên bị can..."
+               className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white" />
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex gap-1 w-fit bg-slate-200 rounded-lg p-1">
+            {[[true, "Đang giải quyết"], [false, "Tất cả"]].map(([v, l]) => (
+              <button key={String(v)} onClick={() => setChiDangGiaiQuyet(v)}
+                      className={`text-xs px-3 py-1 rounded-md font-medium ${chiDangGiaiQuyet === v ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <ChonCotHienThi cotAn={cotAn} onDoi={toggleCot} />
+        </div>
+        <LocKsvComboBox dsKsv={dsKsv} ksv={ksv} onDoi={setKsv} />
+      </div>
+      {/* Tách 3 khối riêng theo giai đoạn (2026-09-23, theo yêu cầu Dũng "tách ra 3 giai đoạn cho
+          dễ tính") — mỗi khối chiếm 1/3 chiều cao, tự cuộn riêng, có tiêu đề + số đếm ngay trên
+          đầu để đếm nhanh mà không cần bấm qua từng tab như trước. */}
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        {renderKhoiGiaiDoan("dieu_tra", "Điều tra", theoGD.dieu_tra)}
+        {renderKhoiGiaiDoan("truy_to", "Truy tố", theoGD.truy_to)}
+        {renderKhoiGiaiDoan("xet_xu", "Xét xử", theoGD.xet_xu)}
       </div>
       <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-400 bg-slate-50/60 flex items-center justify-between gap-3">
         <span>
@@ -10113,11 +10133,34 @@ function HangBaoCao({ nhan, data, lay, layDs, layBiCan, damNet, onMoChiTiet }) {
 const NHOM_VAO_BAO_CAO = ["khoiToTrucTiep", "tachVu", "chuyenDen", "traVe", "phucHoi", "nhanLai", "huyDieuTraLai"];
 const NHOM_RA_BAO_CAO = ["chuyenDi", "traDi", "nhapVu"]; // hoanThanh.* xử lý riêng bên dưới
 
+// ĐỊNH NGHĨA "quay vòng" (Dũng làm rõ 2026-09-28): bị TRẢ về giai đoạn trước rồi LẠI CHUYỂN lên giai
+// đoạn sau trong cùng kỳ — tức vụ KẾT THÚC kỳ ở giai đoạn SAU (VD Toà trả Viện → Viện chuyển lại Toà).
+// Ngược lại, Viện chuyển Toà → Toà trả về Viện (kết thúc ở giai đoạn TRƯỚC) KHÔNG phải quay vòng,
+// vẫn tính đủ cả 2 chiều. Phân biệt bằng thứ tự thời gian ghi (`_log.thoiDiemGhi`) của 2 sự kiện.
+const _tGhiQuayVong = (v) => {
+  const t = v?._log?.thoiDiemGhi;
+  if (!t) return null;
+  const ms = t.toMillis ? t.toMillis() : new Date(t).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
 function _idVuTraDTBSQuayVong(src) {
   const ds = src?.ds || {};
-  const setId = (arr) => new Set((arr || []).map(v => v.id));
-  const idTraVe = setId(ds.traVe), idTraDi = setId(ds.traDi);
-  const idChuyenDi = setId(ds.chuyenDi), idChuyenDen = setId(ds.chuyenDen);
+  // Map id vụ → mốc thời gian MUỘN NHẤT của loại sự kiện đó trong kỳ (null nếu không xác định).
+  const mocMuonNhat = (arr) => {
+    const m = new Map();
+    (arr || []).forEach(v => {
+      const t = _tGhiQuayVong(v);
+      const cu = m.has(v.id) ? m.get(v.id) : undefined;
+      m.set(v.id, cu === undefined ? t : (t == null || cu == null ? null : Math.max(cu, t)));
+    });
+    return m;
+  };
+  const tTraVe = mocMuonNhat(ds.traVe), tTraDi = mocMuonNhat(ds.traDi);
+  const tChuyenDi = mocMuonNhat(ds.chuyenDi), tChuyenDen = mocMuonNhat(ds.chuyenDen);
+  // true nếu sự kiện "tiến lên" (sau) xảy ra SAU sự kiện "trả về" (truoc) — không xác định được thì
+  // KHÔNG coi là quay vòng (giữ lại, an toàn hơn bỏ sót).
+  const tienSauTra = (tTra, tTien) => tTra != null && tTien != null && tTien > tTra;
   // Đếm tổng lần "vào" / "ra" của từng vụ trong kỳ (gồm cả hoàn thành + nhập vụ) để chỉ loại khi
   // net = 0 — giữ cân đối "tồn đầu + mới − ra = tồn cuối".
   const demVao = new Map(), demRa = new Map();
@@ -10130,10 +10173,10 @@ function _idVuTraDTBSQuayVong(src) {
     const nv = demVao.get(id) || 0, nr = demRa.get(id) || 0;
     if (nv > 0 && nv === nr) bo.add(id);
   };
-  // vào qua "traVe" (giai đoạn sau trả hồ sơ về đây) rồi lại đi tiếp trong kỳ
-  idTraVe.forEach(id => { if (idChuyenDi.has(id) || idTraDi.has(id)) xet(id); });
-  // "ra" qua "traDi" (giai đoạn này trả hồ sơ đi) rồi lại quay vào trong kỳ
-  idTraDi.forEach(id => { if (idChuyenDen.has(id) || idTraVe.has(id)) xet(id); });
+  // Nhìn từ giai đoạn TRƯỚC: giai đoạn sau trả hồ sơ về đây ("traVe") RỒI lại chuyển lên ("chuyenDi").
+  tTraVe.forEach((t, id) => { if (tChuyenDi.has(id) && tienSauTra(t, tChuyenDi.get(id))) xet(id); });
+  // Nhìn từ giai đoạn SAU: trả hồ sơ về giai đoạn trước ("traDi") RỒI lại nhận lên ("chuyenDen").
+  tTraDi.forEach((t, id) => { if (tChuyenDen.has(id) && tienSauTra(t, tChuyenDen.get(id))) xet(id); });
   return bo;
 }
 
@@ -12000,16 +12043,19 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   // khỏi D59/D60/D71/D73 để không đếm đúp. `dt.khoiToTrucTiep`/`dt.tachVu`/`dt.traVe`/`dt.chuyenDen`
   // ĐÃ được loại các vụ này từ nguồn (cùng chỗ dedup), nên sheet "DS khởi tố ĐT" cũng tự động không
   // còn các vụ này — công thức Excel B10 C6/C7 (SUMIFS trên sheet đó) tự đúng, không cần sửa riêng.
-  // D62/D69 (2026-09-10): GỘP thêm "DS huỷ ĐT lại ĐT" (HuyDieuTraLaiModal — vụ đã có kết quả bị Toà
+  // [ĐÃ TÁCH RA D58/D65 ngày 2026-09-29 — xem ngay dưới; đoạn sau giữ làm lịch sử] D62/D69 (2026-09-10): GỘP thêm "DS huỷ ĐT lại ĐT" (HuyDieuTraLaiModal — vụ đã có kết quả bị Toà
   // cấp trên huỷ để điều tra lại → quay lại tồn Điều tra). Cùng bản chất "vụ tồn cũ quay lại xử lý
   // điều tra" mà D62 đã là bucket catch-all (xem ghi chú trên). BẮT BUỘC gộp ở đây: D154 (tồn cuối
   // ĐT) đọc thẳng RPC "DS tồn cuối kỳ ĐT" nên +N khi có huỷ-ĐT-lại; nếu D77 (= ...+D62+...) không
   // +N tương ứng thì đẳng thức kiểm tra `D154=D77-D83-D134` báo ✗ giả. Khi Dũng wire dòng D-code
   // riêng cho "Toà cấp trên huỷ án" theo mẫu ngành → tách khoản này ra khỏi D62 để không đếm đúp.
-  m.set(62, _fc(`${_sumSheetA("DS phục hồi TĐC ĐT")}+${_sumSheetA("DS huỷ ĐT lại ĐT")}`,
-    (dt.phucHoi || []).length + (dt.huyDieuTraLai || []).length));
-  m.set(69, _fc(`${demBcSheet("DS phục hồi TĐC ĐT")}+${demBcSheet("DS huỷ ĐT lại ĐT")}`,
-    soBc(dt.phucHoi) + soBc(dt.huyDieuTraLai)));
+  // 2026-09-29 (Dũng): "Huỷ án — điều tra lại" TÁCH khỏi D62/D69, đưa về đúng dòng mẫu ngành
+  // D58 "Số vụ án mới nhận để điều tra lại" / D65 "Số bị can mới nhận để điều tra lại" (D77/D79
+  // đã có sẵn +D58/+D65 theo quy tắc ngành — cộng vào dưới đây nên tổng thụ lý không đổi).
+  m.set(58, _fc(_sumSheetA("DS huỷ ĐT lại ĐT"), (dt.huyDieuTraLai || []).length));
+  m.set(65, _fc(demBcSheet("DS huỷ ĐT lại ĐT"), soBc(dt.huyDieuTraLai)));
+  m.set(62, _fc(_sumSheetA("DS phục hồi TĐC ĐT"), (dt.phucHoi || []).length));
+  m.set(69, _fc(demBcSheet("DS phục hồi TĐC ĐT"), soBc(dt.phucHoi)));
   const dtNoiKhac = (dt.khoiToTrucTiep || []).filter(v => v.nguon === "an_noi_khac_chuyen_den");
   // D71/D72 "Số vụ/bị can CQĐT khởi tố mới" — TRỎ THẲNG vào ô TỔNG cột C6/C7 trên sheet "Biểu B10"
   // (qua b10RefCua, cùng cơ chế đã dùng cho cột "Kiểm tra" liên biểu) thay vì ghi số JS tĩnh —
@@ -12024,10 +12070,10 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   m.set(76, _fc(demBcSheet("DS chuyển đi ĐT"), soBc(dt.hoanThanh?.chuyen_di)));
   // D77/D79 "Tổng số CQĐT thụ lý điều tra" — arithmetic tham chiếu NGAY CÁC Ô KHÁC trong CHÍNH
   // sheet Biểu 2 (không phải sheet DS nào riêng — đã đối chiếu khớp mẫu ngành, xem CLAUDE.md).
-  m.set(77, _fc(`${_cRef(57)}+${_cRef(59)}+${_cRef(60)}+${_cRef(62)}+${_cRef(71)}+${_cRef(73)}-${_cRef(61)}-${_cRef(75)}`,
-    _mv(m,57) + _mv(m,59) + _mv(m,60) + _mv(m,62) + _mv(m,71) + _mv(m,73) - _mv(m,61) - _mv(m,75)));
-  m.set(79, _fc(`${_cRef(64)}+${_cRef(66)}+${_cRef(67)}+${_cRef(69)}+${_cRef(72)}+${_cRef(74)}-${_cRef(68)}-${_cRef(76)}`,
-    _mv(m,64) + _mv(m,66) + _mv(m,67) + _mv(m,69) + _mv(m,72) + _mv(m,74) - _mv(m,68) - _mv(m,76)));
+  m.set(77, _fc(`${_cRef(57)}+${_cRef(58)}+${_cRef(59)}+${_cRef(60)}+${_cRef(62)}+${_cRef(71)}+${_cRef(73)}-${_cRef(61)}-${_cRef(75)}`,
+    _mv(m,57) + _mv(m,58) + _mv(m,59) + _mv(m,60) + _mv(m,62) + _mv(m,71) + _mv(m,73) - _mv(m,61) - _mv(m,75)));
+  m.set(79, _fc(`${_cRef(64)}+${_cRef(65)}+${_cRef(66)}+${_cRef(67)}+${_cRef(69)}+${_cRef(72)}+${_cRef(74)}-${_cRef(68)}-${_cRef(76)}`,
+    _mv(m,64) + _mv(m,65) + _mv(m,66) + _mv(m,67) + _mv(m,69) + _mv(m,72) + _mv(m,74) - _mv(m,68) - _mv(m,76)));
   // D83/D86 "Số vụ/bị can CQĐT đã giải quyết (đề nghị truy tố + đình chỉ)" — BUG THẬT đã sửa
   // (2026-09, Dũng phát hiện qua kỳ 08/2026 thật: D86 ra 224, đúng ra 159 — dư 65). NGUYÊN NHÂN:
   // bản cũ SUY RA từ đẳng thức `D154=D77-D83-D134` (đảo lại D83=D77-D134-D154), D154 lấy từ RPC

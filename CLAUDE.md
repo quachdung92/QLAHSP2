@@ -2,6 +2,56 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Sửa định nghĩa "quay vòng" của toggle "Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" (2026-09-28, `qlahs-sup.html`, nhánh `bao-cao-tuan`, CHƯA commit/deploy)
+
+Bug thật Dũng phát hiện: vụ Nguyễn Văn Chinh (`QLVA_E01.53_2604_0039`) — TT→XX 07/9 rồi Toà trả về TT
+27/9 (cùng kỳ 09) — bị toggle loại khỏi danh sách. Dũng chốt định nghĩa: "quay vòng" CHỈ là bị trả
+về rồi LẠI CHUYỂN LÊN giai đoạn sau trong cùng kỳ (kết thúc kỳ ở giai đoạn SAU, VD Toà trả Viện →
+Viện chuyển lại Toà). Chuyển lên rồi bị trả về (kết thúc ở giai đoạn TRƯỚC) KHÔNG phải quay vòng —
+tính đủ 2 chiều. `_idVuTraDTBSQuayVong` giờ so thứ tự `_log.thoiDiemGhi` (helper `_tGhiQuayVong`):
+chỉ loại khi `traVe` trước `chuyenDi` (nhìn từ giai đoạn trước) hoặc `traDi` trước `chuyenDen` (nhìn
+từ giai đoạn sau), vẫn giữ điều kiện net = 0; bỏ 2 tổ hợp chéo cũ (traVe+traDi / traDi+traVe); thiếu
+thời gian → không loại. Mô tả cũ ở mục "Toggle 'Bỏ vụ trả ĐTBS quay vòng...'" (2026-09-07, ví dụ
+"Công an KTĐT T8, Viện trả lại CA T8" bị loại) KHÔNG còn đúng. Test cô lập 7/7 + compile-check sạch.
+
+## Danh sách vụ án — tách 3 khối theo giai đoạn Điều tra/Truy tố/Xét xử "cho dễ tính" (2026-09-23, `qlahs-sup.html`, nhánh `bao-cao-tuan`, CHƯA commit — chỉ compile-check + smoke test tải trang)
+
+Theo yêu cầu Dũng "phần danh sách vụ án tách ra 3 giai đoạn điều tra truy tố, xét xử cho đễ tính"
+— trước đây `DanhSachPanel` chỉ có 1 bảng + 4 nút lọc (Tất cả/Điều tra/Truy tố/Xét xử), bấm 1 nút
+thì bảng chỉ hiện đúng giai đoạn đó, phải bấm qua lại mới đếm được số vụ mỗi giai đoạn. Đã hỏi rõ
+qua `AskUserQuestion` (genuine ambiguity — có thể hiểu là "thêm số đếm vào 4 nút lọc cũ" hoặc "tách
+hẳn 3 bảng riêng") — Dũng chọn **"tách hẳn thành 3 khối/bảng riêng"**.
+
+**Đã sửa** (`DanhSachPanel`): bỏ hẳn state `giaiDoan` + hàng 4 nút lọc theo giai đoạn — `filtered`
+không còn lọc theo `coQuanThuLy` nữa (chỉ còn lọc theo `chiDangGiaiQuyet`/KSV/từ khoá). Thêm
+`theoGD` (nhóm lại `sorted` — đã lọc + sắp xếp theo ĐÚNG 1 tiêu chí chung — thành 3 mảng theo
+`v.coQuanThuLy`) và hàm cục bộ `renderKhoiGiaiDoan(gd, nhan, rows)` render 1 khối: dải tiêu đề màu
+riêng theo giai đoạn (hằng số mới `MAU_KHOI_GD_DS`, cùng tông với `MAU_GIAI_DOAN`/`Badge` sẵn có
+nhưng nhạt hơn để phủ cả dải tiêu đề) kèm số đếm ngay trên đầu ("N vụ"), rồi 1 bảng con cuộn ĐỘC
+LẬP bên trong (`flex-1 min-h-0 overflow-auto`, sticky thead riêng — đúng pattern cuộn nội bộ đã
+dùng cho bảng gốc, xem "Bố cục cuộn trang"). 3 khối xếp dọc trong `flex-1 min-h-0 flex flex-col`,
+mỗi khối `flex-1 min-h-[120px]` tự chia đều chiều cao còn lại của panel. Bỏ hẳn cột "Giai đoạn"
+trong bảng (dư thừa vì đã ngầm hiểu qua tiêu đề khối — xoá luôn entry `giaiDoan` khỏi
+`DS_COT_TUY_CHON`/"Cột hiển thị"); cột "Hạn ĐT" chỉ còn hiện ở khối Điều tra (2 khối kia luôn "—"
+vì hạn điều tra chỉ có ý nghĩa ở giai đoạn Điều tra). Sort (bấm tiêu đề cột — `sortCot`/`sortChieu`)
+vẫn dùng CHUNG 1 tiêu chí cho cả 3 khối, tính 1 lần trên `sorted` TRƯỚC khi chia nhóm — không tính
+sort riêng từng khối, tránh 3 khối lệch tiêu chí sort với nhau. Ô tìm kiếm/lọc KSV/toggle "Đang
+giải quyết"–"Tất cả"/nút "Cột hiển thị" giữ nguyên như cũ, dùng chung cho cả 3 khối.
+
+**Đã kiểm chứng**: compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong scratchpad,
+gỡ ngay sau) — sạch, 0 lỗi cú pháp. Mở qua server tĩnh cục bộ (`python -m http.server`), tải trang
+qua trình duyệt thật — 0 lỗi console thật (chỉ cảnh báo Babel kích thước file vô hại đã biết, màn
+đăng nhập hiện đúng). **CHƯA đăng nhập được để xem 3 khối với dữ liệu Supabase thật** (không có tài
+khoản trong phiên này) — Dũng nên tự mở "Danh sách vụ án" trên `qlahs-sup.web.app`, xác nhận: (1) 3
+khối Điều tra/Truy tố/Xét xử hiện đúng, mỗi khối có tiêu đề + số đếm ("N vụ") ngay trên đầu, tổng 3
+số khớp dòng "N / M vụ án" ở footer; (2) bấm sort 1 cột (VD "Ngày KTVA") áp dụng đúng cho cả 3
+khối, không lệch nhau; (3) mỗi khối cuộn riêng khi nhiều dòng, không đẩy khối khác ra khỏi màn
+hình; (4) tìm kiếm/lọc KSV/toggle "Đang giải quyết" vẫn lọc đúng trên cả 3 khối cùng lúc; (5) khối
+"Cột hiển thị" không còn tuỳ chọn "Giai đoạn" (đã bỏ, không phải thiếu sót). **CHƯA commit** — thay
+đổi này làm trên nhánh `bao-cao-tuan` (nhánh đang mở khi bắt đầu phiên, không liên quan tính năng
+đó) chỉ vì đó là nhánh hiện tại của working tree, không phải chủ ý gộp 2 việc — cân nhắc tách commit
+riêng (hoặc nhánh riêng) khi commit, đừng gộp lẫn vào lịch sử "Báo cáo tuần".
+
 ## Module mới "Báo cáo tuần" (2026-09-23, `qlahs-sup.html`, nhánh `bao-cao-tuan`, migration ĐÃ CHẠY lên Supabase thật — CHƯA merge/deploy, CHƯA kiểm chứng qua UI thật)
 
 Theo yêu cầu Dũng, gửi kèm file mẫu `PL THỐNG KÊ CÔNG TÁC TUẦN.xlsx` (Phụ lục thống kê công tác
