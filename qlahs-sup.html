@@ -13668,7 +13668,34 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   const phuCols = [4,5,6,7, 4+34, 5+34, 6+34, 7+34, 4+34+31, 5+34+31, 6+34+31, 7+34+31];
   // 2026-09-29 (Dũng): TỰ ẨN các cột tồn (tô xanh) để copy sang biểu ngành cho nhanh — dữ liệu vẫn
   // còn, bấm "Hiện cột" trong Excel để kiểm tra khi cần.
-  phuCols.forEach(c => { wsB10.getColumn(c).hidden = true; });
+  // 2026-09-29 (Dũng): ẩn MỌI cột KHÔNG có trong mẫu ngành (không mang mã Cn): cột A "Mã ĐL", 12 cột
+  // tồn kỳ trước/này, 6 cột "Án huỷ" — để copy đúng C1..C72. LƯU Ý: Excel vẫn copy cả cột ẩn nếu
+  // chọn vùng thường — dùng sheet "B10 nhập ngành" (liền mạch, đúng mẫu) hoặc Alt+; (chỉ ô hiện).
+  [1, ...phuCols, 86, 87, 88, 89, 90, 91].forEach(c => { wsB10.getColumn(c).hidden = true; });
+  // Sheet "B10 nhập ngành" (2026-09-29) — ĐÚNG cấu trúc mẫu ngành (Import_template_Bieu_10173):
+  // A = Số điều (hậu tố */** bộ luật cũ), B = Tội danh (để trống như mẫu), C..BT = C3..C72 liền mạch,
+  // mỗi ô = tham chiếu ô tương ứng trên "Biểu B10" (luôn khớp). Dán sang mẫu ngành bằng
+  // Ctrl+Alt+V → Giá trị (Values) để không kéo theo liên kết.
+  {
+    const wsNg = wb.addWorksheet("B10 nhập ngành");
+    const hdr = ["Điều luật", "Tội danh"];
+    for (let n = 3; n <= 72; n++) hdr.push(`C${n}`);
+    wsNg.addRow(hdr).font = { bold: true };
+    b10Rows.forEach((row, idx) => {
+      const rSrc = B10_R0 + idx;
+      const cells = [extractSoDieu(row.D), null];
+      for (let n = 3; n <= 72; n++) {
+        const col = b10ColCuaC[n];
+        const ci = col ? wsB10.getColumn(col).number : null;
+        const kVal = ci ? ci - 4 : -1; // cột Excel (1-based) → vals[] index (bù A/B/C)
+        cells.push(col ? { formula: `'Biểu B10'!${col}${rSrc}`, result: row.vals[kVal] ?? 0 } : 0);
+      }
+      wsNg.addRow(cells);
+    });
+    wsNg.getColumn(1).width = 10; wsNg.getColumn(2).width = 6;
+    for (let c = 3; c <= 72; c++) wsNg.getColumn(c).width = 6;
+    wsNg.views = [{ state: "frozen", xSplit: 2, ySplit: 1 }];
+  }
   // Màu vàng nhạt: cột SUMIF/COUNTIFS khác — tham chiếu sheet DS vào/ra (loại trừ nhóm "tồn" ở trên,
   // dù cũng nằm trong B10_FORMULA, để giữ đúng 2 màu tách biệt theo ý nghĩa, không lẫn lộn).
   const sumifCols = Object.keys(B10_FORMULA)
