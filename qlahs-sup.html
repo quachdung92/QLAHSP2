@@ -13891,6 +13891,136 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     for (let cc = 5; cc <= B4_NCOL; cc++) wsB4.getColumn(cc).width = 7;
   }
 
+  // ---- Sheet: Biểu 13 — Thống kê người dưới 18 tuổi phạm tội (mẫu ngành 10088, QĐ 358) ----
+  // 2026-09-29. Cách tính: chạy LẠI tinhBieu10 với danh sách bị can chỉ gồm người DƯỚI 18 TUỔI (tuổi
+  // = năm QĐ KTVA − năm sinh, nhóm 14-16/16-18 — y hệt cột Nhóm tuổi B10) ⇒ mọi cột Bị can của B10
+  // (Tổng thụ lý / mới khởi tố / đề nghị truy tố / đình chỉ / truy tố / đã xét xử...) tự ra phần của
+  // người chưa thành niên, cùng quy tắc với Biểu 10. Các cột "trong đó" cần thêm tiêu chí (tạm giam,
+  // đồng phạm với người ≥18, trình độ ở TT, 16-18 tuổi ở XX, tái phạm, mức án) = chạy thêm với bộ lọc
+  // hẹp hơn. Cột hệ thống chưa thu thập (lang thang, ly hôn, mồ côi, khuyết tật, nghiện, xúi giục,
+  // lý do đình chỉ, BBCB, giáo dục...) để 0 — nhập tay.
+  {
+    const _vuById = new Map();
+    const _gomVu = arr => (arr || []).forEach(v => { if (v && v.id && !_vuById.has(v.id)) _vuById.set(v.id, v); });
+    for (const gd of THU_TU_GIAI_DOAN) {
+      Object.values(baoCao[gd].ds || {}).forEach(x => {
+        if (Array.isArray(x)) _gomVu(x);
+        else if (x && typeof x === "object") Object.values(x).forEach(a => Array.isArray(a) && _gomVu(a));
+      });
+    }
+    [b10RpcTonList, b10RpcTonTruocList].forEach(l => l && THU_TU_GIAI_DOAN.forEach(gd => _gomVu(l[gd])));
+    const namKTVAVu = (id) => {
+      const n = _vuById.get(id)?.ngayQdKtva;
+      return n ? new Date(n.seconds ? n.seconds * 1000 : n).getFullYear() : new Date().getFullYear();
+    };
+    const nhomTuoiBc = (bc, vuId) => bc.loaiBiCan === "phap_nhan" ? null : tinhNhomTuoi(bc.namSinh, namKTVAVu(vuId));
+    const laDuoi18 = (bc, vuId) => ["14_16", "16_18"].includes(nhomTuoiBc(bc, vuId));
+    const coNguoiLon = (vuId) => (biCanByVu[vuId] || []).some(bc => {
+      const nt = nhomTuoiBc(bc, vuId); return nt && !["14_16", "16_18"].includes(nt);
+    });
+    const chayB13 = (loc) => {
+      const bcMap = {};
+      for (const [vuId, arr] of Object.entries(biCanByVu)) bcMap[vuId] = (arr || []).filter(bc => laDuoi18(bc, vuId) && loc(bc, vuId));
+      const { rows } = tinhBieu10(ky, kyTruoc, baoCao, bcMap, danhMuc, bcKyKhoiToMap, kyIdSetTrongBaoCao, vuKyKhoiToMap, b10RpcTonList, b10RpcTonTruocList, ttTraDi_TrucTiep, dtChuyenDi_LanDau, ttChuyenDi_LanDau, false);
+      return new Map(rows.map(r => [r.D, r]));
+    };
+    const tatCa = () => true;
+    const R = {
+      base: chayB13(tatCa),
+      giam: chayB13(bc => bc.bienPhapNganChan === "giam"),
+      dongPham: chayB13((bc, vuId) => coNguoiLon(vuId)),
+      td_khong_biet_chu: chayB13(bc => bc.trinhDo === "khong_biet_chu"),
+      td_tieu_hoc: chayB13(bc => bc.trinhDo === "tieu_hoc"),
+      td_thcs: chayB13(bc => bc.trinhDo === "thcs"),
+      td_thpt: chayB13(bc => bc.trinhDo === "thpt"),
+      t1618: chayB13((bc, vuId) => nhomTuoiBc(bc, vuId) === "16_18"),
+      taiPham: chayB13(bc => bc.taiPham === "tai_pham"),
+      tpnh: chayB13(bc => bc.taiPham === "tai_pham_nguy_hiem"),
+      phatTien: chayB13(bc => phanLoaiBiCanBieu4(bc) === "phat_tien_cn"),
+      anTreo: chayB13(bc => phanLoaiBiCanBieu4(bc) === "an_treo"),
+      le3: chayB13(bc => phanLoaiBiCanBieu4(bc) === "tu_le3"),
+      t37: chayB13(bc => phanLoaiBiCanBieu4(bc) === "tu_3_7"),
+      tren7: chayB13(bc => ["tu_7_15", "tu_tren15", "chung_than", "tu_hinh"].includes(phanLoaiBiCanBieu4(bc))),
+    };
+    const v = (k, D, i) => R[k].get(D)?.vals[i] || 0;
+    // Chỉ số vals[] của tinhBieu10: C4=5, C7=8, C9(14-16)=10, trình độ ĐT 15-18, C19 nữ=20, C20 DTTS=21,
+    // C23 NN=24, C26=27, C29=30, C34=39, C37=42, C43=48, C48 nữ=53, C49 DTTS=54, C52 NN=57, C54=59,
+    // C61=70, C64=73, C67=76.
+    const B13_COT = (D) => {
+      const c44 = v("base", D, 73), c47 = v("taiPham", D, 73), c48 = v("tpnh", D, 73);
+      return [
+        v("base", D, 5), v("giam", D, 5), v("base", D, 8),                        // C3-C5
+        v("base", D, 10), v("base", D, 20), v("base", D, 24), v("base", D, 21),     // C6-C9
+        0, 0, 0, 0, 0, v("dongPham", D, 8), 0,                                     // C10-C16
+        v("base", D, 15), v("base", D, 16), v("base", D, 17), v("base", D, 18),     // C17-C20
+        v("base", D, 27), v("base", D, 30), 0, 0, 0,                               // C21-C25
+        v("base", D, 39), v("giam", D, 39), v("base", D, 42),                      // C26-C28
+        v("base", D, 48), v("base", D, 53), v("base", D, 57), v("base", D, 54),     // C29-C32
+        v("td_khong_biet_chu", D, 42), v("td_tieu_hoc", D, 42), v("td_thcs", D, 42), v("td_thpt", D, 42), // C33-C36
+        v("base", D, 59), 0, 0, 0, 0,                                              // C37-C41
+        v("base", D, 70), v("giam", D, 70), c44, v("t1618", D, 73),                // C42-C45
+        Math.max(0, c44 - c47 - c48), c47, c48,                                    // C46-C48
+        0, 0, 0, v("phatTien", D, 73), 0, v("anTreo", D, 73),                      // C49-C54
+        v("le3", D, 73), v("t37", D, 73), v("tren7", D, 73),                       // C55-C57
+        v("base", D, 76), 0, 0, 0, 0, 0,                                           // C58-C63
+      ];
+    };
+    const b13Rows = b10Rows
+      .map(row => ({ row, cells: B13_COT(row.D) }))
+      .filter(x => x.cells.some(n => n));
+
+    const ws13 = wb.addWorksheet("Biểu 13");
+    const NHAN13 = [
+      "Điều luật", "Tội danh",
+      "ĐT: Tổng BC đã khởi tố", "Tr.đó tạm giam", "BC mới khởi tố", "14-16 tuổi", "Nữ", "Nước ngoài", "DTTS",
+      "Lang thang", "Bố mẹ ly hôn", "Mồ côi", "Khuyết tật", "Nghiện MT", "Đồng phạm ≥18", "Bị xúi giục",
+      "Không biết chữ", "Tiểu học", "THCS", "THPT", "Đề nghị truy tố", "CQĐT đình chỉ",
+      "ĐC miễn TNHS", "ĐC không phạm tội", "ĐC chuyển XLHC",
+      "TT: Tổng BC VKS thụ lý", "Tr.đó tạm giam", "VKS truy tố", "14-16 tuổi", "Nữ", "Nước ngoài", "DTTS",
+      "Không biết chữ", "Tiểu học", "THCS", "THPT", "VKS đình chỉ", "Miễn TNHS", "Không phạm tội",
+      "Chuyển XLHC", "VKS BBCB",
+      "XX: Tổng Toà thụ lý", "Tr.đó tạm giam", "Đã xét xử", "16-18 tuổi", "Lần đầu", "Tái phạm", "TPNH",
+      "Không phạm tội", "Miễn hình phạt", "Cảnh cáo", "Phạt tiền", "CTKGG", "Án treo", "≤3 năm",
+      "3-7 năm", ">7 năm", "Toà đình chỉ", "Miễn TNHS", "ĐC do VKS rút", "GD tại xã", "Trường GD",
+      "BBCB",
+    ];
+    const tde = ws13.addRow(["BIỂU 13 — THỐNG KÊ NGƯỜI DƯỚI 18 TUỔI PHẠM TỘI — " + (ky.tenKy || "")]);
+    tde.font = { bold: true, size: 13 };
+    const hNhan = ws13.addRow(NHAN13);
+    hNhan.font = { bold: true, size: 9 };
+    hNhan.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
+    hNhan.height = 45;
+    const hC = ws13.addRow(NHAN13.map((_, i) => `C${i + 1}`));
+    hC.font = { bold: true, color: { argb: "FF4B5563" } };
+    const r0 = 5, r1 = r0 + b13Rows.length - 1;
+    const tongCells = ["Tổng", ""];
+    for (let c = 3; c <= 63; c++) {
+      const L = ws13.getColumn(c).letter;
+      const s = b13Rows.reduce((a, x) => a + x.cells[c - 3], 0);
+      tongCells.push(b13Rows.length ? { formula: `SUM(${L}${r0}:${L}${r1})`, result: s } : 0);
+    }
+    const tongRow = ws13.addRow(tongCells);
+    tongRow.font = { bold: true };
+    tongRow.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } }; });
+    for (const x of b13Rows) ws13.addRow([extractSoDieu(x.row.D), x.row.tenToiDanh, ...x.cells]);
+    // Ô nhập tay (hệ thống chưa thu thập) — nền xám nhạt
+    const COT_TAY = [10, 11, 12, 13, 14, 16, 23, 24, 25, 38, 39, 40, 41, 49, 50, 51, 53, 59, 60, 61, 62, 63];
+    for (let rr = 4; rr <= ws13.rowCount; rr++) {
+      COT_TAY.forEach(c => { ws13.getRow(rr).getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F4F6" } }; });
+    }
+    ws13.addRow([]);
+    [
+      "Ghi chú:",
+      "• Người dưới 18 tuổi = năm QĐ khởi tố vụ án − năm sinh trong khoảng 14-17 (cùng cách tính cột Nhóm tuổi Biểu 10). Mọi cột Bị can lấy ĐÚNG quy tắc Biểu 10, chỉ giữ người dưới 18 tuổi.",
+      "• C4/C27/C43 'tạm giam' theo Biện pháp ngăn chặn HIỆN TẠI của bị can; C15 = vụ có bị can từ đủ 18 tuổi trở lên; C46 'Lần đầu' = Đã xét xử − Tái phạm − Tái phạm nguy hiểm; C52-C57 theo mức án tổng hợp từng bị cáo (tab 'Đã xét xử').",
+      "• Ô nền xám: hệ thống chưa thu thập (lang thang, ly hôn, mồ côi, khuyết tật, nghiện, xúi giục, lý do đình chỉ, BBCB, cảnh cáo, CTKGG, miễn hình phạt, biện pháp giáo dục...) — NHẬP TAY.",
+      "• Nhập lên phần mềm ngành: dán dòng 'Tổng' và các dòng điều luật (C1..C63) vào mẫu Import_template_Bieu_10088, dán kiểu Giá trị (Ctrl+Alt+V → Values).",
+    ].forEach((t, i) => { ws13.addRow([t]).getCell(1).font = { bold: i === 0, italic: i !== 0, color: { argb: i === 0 ? "FF000000" : "FF6B7280" } }; });
+    ws13.getColumn(1).width = 9; ws13.getColumn(2).width = 30;
+    for (let c = 3; c <= 63; c++) ws13.getColumn(c).width = 8;
+    ws13.views = [{ state: "frozen", xSplit: 2, ySplit: 4 }];
+  }
+
   // ---- Sheet: Biểu 2 & Biểu 3 (mẫu thống kê ngành, đặt cạnh Biểu 10) ----
   // Port từ nhánh feature/tong-ke-dong (2026-08-06), thích ứng kiến trúc "tồn theo kỳ thống kê"
   // hiện tại. 396 dòng Biểu 2 + 150 dòng Biểu 3 — dòng nào tính được từ `baoCao` thì tự tính
