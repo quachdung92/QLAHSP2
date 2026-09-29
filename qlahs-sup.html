@@ -4376,8 +4376,20 @@ function ChuyenGiaiDoanModal({ vuAn, onDong, onXong }) {
   );
 }
 
+// Lý do VKS trả hồ sơ cho CQĐT điều tra bổ sung — khớp đúng 5 dòng Biểu 2 D354-D358 (vụ) / D362-D366
+// (vụ CQĐT chấp nhận). Dữ liệu cũ chưa có lý do ⇒ coi là "khac" (Dũng chốt 2026-09-29).
+const LY_DO_TRA_DTBS = [
+  ["thieu_chung_cu", "Còn thiếu chứng cứ"],
+  ["toi_pham_khac", "Có căn cứ khởi tố bị can về một hay nhiều tội phạm khác"],
+  ["dong_pham", "Có đồng phạm hoặc người phạm tội khác nhưng chưa được khởi tố"],
+  ["vi_pham_to_tung", "Có vi phạm nghiêm trọng thủ tục tố tụng"],
+  ["khac", "Do phát sinh tình tiết mới hoặc lý do khác"],
+];
+const NHAN_LY_DO_TRA_DTBS = Object.fromEntries(LY_DO_TRA_DTBS);
+
 function TraHoSoModal({ vuAn, onDong, onXong }) {
   const hd = useHanhDongVuAn();
+  const [lyDoTraDTBS, setLyDoTraDTBS] = useState("khac");
   const [ngay, setNgay] = useState("");
   const [soQuyetDinh, setSoQuyetDinh] = useState("");
   const [ghiChu, setGhiChu] = useState("");
@@ -4393,6 +4405,7 @@ function TraHoSoModal({ vuAn, onDong, onXong }) {
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "tra_ho_so", tuGiaiDoan: vuAn.coQuanThuLy, denGiaiDoan,
         soQuyetDinh: soQuyetDinh.trim(),
+        ...(vuAn.coQuanThuLy === "truy_to" ? { lyDoTraDTBS } : {}),
         ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
       }));
       await batch.commit();
@@ -4407,6 +4420,12 @@ function TraHoSoModal({ vuAn, onDong, onXong }) {
       <NhapNgay value={ngay} onChange={e => setNgay(e.target.value)} onTachSo={setSoQuyetDinh} className={oInput + " mb-3"} />
       <label className="text-xs text-slate-500 block mb-1">Số quyết định trả hồ sơ điều tra bổ sung</label>
       <input value={soQuyetDinh} onChange={e => setSoQuyetDinh(e.target.value)} className={oInput + " mb-3"} />
+      {vuAn.coQuanThuLy === "truy_to" && (<>
+        <label className="text-xs text-slate-500 block mb-1">Lý do trả hồ sơ điều tra bổ sung (Biểu 2)</label>
+        <select value={lyDoTraDTBS} onChange={e => setLyDoTraDTBS(e.target.value)} className={oInput + " mb-3"}>
+          {LY_DO_TRA_DTBS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+        </select>
+      </>)}
       <label className="text-xs text-slate-500 block mb-1">Lý do / ghi chú</label>
       <textarea value={ghiChu} onChange={e => setGhiChu(e.target.value)} rows={2} className={oInput + " mb-4"} />
       <div className="flex justify-end gap-2">
@@ -9205,7 +9224,7 @@ async function vuAnTuLogDocs(logDocs, kyRankMap = null) {
       // "cũ (trả ĐTBS)/mới" ở tab "Kết thúc điều tra"/"Kết thúc truy tố" (Án đã giải quyết), nơi
       // cần lọc lại theo cutoff KHÁC (ngày trả hồ sơ TRƯỚC ĐÓ, không phải ngày sự kiện này) mà
       // không cần query lại bị can.
-      _soBiCanHienTai: bcListGoc.length, _bcListGoc: bcListGoc,
+      _soBiCanHienTai: bcListGoc.length, _bcListGoc: bcListGoc, _bcIdsDung: bcListDung.map(b => b.id),
     };
   }).filter(Boolean);
 }
@@ -9408,6 +9427,33 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     // snapshot, và bản dựng lại này không hề dedup nên sẽ làm lệch lại đúng bug vừa sửa).
     const dsChuyenDiArr = await vuAnTuLogDocs(chuyenDi.docs, kyRankMap);
     const dsTraDiArr = await vuAnTuLogDocs(traDi.docs, kyRankMap);
+    // 2026-09-29 (lỗi D281 ngành): VKS trả hồ sơ ĐTBS (TT→ĐT) — CHỈ tính bị can ĐÃ CÓ lúc trả hồ sơ.
+    // Bị can khởi tố bổ sung SAU lần trả (cùng kỳ, lúc vụ đã về ĐT — VD QLVA_E01.53_2503_0063 kỳ 09,
+    // 4 bị can) trước đây bị đếm vào D279 (lọc theo kỳ, không theo giờ) rồi phải bù bằng số hạng "bổ
+    // sung BC TT" ở D281 → sai công thức ngành. Gắn `_bcIdsTon` (Excel addSheetVu lọc theo đó) +
+    // `_bcBoSauTra` (tinhBieu10 loại khỏi tt_boSungBc).
+    if (gd === "truy_to" && dsTraDiArr.length) {
+      const ktDocs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", [...new Set(dsTraDiArr.map(v => v.id))],
+        q => q.where("loaiSuKien", "==", "khoi_to_bican"));
+      const msOf = (t) => !t ? null : (t.toMillis ? t.toMillis() : new Date(t).getTime());
+      const ktTheoBc = new Map();
+      ktDocs.forEach(d => { const e = d.data(); if (e.maBiCan) ktTheoBc.set(e.maBiCan, e); });
+      dsTraDiArr.forEach(v => {
+        const tTra = msOf(v._log?.thoiDiemGhi);
+        const boSau = new Set();
+        (v._bcListGoc || []).forEach(bc => {
+          const e = ktTheoBc.get(bc.id);
+          const tKt = msOf(e?.thoiDiemGhi);
+          if (e && e.kyThongKe === v._log?.kyThongKe && tTra != null && tKt != null && tKt > tTra) boSau.add(bc.id);
+        });
+        if (!boSau.size) return;
+        v._bcBoSauTra = boSau;
+        // giữ đúng tập đã lọc theo kỳ như trước, chỉ bỏ thêm bị can thêm sau lần trả
+        const giu = (v._bcIdsDung || []).filter(id => !boSau.has(id));
+        v._bcIdsTon = new Set(giu);
+        v._soBiCan = giu.length;
+      });
+    }
     // "bo_sung_bican" là sự kiện CẤP BỊ CAN (không phải cấp vụ) — dùng vuBiCanTuLogDocs riêng
     // (1 dòng/bị can, kèm vụ để hiển thị) thay vì vuAnTuLogDocs (1 dòng/vụ, gộp _soBiCan).
     // 2026-09-29 (lỗi D86 Biểu 3 kỳ 09 lệch 1): vụ VÀO giai đoạn này NGAY TRONG CÙNG KỲ (chuyển đến/
@@ -10729,6 +10775,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
         ? new Date(vu.ngayQdKtva.seconds ? vu.ngayQdKtva.seconds * 1000 : vu.ngayQdKtva).getFullYear()
         : namKy;
       for (const bc of (biCanByVu[vu.id] || [])) {
+        if (vu._bcBoSauTra?.has(bc.id)) continue; // bị can thêm SAU lần VKS trả hồ sơ (D279/C59)
         if (getDL(bc) === D) result.push({ ...bc, _namKTVA: nk });
       }
     }
@@ -10953,7 +11000,9 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   ].map(v => v.id));
   const tt_boSungBc = [];
   {
-    const idsDaThem = new Set();
+    // 2026-09-29: bị can khởi tố SAU lần VKS trả ĐTBS (vụ đã về ĐT) không phải "bổ sung ở TT" —
+    // họ không nằm trong D279 nữa nên cũng không cần bù ở D281.
+    const idsDaThem = new Set((baoCao.truy_to.ds.traDi || []).flatMap(v => [...(v._bcBoSauTra || [])]));
     for (const vu of allVuTT) {
       if (_ttVaoKyNayIds.has(vu.id)) continue;
       for (const bc of (biCanByVu[vu.id] || [])) {
@@ -12268,10 +12317,71 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   m.set(367, _fc(_cfBcCrit("DS TT trả ĐT", "AJ", "x"), soBc(ttTraDi_TrucTiep)));
   m.set(368, _fc(_cfBcCrit("DS TT trả ĐT", "AJ", "x"), soBc(ttTraDi_TrucTiep)));
 
+  // ── 2026-09-29 (Dũng) — các dòng "Trong đó" theo lý do + người bào chữa, để khớp quy tắc ngành ──
+  // D352=D354+..+D358 / D361=D362+..+D366: theo cột "Lý do trả" (AK) của "DS TT trả ĐT" (chỉ dòng
+  // "Trực tiếp"=x). Sự kiện cũ chưa có lý do ⇒ "lý do khác" (D358/D366).
+  LY_DO_TRA_DTBS.forEach(([k, nhan], i) => {
+    const f = `SUMIFS('DS TT trả ĐT'!$A:$A,'DS TT trả ĐT'!$AJ:$AJ,"x",'DS TT trả ĐT'!$AK:$AK,"${nhan}")`;
+    const r = (ttTraDi_TrucTiep || []).filter(v => (v._log?.lyDoTraDTBS || "khac") === k).length;
+    m.set(354 + i, _fc(f, r));
+    m.set(362 + i, _fc(f, r));
+  });
+  // D134=D135+..+D140 (vụ CQĐT tạm đình chỉ theo lý do): vụ KHÔNG có bị can → D135 "Chưa xác định
+  // được bị can"; vụ CÓ bị can → D136 "Không biết rõ bị can đang ở đâu" (Dũng chốt). D137-D140 = 0.
+  const _tdcDt = dt.hoanThanh?.tam_dinh_chi || [];
+  m.set(135, _fc(`COUNTIF('DS tạm đình chỉ ĐT'!$M:$M,"(Chưa có BC)")`, _tdcDt.filter(v => !(v._soBiCan > 0)).length));
+  m.set(136, _fc(`${_cRef(134)}-${_cRef(135)}`, _tdcDt.filter(v => v._soBiCan > 0).length));
+  [137, 138, 139, 140].forEach(md => m.set(md, 0));
+  // D141=D142+D143+D144+D146 (bị can CQĐT tạm đình chỉ) / D332=D333+..+D337 (bị can VKS tạm đình
+  // chỉ): mọi bị can → dòng "không biết rõ bị can đang ở đâu" (cùng quy ước D136).
+  m.set(142, _fc(_cRef(141), _mv(m, 141)));
+  [143, 144, 145, 146].forEach(md => m.set(md, 0));
+  m.set(333, _fc(_cRef(332), _mv(m, 332)));
+  [334, 335, 336, 337].forEach(md => m.set(md, 0));
+
+  // Người bào chữa (Dũng chốt): MỌI bị can đều có người bào chữa — từ 18 tuổi trở lên (và pháp nhân,
+  // thiếu năm sinh) → Luật sư; dưới 18 (cột "Nhóm tuổi" Y = 14_16/16_18) → Trợ giúp viên pháp lý.
+  // Bào chữa viên nhân dân = 0.
+  const _namKTVA = (v) => v?.ngayQdKtva
+    ? new Date(v.ngayQdKtva.seconds ? v.ngayQdKtva.seconds * 1000 : v.ngayQdKtva).getFullYear()
+    : new Date().getFullYear();
+  const _laVTN = (bc, v) => bc.loaiBiCan !== "phap_nhan" && ["14_16", "16_18"].includes(tinhNhomTuoi(bc.namSinh, _namKTVA(v)));
+  const _bcCua = (v) => {
+    const all = (biCanByVu && biCanByVu[v.id]) || [];
+    return v._bcIdsTon ? all.filter(b => v._bcIdsTon.has(b.id)) : all.slice(0, v._soBiCan ?? all.length);
+  };
+  const demVTN = (arrs) => arrs.flat().reduce((s, v) => s + _bcCua(v).filter(b => _laVTN(b, v)).length, 0);
+  const fVTN = (sheets) => sheets.map(sn => `${_cfBcCrit(sn, "Y", "14_16")}+${_cfBcCrit(sn, "Y", "16_18")}`).join("+");
+  const datBaoChua = (mdTong, mdCo, sheets, arrs, rVTN) => {
+    const vtn = rVTN != null ? rVTN : demVTN(arrs);
+    m.set(mdCo, _fc(_cRef(mdTong), _mv(m, mdTong)));                     // có người bào chữa = tổng
+    m.set(mdCo + 3, _fc(fVTN(sheets), vtn));                              // Trợ giúp viên pháp lý
+    m.set(mdCo + 1, _fc(`${_cRef(mdCo)}-${_cRef(mdCo + 3)}`, _mv(m, mdTong) - vtn)); // Luật sư
+    m.set(mdCo + 2, 0);                                                   // Bào chữa viên nhân dân
+  };
+  datBaoChua(86, 87, ["DS ĐT chuyển TT", "DS đình chỉ ĐT"], [dt.chuyenDi || [], dt.hoanThanh?.dinh_chi || []]);
+  datBaoChua(141, 147, ["DS tạm đình chỉ ĐT"], [dt.hoanThanh?.tam_dinh_chi || []]);
+  datBaoChua(156, 157, ["DS tồn cuối kỳ ĐT"], [], 0);
+  datBaoChua(285, 286, ["DS TT chuyển XX", "DS chuyển đi TT", "DS đình chỉ TT"],
+    [tt.chuyenDi || [], tt.hoanThanh?.chuyen_di || [], tt.hoanThanh?.dinh_chi || []]);
+  datBaoChua(332, 338, ["DS tạm đình chỉ TT"], [tt.hoanThanh?.tam_dinh_chi || []]);
+  datBaoChua(346, 347, ["DS tồn cuối kỳ TT"], [], 0);
+  // D43-D46 (người bị tạm giữ có người bào chữa) / D47-D50 (bị can bị tạm giam có người bào chữa) —
+  // cùng nguồn D3-D14 (bị can có ngày bắt trong kỳ), số tĩnh.
+  if (biCanBatTrongKy) {
+    const vtnBat = (bc) => bc.loaiBiCan !== "phap_nhan" && bc.namSinh && (new Date().getFullYear() - Number(bc.namSinh)) < 18;
+    const tamGiu = biCanBatTrongKy.filter(bc => bc.bienPhapNganChan === "tam_giu" || (bc.bienPhapNganChan === "giam" && bc.nguonGocTamGiam === "tu_tam_giu"));
+    const tamGiam = biCanBatTrongKy.filter(bc => bc.bienPhapNganChan === "giam");
+    [[43, tamGiu], [47, tamGiam]].forEach(([md, arr]) => {
+      const vtn = arr.filter(vtnBat).length;
+      m.set(md, arr.length); m.set(md + 1, arr.length - vtn); m.set(md + 2, 0); m.set(md + 3, vtn);
+    });
+  }
+
   return m;
 }
 
-function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC61, b10RefCua) {
+function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC61, b10RefCua, biCanByVu) {
   const m = new Map();
   const xx = baoCao.xet_xu.ds;
   const soBc = (arr) => (arr || []).reduce((s, v) => s + (v._soBiCan || 0), 0);
@@ -12311,6 +12421,22 @@ function tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, tongC60, tongC
   m.set(84, _fc(_sumSheetA("DS tồn cuối kỳ XX"), baoCao.xet_xu.tonCuoiKy));
   m.set(86, _fc(demBcSheet("DS tồn cuối kỳ XX"), baoCao.xet_xu.tonCuoiBiCanKy));
 
+  // 2026-09-29 (Dũng) — người bào chữa: mọi bị cáo đều có; ≥18 tuổi (và pháp nhân/thiếu năm sinh)
+  // → Luật sư, <18 (Nhóm tuổi 14_16/16_18) → Trợ giúp viên pháp lý. D23 (vụ có người bào chữa) = D22;
+  // D24 (vụ có luật sư) = vụ có ≥1 bị cáo từ 18 tuổi trở lên (số tĩnh, không có cột vụ-level để COUNTIFS).
+  {
+    const dxx = xx.hoanThanh?.da_xet_xu || [];
+    const namKT = (v) => v?.ngayQdKtva ? new Date(v.ngayQdKtva.seconds ? v.ngayQdKtva.seconds * 1000 : v.ngayQdKtva).getFullYear() : new Date().getFullYear();
+    const laVTN = (bc, v) => bc.loaiBiCan !== "phap_nhan" && ["14_16", "16_18"].includes(tinhNhomTuoi(bc.namSinh, namKT(v)));
+    const bcCua = (v) => { const all = (biCanByVu && biCanByVu[v.id]) || []; return all.slice(0, v._soBiCan ?? all.length); };
+    m.set(23, _fc(_cRef(22), _mv(m, 22)));
+    m.set(24, dxx.filter(v => { const l = bcCua(v); return !l.length || l.some(b => !laVTN(b, v)); }).length);
+    const vtn = dxx.reduce((s, v) => s + bcCua(v).filter(b => laVTN(b, v)).length, 0);
+    m.set(36, _fc(_cRef(35), _mv(m, 35)));
+    m.set(39, _fc(`${_cfBcCrit("DS đã xét xử XX", "Y", "14_16")}+${_cfBcCrit("DS đã xét xử XX", "Y", "16_18")}`, vtn));
+    m.set(37, _fc(`${_cRef(36)}-${_cRef(39)}`, _mv(m, 35) - vtn));
+    m.set(38, 0);
+  }
   return m;
 }
 
@@ -13680,7 +13806,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     themSheetBieu2Va3(
       wb,
       tinhBieu2(baoCao, biCanByVu, b10Tong[7], dtChuyenDi_LanDau, ttChuyenDi_LanDau, ttTraDi_TrucTiep, b10Tong[8], biCanBatTrongKy, b10RefCua, b10TtBoSungBc),
-      tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70], b10RefCua),
+      tinhBieu3(baoCao, ttChuyenDi_LanDau, xxTraDi_KhongLapKy, b10Tong[69], b10Tong[70], b10RefCua, biCanByVu),
       b10RefCua,
       giaTriKyTruoc,
     );
@@ -14622,8 +14748,11 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
         // vụ cũng nằm ĐT chuyenDi). B10 C58/C59 SUMIFS/COUNTIFS theo cột này để khớp Biểu 2
         // D361/D368 (quy tắc D361_10238=C58 / D361=C58_10173). Vị trí: Kỳ TK=AG, Ngày trả=AH,
         // Số QĐ=AI, Trực tiếp=AJ.
-        add(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ", "Trực tiếp"],
-          v => [...(_ngaySoQD(v)), _ttTraDiTrucTiepIds.has(v.id) ? "x" : ""]);
+        // + cột "Lý do trả" (AK, 2026-09-29) — nhãn lý do VKS trả ĐTBS (sự kiện cũ chưa có ⇒ "lý do
+        // khác"), Biểu 2 D354-D358/D362-D366 SUMIFS theo cột này (cùng AJ="x").
+        add(`DS ${gs} trả ${gsPrev}`, d.traDi||[], ["Ngày trả", "Số QĐ", "Trực tiếp", "Lý do trả"],
+          v => [...(_ngaySoQD(v)), _ttTraDiTrucTiepIds.has(v.id) ? "x" : "",
+                NHAN_LY_DO_TRA_DTBS[v._log?.lyDoTraDTBS] || NHAN_LY_DO_TRA_DTBS.khac]);
       } else {
         // gd === "xet_xu": thêm cột phụ CẤP VỤ "Chưa nhận lại" (postExtra, AJ — sheet này không có
         // bcExtraHeaders nên "Chưa nhận lại" chiếm luôn vị trí ngay sau "Số QĐ") — đánh dấu đúng

@@ -336,6 +336,7 @@ create table "lichsuChuyenGiaiDoan" (
   -- thật (không phải deploy lại schema.sql từ đầu) — xem ghi chú CLAUDE.md "Giao nhận hồ sơ: thêm
   -- ô 'Số tập hồ sơ'...".
   "soTapHoSo"             text not null default '',
+  "lyDoTraDTBS"           text not null default '',
   "trangThaiVu"           text,      -- snapshot vuan.trangThai
   "soQdGiaiQuyet"         text,      -- snapshot số QĐ giải quyết tương ứng
   "ngayQuyetDinh"         timestamptz,  -- snapshot ngày giải quyết

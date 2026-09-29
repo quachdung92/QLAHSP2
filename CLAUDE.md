@@ -55,6 +55,24 @@ khởi tố ở kỳ lưu trữ được tính lại" (trước chỉ `huy_dieu_
 69/380, 24/307), kỳ 08 không đổi (330/798). Nguyên nhân gốc NULL kỳ: `ModalXacNhanKy` cho bấm
 "Xác nhận" khi danh sách kỳ chưa tải xong — nay `disabled` cho tới khi có kỳ được chọn.
 
+## Sửa các dòng Biểu 2/3 phần mềm ngành báo lỗi (2026-09-29, nhánh `tinh-quay-vong-2-chieu`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA deploy production)
+
+- **D279/D367/D368 + B10 C59**: VKS trả ĐTBS chỉ tính bị can ĐÃ CÓ lúc trả hồ sơ. Bị can
+  `khoi_to_bican` cùng kỳ nhưng `thoiDiemGhi` SAU sự kiện `tra_ho_so` bị loại (`_bcBoSauTra`, gắn
+  trong `tinhBaoCaoKyTuLog` gd=truy_to; `_bcIdsTon` lọc sheet "DS TT trả ĐT"; `bcCoD` bỏ qua). Cũng
+  loại họ khỏi `tt_boSungBc` ⇒ D281 giữ nguyên giá trị nhưng công thức ngành
+  `D281=D265+...-D279` khớp. Kỳ 09: QLVA_E01.53_2503_0063 (4 BC) + QLVA_E01.53_2510_0017 (1 BC).
+- **Lý do VKS trả ĐTBS** (D354-358/D362-366): field mới `lichsuChuyenGiaiDoan.lyDoTraDTBS`
+  (migration `supabase/add_ly_do_tra_dtbs_2026-09-29.sql` ĐÃ CHẠY), chọn trong `TraHoSoModal` khi
+  trả từ Truy tố, mặc định "Do phát sinh tình tiết mới hoặc lý do khác" (rỗng = mặc định). Cột AK
+  "Lý do trả" trên sheet "DS TT trả ĐT".
+- **D135/D136** (lý do tạm đình chỉ ĐT): vụ 0 bị can = "chưa xác định được bị can" (D135), còn lại
+  = "không rõ bị can đang ở đâu" (D136 = D134 − D135). D137-140/D142-146/D333-337 theo quy ước.
+- **Người bào chữa** (Dũng chốt): mọi bị can có người bào chữa; dưới 18 tuổi (Nhóm tuổi Y =
+  14_16/16_18) = Trợ giúp viên pháp lý, còn lại (kể cả pháp nhân/thiếu năm sinh) = Luật sư, Bào
+  chữa viên nhân dân = 0 — Biểu 2 D87/D147/D157/D286/D338/D347 (+con), D43-50; Biểu 3 D23/D24/D36-39.
+- Chỉ compile-check. CHƯA xuất Excel thật kỳ 09 kiểm các dòng trên.
+
 ## "Huỷ án — điều tra lại" → Biểu 2 D58/D65 + tick "Giữ bị can hiện có ở kỳ lưu trữ" (2026-09-29, nhánh `huy-an-bican-luu-tru` tách từ `fix-quay-vong-tra-dtbs`, RPC ĐÃ CHẠY lên Supabase thật, ĐÃ commit/push/deploy)
 
 - Biểu 2: huỷ-ĐT-lại TÁCH khỏi D62/D69, đưa về D58 ("Số vụ án mới nhận để điều tra lại") / D65
