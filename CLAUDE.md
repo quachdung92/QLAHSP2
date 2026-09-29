@@ -3,6 +3,18 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 
+
+## Định nghĩa "quay vòng" chốt lại lần 2 + đếm số lần trả ĐTBS (2026-09-29, nhánh `tinh-quay-vong-2-chieu` tách từ `huy-an-bican-luu-tru`, CHƯA deploy)
+
+Dũng: *"nếu đang ở điều tra cùng kỳ chuyển sang viện mà lại trả điều tra bổ sung thì ko tính cả kết
+thúc điều tra và không tính cả trả ĐTBS (tương tự truy tố, xét xử)"* — THAY định nghĩa 2026-09-28
+(mục ngay dưới, chỉ loại khi trả rồi chuyển lại). Nay `_idVuTraDTBSQuayVong`: trong cùng kỳ vụ có CẢ
+chuyển lên + trả về (bất kể thứ tự) ⇒ loại cả 2 chiều ở cả 2 giai đoạn liên quan (vẫn giữ điều kiện
+net vào = ra). Bỏ `_tGhiQuayVong`. Vẫn nằm sau công tắc "Bỏ vụ trả ĐTBS quay vòng" (mặc định TẮT).
+Tính năng mới đếm số lần trả ĐTBS/vụ: `timSuKienKyTheoVuAn` trả thêm `soLanTraDTBS` → badge
+"↩ ĐTBS ×N" cạnh tên vụ ở Danh sách vụ án (tooltip tách VKS trả CQĐT / Toà trả VKS) + dòng "Số lần
+trả ĐTBS" ở panel chi tiết. Test cô lập 6/6, compile sạch.
+
 ## Khớp tồn cuối kỳ 09/2026 với số thực tế (2026-09-29, nhánh `huy-an-bican-luu-tru`, ĐÃ chạy lên Supabase + deploy)
 
 Dũng: kỳ 09 RPC báo ĐT 344/705 nhưng tồn thực tế 343/702 (kỳ 10 chỉ có 2 vụ Toà trả ĐTBS về TT).

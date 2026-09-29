@@ -1251,12 +1251,19 @@ function timSuKienKyTheoVuAn(logEvents) {
   const moiLoai = () => ({});
   const suKienMoi = moiLoai(), suKienHoanThanh = moiLoai(), suKienVaoTruyTo = moiLoai(),
         suKienVaoXetXu = moiLoai(), suKienTraVeDieuTra = moiLoai();
+  // Số lần trả hồ sơ ĐTBS của từng vụ (mọi kỳ): {tong, vksTra (TT→ĐT), toaTra (XX→TT)}.
+  const soLanTraDTBS = {};
   const layMillis = l => l.thoiDiemGhi?.toMillis ? l.thoiDiemGhi.toMillis() : 0;
   const giuGanNhat = (map, l) => {
     const cu = map[l.maVuAn];
     if (!cu || layMillis(l) > layMillis(cu)) map[l.maVuAn] = l;
   };
   for (const l of logEvents) {
+    if (l.loaiSuKien === "tra_ho_so") {
+      const c = soLanTraDTBS[l.maVuAn] || (soLanTraDTBS[l.maVuAn] = { tong: 0, vksTra: 0, toaTra: 0 });
+      c.tong++;
+      if (l.denGiaiDoan === "dieu_tra") c.vksTra++; else if (l.denGiaiDoan === "truy_to") c.toaTra++;
+    }
     if (l.loaiSuKien === "khoi_to_vu") suKienMoi[l.maVuAn] = l;
     else if (l.loaiSuKien === "tach_vu" && l.vuTachRa) suKienMoi[l.vuTachRa] = l;
     else if (l.loaiSuKien === "hoan_thanh") giuGanNhat(suKienHoanThanh, l);
@@ -1264,7 +1271,7 @@ function timSuKienKyTheoVuAn(logEvents) {
     else if (l.loaiSuKien === "chuyen_giai_doan" && l.denGiaiDoan === "xet_xu") giuGanNhat(suKienVaoXetXu, l);
     else if (l.loaiSuKien === "tra_ho_so" && l.denGiaiDoan === "dieu_tra") giuGanNhat(suKienTraVeDieuTra, l);
   }
-  return { suKienMoi, suKienHoanThanh, suKienVaoTruyTo, suKienVaoXetXu, suKienTraVeDieuTra };
+  return { suKienMoi, suKienHoanThanh, suKienVaoTruyTo, suKienVaoXetXu, suKienTraVeDieuTra, soLanTraDTBS };
 }
 
 function taoSuKien(overrides) {
@@ -7584,7 +7591,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
     () => [...kyBaoCaoList].sort((a, b) => (b.ngayBatDau?.toMillis?.() ?? 0) - (a.ngayBatDau?.toMillis?.() ?? 0)),
     [kyBaoCaoList]
   );
-  const { suKienMoi, suKienHoanThanh, suKienVaoTruyTo, suKienVaoXetXu, suKienTraVeDieuTra } = useMemo(
+  const { suKienMoi, suKienHoanThanh, suKienVaoTruyTo, suKienVaoXetXu, suKienTraVeDieuTra, soLanTraDTBS } = useMemo(
     () => timSuKienKyTheoVuAn(logKyEvents), [logKyEvents]
   );
   const [dangSuaKy, setDangSuaKy] = useState(null);
@@ -7750,7 +7757,14 @@ function DanhSachPanel({ selectedId, onSelect }) {
                   }`}>
                 <td className="hidden md:table-cell px-3 py-2 text-xs text-slate-500 align-top whitespace-nowrap">{hienThiMa(v)}</td>
                 <td className="px-3 py-2 align-top">
-                  <div className="font-medium text-slate-800">{v.tenVu || "(chưa đặt tên)"}</div>
+                  <div className="font-medium text-slate-800">{v.tenVu || "(chưa đặt tên)"}
+                    {soLanTraDTBS[v.id]?.tong > 0 && (
+                      <span className="ml-1.5 inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle"
+                            title={`Đã trả hồ sơ điều tra bổ sung ${soLanTraDTBS[v.id].tong} lần (VKS trả CQĐT: ${soLanTraDTBS[v.id].vksTra}, Toà trả VKS: ${soLanTraDTBS[v.id].toaTra})`}>
+                        ↩ ĐTBS ×{soLanTraDTBS[v.id].tong}
+                      </span>
+                    )}
+                  </div>
                   {v.ksvChinh && <div className="text-xs text-slate-400 mt-0.5">{v.ksvChinh}</div>}
                 </td>
                 {!cotAn.has("biCan") && (
@@ -8365,6 +8379,13 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
                 ? <span className={mauCanhBaoHan(vuAn.hanDieuTra)}>{fmtDate(vuAn.hanDieuTra)}</span>
                 : fmtDate(vuAn.hanDieuTra)]]} />
             <HangThongTin items={[["Án điểm", vuAn.anDiem ? "Có" : "Không"]]} />
+            <HangThongTin items={[["Số lần trả ĐTBS", (() => {
+              const tra = lichSu.filter(l => l.loaiSuKien === "tra_ho_so");
+              if (!tra.length) return "0";
+              const vks = tra.filter(l => l.denGiaiDoan === "dieu_tra").length;
+              const toa = tra.filter(l => l.denGiaiDoan === "truy_to").length;
+              return `${tra.length} lần (VKS trả CQĐT: ${vks}, Toà trả VKS: ${toa})`;
+            })()]]} />
             <HangThongTin items={[["Ghi chú", vuAn.ghiChu]]} />
           </tbody>
         </table>
@@ -10129,34 +10150,16 @@ function HangBaoCao({ nhan, data, lay, layDs, layBiCan, damNet, onMoChiTiet }) {
 const NHOM_VAO_BAO_CAO = ["khoiToTrucTiep", "tachVu", "chuyenDen", "traVe", "phucHoi", "nhanLai", "huyDieuTraLai"];
 const NHOM_RA_BAO_CAO = ["chuyenDi", "traDi", "nhapVu"]; // hoanThanh.* xử lý riêng bên dưới
 
-// ĐỊNH NGHĨA "quay vòng" (Dũng làm rõ 2026-09-28): bị TRẢ về giai đoạn trước rồi LẠI CHUYỂN lên giai
-// đoạn sau trong cùng kỳ — tức vụ KẾT THÚC kỳ ở giai đoạn SAU (VD Toà trả Viện → Viện chuyển lại Toà).
-// Ngược lại, Viện chuyển Toà → Toà trả về Viện (kết thúc ở giai đoạn TRƯỚC) KHÔNG phải quay vòng,
-// vẫn tính đủ cả 2 chiều. Phân biệt bằng thứ tự thời gian ghi (`_log.thoiDiemGhi`) của 2 sự kiện.
-const _tGhiQuayVong = (v) => {
-  const t = v?._log?.thoiDiemGhi;
-  if (!t) return null;
-  const ms = t.toMillis ? t.toMillis() : new Date(t).getTime();
-  return Number.isFinite(ms) ? ms : null;
-};
-
+// ĐỊNH NGHĨA "quay vòng" (Dũng chốt lại 2026-09-29, THAY định nghĩa 2026-09-28): trong CÙNG 1 kỳ,
+// vụ vừa CHUYỂN lên giai đoạn sau vừa bị TRẢ hồ sơ ĐTBS về giai đoạn trước (bất kể thứ tự — chuyển
+// rồi bị trả, HAY bị trả rồi chuyển lại) ⇒ KHÔNG tính CẢ "kết thúc/chuyển giai đoạn" LẪN "trả ĐTBS"
+// ở cả 2 giai đoạn liên quan (ĐT↔TT, TT↔XX). VD Nguyễn Văn Chinh: TT→XX 07/9, Toà trả TT 27/9 (kỳ
+// 09) ⇒ bỏ khỏi "Kết thúc truy tố" của TT VÀ khỏi "Toà trả ĐTBS" của XX.
 function _idVuTraDTBSQuayVong(src) {
   const ds = src?.ds || {};
-  // Map id vụ → mốc thời gian MUỘN NHẤT của loại sự kiện đó trong kỳ (null nếu không xác định).
-  const mocMuonNhat = (arr) => {
-    const m = new Map();
-    (arr || []).forEach(v => {
-      const t = _tGhiQuayVong(v);
-      const cu = m.has(v.id) ? m.get(v.id) : undefined;
-      m.set(v.id, cu === undefined ? t : (t == null || cu == null ? null : Math.max(cu, t)));
-    });
-    return m;
-  };
-  const tTraVe = mocMuonNhat(ds.traVe), tTraDi = mocMuonNhat(ds.traDi);
-  const tChuyenDi = mocMuonNhat(ds.chuyenDi), tChuyenDen = mocMuonNhat(ds.chuyenDen);
-  // true nếu sự kiện "tiến lên" (sau) xảy ra SAU sự kiện "trả về" (truoc) — không xác định được thì
-  // KHÔNG coi là quay vòng (giữ lại, an toàn hơn bỏ sót).
-  const tienSauTra = (tTra, tTien) => tTra != null && tTien != null && tTien > tTra;
+  const ids = (arr) => new Set((arr || []).map(v => v.id));
+  const sTraVe = ids(ds.traVe), sTraDi = ids(ds.traDi);
+  const sChuyenDi = ids(ds.chuyenDi), sChuyenDen = ids(ds.chuyenDen);
   // Đếm tổng lần "vào" / "ra" của từng vụ trong kỳ (gồm cả hoàn thành + nhập vụ) để chỉ loại khi
   // net = 0 — giữ cân đối "tồn đầu + mới − ra = tồn cuối".
   const demVao = new Map(), demRa = new Map();
@@ -10169,10 +10172,10 @@ function _idVuTraDTBSQuayVong(src) {
     const nv = demVao.get(id) || 0, nr = demRa.get(id) || 0;
     if (nv > 0 && nv === nr) bo.add(id);
   };
-  // Nhìn từ giai đoạn TRƯỚC: giai đoạn sau trả hồ sơ về đây ("traVe") RỒI lại chuyển lên ("chuyenDi").
-  tTraVe.forEach((t, id) => { if (tChuyenDi.has(id) && tienSauTra(t, tChuyenDi.get(id))) xet(id); });
-  // Nhìn từ giai đoạn SAU: trả hồ sơ về giai đoạn trước ("traDi") RỒI lại nhận lên ("chuyenDen").
-  tTraDi.forEach((t, id) => { if (tChuyenDen.has(id) && tienSauTra(t, tChuyenDen.get(id))) xet(id); });
+  // Nhìn từ giai đoạn TRƯỚC: chuyển lên ("chuyenDi") + bị trả về ("traVe") trong kỳ.
+  sTraVe.forEach(id => { if (sChuyenDi.has(id)) xet(id); });
+  // Nhìn từ giai đoạn SAU: nhận lên ("chuyenDen") + trả về giai đoạn trước ("traDi") trong kỳ.
+  sTraDi.forEach(id => { if (sChuyenDen.has(id)) xet(id); });
   return bo;
 }
 
@@ -10279,9 +10282,9 @@ function BangBaoCaoChiTiet({ baoCao, boQuayVong: boQuayVongProp, onDoiBoQuayVong
           nhan="Bỏ vụ trả ĐTBS quay vòng trong cùng kỳ" />
         <span className="text-xs text-slate-500 leading-snug">
           {boQuayVong
-            ? `Đang loại ${soVuQuayVong} vụ bị trả hồ sơ điều tra bổ sung rồi quay lại đúng giai đoạn cũ ngay trong kỳ (Toà↔Viện hoặc Viện↔CQĐT) — không tính vào "Số mới"/"Đã giải quyết". Tồn đầu/cuối kỳ không đổi. Bấm "Xuất Excel" sẽ ra file ĐÃ lọc theo đúng trạng thái này.`
+            ? `Đang loại ${soVuQuayVong} vụ trong cùng kỳ vừa chuyển giai đoạn vừa bị trả hồ sơ ĐTBS (Toà↔Viện hoặc Viện↔CQĐT, bất kể thứ tự) — không tính cả "kết thúc/chuyển giai đoạn" lẫn "trả ĐTBS". Tồn đầu/cuối kỳ không đổi. Bấm "Xuất Excel" sẽ ra file ĐÃ lọc theo đúng trạng thái này.`
             : (soVuQuayVong > 0
-                ? `Có ${soVuQuayVong} vụ trả hồ sơ ĐTBS quay vòng trọn vẹn trong kỳ (VD: Toà trả Viện rồi Viện chuyển lại Toà cùng kỳ; hoặc Viện trả CQĐT rồi CQĐT kết thúc điều tra chuyển lại Viện cùng kỳ). Bật để không tính 2 chiều "vào"/"ra" — áp dụng cho cả bảng này lẫn file Excel xuất ra.`
+                ? `Có ${soVuQuayVong} vụ trả hồ sơ ĐTBS quay vòng trọn vẹn trong kỳ (VD: CQĐT kết thúc điều tra chuyển Viện rồi Viện trả ĐTBS cùng kỳ; hoặc Viện chuyển Toà rồi Toà trả ĐTBS cùng kỳ; hoặc ngược lại trả rồi chuyển lại). Bật để không tính 2 chiều "vào"/"ra" — áp dụng cho cả bảng này lẫn file Excel xuất ra.`
                 : "Không có vụ trả hồ sơ ĐTBS nào quay vòng trọn vẹn trong kỳ này.")}
         </span>
       </div>
