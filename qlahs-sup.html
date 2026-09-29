@@ -9439,12 +9439,20 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
       const ktTheoBc = new Map();
       ktDocs.forEach(d => { const e = d.data(); if (e.maBiCan) ktTheoBc.set(e.maBiCan, e); });
       dsTraDiArr.forEach(v => {
-        const tTra = msOf(v._log?.thoiDiemGhi);
+        // So NGÀY KHỞI TỐ THẬT của bị can với NGÀY TRẢ hồ sơ (ngaySuKien) — không so giờ nhập máy
+        // (thoiDiemGhi): bị can khởi tố TRƯỚC ngày trả nhưng nhập vào hệ thống SAU vẫn là người có
+        // mặt lúc trả (VD QLVA_E01.53_2503_0063: 4 BC KTBC 17/07, trả 04/09, nhập máy 28/09). Chỉ
+        // khi bị can thiếu ngày khởi tố mới rơi về so giờ nhập máy.
+        const tTraNgay = msOf(v._log?.ngaySuKien);
+        const tTraGhi = msOf(v._log?.thoiDiemGhi);
         const boSau = new Set();
         (v._bcListGoc || []).forEach(bc => {
           const e = ktTheoBc.get(bc.id);
-          const tKt = msOf(e?.thoiDiemGhi);
-          if (e && e.kyThongKe === v._log?.kyThongKe && tTra != null && tKt != null && tKt > tTra) boSau.add(bc.id);
+          if (!e || e.kyThongKe !== v._log?.kyThongKe) return;
+          const tNgayKt = msOf(bc.ngayKhoiTo);
+          if (tNgayKt != null && tTraNgay != null) { if (tNgayKt > tTraNgay) boSau.add(bc.id); return; }
+          const tKt = msOf(e.thoiDiemGhi);
+          if (tTraGhi != null && tKt != null && tKt > tTraGhi) boSau.add(bc.id);
         });
         if (!boSau.size) return;
         v._bcBoSauTra = boSau;
