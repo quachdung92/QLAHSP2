@@ -6,6 +6,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 
 
+## Cài đặt → "Kiểm tra số liệu" (2026-10-01, nhánh `kiem-tra-so-lieu`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA prod, CHƯA kiểm chứng UI thật)
+
+Công cụ CHỈ ĐỌC để tự tìm vụ gây lệch số liệu, thay việc truy vấn tay Postgres/đọc công thức Excel
+(tốn token). `KiemTraSoLieuModule` (đặt trước `CaiDatModule`, mọi hàm tiền tố `ktsl`), 4 khối:
+1. **Đối soát tồn** (`ktslDoiSoatTon`) — theo TỪNG vụ: tồn đầu (RPC kỳ trước) + vào − ra (đúng các mảng
+   `baoCao[gd].ds.*` của `tinhBaoCaoKy`, kể cả `boSungBiCan`) so với tồn cuối RPC, cho vụ VÀ bị can;
+   tổng theo giai đoạn = sheet "Cân đối số liệu". Dòng lệch kèm chuỗi sự kiện, gợi ý nguyên nhân, nút
+   Mở vụ (`ChiTietVuAnModal`) / sửa kỳ (`SuaKyModal`). Cần `_logId` — đã thêm vào `vuAnTuLogDocs`,
+   `vuBiCanTuLogDocs`, entry `hoan_thanh`/`nhap_vu` trong `tinhBaoCaoKyTuLog` (thuần thêm field).
+2. **Quét lỗi dữ liệu** (`ktslQuetLoi`, tải thẳng qua `sb.from` phân trang 1000): sự kiện thiếu kỳ;
+   vụ đã giải quyết thiếu `hoan_thanh`; trạng thái/giai đoạn `vuan` lệch sự kiện cuối (sắp như RPC:
+   kỳ → thoiDiemGhi → sự kiện RA thắng); vụ không có sự kiện; thiếu điều luật; bị can không được tính
+   tồn ở kỳ thật mới nhất (so RPC); vụ 0 bị can; thiếu năm sinh; trình độ ước tính.
+3. **Quy tắc Biểu 2/3/10** (`ktslKiemBieu`) — gọi `xuatBaoCaoThangExcel(..., { chiTraSoLieu: true })`
+   (tham số MỚI thứ 6: dựng y hệt nhưng KHÔNG tải file, trả `bieu2`/`bieu3` Map + `b10Tong`/`b10Rows`
+   + `b10IdxCuaC`), chạy `BIEU2/3_QUY_TAC_RAW`, `BIEU10_QUY_TAC_RAW` (dòng Tổng + từng dòng tội danh),
+   `BIEU10_LIEN_BIEU_RAW` trên giá trị "result" JS. Guard "=" như cột Kiểm tra Excel. Chưa có drill-down
+   ô → vụ.
+4. **Thống kê theo tội danh** (`ktslThongKeToiDanh`) — nhóm theo khoảng điều BLHS 2015/2025 (chỉ đọc
+   số điều, bỏ BLHS 1999), khởi tố mới (sự kiện `khoi_to_vu`/`khoi_to_bican` ở các kỳ chọn, gồm cả lưu
+   trữ) hoặc tồn cuối kỳ (RPC). Vụ theo tội chính (`chonBiCanChinh`), bị can theo tội chính của từng
+   người; liệt kê riêng vụ có bị can thuộc nhóm nhưng tội chính khác. Ra đoạn văn mẫu "Cơ quan điều
+   tra đã thụ lý, khởi tố N vụ/M bị can. Trong đó, ...".
+Chỉ compile-check — chưa đăng nhập được để chạy thử dữ liệu thật (cần Dũng đăng nhập).
+
 ## Biểu 13 — người dưới 18 tuổi phạm tội (mẫu ngành 10088) + dòng "Tổng số" cho B10 nhập ngành (2026-09-29, nhánh `tinh-quay-vong-2-chieu`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA prod)
 
 - Sheet "Biểu 13" (C1..C63, dòng Tổng đầu bảng như bản ngành xuất): chạy LẠI `tinhBieu10` với
