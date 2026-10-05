@@ -13899,7 +13899,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   // đồng phạm với người ≥18, trình độ ở TT, 16-18 tuổi ở XX, tái phạm, mức án) = chạy thêm với bộ lọc
   // hẹp hơn. Cột hệ thống chưa thu thập (lang thang, ly hôn, mồ côi, khuyết tật, nghiện, xúi giục,
   // lý do đình chỉ, BBCB, giáo dục...) để 0 — nhập tay.
-  {
+  try {
     const _vuById = new Map();
     const _gomVu = arr => (arr || []).forEach(v => { if (v && v.id && !_vuById.has(v.id)) _vuById.set(v.id, v); });
     for (const gd of THU_TU_GIAI_DOAN) {
@@ -14019,6 +14019,10 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     ws13.getColumn(1).width = 9; ws13.getColumn(2).width = 30;
     for (let c = 3; c <= 63; c++) ws13.getColumn(c).width = 8;
     ws13.views = [{ state: "frozen", xSplit: 2, ySplit: 4 }];
+  } catch (e) {
+    // Biểu 13 là sheet bổ sung — lỗi ở đây KHÔNG được làm hỏng cả file báo cáo tháng.
+    console.error("Biểu 13 lỗi:", e);
+    addToast("Không dựng được sheet Biểu 13 (các sheet khác vẫn xuất bình thường): " + e.message, "error");
   }
 
   // ---- Sheet: Biểu 2 & Biểu 3 (mẫu thống kê ngành, đặt cạnh Biểu 10) ----

@@ -6,6 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 
 
+## Biểu 13 — người dưới 18 tuổi phạm tội (mẫu ngành 10088) + dòng "Tổng số" cho B10 nhập ngành (2026-09-29, nhánh `tinh-quay-vong-2-chieu`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA prod)
+
+- Sheet "Biểu 13" (C1..C63, dòng Tổng đầu bảng như bản ngành xuất): chạy LẠI `tinhBieu10` với
+  `biCanByVu` chỉ giữ bị can 14-17 tuổi (năm QĐ KTVA − năm sinh, như cột Nhóm tuổi B10) ⇒ lấy cột
+  Bị can của B10 (vals idx: C4=5, C7=8, C26=27, C29=30, C34=39, C37=42, C54=59, C61=70, C64=73,
+  C67=76...). Cột "trong đó" = chạy thêm với bộ lọc hẹp (tạm giam hiện tại, đồng phạm ≥18, trình độ
+  TT, 16-18 XX, tái phạm, mức án `phanLoaiBiCanBieu4`) — 15 lượt tinhBieu10. Cột chưa có dữ liệu = 0,
+  nền xám (nhập tay). Chỉ compile-check, CHƯA xuất Excel thật.
+- "B10 nhập ngành" thêm dòng "Tổng số" (SUM) — mẫu ngành có dòng này; bản nộp để trống bị báo lỗi
+  liên biểu hàng loạt dù tổng các dòng đã khớp 18/18 quy tắc. Chưa xác nhận qua lần nộp thật.
+- 2026-10-05: bọc khối dựng sheet Biểu 13 trong try/catch — lỗi ở Biểu 13 chỉ báo toast, KHÔNG làm
+  hỏng cả file Xuất Excel báo cáo tháng. Deploy production cùng merge `tinh-quay-vong-2-chieu` vào `main`.
+
 ## Biểu 2 D294/D298 cộng thêm "DS chuyển đi XX" (2026-09-29, nhánh `tinh-quay-vong-2-chieu`)
 
 Dũng: vụ "chuyển đi" ở giai đoạn Xét xử cũng là "VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ
@@ -76,7 +89,10 @@ giai đoạn ⇒ lệch `D77−D59=C3`, `D79−D66=C4`, `D280−D262=C33`, `D281
   `khoi_to_bican` cùng kỳ nhưng `thoiDiemGhi` SAU sự kiện `tra_ho_so` bị loại (`_bcBoSauTra`, gắn
   trong `tinhBaoCaoKyTuLog` gd=truy_to; `_bcIdsTon` lọc sheet "DS TT trả ĐT"; `bcCoD` bỏ qua). Cũng
   loại họ khỏi `tt_boSungBc` ⇒ D281 giữ nguyên giá trị nhưng công thức ngành
-  `D281=D265+...-D279` khớp. Kỳ 09: QLVA_E01.53_2503_0063 (4 BC) + QLVA_E01.53_2510_0017 (1 BC).
+  `D281=D265+...-D279` khớp. **Sửa lại cùng ngày (ĐÃ deploy prod)**: so `bican.ngayKhoiTo` (ngày KTBC
+  thật) với `ngaySuKien` của `tra_ho_so`, chỉ khi thiếu ngayKhoiTo mới so `thoiDiemGhi` — bản đầu so
+  giờ nhập máy nên loại nhầm 4 BC vụ QLVA_E01.53_2503_0063 (KTBC 17/07, trả 04/09, nhập máy 28/09) +
+  Lê Thanh Tùng vụ QLVA_E01.53_2510_0017 (KTBC 07/08, trả 10/09). Không sửa dữ liệu.
 - **Lý do VKS trả ĐTBS** (D354-358/D362-366): field mới `lichsuChuyenGiaiDoan.lyDoTraDTBS`
   (migration `supabase/add_ly_do_tra_dtbs_2026-09-29.sql` ĐÃ CHẠY), chọn trong `TraHoSoModal` khi
   trả từ Truy tố, mặc định "Do phát sinh tình tiết mới hoặc lý do khác" (rỗng = mặc định). Cột AK
