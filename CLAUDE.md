@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 
 
-## Cài đặt → "Kiểm tra số liệu" (2026-10-01, nhánh `kiem-tra-so-lieu`, ĐÃ deploy `qlahs-sup.web.app`, CHƯA prod, CHƯA kiểm chứng UI thật)
+## Cài đặt → "Kiểm tra số liệu" (2026-10-01, nhánh `kiem-tra-so-lieu`, ĐÃ merge `main` + deploy `qlahs-sup.web.app` VÀ `qlahsp2.web.app` 2026-10-05, CHƯA kiểm chứng UI thật)
 
 Công cụ CHỈ ĐỌC để tự tìm vụ gây lệch số liệu, thay việc truy vấn tay Postgres/đọc công thức Excel
 (tốn token). `KiemTraSoLieuModule` (đặt trước `CaiDatModule`, mọi hàm tiền tố `ktsl`), 4 khối:
