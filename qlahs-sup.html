@@ -22130,6 +22130,235 @@ function BangExcelModule() {
 }
 
 // ====================================================================
+// MODULE: CHATBOT THỐNG KÊ (2026-10-09, nhánh chatbot-thong-ke)
+// Chatbot đơn giản theo luật (KHÔNG dùng AI/máy chủ ngoài): hiểu chỉ tiêu qua từ khoá ("TDC", "đình
+// chỉ", "xét xử"...), hỏi lại "các kỳ nào", rồi tính bằng đúng tinhBaoCaoKy (log là nguồn sự thật,
+// y hệt Kỳ báo cáo) và trả số vụ/bị can + số án điểm, số vụ phiên toà rút kinh nghiệm, số đảng viên
+// phạm tội + file Excel danh sách vụ.
+// ====================================================================
+const CHATBOT_CHI_TIEU = [
+  { id: "tam_dinh_chi", nhan: "Tạm đình chỉ (TĐC)", tuKhoa: ["tdc", "tam dinh chi"], loai: "hoan_thanh" },
+  { id: "dinh_chi", nhan: "Đình chỉ", tuKhoa: ["dinh chi"], loai: "hoan_thanh" },
+  { id: "da_xet_xu", nhan: "Đã xét xử", tuKhoa: ["xet xu"], loai: "hoan_thanh" },
+  { id: "chuyen_di", nhan: "Chuyển đi", tuKhoa: ["chuyen di"], loai: "hoan_thanh" },
+  { id: "an_huy", nhan: "Án huỷ", tuKhoa: ["an huy", "huy an"], loai: "hoan_thanh" },
+  { id: "giai_quyet", nhan: "Tất cả vụ đã giải quyết", tuKhoa: ["giai quyet"], loai: "hoan_thanh_tat_ca" },
+  { id: "khoi_to_moi", nhan: "Vụ khởi tố mới", tuKhoa: ["khoi to"], loai: "khoi_to_moi" },
+];
+const CHATBOT_CHI_TIEU_PHU = ["an diem", "rut kinh nghiem", "dang vien"];
+
+function chatbotBoDau(s) {
+  return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/\s+/g, " ").trim();
+}
+function chatbotNhanDienChiTieu(text) {
+  const t = chatbotBoDau(text);
+  const re = (k) => new RegExp("(^|[^a-z])" + k + "([^a-z]|$)");
+  for (const ct of CHATBOT_CHI_TIEU) if (ct.tuKhoa.some(k => re(k).test(t))) return ct;
+  if (CHATBOT_CHI_TIEU_PHU.some(k => t.includes(k))) return CHATBOT_CHI_TIEU.find(c => c.id === "giai_quyet");
+  return null;
+}
+function chatbotKyThang(ky) {
+  const m = /(\d{1,2})\s*\/\s*(\d{4})/.exec(ky.tenKy || "");
+  return m ? { thang: +m[1], nam: +m[2] } : null;
+}
+// Đọc câu trả lời về kỳ: "kỳ mới nhất", "3 kỳ gần nhất", "tất cả", "năm 2026", "tháng 7, 8 năm 2026"
+function chatbotDocKy(text, dsKy) {
+  const t = chatbotBoDau(text);
+  if (!dsKy.length) return [];
+  if (/tat ca|toan bo/.test(t)) return dsKy;
+  const mN = /(\d+)\s*ky/.exec(t);
+  if (mN) return dsKy.slice(0, Math.max(1, +mN[1]));
+  if (/(moi nhat|gan nhat|hien tai|ky nay)/.test(t)) return dsKy.slice(0, 1);
+  const nam = (/(20\d{2})/.exec(t) || [])[1];
+  const mt = /thang ([\d ,va]+)/.exec(t);
+  const thangs = mt ? (mt[1].match(/\d{1,2}/g) || []).map(Number).filter(n => n >= 1 && n <= 12) : [];
+  if (!nam && !thangs.length) return [];
+  return dsKy.filter(k => {
+    const th = chatbotKyThang(k);
+    if (!th) return false;
+    return (!nam || th.nam === +nam) && (!thangs.length || thangs.includes(th.thang));
+  });
+}
+
+async function chatbotTinh(chiTieu, dsKyChon, dsKyTatCaDesc) {
+  const theoKy = [];
+  const gop = new Map(); // id vụ -> dòng
+  for (const ky of dsKyChon) { // tuần tự, tránh dồn nhiều request cùng lúc (xem commit "tránh Failed to fetch")
+    const bc = await tinhBaoCaoKy(ky, timKyTruoc(ky, dsKyTatCaDesc));
+    const dsKy = new Map();
+    const them = (v) => {
+      if (!v || dsKy.has(v.id)) return;
+      const ids = new Set(v._bcIdsDung || []);
+      const bcs = (v._bcListGoc || []).filter(b => !ids.size || ids.has(b.id));
+      dsKy.set(v.id, {
+        id: v.id, ky: ky.tenKy, ma: hienThiMa(v), tenVu: v.tenVu || "", ksv: v.ksvChinh || "", dieuLuat: v.dieuLuat || "",
+        soBiCan: v._soBiCan ?? bcs.length, anDiem: !!v.anDiem, rkn: !!v.phienToaRutKN,
+        dangVien: bcs.filter(b => b.dangVien === "co").length,
+        ngay: v.ngayQuyetDinh || v._log?.ngaySuKien || null,
+      });
+    };
+    for (const gd of THU_TU_GIAI_DOAN) {
+      const d = bc[gd]?.ds || {};
+      if (chiTieu.loai === "hoan_thanh") (d.hoanThanh?.[chiTieu.id] || []).forEach(them);
+      else if (chiTieu.loai === "hoan_thanh_tat_ca") HOAN_THANH_TRUONG_TONG.forEach(k => (d.hoanThanh?.[k] || []).forEach(them));
+      else if (chiTieu.loai === "khoi_to_moi" && gd === "dieu_tra")
+        (d.khoiToTrucTiep || []).filter(v => v.nguon === "an_khoi_to_moi" || v.nguon === "tin_bao_khoi_to_len").forEach(them);
+    }
+    theoKy.push({ ky: ky.tenKy, vu: dsKy.size, biCan: [...dsKy.values()].reduce((s, x) => s + x.soBiCan, 0) });
+    dsKy.forEach((row, id) => { if (!gop.has(id)) gop.set(id, row); });
+  }
+  const rows = [...gop.values()];
+  return {
+    chiTieu: chiTieu.nhan, dsKy: dsKyChon.map(k => k.tenKy), theoKy, rows,
+    soVu: rows.length, soBiCan: rows.reduce((s, r) => s + r.soBiCan, 0),
+    anDiem: rows.filter(r => r.anDiem).length,
+    rkn: rows.filter(r => r.rkn).length,
+    dangVienBiCan: rows.reduce((s, r) => s + r.dangVien, 0),
+    dangVienVu: rows.filter(r => r.dangVien > 0).length,
+  };
+}
+
+async function chatbotXuatExcel(kq) {
+  const wb = new ExcelJS.Workbook();
+  const ws1 = wb.addWorksheet("Tổng hợp");
+  ws1.addRows([
+    ["Chỉ tiêu", kq.chiTieu], ["Các kỳ", kq.dsKy.join(", ")], [],
+    ["Số vụ", kq.soVu], ["Số bị can", kq.soBiCan], ["Số vụ án điểm", kq.anDiem],
+    ["Số vụ phiên toà rút kinh nghiệm", kq.rkn],
+    ["Số bị can là đảng viên", kq.dangVienBiCan], ["Số vụ có bị can là đảng viên", kq.dangVienVu], [],
+    ["Kỳ", "Số vụ", "Số bị can"], ...kq.theoKy.map(t => [t.ky, t.vu, t.biCan]),
+  ]);
+  ws1.getColumn(1).width = 34; ws1.getColumn(2).width = 40;
+  const ws2 = wb.addWorksheet("Danh sách vụ");
+  ws2.addRow(["STT", "Kỳ", "Mã vụ", "Tên vụ", "KSV", "Điều luật", "Số bị can", "Án điểm", "Phiên toà RKN", "Số đảng viên", "Ngày"]);
+  kq.rows.forEach((r, i) => ws2.addRow([i + 1, r.ky, r.ma, r.tenVu, r.ksv, r.dieuLuat, r.soBiCan,
+    r.anDiem ? "Có" : "", r.rkn ? "Có" : "", r.dangVien || "", r.ngay ? fmtDate(r.ngay) : ""]));
+  ws2.getRow(1).font = { bold: true };
+  [6, 12, 26, 44, 20, 30, 10, 9, 14, 12, 12].forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
+  const buffer = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = `QLVA_ThongKe_${chatbotBoDau(kq.chiTieu).replace(/[^a-z0-9]+/g, "_")}_${toInputDateNhanh(new Date())}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+function ChatbotThongKeModule() {
+  const dsKyAll = useCollectionCache("kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc"));
+  const dsKy = useMemo(() => dsKyAll.filter(k => k.loai !== "luu_tru"), [dsKyAll]);
+  const [tin, setTin] = useState([{ vai: "bot", text: "Xin chào! Bạn muốn xem số liệu gì? Ví dụ: \"số vụ án TĐC\", \"đình chỉ\", \"đã xét xử\", \"chuyển đi\", \"án huỷ\", \"khởi tố mới\" — mình sẽ hỏi bạn chọn kỳ nào.", chips: true }]);
+  const [cho, setCho] = useState(null);       // chỉ tiêu đang chờ chọn kỳ
+  const [tich, setTich] = useState(new Set()); // id kỳ đang tích
+  const [nhap, setNhap] = useState("");
+  const [dangTinh, setDangTinh] = useState(false);
+  const cuoiRef = useRef(null);
+  useEffect(() => { cuoiRef.current?.scrollIntoView({ behavior: "smooth" }); }, [tin, cho, dangTinh]);
+
+  const bot = (m) => setTin(t => [...t, { vai: "bot", ...m }]);
+  const user = (text) => setTin(t => [...t, { vai: "user", text }]);
+
+  const tinhVaTraLoi = async (chiTieu, dsChon) => {
+    if (!dsChon.length) { bot({ text: "Bạn chưa chọn kỳ nào. Chọn ít nhất 1 kỳ nhé." }); return; }
+    setCho(null); setDangTinh(true);
+    try {
+      const kq = await chatbotTinh(chiTieu, dsChon, dsKy);
+      bot({ kq });
+    } catch (e) {
+      bot({ text: "Không tính được: " + (e.message || e) });
+    } finally { setDangTinh(false); }
+  };
+
+  const gui = async (textRaw) => {
+    const text = (textRaw ?? nhap).trim();
+    if (!text || dangTinh) return;
+    setNhap(""); user(text);
+    if (cho) { // đang chờ trả lời về kỳ
+      const ct2 = chatbotNhanDienChiTieu(text);
+      const chon = chatbotDocKy(text, dsKy);
+      if (ct2 && !chon.length) { setCho(ct2); setTich(new Set()); bot({ text: `Được, chuyển sang "${ct2.nhan}". Bạn muốn các kỳ nào?` }); return; }
+      if (!chon.length) { bot({ text: "Mình chưa hiểu kỳ bạn muốn. Hãy tích chọn bên dưới, hoặc gõ như: \"3 kỳ gần nhất\", \"tháng 7, 8\", \"năm 2026\", \"tất cả\"." }); return; }
+      await tinhVaTraLoi(cho, chon); return;
+    }
+    const ct = chatbotNhanDienChiTieu(text);
+    if (!ct) { bot({ text: "Mình chưa hiểu chỉ tiêu bạn muốn. Thử một trong các lựa chọn này:", chips: true }); return; }
+    const chon = chatbotDocKy(text, dsKy); // người dùng đã nói luôn kỳ trong câu hỏi
+    if (chon.length) { await tinhVaTraLoi(ct, chon); return; }
+    setCho(ct); setTich(new Set());
+    bot({ text: `"${ct.nhan}" — bạn muốn xem các kỳ nào? Tích chọn bên dưới hoặc gõ (VD: "3 kỳ gần nhất", "tháng 7, 8", "năm 2026", "tất cả").` });
+  };
+
+  const Chips = () => (
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      {CHATBOT_CHI_TIEU.map(c => (
+        <button key={c.id} onClick={() => gui(c.nhan)} disabled={dangTinh}
+                className="text-xs px-2.5 py-1 rounded-full border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50">{c.nhan}</button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="h-full flex flex-col max-w-3xl mx-auto min-h-0">
+      <h2 className="text-lg font-semibold mb-2">Chatbot thống kê <span className="text-xs font-normal text-slate-400 align-middle">(thử nghiệm)</span></h2>
+      <div className="flex-1 min-h-[300px] overflow-auto bg-white border border-slate-200 rounded-lg p-3 space-y-3">
+        {tin.map((m, i) => m.vai === "user" ? (
+          <div key={i} className="flex justify-end"><div className="bg-indigo-600 text-white text-sm rounded-2xl px-3 py-2 max-w-[80%]">{m.text}</div></div>
+        ) : (
+          <div key={i} className="flex"><div className="bg-slate-100 text-sm rounded-2xl px-3 py-2 max-w-[92%]">
+            {m.text && <div>{m.text}</div>}
+            {m.chips && <Chips />}
+            {m.kq && (
+              <div className="space-y-2">
+                <div className="font-semibold">{m.kq.chiTieu} — {m.kq.dsKy.join(", ")}</div>
+                <table className="text-sm"><tbody>
+                  {[["Số vụ", m.kq.soVu], ["Số bị can", m.kq.soBiCan], ["Số vụ án điểm", m.kq.anDiem],
+                    ["Số vụ phiên toà rút kinh nghiệm", m.kq.rkn],
+                    ["Số bị can là đảng viên", `${m.kq.dangVienBiCan} (thuộc ${m.kq.dangVienVu} vụ)`]].map(([a, b]) => (
+                    <tr key={a}><td className="pr-4 py-0.5 text-slate-600">{a}</td><td className="font-semibold">{b}</td></tr>
+                  ))}
+                </tbody></table>
+                {m.kq.theoKy.length > 1 && (
+                  <div className="text-xs text-slate-500">Theo kỳ: {m.kq.theoKy.map(t => `${t.ky}: ${t.vu} vụ/${t.biCan} BC`).join(" · ")}</div>
+                )}
+                <button onClick={() => chatbotXuatExcel(m.kq)} className="text-xs px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700">⬇ Tải file Excel danh sách vụ</button>
+                <div className="text-[11px] text-slate-400">Số đảng viên đếm theo hồ sơ bị can hiện tại. Số vụ/bị can tính theo log của kỳ (giống Kỳ báo cáo).</div>
+              </div>
+            )}
+          </div></div>
+        ))}
+        {dangTinh && <div className="text-xs text-slate-500 flex items-center gap-2"><Spinner cls="w-4 h-4 text-indigo-400" /> Đang tính số liệu, vài giây...</div>}
+        <div ref={cuoiRef} />
+      </div>
+      {cho && !dangTinh && (
+        <div className="mt-2 border border-indigo-200 bg-indigo-50/50 rounded-lg p-2">
+          <div className="flex flex-wrap gap-1.5 mb-2 text-xs">
+            <button className="px-2 py-1 rounded border bg-white" onClick={() => setTich(new Set(dsKy.slice(0, 1).map(k => k.id)))}>Kỳ mới nhất</button>
+            <button className="px-2 py-1 rounded border bg-white" onClick={() => setTich(new Set(dsKy.slice(0, 3).map(k => k.id)))}>3 kỳ gần nhất</button>
+            <button className="px-2 py-1 rounded border bg-white" onClick={() => setTich(new Set(dsKy.map(k => k.id)))}>Tất cả kỳ</button>
+            <button className="px-2 py-1 rounded border bg-white" onClick={() => setTich(new Set())}>Bỏ chọn</button>
+          </div>
+          <div className="max-h-32 overflow-auto flex flex-wrap gap-x-4 gap-y-1">
+            {dsKy.map(k => (
+              <label key={k.id} className="text-sm flex items-center gap-1.5">
+                <input type="checkbox" checked={tich.has(k.id)}
+                       onChange={e => setTich(s => { const n = new Set(s); e.target.checked ? n.add(k.id) : n.delete(k.id); return n; })} />
+                {k.tenKy}
+              </label>
+            ))}
+          </div>
+          <button onClick={() => { const ds = dsKy.filter(k => tich.has(k.id)); user("Các kỳ: " + (ds.map(k => k.tenKy).join(", ") || "(chưa chọn)")); tinhVaTraLoi(cho, ds); }}
+                  className="mt-2 text-sm px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700">Xem số liệu ({tich.size} kỳ)</button>
+        </div>
+      )}
+      <form className="mt-2 flex gap-2" onSubmit={e => { e.preventDefault(); gui(); }}>
+        <input value={nhap} onChange={e => setNhap(e.target.value)} disabled={dangTinh}
+               placeholder={cho ? "Gõ kỳ muốn xem, hoặc tích chọn ở trên..." : "Hỏi số liệu, ví dụ: số vụ án TĐC"}
+               className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+        <button className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm disabled:opacity-50" disabled={dangTinh || !nhap.trim()}>Gửi</button>
+      </form>
+    </div>
+  );
+}
+
+// ====================================================================
 // KHUNG CHÍNH (SIDEBAR + NỘI DUNG)
 // ====================================================================
 const MODULES = [
@@ -22140,6 +22369,7 @@ const MODULES = [
   { id: "nopluukho",   label: "Nộp lưu kho"        },
   { id: "ky",          label: "Kỳ báo cáo"        },
   { id: "dashboard",   label: "Dashboard"          },
+  { id: "chatbot",     label: "Chatbot thống kê"   },
 ];
 
 // ====================================================================
@@ -23226,6 +23456,7 @@ function AppShell({ user }) {
           {tab === "nopluukho"   && <NopLuuKhoModule />}
           {tab === "ky"          && <KyBaoCaoModule />}
           {tab === "dashboard"   && <DashboardModule />}
+          {tab === "chatbot"     && <ChatbotThongKeModule />}
           {tab === "setting"     && <CaiDatModule />}
         </main>
       </div>
