@@ -17520,6 +17520,8 @@ function GiaoNhanHoSoModule({ currentUser }) {
         <form onSubmit={xuLyQuet} className="mb-2">
           {loiQuet && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-2">{loiQuet}</div>}
           <input ref={inputRef} value={maQuet} onChange={e => setMaQuet(e.target.value)}
+                 lang="en" autoComplete="off" spellCheck={false}
+                 onKeyDown={e => { if (e.key !== "Enter") xuLyPhimQuet(e, setMaQuet); }}
                  autoFocus placeholder="Quét mã QR vụ án vào đây..."
                  className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 text-base focus:border-indigo-500 focus:outline-none" />
         </form>
@@ -18846,6 +18848,50 @@ function ManXemTruocSuaDoi({ dot, dsHoSoCu, dsXemTruoc, onQuayLai, onXongSua }) 
 }
 
 // ── Sổ lưu trữ (đã chốt = chỉ đọc + quét/in; đang mở khoá = sửa được: xoá/chèn/tính lại) ────────
+// Ô sửa nhanh Số bút lục / Số tập ngay trong bảng sổ lưu trữ — lưu khi rời ô (blur) hoặc Enter.
+function OSuaNhanhNopLuuKho({ h, truong }) {
+  const [gt, setGt] = useState(h[truong] || "");
+  const [dangLuu, setDangLuu] = useState(false);
+  useEffect(() => { setGt(h[truong] || ""); }, [h[truong]]);
+  const luu = async () => {
+    const moi = gt.trim();
+    if (moi === (h[truong] || "")) return;
+    setDangLuu(true);
+    try {
+      await db.collection("hoSoNopLuuKho").doc(h.id).update({ [truong]: moi });
+    } catch (err) { console.error(err); alert("Lỗi khi lưu: " + err.message); setGt(h[truong] || ""); }
+    finally { setDangLuu(false); }
+  };
+  return (
+    <input value={gt} onChange={e => setGt(e.target.value)} onBlur={luu}
+           onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }}
+           placeholder="—" disabled={dangLuu}
+           className="w-20 border border-transparent hover:border-slate-300 focus:border-indigo-400 rounded px-1.5 py-1 text-sm bg-transparent focus:bg-white" />
+  );
+}
+
+// Đầu đọc QR kiểu bàn phím: nếu bộ gõ tiếng Việt (Telex/Unikey) đang bật, ký tự bị biến đổi/mất
+// (VD "QLVA_E01.53_1711_0001" → "QQQQLVAE0153"). Bắt phím theo MÃ PHÍM VẬT LÝ (e.code) khi bộ gõ
+// can thiệp (key === "Process"), tự ghép lại đúng ký tự, bỏ qua bộ gõ.
+function xuLyPhimQuet(e, datGiaTri) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key !== "Process" && !e.nativeEvent?.isComposing) return;
+  const c = e.code || "";
+  const shift = e.shiftKey !== e.getModifierState?.("CapsLock");
+  let ch = null;
+  if (/^Key[A-Z]$/.test(c)) ch = shift ? c.slice(3) : c.slice(3).toLowerCase();
+  else if (/^Digit[0-9]$/.test(c)) ch = e.shiftKey ? null : c.slice(5);
+  else if (c === "Minus") ch = e.shiftKey ? "_" : "-";
+  else if (c === "Period") ch = ".";
+  if (ch === null) return;
+  e.preventDefault();
+  const el = e.target;
+  const v = el.value || "";
+  const s = el.selectionStart ?? v.length, en = el.selectionEnd ?? v.length;
+  datGiaTri(v.slice(0, s) + ch + v.slice(en));
+}
+const chuanHoaMaQuet = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
 function ManSoLuuTru({ dot, dsHoSo }) {
   const [dangThaoTac, setDangThaoTac] = useState(false);
   const [chenSauId, setChenSauId] = useState(null);
@@ -18982,7 +19028,9 @@ function ManSoLuuTru({ dot, dsHoSo }) {
       await xacNhanDaLenKho(ketQuaQuet);
     }
 
-    const found = dsHoSo.find(h => h.maVuAn === maTrim);
+    const maChuan = chuanHoaMaQuet(maTrim);
+    const found = dsHoSo.find(h => h.maVuAn === maTrim)
+      || (maChuan ? dsHoSo.find(h => chuanHoaMaQuet(h.maVuAn) === maChuan) : null);
     if (!found) { setKetQuaQuet({ khongTim: true, ma: maTrim }); return; }
     if (found.thoiDiemQuetXacNhan) {
       addToast(`⚠ "${found.tenVu}" (Số ${found.nhanSo}) đã được xác nhận lên Kho từ trước (lúc ${fmtNgayGio(found.thoiDiemQuetXacNhan)}) — quét trùng.`, "warn");
@@ -19053,8 +19101,8 @@ function ManSoLuuTru({ dot, dsHoSo }) {
 
       <div className="bg-white border border-slate-200 rounded-xl p-3 mb-4">
         <div className="text-sm font-medium text-slate-700 mb-2">Quét QR tra cứu / xác nhận lên Kho</div>
-        <input value={dsQuetTemp} onChange={e => setDsQuetTemp(e.target.value)}
-               onKeyDown={e => { if (e.key === "Enter" && dsQuetTemp.trim()) quetTraCuu(dsQuetTemp); }}
+        <input value={dsQuetTemp} onChange={e => setDsQuetTemp(e.target.value)} lang="en" autoComplete="off" spellCheck={false}
+               onKeyDown={e => { if (e.key === "Enter" && dsQuetTemp.trim()) quetTraCuu(dsQuetTemp); else xuLyPhimQuet(e, setDsQuetTemp); }}
                placeholder="Quét mã QR vụ án vào đây..." autoFocus
                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
         {ketQuaQuet && (
@@ -19119,8 +19167,8 @@ function ManSoLuuTru({ dot, dsHoSo }) {
                   <td className="p-2 whitespace-nowrap">{h.soQuyetDinhGiaiQuyet || "—"}</td>
                   <td className="p-2 whitespace-nowrap">{fmtDate(h.ngayGiaiQuyet)}</td>
                   <td className="p-2">{h.thoiHanBaoQuan ? <span className="text-red-600 font-bold">{h.thoiHanBaoQuan}</span> : "—"}</td>
-                  <td className="p-2 whitespace-nowrap">{h.soButLuc || "—"}</td>
-                  <td className="p-2 whitespace-nowrap">{h.soTapHoSo || "—"}</td>
+                  <td className="p-1"><OSuaNhanhNopLuuKho h={h} truong="soButLuc" /></td>
+                  <td className="p-1"><OSuaNhanhNopLuuKho h={h} truong="soTapHoSo" /></td>
                   <td className="p-2">{h.thoiDiemQuetXacNhan ? <span className="text-emerald-600 text-xs">✓ {fmtDate(h.thoiDiemQuetXacNhan)}</span> : <span className="text-slate-300 text-xs">—</span>}</td>
                   {!daChot && (
                     <td className="p-2 whitespace-nowrap">
