@@ -8902,6 +8902,227 @@ function toInputDateNhanh(d) {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Xuất Excel danh sách vụ án THEO KỲ (2026-10-09, theo yêu cầu Dũng): 3 sheet Điều tra / Truy tố /
+// Xét xử, cho chọn 1 hoặc nhiều kỳ (cách chọn học từ PhanCongBaoCaoChiTietModal). Mỗi sheet liệt kê
+// các vụ CÓ phát sinh ở giai đoạn đó trong các kỳ đã chọn (mới vào / đã giải quyết-rời đi) cộng với
+// vụ còn tồn cuối kỳ muộn nhất — lấy từ CHÍNH tinhBaoCaoKy (log + RPC) nên khớp số "Kỳ báo cáo".
+// Vụ nhiều bị can: 1 dòng vụ (bị can đầu) hiện sẵn, các bị can còn lại gom Excel Outline + ẩn
+// (bấm [+] để mở) — cùng cách addSheetVu(gomBiCanPhu) của Excel báo cáo tháng.
+async function xuatExcelDanhSachTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
+  const kyMuonNhat = dsKyDaChonDesc[0];
+  const baoCaoTungKy = await Promise.all(
+    dsKyDaChonDesc.map(ky => tinhBaoCaoKy(ky, timKyTruoc(ky, listBaoCaoDesc)))
+  );
+  const rpcCuoiKy = await layTonTheoKyRPC(kyMuonNhat.id);
+  if (!rpcCuoiKy) throw new Error("Không tính được tồn cuối kỳ (RPC không phản hồi — cần kết nối mạng ổn định).");
+  const tenKyTheoId = Object.fromEntries(listBaoCaoDesc.map(k => [k.id, k.tenKy]));
+
+  const NHAN_VAO = {
+    khoiToTrucTiep: "Khởi tố mới", tachVu: "Tách vụ", chuyenDen: "Chuyển đến", traVe: "Trả hồ sơ về",
+    phucHoi: "Phục hồi", nhanLai: "Nhận lại", huyDieuTraLai: "Huỷ án - điều tra lại",
+  };
+  const NHAN_RA = { chuyenDi: "Chuyển giai đoạn sau", traDi: "Trả hồ sơ đi", nhapVu: "Nhập vào vụ khác" };
+
+  // gd -> Map(vuId -> { vu, nhan:Set, ky:Set })
+  const theoGd = {};
+  const themVu = (gd, v, nhan) => {
+    const id = v.id || v.maVuAn;
+    if (!id) return;
+    const m = theoGd[gd];
+    if (!m.has(id)) m.set(id, { vu: v, nhan: new Set(), ky: new Set() });
+    const e = m.get(id);
+    e.nhan.add(nhan);
+    const kyId = v._log?.kyThongKe;
+    if (kyId && tenKyTheoId[kyId]) e.ky.add(tenKyTheoId[kyId]);
+  };
+  for (const gd of THU_TU_GIAI_DOAN) {
+    theoGd[gd] = new Map();
+    for (const b of baoCaoTungKy) {
+      const d = b[gd].ds;
+      for (const k of Object.keys(NHAN_VAO)) (d[k] || []).forEach(v => themVu(gd, v, NHAN_VAO[k]));
+      for (const k of Object.keys(NHAN_RA)) (d[k] || []).forEach(v => themVu(gd, v, NHAN_RA[k]));
+      for (const k of HOAN_THANH_TRUONG_TONG) {
+        (d.hoanThanh?.[k] || []).forEach(v => themVu(gd, v, "Giải quyết: " + (NHAN_TRANG_THAI[k] || k)));
+      }
+    }
+    const { list } = await tinhDsTonTheoKy(gd, kyMuonNhat, rpcCuoiKy);
+    list.forEach(v => themVu(gd, v, "Tồn cuối kỳ"));
+  }
+
+  const tatCaIds = [...new Set(THU_TU_GIAI_DOAN.flatMap(gd => [...theoGd[gd].keys()]))];
+  const biCanByVu = await batchLayBiCanList(tatCaIds);
+
+  const HEADER = [
+    "Mã vụ", "Tên vụ", "Giai đoạn hiện tại", "Trạng thái hiện tại", "KSV chính", "KSV hỗ trợ", "ĐTV/CBĐT",
+    "Điều luật", "Số QĐ KTVA", "Ngày QĐ KTVA", "Hạn điều tra", "Phát sinh trong kỳ", "Kỳ",
+    "Số BC", "STT BC", "Họ tên BC", "Năm sinh", "Giới tính", "Địa chỉ", "Tội danh BC",
+    "Biện pháp", "Hạn tạm giam", "Ngày KT BC",
+  ];
+  const WIDTHS = [22, 34, 12, 14, 18, 18, 18, 24, 12, 12, 12, 30, 14, 7, 7, 22, 9, 8, 30, 30, 11, 12, 12];
+  const MAU_GD = { dieu_tra: "FFDBEAFE", truy_to: "FFEDE9FE", xet_xu: "FFD1FAE5" };
+  const TEN_SHEET = { dieu_tra: "Điều tra", truy_to: "Truy tố", xet_xu: "Xét xử" };
+  const VIEN = { style: "thin", color: { argb: "FFCBD5E1" } };
+  const oVien = { top: VIEN, left: VIEN, bottom: VIEN, right: VIEN };
+
+  const wb = new ExcelJS.Workbook();
+  const tenGop = dsKyDaChonDesc.length === 1
+    ? kyMuonNhat.tenKy
+    : `${dsKyDaChonDesc[dsKyDaChonDesc.length - 1].tenKy} → ${kyMuonNhat.tenKy}`;
+
+  for (const gd of THU_TU_GIAI_DOAN) {
+    const ws = wb.addWorksheet(TEN_SHEET[gd]);
+    ws.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
+    ws.properties.tabColor = { argb: MAU_GD[gd].replace("FF", "FF") };
+    const tieuDe = ws.addRow([`DANH SÁCH VỤ ÁN — ${TEN_SHEET[gd].toUpperCase()} — ${tenGop} — xuất ngày ${fmtDate(new Date())}`]);
+    tieuDe.font = { bold: true, size: 13 };
+    ws.mergeCells(tieuDe.number, 1, tieuDe.number, HEADER.length);
+    const hdr = ws.addRow(HEADER);
+    hdr.font = { bold: true };
+    hdr.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    hdr.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: MAU_GD[gd] } }; c.border = oVien; });
+    WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    ws.views = [{ state: "frozen", ySplit: 2, xSplit: 2 }];
+
+    const dsVu = [...theoGd[gd].values()].sort((a, b) =>
+      String(hienThiMa(a.vu)).localeCompare(String(hienThiMa(b.vu))));
+    let zebra = false;
+    for (const { vu, nhan, ky } of dsVu) {
+      zebra = !zebra;
+      const id = vu.id || vu.maVuAn;
+      const bcArr = biCanByVu[id] || [];
+      const vuPart = [
+        hienThiMa(vu), vu.tenVu || "", NHAN_GIAI_DOAN[vu.coQuanThuLy] || vu.coQuanThuLy || "",
+        NHAN_TRANG_THAI[vu.trangThai] || vu.trangThai || "", vu.ksvChinh || "",
+        (vu.ksvHoTro || []).join(", "), vu.dtvCbdt || "", vu.dieuLuat || "",
+        vu.soQdKtva || "", fmtDate(vu.ngayQdKtva), fmtDate(vu.hanDieuTra),
+        [...nhan].join("; "), [...ky].join("; "), bcArr.length,
+      ];
+      const bcCells = (bc, i) => [
+        i + 1, bc.hoTen || "", bc.namSinh || "", bc.gioiTinh === "nu" ? "Nữ" : "Nam", bc.diaChi || "",
+        (bc.toiDanh || []).filter(Boolean).join("; "),
+        NHAN_BIEN_PHAP_NGAN_CHAN[bc.bienPhapNganChan] || NHAN_BIEN_PHAP_NGAN_CHAN.tai_ngoai,
+        fmtDate(bc.hanTamGiam), fmtDate(bc.ngayKhoiTo),
+      ];
+      const dong = bcArr.length ? bcArr.map(bcCells) : [["", "(Chưa có BC)", "", "", "", "", "", "", ""]];
+      dong.forEach((bcPart, i) => {
+        const r = ws.addRow([...vuPart, ...bcPart]);
+        r.alignment = { vertical: "top", wrapText: true };
+        r.eachCell({ includeEmpty: true }, c => {
+          c.border = oVien;
+          if (zebra) c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+        });
+        if (i > 0) { r.outlineLevel = 1; r.hidden = true; r.font = { color: { argb: "FF64748B" } }; }
+        else if (dong.length > 1) r.font = { bold: false };
+      });
+    }
+    ws.addRow([]);
+    const tong = ws.addRow([`Tổng: ${dsVu.length} vụ`]);
+    tong.font = { bold: true };
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `DanhSachVuAn_${toInputDateNhanh(new Date())}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function XuatExcelTheoKyModal({ onDong }) {
+  const listBaoCao = useCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  const dangTaiKy = !useCacheLoaded(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  const [kyChon, setKyChon] = useState(new Set());
+  const [dangXuat, setDangXuat] = useState(false);
+  const [loi, setLoi] = useState("");
+  const toggleKy = (id) => setKyChon(s => { const m = new Set(s); m.has(id) ? m.delete(id) : m.add(id); return m; });
+  // "Từ đây →": chọn kỳ này và mọi kỳ MỚI HƠN (mảng desc, index 0 = mới nhất), bỏ kỳ lưu trữ.
+  const chonTuKyNay = (idx) =>
+    setKyChon(new Set(listBaoCao.slice(0, idx + 1).filter(k => k.loai !== "luu_tru").map(k => k.id)));
+
+  const xuat = async () => {
+    const daChon = listBaoCao.filter(k => kyChon.has(k.id)); // giữ thứ tự desc của cache
+    if (!daChon.length) return;
+    setDangXuat(true); setLoi("");
+    try {
+      await xuatExcelDanhSachTheoKy(daChon, listBaoCao);
+      onDong();
+    } catch (err) {
+      console.error(err);
+      setLoi("Lỗi khi xuất Excel: " + err.message);
+    } finally {
+      setDangXuat(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-40 overflow-auto py-8">
+      <div className="bg-white rounded-xl shadow-lg w-[640px] max-w-[97vw] p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-semibold">Xuất Excel danh sách vụ án theo kỳ</h3>
+          <button onClick={onDong} className="text-red-400 hover:text-red-600 text-sm">Đóng ✕</button>
+        </div>
+        <div className="text-sm text-slate-500 mb-3">
+          Chọn 1 hoặc nhiều kỳ báo cáo. File gồm 3 sheet <b>Điều tra / Truy tố / Xét xử</b>, mỗi sheet liệt kê
+          vụ có phát sinh (mới vào, đã giải quyết/rời đi) trong các kỳ đã chọn và vụ còn tồn cuối kỳ muộn nhất.
+          Vụ nhiều bị can hiện 1 dòng, các bị can còn lại được gom nhóm và ẩn — bấm [+] bên trái để mở.
+        </div>
+        {dangTaiKy && <div className="text-sm text-slate-400">Đang tải danh sách kỳ...</div>}
+        {!dangTaiKy && (
+          <>
+            <div className="flex items-center gap-3 mb-2">
+              <button onClick={() => setKyChon(new Set(listBaoCao.map(k => k.id)))} className="text-xs text-indigo-600 font-medium">Chọn tất cả</button>
+              <button onClick={() => setKyChon(new Set())} className="text-xs text-slate-500 font-medium">Bỏ chọn tất cả</button>
+              <span className="text-xs text-slate-400">Đã chọn {kyChon.size} kỳ</span>
+            </div>
+            <div className="border border-slate-200 rounded-lg max-h-72 overflow-auto mb-4">
+              <table className="w-full text-sm">
+                <tbody>
+                  {listBaoCao.map((ky, i) => (
+                    <tr key={ky.id} onClick={() => toggleKy(ky.id)}
+                        className={`cursor-pointer border-b border-slate-100 last:border-0 hover:bg-indigo-50/50 ${i % 2 === 1 ? "bg-slate-50/60" : ""}`}>
+                      <td className="p-2 w-8" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={kyChon.has(ky.id)} onChange={() => toggleKy(ky.id)} />
+                      </td>
+                      <td className="p-2 font-medium">
+                        {ky.tenKy}{ky.loai === "luu_tru" && <span className="text-slate-400 font-normal"> [Lưu trữ]</span>}
+                      </td>
+                      <td className="p-2 text-slate-400">{fmtDate(ky.ngayBatDau) || "—"}</td>
+                      <td className="p-2">
+                        <span className={`text-xs px-2 py-0.5 rounded ${ky.trangThai === "dang_mo" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}>
+                          {ky.trangThai === "dang_mo" ? "Đang mở" : "Đã chốt"}
+                        </span>
+                      </td>
+                      <td className="p-2 text-right" onClick={e => e.stopPropagation()}>
+                        {ky.loai !== "luu_tru" && (
+                          <button onClick={() => chonTuKyNay(i)} title="Chọn kỳ này và mọi kỳ mới hơn"
+                                  className="text-xs text-indigo-500 hover:underline">Từ đây →</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {listBaoCao.length === 0 && (
+                    <tr><td colSpan={5} className="p-4 text-center text-slate-400">Chưa có kỳ báo cáo nào.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-3">{loi}</div>}
+            <button onClick={xuat} disabled={kyChon.size === 0 || dangXuat}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
+              {dangXuat ? "Đang tính & xuất (có thể mất vài giây)..." : `⬇ Xuất Excel (${kyChon.size} kỳ)`}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Đếm nhanh số vụ mới khởi tố / đã giải quyết trong kỳ báo cáo đang mở — dùng đúng nguồn sự thật
 // là lichsuChuyenGiaiDoan (loaiSuKien khoi_to_vu / hoan_thanh) theo kyThongKe, không suy ra từ
 // trạng thái hiện tại. Chỉ đếm tổng toàn hệ thống (không tách theo giai đoạn) để hiển thị gọn
@@ -8980,6 +9201,7 @@ function DanhSachVuAnModule({ currentUser }) {
   const [showForm, setShowForm] = useState(false);
   const [dangXuat, setDangXuat] = useState(false);
   const [loiXuat, setLoiXuat] = useState("");
+  const [hienXuatTheoKy, setHienXuatTheoKy] = useState(false);
 
   useEffect(() => {
     try {
@@ -8994,10 +9216,15 @@ function DanhSachVuAnModule({ currentUser }) {
         <h2 className="text-lg font-semibold">Danh sách vụ án</h2>
         <div className="flex gap-2 items-center flex-wrap">
           {loiXuat && <span className="text-xs text-red-600">{loiXuat}</span>}
+          <button onClick={() => setHienXuatTheoKy(true)}
+                  title="Chọn các kỳ báo cáo rồi xuất Excel 3 sheet Điều tra / Truy tố / Xét xử, vụ nhiều bị can gom nhóm ẩn."
+                  className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium">
+            Xuất Excel
+          </button>
           <button onClick={() => xuatExcel(setDangXuat, setLoiXuat)} disabled={dangXuat}
-                  title="Xuất toàn bộ dữ liệu hiện tại ra 1 bản DSAT/DSBCT dễ đọc (đã kiểm tra lại mapping cột 2026-07-11, khớp với dữ liệu hệ thống). Đây là bản xem/lưu trữ, KHÔNG dùng để nhập ngược lại qua Import Excel — cột đã gộp/đổi khác cấu trúc file gốc."
-                  className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
-            {dangXuat ? "Đang xuất..." : "Xuất Excel"}
+                  title="Xuất toàn bộ dữ liệu hiện tại ra 1 bản DSAT/DSBCT dễ đọc (bản cũ, không chia theo kỳ). Đây là bản xem/lưu trữ, KHÔNG dùng để nhập ngược lại qua Import Excel."
+                  className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 rounded-lg px-3 py-2 text-xs disabled:opacity-50">
+            {dangXuat ? "Đang xuất..." : "Xuất toàn bộ (bản cũ)"}
           </button>
           <button onClick={() => setShowForm(true)}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">
@@ -9006,6 +9233,7 @@ function DanhSachVuAnModule({ currentUser }) {
         </div>
       </div>
       <ThongKeKyHienTai />
+      {hienXuatTheoKy && <XuatExcelTheoKyModal onDong={() => setHienXuatTheoKy(false)} />}
       <div className="flex-1 flex gap-4 min-h-[280px]">
         <DanhSachPanel selectedId={selectedId} onSelect={setSelectedId} />
         <ChiTietPanel vuAnId={selectedId} onDoiSelected={setSelectedId} onDong={() => setSelectedId(null)} />
