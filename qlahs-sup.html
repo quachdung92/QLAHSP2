@@ -8910,9 +8910,10 @@ function toInputDateNhanh(d) {
 // (bấm [+] để mở) — cùng cách addSheetVu(gomBiCanPhu) của Excel báo cáo tháng.
 async function xuatExcelDanhSachTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
   const kyMuonNhat = dsKyDaChonDesc[0];
-  const baoCaoTungKy = await Promise.all(
-    dsKyDaChonDesc.map(ky => tinhBaoCaoKy(ky, timKyTruoc(ky, listBaoCaoDesc)))
-  );
+  // Tính TUẦN TỰ từng kỳ (không Promise.all) — mỗi kỳ bắn hàng chục truy vấn, chọn nhiều kỳ cùng lúc
+  // làm trình duyệt quá tải kết nối → "TypeError: Failed to fetch".
+  const baoCaoTungKy = [];
+  for (const ky of dsKyDaChonDesc) baoCaoTungKy.push(await tinhBaoCaoKy(ky, timKyTruoc(ky, listBaoCaoDesc)));
   const rpcCuoiKy = await layTonTheoKyRPC(kyMuonNhat.id);
   if (!rpcCuoiKy) throw new Error("Không tính được tồn cuối kỳ (RPC không phản hồi — cần kết nối mạng ổn định).");
   const tenKyTheoId = Object.fromEntries(listBaoCaoDesc.map(k => [k.id, k.tenKy]));
@@ -8950,7 +8951,11 @@ async function xuatExcelDanhSachTheoKy(dsKyDaChonDesc, listBaoCaoDesc) {
   }
 
   const tatCaIds = [...new Set(THU_TU_GIAI_DOAN.flatMap(gd => [...theoGd[gd].keys()]))];
-  const biCanByVu = await batchLayBiCanList(tatCaIds);
+  // Lấy bị can theo lô 300 vụ, TUẦN TỰ (tránh bắn hàng chục request song song).
+  const biCanByVu = {};
+  for (let i = 0; i < tatCaIds.length; i += 300) {
+    Object.assign(biCanByVu, await batchLayBiCanList(tatCaIds.slice(i, i + 300)));
+  }
 
   const HEADER = [
     "Mã vụ", "Tên vụ", "Giai đoạn hiện tại", "Trạng thái hiện tại", "KSV chính", "KSV hỗ trợ", "ĐTV/CBĐT",
