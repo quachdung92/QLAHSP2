@@ -127,7 +127,7 @@ create table "vuan" (
   "maNganhCap"              text,
   "tenVu"                   text,
   "nguon"                   text not null default 'an_khoi_to_moi'
-                              check ("nguon" in ('an_khoi_to_moi','tin_bao_khoi_to_len','an_noi_khac_chuyen_den','phuc_hoi_dieu_tra')),
+                              check ("nguon" in ('an_khoi_to_moi','tin_bao_khoi_to_len','an_noi_khac_chuyen_den','phuc_hoi_dieu_tra','tach_vu_an')),
   "nguonChiTiet"            text not null default '',
   "hanDieuTra"              timestamptz,
   "soQdKtva"                text,
