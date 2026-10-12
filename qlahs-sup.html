@@ -18041,7 +18041,7 @@ async function layThongTinNopLuuTruMotVu(maVuAn) {
     const phien = await db.collection("phienGiaoNhan").doc(phienId).get();
     if (phien.exists && phien.data().laLuuTru) {
       daNop = true;
-      const ms = data.thoiDiemGhi?.toMillis?.() || 0;
+      const ms = new Date(data.thoiDiemGhi?.toDate?.() || data.thoiDiemGhi || 0).getTime() || 0;
       if (ms > msMoi) { msMoi = ms; soButLuc = data.soButLuc || ""; soTapHoSo = data.soTapHoSo || ""; }
     }
   }
@@ -19225,13 +19225,32 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
   const lamMoiThoiHan = async () => {
     const docs = await chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), dsHoSo.map(h => h.maVuAn));
     const vm = {}; docs.forEach(d => { vm[d.id] = { id: d.id, ...d.data() }; });
+    // Số bút lục / Số tập MỚI NHẤT từ lần "Nộp hồ sơ lưu trữ" gần nhất của từng vụ.
+    const evs = await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", dsHoSo.map(h => h.maVuAn),
+      q => q.where("loaiSuKien", "==", "giao_nhan_ho_so").where("loaiGiaoDich", "==", "nhan"));
+    const phienIds = [...new Set(evs.map(d => d.data().phienGiaoNhanId).filter(Boolean))];
+    const phDocs = await chiaLoTruyVanIn("phienGiaoNhan", firebase.firestore.FieldPath.documentId(), phienIds);
+    const laLuuTru = {}; phDocs.forEach(d => { laLuuTru[d.id] = !!d.data().laLuuTru; });
+    const moiNhat = {};
+    evs.forEach(d => {
+      const x = d.data();
+      if (!laLuuTru[x.phienGiaoNhanId]) return;
+      const ms = new Date(x.thoiDiemGhi?.toDate?.() || x.thoiDiemGhi || 0).getTime() || 0;
+      const cu = moiNhat[x.maVuAn];
+      if (!cu || ms > cu.ms) moiNhat[x.maVuAn] = { ms, soButLuc: x.soButLuc || "", soTapHoSo: x.soTapHoSo || "" };
+    });
     const caiTien = [];
     dsHoSo.forEach(h => {
       const v = vm[h.maVuAn]; if (!v) return;
       const th = tinhThoiHanBaoQuanVu(v) || "";
       const patch = {};
       if (th && th !== (h.thoiHanBaoQuan || "")) patch.thoiHanBaoQuan = th;
-      if (!h.soButLuc && v.soButLuc) patch.soButLuc = v.soButLuc;
+      const nn = moiNhat[h.maVuAn];
+      if (nn) {
+        if (nn.soButLuc && nn.soButLuc !== (h.soButLuc || "")) patch.soButLuc = nn.soButLuc;
+        if (nn.soTapHoSo && nn.soTapHoSo !== (h.soTapHoSo || "")) patch.soTapHoSo = nn.soTapHoSo;
+      }
+      if (!h.soButLuc && !patch.soButLuc && v.soButLuc) patch.soButLuc = v.soButLuc;
       if (Object.keys(patch).length) caiTien.push({ h, patch });
     });
     for (let i = 0; i < caiTien.length; i += 400) {
@@ -19245,7 +19264,7 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
     setDangThaoTac(true);
     try {
       const kq = await lamMoiThoiHan();
-      addToast(kq.length ? `Đã cập nhật thời hạn bảo quản cho ${kq.length} hồ sơ (số lưu trữ giữ nguyên).` : "Không có hồ sơ nào cần cập nhật thời hạn.");
+      addToast(kq.length ? `Đã cập nhật thời hạn/bút lục/số tập cho ${kq.length} hồ sơ (số lưu trữ giữ nguyên).` : "Không có hồ sơ nào cần cập nhật thời hạn.");
     } catch (err) { console.error(err); addToast("Lỗi: " + err.message, "error"); }
     finally { setDangThaoTac(false); }
   };
@@ -19467,13 +19486,22 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
       setKetQuaQuet({ khongTim: true, ma: maTrim });
       return;
     }
+    // Làm mới dữ liệu hồ sơ từ nguồn mới nhất (số bút lục/số tập/thời hạn có thể được cập nhật sau khi vào sổ).
+    try {
+      const [tt, vd] = await Promise.all([layThongTinNopLuuTruMotVu(found.maVuAn), db.collection("vuan").doc(found.maVuAn).get()]);
+      const patch = {};
+      if (tt.soButLuc && tt.soButLuc !== (found.soButLuc || "")) patch.soButLuc = tt.soButLuc;
+      if (tt.soTapHoSo && tt.soTapHoSo !== (found.soTapHoSo || "")) patch.soTapHoSo = tt.soTapHoSo;
+      if (vd.exists) { const th = tinhThoiHanBaoQuanVu({ id: vd.id, ...vd.data() }) || ""; if (th && th !== (found.thoiHanBaoQuan || "")) patch.thoiHanBaoQuan = th; }
+      if (Object.keys(patch).length) { await db.collection("hoSoNopLuuKho").doc(found.id).update(patch); Object.assign(found, patch); }
+    } catch (e) { console.error(e); }
     if (phucHoiMap[found.maVuAn]?.ngay) {
       addToast(`⚠ "${found.tenVu}" đã PHỤC HỒI ngày ${fmtDate(phucHoiMap[found.maVuAn].ngay)}${found.khongNopLuu ? " — đã đánh dấu KHÔNG nộp lưu" : " — bạn có chắc muốn nộp lưu không?"}`, "warn");
     }
     if (found.thoiDiemQuetXacNhan) {
       addToast(`⚠ "${found.tenVu}" (Số ${found.nhanSo}) đã được xác nhận lên Kho từ trước (lúc ${fmtNgayGio(found.thoiDiemQuetXacNhan)}) — quét trùng.`, "warn");
     }
-    setKetQuaQuet(found);
+    setKetQuaQuet({ ...found });
   };
 
   const xacNhanDaLenKho = async (h) => {
@@ -19531,7 +19559,7 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
           </>
         )}
         <button onClick={() => setHienInSo(true)} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">In sổ danh sách</button>
-        <button onClick={bamLamMoiThoiHan} disabled={dangThaoTac} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50" title="Cập nhật cột Thời hạn bảo quản từ mức án hiện tại của vụ (không đổi số)">↻ Cập nhật thời hạn</button>
+        <button onClick={bamLamMoiThoiHan} disabled={dangThaoTac} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50" title="Cập nhật Thời hạn bảo quản, Số bút lục, Số tập từ dữ liệu mới nhất (không đổi số lưu trữ)">↻ Cập nhật thời hạn / bút lục</button>
         <button onClick={taiExcelSo} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">⬇ Excel sổ</button>
         <button onClick={() => setHienInTag(true)} disabled={dsChonIn.size === 0} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50">
           In tag ({dsChonIn.size} đã chọn)
