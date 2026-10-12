@@ -19320,32 +19320,64 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
     } catch (err) { console.error(err); addToast("Lỗi khi chèn: " + err.message, "error"); }
   };
 
-  // Bổ sung 1 vụ vào CUỐI sổ (đợt đang mở khoá): số = số nguyên lớn nhất hiện có + 1.
+  // Bổ sung 1 vụ vào sổ (đợt đang mở khoá), theo NHÓM THỜI HẠN BẢO QUẢN: vụ mới nhận số ngay sau hồ
+  // sơ cuối cùng của nhóm cùng thời hạn (hoặc nhóm dài hơn) — VD Vĩnh viễn kết thúc ở 1000 → vụ bổ
+  // sung là 1001, nhóm 52 năm dịch lên bắt đầu từ 1002. Các hồ sơ phía sau được dịch +1 (đánh lên dần),
+  // TRỪ KHI trong số đó có hồ sơ đã nộp lưu (đã xác nhận lên Kho = đã có số chính thức) → không dịch,
+  // vụ mới lấy số cuối sổ (max + 1) để tránh lẫn số.
   const themCuoiSo = async (vuAn) => {
     try {
       // Đọc LẠI sổ từ máy chủ (không tin state cục bộ — máy khác có thể vừa thêm) để tránh trùng số.
       const tuoi = await db.collection("hoSoNopLuuKho").where("dotId", "==", dot.id).get();
-      const soMoi = Math.max(0, ...tuoi.docs.map(d => Math.trunc(d.data().soThuTu || 0))) + 1;
+      const ds = tuoi.docs.map(d => ({ id: d.id, ...d.data() }));
+      const maxSo = Math.max(0, ...ds.map(h => Math.trunc(h.soThuTu || 0)));
+      const thoiHan = tinhThoiHanBaoQuanVu(vuAn) || "";
+      const kMoi = thoiHanBaoQuanSortKey(thoiHan);
+      let soMoi = maxSo + 1;
+      let canDich = [];
+      let ghiChuViTri = "vào cuối sổ";
+      if (kMoi >= 0) {
+        const truoc = ds.filter(h => thoiHanBaoQuanSortKey(h.thoiHanBaoQuan) >= kMoi);
+        const viTri = Math.max(0, ...truoc.map(h => Math.trunc(h.soThuTu || 0))) + 1;
+        const sau = ds.filter(h => Math.trunc(h.soThuTu || 0) >= viTri);
+        if (sau.length === 0) {
+          soMoi = viTri;
+        } else if (sau.some(h => h.thoiDiemQuetXacNhan)) {
+          addToast(`Các hồ sơ phía sau Số ${viTri} đã nộp lưu (có số chính thức) nên không dịch số — "${vuAn.tenVu || vuAn.id}" được thêm vào cuối sổ.`, "warn");
+        } else {
+          soMoi = viTri; canDich = sau; ghiChuViTri = `sau nhóm ${thoiHan || "cùng thời hạn"} (các số phía sau dịch +1)`;
+        }
+      }
+      // Dịch các hồ sơ phía sau lên 1 số (theo lô ≤400/batch).
+      for (let i = 0; i < canDich.length; i += 400) {
+        const batch = db.batch();
+        canDich.slice(i, i + 400).forEach(h => {
+          const moiSo = Number(h.soThuTu) + 1;
+          const hau = String(h.nhanSo || "").replace(/^\d+/, "");
+          batch.update(db.collection("hoSoNopLuuKho").doc(h.id), { soThuTu: moiSo, nhanSo: String(Math.trunc(moiSo)) + hau });
+        });
+        await batch.commit();
+      }
       const { soButLuc, soTapHoSo } = await layThongTinNopLuuTruMotVu(vuAn.id);
       const du = {
         dotId: dot.id, maVuAn: vuAn.id, soThuTu: soMoi, nhanSo: String(soMoi),
         tenVu: vuAn.tenVu || "", hinhThucGiaiQuyet: vuAn.trangThai, ngayGiaiQuyet: vuAn.ngayQuyetDinh || null,
         soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
         soQuyetDinhGiaiQuyet: laySoQdGiaiQuyetNopLuuKho(vuAn),
-        ksvChinh: vuAn.ksvChinh || "", thoiHanBaoQuan: tinhThoiHanBaoQuanVu(vuAn) || "",
+        ksvChinh: vuAn.ksvChinh || "", thoiHanBaoQuan: thoiHan,
         soButLuc, soTapHoSo,
         ngayTao: new Date(), nguoiTao: auth.currentUser?.email || "",
       };
       const ref = await db.collection("hoSoNopLuuKho").add(du);
-      // Kiểm tra lại sau khi ghi: nếu máy khác cũng vừa cấp đúng số này → gỡ bản vừa thêm + cảnh báo.
-      const sau = await db.collection("hoSoNopLuuKho").where("dotId", "==", dot.id).get();
-      const trung = sau.docs.filter(d => d.id !== ref.id && Math.trunc(d.data().soThuTu || 0) === soMoi);
+      // Kiểm tra lại sau khi ghi: nếu có hồ sơ khác trùng đúng số này → gỡ bản vừa thêm + cảnh báo.
+      const lai = await db.collection("hoSoNopLuuKho").where("dotId", "==", dot.id).get();
+      const trung = lai.docs.filter(d => d.id !== ref.id && Math.trunc(d.data().soThuTu || 0) === soMoi && !String(d.data().nhanSo).match(/[A-Za-z]$/));
       if (trung.length) {
         await ref.delete();
-        alert(`⚠ TRÙNG SỐ ${soMoi}: máy khác vừa cấp đúng số này cho "${trung[0].data().tenVu}". Hồ sơ "${vuAn.tenVu || vuAn.id}" CHƯA được thêm — hãy quét lại.`);
+        alert(`⚠ TRÙNG SỐ ${soMoi}: đã có hồ sơ "${trung[0].data().tenVu}" mang số này. Hồ sơ "${vuAn.tenVu || vuAn.id}" CHƯA được thêm — hãy kiểm tra sổ rồi quét lại.`);
         return null;
       }
-      addToast(`Đã bổ sung "${vuAn.tenVu || vuAn.id}" vào cuối sổ — Số ${soMoi}.`);
+      addToast(`Đã bổ sung "${vuAn.tenVu || vuAn.id}" ${ghiChuViTri} — Số ${soMoi}.`);
       return { id: ref.id, ...du };
     } catch (err) { console.error(err); addToast("Lỗi khi bổ sung: " + err.message, "error"); return null; }
   };
