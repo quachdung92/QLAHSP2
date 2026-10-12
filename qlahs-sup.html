@@ -19211,10 +19211,44 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
     catch (err) { console.error(err); addToast("Lỗi: " + err.message, "error"); }
   };
 
+  // Làm mới "Thời hạn bảo quản" của sổ từ dữ liệu vụ án HIỆN TẠI (2026-10-12): sổ chỉ lưu snapshot lúc
+  // thêm vào đợt, nên vụ được nhập mức án SAU đó (VD ở Giao nhận hồ sơ) vẫn bị trống. Chỉ đổi cột
+  // thoiHanBaoQuan (+ ngày/số QĐ giải quyết nếu trống) — KHÔNG đụng số lưu trữ.
+  const lamMoiThoiHan = async () => {
+    const docs = await chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), dsHoSo.map(h => h.maVuAn));
+    const vm = {}; docs.forEach(d => { vm[d.id] = { id: d.id, ...d.data() }; });
+    const caiTien = [];
+    dsHoSo.forEach(h => {
+      const v = vm[h.maVuAn]; if (!v) return;
+      const th = tinhThoiHanBaoQuanVu(v) || "";
+      const patch = {};
+      if (th && th !== (h.thoiHanBaoQuan || "")) patch.thoiHanBaoQuan = th;
+      if (!h.soButLuc && v.soButLuc) patch.soButLuc = v.soButLuc;
+      if (Object.keys(patch).length) caiTien.push({ h, patch });
+    });
+    for (let i = 0; i < caiTien.length; i += 400) {
+      const batch = db.batch();
+      caiTien.slice(i, i + 400).forEach(x => batch.update(db.collection("hoSoNopLuuKho").doc(x.h.id), x.patch));
+      await batch.commit();
+    }
+    return caiTien;
+  };
+  const bamLamMoiThoiHan = async () => {
+    setDangThaoTac(true);
+    try {
+      const kq = await lamMoiThoiHan();
+      addToast(kq.length ? `Đã cập nhật thời hạn bảo quản cho ${kq.length} hồ sơ (số lưu trữ giữ nguyên).` : "Không có hồ sơ nào cần cập nhật thời hạn.");
+    } catch (err) { console.error(err); addToast("Lỗi: " + err.message, "error"); }
+    finally { setDangThaoTac(false); }
+  };
+
   const taiExcelSo = async () => {
+    try { await lamMoiThoiHan(); } catch (e) { console.error(e); }
     const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet("Sổ lưu trữ");
     ws.addRow(["Số", "Tên vụ", "KSV", "Hình thức GQ", "Số QĐ KTVA", "Ngày QĐ KTVA", "Số QĐ GQ", "Ngày GQ", "Thời hạn bảo quản", "Số bút lục", "Số tập", "Lên Kho", "Ghi chú"]).font = { bold: true };
-    dsHoSo.forEach(h => {
+    const sMoi = await db.collection("hoSoNopLuuKho").where("dotId", "==", dot.id).get();
+    const dsMoi = sMoi.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.soThuTu || 0) - (b.soThuTu || 0));
+    dsMoi.forEach(h => {
       const ph = phucHoiMap[h.maVuAn];
       const ghi = [];
       if (ph?.ngay) ghi.push(`Vụ đã phục hồi điều tra ngày ${fmtDate(ph.ngay)}${ph.dangGQ ? " (hiện đang giải quyết)" : ""}`);
@@ -19489,6 +19523,7 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
           </>
         )}
         <button onClick={() => setHienInSo(true)} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">In sổ danh sách</button>
+        <button onClick={bamLamMoiThoiHan} disabled={dangThaoTac} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50" title="Cập nhật cột Thời hạn bảo quản từ mức án hiện tại của vụ (không đổi số)">↻ Cập nhật thời hạn</button>
         <button onClick={taiExcelSo} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">⬇ Excel sổ</button>
         <button onClick={() => setHienInTag(true)} disabled={dsChonIn.size === 0} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50">
           In tag ({dsChonIn.size} đã chọn)
