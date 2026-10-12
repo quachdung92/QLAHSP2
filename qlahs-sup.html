@@ -4221,7 +4221,37 @@ function ImportExcelModule() {
 // mặc định kỳ đang mở, cho đổi sang kỳ khác. Chưa có module Kỳ báo cáo nên nếu
 // Firestore chưa có bản ghi kybaocao nào thì vẫn cho tiếp tục với kyThongKe = null.
 // ====================================================================
-function ModalXacNhanKy({ open, onXacNhan, onHuy }) {
+// Chặn gán kỳ LƯU TRỮ cho vụ ĐÃ nằm trong một đợt nộp lưu kho (2026-10-12): vụ đã tính lưu ở năm
+// trước mà bị gán sang kỳ lưu trữ khác (VD "Án lưu 2026") sẽ lệch kỳ/đợt. Muốn vẫn gán → gõ mã xác nhận.
+function CanhBaoDaNopLuu({ maVuAns, kyObj, onChan }) {
+  const [ds, setDs] = useState([]);
+  const [ma] = useState(() => taoMaXacNhanNgauNhien());
+  const [nhap, setNhap] = useState("");
+  const key = (maVuAns || []).filter(Boolean).join("|");
+  useEffect(() => {
+    let huy = false;
+    const ids = (maVuAns || []).filter(Boolean);
+    if (!ids.length) { setDs([]); return; }
+    chiaLoTruyVanIn("hoSoNopLuuKho", "maVuAn", ids)
+      .then(r => { if (!huy) setDs(r || []); }).catch(() => { if (!huy) setDs([]); });
+    return () => { huy = true; };
+  }, [key]);
+  const canhBao = kyObj?.loai === "luu_tru" && ds.length > 0;
+  const chan = canhBao && nhap.trim().toUpperCase() !== ma;
+  useEffect(() => { onChan && onChan(chan); }, [chan]);
+  if (!canhBao) return null;
+  return (
+    <div className="bg-red-50 border-2 border-red-300 rounded-lg p-3 text-xs text-red-800 mb-3">
+      <div className="font-semibold mb-1">⛔ Vụ đã nằm trong đợt nộp lưu kho — không nên gán kỳ lưu trữ khác</div>
+      <p className="mb-2">{ds.length} hồ sơ đã được đánh số lưu trữ (VD Số {ds[0].data().nhanSo}). Gán kỳ lưu trữ "{kyObj.tenKy}" có thể làm lệch kỳ.
+        Muốn chuyển, hãy <b>Phục hồi</b> vụ trước. Nếu vẫn chắc chắn, gõ mã <b>{ma}</b>:</p>
+      <input value={nhap} onChange={e => setNhap(e.target.value)} className="border border-red-300 rounded px-2 py-1 w-28 bg-white" placeholder="Mã" />
+    </div>
+  );
+}
+
+function ModalXacNhanKy({ open, onXacNhan, onHuy, maVuAns }) {
+  const [chanNopLuu, setChanNopLuu] = useState(false);
   // Trước đây modal này tự .get() TOÀN BỘ collection kybaocao MỖI LẦN MỞ — vì modal này mở ở MỌI
   // thao tác nghiệp vụ (Chuyển giai đoạn/Trả hồ sơ/Hoàn thành...), đây thực chất là điểm tốn quota
   // nhiều nhất trong app dù không lộ ra qua onSnapshot. Đổi sang dùng chung cache "kybaocao:desc"
@@ -4279,6 +4309,7 @@ function ModalXacNhanKy({ open, onXacNhan, onHuy }) {
                   Kỳ lưu trữ — sự kiện này <b>không tính vào số liệu báo cáo</b> tháng nào.
                 </div>
               )}
+              <CanhBaoDaNopLuu maVuAns={maVuAns} kyObj={kyChonObj} onChan={setChanNopLuu} />
               {kyChonObj?.trangThai === "da_chot" && kyChonObj?.loai !== "luu_tru" && (
                 <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2 mb-3">
                   ⚠️ Kỳ này đã chốt — số liệu báo cáo tự tính lại theo kỳ thống kê mỗi lần mở (không cần thao tác gì thêm sau khi xác nhận).
@@ -4292,7 +4323,7 @@ function ModalXacNhanKy({ open, onXacNhan, onHuy }) {
           {/* 2026-09-29: chặn bấm Xác nhận khi danh sách kỳ chưa tải xong / chưa chọn kỳ — trước đây
               bấm quá nhanh lưu sự kiện kyThongKe = null, bị mọi báo cáo bỏ qua (lệch tồn cuối kỳ 09). */}
           <button onClick={() => onXacNhan(kyChon || null)}
-                  disabled={dangTai || (danhSachKy.length > 0 && !kyChon)}
+                  disabled={dangTai || (danhSachKy.length > 0 && !kyChon) || chanNopLuu}
                   className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium">
             Xác nhận
           </button>
@@ -4371,7 +4402,7 @@ function ChuyenGiaiDoanModal({ vuAn, onDong, onXong }) {
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
-      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+      <ModalXacNhanKy maVuAns={[vuAn.id]} open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
     </KhungModalHanhDong>
   );
 }
@@ -4435,7 +4466,7 @@ function TraHoSoModal({ vuAn, onDong, onXong }) {
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
-      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+      <ModalXacNhanKy maVuAns={[vuAn.id]} open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
     </KhungModalHanhDong>
   );
 }
@@ -4613,7 +4644,7 @@ function PhucHoiModal({ vuAn, onDong, onXong }) {
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
-      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+      <ModalXacNhanKy maVuAns={[vuAn.id]} open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
     </KhungModalHanhDong>
   );
 }
@@ -4678,7 +4709,7 @@ function NhanLaiChuyenDiModal({ vuAn, onDong, onXong }) {
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
-      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+      <ModalXacNhanKy maVuAns={[vuAn.id]} open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
     </KhungModalHanhDong>
   );
 }
@@ -4777,7 +4808,7 @@ function HuyDieuTraLaiModal({ vuAn, onDong, onXong }) {
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
-      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+      <ModalXacNhanKy maVuAns={[vuAn.id]} open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
     </KhungModalHanhDong>
   );
 }
@@ -5258,7 +5289,7 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
-      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+      <ModalXacNhanKy maVuAns={[vuAnId]} open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
     </KhungModalHanhDong>
   );
 }
@@ -5359,7 +5390,7 @@ function TachVuAnModal({ vuAnId, onDong, onXong }) {
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
-      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+      <ModalXacNhanKy maVuAns={[vuAnId]} open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
     </KhungModalHanhDong>
   );
 }
@@ -5542,7 +5573,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
           {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
         </button>
       </div>
-      <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
+      <ModalXacNhanKy maVuAns={[vuAn.id]} open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
     </KhungModalHanhDong>
   );
 }
@@ -19145,6 +19176,56 @@ function ManSoLuuTru({ dot, dsHoSo }) {
 
   const daChot = dot.trangThai === "da_chot";
 
+  // Cảnh báo vụ ĐÃ PHỤC HỒI sau khi giải quyết (2026-10-12): tra sự kiện phuc_hoi + trạng thái hiện tại.
+  const [phucHoiMap, setPhucHoiMap] = useState({});
+  const idsHoSoKey = dsHoSo.map(h => h.maVuAn).join("|");
+  useEffect(() => {
+    let huy = false;
+    const ids = dsHoSo.map(h => h.maVuAn);
+    if (!ids.length) { setPhucHoiMap({}); return; }
+    (async () => {
+      try {
+        const [ev, vu] = await Promise.all([
+          chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maVuAn", ids, q => q.where("loaiSuKien", "==", "phuc_hoi")),
+          chiaLoTruyVanIn("vuan", firebase.firestore.FieldPath.documentId(), ids).catch(() => []),
+        ]);
+        const m = {};
+        ev.forEach(d => { const x = d.data(); const t = x.ngaySuKien || x.thoiDiemGhi; const cu = m[x.maVuAn]; if (!cu || new Date(t) > new Date(cu.ngay)) m[x.maVuAn] = { ngay: t }; });
+        vu.forEach(d => { if (d.data().trangThai === "dang_giai_quyet") m[d.id] = { ...(m[d.id] || {}), dangGQ: true }; });
+        if (!huy) setPhucHoiMap(m);
+      } catch (e) { console.error(e); }
+    })();
+    return () => { huy = true; };
+  }, [idsHoSoKey]);
+
+  const doiKhongNopLuu = async (h) => {
+    const ph = phucHoiMap[h.maVuAn];
+    const moi = !h.khongNopLuu;
+    const hoi = moi
+      ? `Đánh dấu KHÔNG nộp lưu hồ sơ Số ${h.nhanSo}?${ph ? ` (vụ đã phục hồi ngày ${fmtDate(ph.ngay)})` : ""}
+Số ${h.nhanSo} vẫn được GIỮ, chỉ ghi chú trong Excel.`
+      : `Bỏ đánh dấu — nộp lưu hồ sơ Số ${h.nhanSo}?${ph ? `
+Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp lưu không?` : ""}`;
+    if (!confirm(hoi)) return;
+    try { await db.collection("hoSoNopLuuKho").doc(h.id).update({ khongNopLuu: moi }); }
+    catch (err) { console.error(err); addToast("Lỗi: " + err.message, "error"); }
+  };
+
+  const taiExcelSo = async () => {
+    const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet("Sổ lưu trữ");
+    ws.addRow(["Số", "Tên vụ", "KSV", "Hình thức GQ", "Số QĐ KTVA", "Ngày QĐ KTVA", "Số QĐ GQ", "Ngày GQ", "Thời hạn bảo quản", "Số bút lục", "Số tập", "Lên Kho", "Ghi chú"]).font = { bold: true };
+    dsHoSo.forEach(h => {
+      const ph = phucHoiMap[h.maVuAn];
+      const ghi = [];
+      if (ph?.ngay) ghi.push(`Vụ đã phục hồi điều tra ngày ${fmtDate(ph.ngay)}${ph.dangGQ ? " (hiện đang giải quyết)" : ""}`);
+      if (h.khongNopLuu) ghi.unshift("KHÔNG NỘP LƯU (giữ số " + h.nhanSo + ")");
+      ws.addRow([h.nhanSo, h.tenVu, h.ksvChinh || "", NHAN_TRANG_THAI[h.hinhThucGiaiQuyet] || h.hinhThucGiaiQuyet, h.soQdKtva || "", fmtDate(h.ngayQdKtva), h.soQuyetDinhGiaiQuyet || "", fmtDate(h.ngayGiaiQuyet), h.thoiHanBaoQuan || "", h.soButLuc || "", h.soTapHoSo || "", h.thoiDiemQuetXacNhan ? fmtDate(h.thoiDiemQuetXacNhan) : "", ghi.join("; ")]);
+    });
+    ws.columns.forEach((c, i) => { c.width = [8, 40, 20, 16, 14, 14, 14, 14, 16, 10, 8, 12, 50][i]; });
+    const buf = await wb.xlsx.writeBuffer();
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([buf])); a.download = `So_luu_tru_${dot.tenDot || "dot"}.xlsx`; a.click();
+  };
+
   const moKhoa = async () => {
     if (!confirm(`Mở khoá đợt "${dot.tenDot}"? Sổ đã in/ghi tay số lưu trữ ra ngoài vẫn giữ nguyên — chỉ mở để chèn thêm hoặc sửa.`)) return;
     setDangThaoTac(true);
@@ -19312,6 +19393,9 @@ function ManSoLuuTru({ dot, dsHoSo }) {
       setKetQuaQuet({ khongTim: true, ma: maTrim });
       return;
     }
+    if (phucHoiMap[found.maVuAn]?.ngay) {
+      addToast(`⚠ "${found.tenVu}" đã PHỤC HỒI ngày ${fmtDate(phucHoiMap[found.maVuAn].ngay)}${found.khongNopLuu ? " — đã đánh dấu KHÔNG nộp lưu" : " — bạn có chắc muốn nộp lưu không?"}`, "warn");
+    }
     if (found.thoiDiemQuetXacNhan) {
       addToast(`⚠ "${found.tenVu}" (Số ${found.nhanSo}) đã được xác nhận lên Kho từ trước (lúc ${fmtNgayGio(found.thoiDiemQuetXacNhan)}) — quét trùng.`, "warn");
     }
@@ -19373,6 +19457,7 @@ function ManSoLuuTru({ dot, dsHoSo }) {
           </>
         )}
         <button onClick={() => setHienInSo(true)} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">In sổ danh sách</button>
+        <button onClick={taiExcelSo} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">⬇ Excel sổ</button>
         <button onClick={() => setHienInTag(true)} disabled={dsChonIn.size === 0} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50">
           In tag ({dsChonIn.size} đã chọn)
         </button>
@@ -19448,7 +19533,12 @@ function ManSoLuuTru({ dot, dsHoSo }) {
                 <tr className="border-t border-slate-100">
                   <td className="p-2 text-center"><input type="checkbox" checked={dsChonIn.has(h.id)} onChange={() => toggleChonIn(h.id)} /></td>
                   <td className="p-2 font-bold text-slate-700">{h.nhanSo}</td>
-                  <td className="p-2">{h.tenVu}</td>
+                  <td className="p-2">{h.tenVu}
+                    {phucHoiMap[h.maVuAn]?.ngay && (
+                      <div className="text-xs text-amber-700 mt-0.5">↩ Đã phục hồi ngày {fmtDate(phucHoiMap[h.maVuAn].ngay)}{phucHoiMap[h.maVuAn].dangGQ ? " — đang giải quyết" : ""}
+                        {" "}<button onClick={() => doiKhongNopLuu(h)} className="underline">{h.khongNopLuu ? "bỏ 'không nộp lưu'" : "đánh dấu không nộp lưu"}</button></div>)}
+                    {h.khongNopLuu && <div className="text-xs font-semibold text-red-600">⛔ KHÔNG NỘP LƯU (giữ số {h.nhanSo})</div>}
+                  </td>
                   <td className="p-2">{h.ksvChinh || "—"}</td>
                   <td className="p-2"><Badge mau={MAU_TRANG_THAI[h.hinhThucGiaiQuyet]}>{NHAN_TRANG_THAI[h.hinhThucGiaiQuyet] || h.hinhThucGiaiQuyet}</Badge></td>
                   <td className="p-2 whitespace-nowrap">{h.soQdKtva || "—"}</td>
@@ -20749,6 +20839,7 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
   const [dangLuu, setDangLuu] = useState(false);
   const [loi, setLoi] = useState("");
   const [daHieuAnhHuongChot, setDaHieuAnhHuongChot] = useState(false);
+  const [chanNopLuu, setChanNopLuu] = useState(false);
 
   const kyCuObj = danhSachKy.find(k => k.id === (suKien.kyThongKe || null)) || null;
   const kyMoiObj = danhSachKy.find(k => k.id === kyChon) || null;
@@ -20793,6 +20884,7 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
           <option key={k.id} value={k.id}>{k.tenKy}{k.loai === "luu_tru" ? " [Lưu trữ]" : k.trangThai === "dang_mo" ? " (đang mở)" : ""}</option>
         ))}
       </select>
+      <CanhBaoDaNopLuu maVuAns={[suKien.maVuAn]} kyObj={kyMoiObj} onChan={setChanNopLuu} />
       {anhHuongKyDaChot && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 mb-3">
           <div className="font-medium mb-1">⚠️ Ảnh hưởng tới kỳ đã chốt</div>
@@ -20826,7 +20918,7 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
       )}
       <div className="flex justify-end gap-2">
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
-        <button onClick={luu} disabled={dangLuu || (anhHuongKyDaChot && !daHieuAnhHuongChot)}
+        <button onClick={luu} disabled={dangLuu || chanNopLuu || (anhHuongKyDaChot && !daHieuAnhHuongChot)}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
           {dangLuu ? "Đang lưu..." : "Lưu"}
         </button>

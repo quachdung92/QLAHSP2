@@ -409,6 +409,7 @@ create table "hoSoNopLuuKho" (
   "thoiHanBaoQuan"        text,
   "soButLuc"              text,               -- snapshot từ lần "Nộp hồ sơ lưu trữ" gần nhất (2026-07-26)
   "soTapHoSo"             text,
+  "khongNopLuu"           boolean not null default false,
   "thoiDiemQuetXacNhan"   timestamptz,        -- null = chưa quét đưa lên Kho
   "ngayTao"               timestamptz not null default now(),
   "nguoiTao"              text,
