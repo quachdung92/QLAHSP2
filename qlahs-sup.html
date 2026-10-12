@@ -19408,7 +19408,28 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
       let soMoi = maxSo + 1;
       let canDich = [];
       let ghiChuViTri = "vào cuối sổ";
-      if (kMoi >= 0) {
+      // Số TRỐNG trong sổ (hồ sơ bị xoá / không lưu): hỏi có muốn lưu vào số đó để chèn đầy không.
+      const daDung = new Set(ds.map(h => Math.trunc(h.soThuTu || 0)));
+      const khuyet = []; for (let n = 1; n <= maxSo; n++) if (!daDung.has(n)) khuyet.push(n);
+      let dungKhuyet = false;
+      if (khuyet.length) {
+        const cuaNhomDai = ds.filter(h => thoiHanBaoQuanSortKey(h.thoiHanBaoQuan) > kMoi).map(h => Math.trunc(h.soThuTu || 0));
+        const cuaNhomNgan = ds.filter(h => thoiHanBaoQuanSortKey(h.thoiHanBaoQuan) < kMoi).map(h => Math.trunc(h.soThuTu || 0));
+        const can = kMoi >= 0 && cuaNhomDai.length ? Math.max(...cuaNhomDai) : 0;
+        const tran = kMoi >= 0 && cuaNhomNgan.length ? Math.min(...cuaNhomNgan) : Infinity;
+        const hopNhom = khuyet.filter(n => n > can && n < tran);
+        const chon = hopNhom.length ? hopNhom[0] : khuyet[0];
+        const lyDo = hopNhom.length ? "" : `
+(Số này nằm ngoài nhóm thời hạn ${thoiHan || "của vụ"}.)`;
+        if (confirm(`Sổ đang TRỐNG Số ${chon} (có hồ sơ bị xoá hoặc không lưu trong đợt này${khuyet.length > 1 ? `; tổng ${khuyet.length} số trống: ${khuyet.slice(0, 10).join(", ")}${khuyet.length > 10 ? "…" : ""}` : ""}).
+
+Lưu "${vuAn.tenVu || vuAn.id}" vào Số ${chon} để chèn đầy?${lyDo}
+
+OK = lưu vào Số ${chon}; Huỷ = thêm theo cách thông thường.`)) {
+          soMoi = chon; dungKhuyet = true; ghiChuViTri = `vào số trống ${chon}`;
+        }
+      }
+      if (!dungKhuyet && kMoi >= 0) {
         const truoc = ds.filter(h => thoiHanBaoQuanSortKey(h.thoiHanBaoQuan) >= kMoi);
         const viTri = Math.max(0, ...truoc.map(h => Math.trunc(h.soThuTu || 0))) + 1;
         const sau = ds.filter(h => Math.trunc(h.soThuTu || 0) >= viTri);
