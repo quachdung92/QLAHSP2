@@ -18048,6 +18048,25 @@ async function layThongTinNopLuuTruMotVu(maVuAn) {
   return { daNop, soButLuc, soTapHoSo };
 }
 
+// Tính patch cập nhật MỌI thông tin snapshot của 1 hồ sơ trong sổ nộp lưu từ vụ án HIỆN TẠI + lần nộp
+// hồ sơ lưu trữ mới nhất (nn = {soButLuc, soTapHoSo}). KHÔNG đụng số lưu trữ/trạng thái lên Kho/đánh dấu.
+function tinhPatchHoSoNopLuuKho(h, v, nn) {
+  const patch = {};
+  const msOf = x => { if (!x) return 0; return new Date(x.toDate ? x.toDate() : x).getTime() || 0; };
+  const gan = (k, moi) => { if (moi !== undefined && moi !== null && String(moi) !== "" && String(moi) !== String(h[k] ?? "")) patch[k] = moi; };
+  gan("tenVu", v.tenVu || "");
+  gan("hinhThucGiaiQuyet", v.trangThai);
+  gan("soQdKtva", v.soQdKtva || "");
+  gan("soQuyetDinhGiaiQuyet", laySoQdGiaiQuyetNopLuuKho(v));
+  gan("ksvChinh", v.ksvChinh || "");
+  gan("thoiHanBaoQuan", tinhThoiHanBaoQuanVu(v) || "");
+  if (v.ngayQdKtva && msOf(v.ngayQdKtva) !== msOf(h.ngayQdKtva)) patch.ngayQdKtva = v.ngayQdKtva;
+  if (v.ngayQuyetDinh && msOf(v.ngayQuyetDinh) !== msOf(h.ngayGiaiQuyet)) patch.ngayGiaiQuyet = v.ngayQuyetDinh;
+  if (nn) { gan("soButLuc", nn.soButLuc); gan("soTapHoSo", nn.soTapHoSo); }
+  else if (!h.soButLuc && v.soButLuc) patch.soButLuc = v.soButLuc;
+  return patch;
+}
+
 // ── Màn "Chuẩn bị danh sách" — lọc theo tháng/năm giải quyết + tuỳ chọn mở rộng kỳ trước ────────
 function ManChuanBiDanhSach({ onXemTruoc }) {
   const namNay = new Date().getFullYear();
@@ -19242,15 +19261,7 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
     const caiTien = [];
     dsHoSo.forEach(h => {
       const v = vm[h.maVuAn]; if (!v) return;
-      const th = tinhThoiHanBaoQuanVu(v) || "";
-      const patch = {};
-      if (th && th !== (h.thoiHanBaoQuan || "")) patch.thoiHanBaoQuan = th;
-      const nn = moiNhat[h.maVuAn];
-      if (nn) {
-        if (nn.soButLuc && nn.soButLuc !== (h.soButLuc || "")) patch.soButLuc = nn.soButLuc;
-        if (nn.soTapHoSo && nn.soTapHoSo !== (h.soTapHoSo || "")) patch.soTapHoSo = nn.soTapHoSo;
-      }
-      if (!h.soButLuc && !patch.soButLuc && v.soButLuc) patch.soButLuc = v.soButLuc;
+      const patch = tinhPatchHoSoNopLuuKho(h, v, moiNhat[h.maVuAn]);
       if (Object.keys(patch).length) caiTien.push({ h, patch });
     });
     for (let i = 0; i < caiTien.length; i += 400) {
@@ -19264,7 +19275,7 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
     setDangThaoTac(true);
     try {
       const kq = await lamMoiThoiHan();
-      addToast(kq.length ? `Đã cập nhật thời hạn/bút lục/số tập cho ${kq.length} hồ sơ (số lưu trữ giữ nguyên).` : "Không có hồ sơ nào cần cập nhật thời hạn.");
+      addToast(kq.length ? `Đã cập nhật thông tin cho ${kq.length} hồ sơ (số lưu trữ giữ nguyên).` : "Không có hồ sơ nào cần cập nhật thời hạn.");
     } catch (err) { console.error(err); addToast("Lỗi: " + err.message, "error"); }
     finally { setDangThaoTac(false); }
   };
@@ -19489,10 +19500,7 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
     // Làm mới dữ liệu hồ sơ từ nguồn mới nhất (số bút lục/số tập/thời hạn có thể được cập nhật sau khi vào sổ).
     try {
       const [tt, vd] = await Promise.all([layThongTinNopLuuTruMotVu(found.maVuAn), db.collection("vuan").doc(found.maVuAn).get()]);
-      const patch = {};
-      if (tt.soButLuc && tt.soButLuc !== (found.soButLuc || "")) patch.soButLuc = tt.soButLuc;
-      if (tt.soTapHoSo && tt.soTapHoSo !== (found.soTapHoSo || "")) patch.soTapHoSo = tt.soTapHoSo;
-      if (vd.exists) { const th = tinhThoiHanBaoQuanVu({ id: vd.id, ...vd.data() }) || ""; if (th && th !== (found.thoiHanBaoQuan || "")) patch.thoiHanBaoQuan = th; }
+      const patch = vd.exists ? tinhPatchHoSoNopLuuKho(found, { id: vd.id, ...vd.data() }, tt.soButLuc || tt.soTapHoSo ? tt : null) : {};
       if (Object.keys(patch).length) { await db.collection("hoSoNopLuuKho").doc(found.id).update(patch); Object.assign(found, patch); }
     } catch (e) { console.error(e); }
     if (phucHoiMap[found.maVuAn]?.ngay) {
@@ -19559,7 +19567,7 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
           </>
         )}
         <button onClick={() => setHienInSo(true)} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">In sổ danh sách</button>
-        <button onClick={bamLamMoiThoiHan} disabled={dangThaoTac} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50" title="Cập nhật Thời hạn bảo quản, Số bút lục, Số tập từ dữ liệu mới nhất (không đổi số lưu trữ)">↻ Cập nhật thời hạn / bút lục</button>
+        <button onClick={bamLamMoiThoiHan} disabled={dangThaoTac} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50" title="Cập nhật tên vụ, KSV, số/ngày QĐ, hình thức giải quyết, thời hạn, số bút lục, số tập từ dữ liệu mới nhất (không đổi số lưu trữ)">↻ Cập nhật thông tin hồ sơ</button>
         <button onClick={taiExcelSo} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">⬇ Excel sổ</button>
         <button onClick={() => setHienInTag(true)} disabled={dsChonIn.size === 0} className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50">
           In tag ({dsChonIn.size} đã chọn)
