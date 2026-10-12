@@ -19239,6 +19239,36 @@ function ManSoLuuTru({ dot, dsHoSo }) {
     } catch (err) { console.error(err); addToast("Lỗi khi chèn: " + err.message, "error"); }
   };
 
+  // Bổ sung 1 vụ vào CUỐI sổ (đợt đang mở khoá): số = số nguyên lớn nhất hiện có + 1.
+  const themCuoiSo = async (vuAn) => {
+    try {
+      // Đọc LẠI sổ từ máy chủ (không tin state cục bộ — máy khác có thể vừa thêm) để tránh trùng số.
+      const tuoi = await db.collection("hoSoNopLuuKho").where("dotId", "==", dot.id).get();
+      const soMoi = Math.max(0, ...tuoi.docs.map(d => Math.trunc(d.data().soThuTu || 0))) + 1;
+      const { soButLuc, soTapHoSo } = await layThongTinNopLuuTruMotVu(vuAn.id);
+      const du = {
+        dotId: dot.id, maVuAn: vuAn.id, soThuTu: soMoi, nhanSo: String(soMoi),
+        tenVu: vuAn.tenVu || "", hinhThucGiaiQuyet: vuAn.trangThai, ngayGiaiQuyet: vuAn.ngayQuyetDinh || null,
+        soQdKtva: vuAn.soQdKtva || "", ngayQdKtva: vuAn.ngayQdKtva || null,
+        soQuyetDinhGiaiQuyet: laySoQdGiaiQuyetNopLuuKho(vuAn),
+        ksvChinh: vuAn.ksvChinh || "", thoiHanBaoQuan: tinhThoiHanBaoQuanVu(vuAn) || "",
+        soButLuc, soTapHoSo,
+        ngayTao: new Date(), nguoiTao: auth.currentUser?.email || "",
+      };
+      const ref = await db.collection("hoSoNopLuuKho").add(du);
+      // Kiểm tra lại sau khi ghi: nếu máy khác cũng vừa cấp đúng số này → gỡ bản vừa thêm + cảnh báo.
+      const sau = await db.collection("hoSoNopLuuKho").where("dotId", "==", dot.id).get();
+      const trung = sau.docs.filter(d => d.id !== ref.id && Math.trunc(d.data().soThuTu || 0) === soMoi);
+      if (trung.length) {
+        await ref.delete();
+        alert(`⚠ TRÙNG SỐ ${soMoi}: máy khác vừa cấp đúng số này cho "${trung[0].data().tenVu}". Hồ sơ "${vuAn.tenVu || vuAn.id}" CHƯA được thêm — hãy quét lại.`);
+        return null;
+      }
+      addToast(`Đã bổ sung "${vuAn.tenVu || vuAn.id}" vào cuối sổ — Số ${soMoi}.`);
+      return { id: ref.id, ...du };
+    } catch (err) { console.error(err); addToast("Lỗi khi bổ sung: " + err.message, "error"); return null; }
+  };
+
   // Quét liên tục (2026-07-26, theo yêu cầu người dùng) — vụ QUÉT NGAY TRƯỚC ĐÓ tự động được xác
   // nhận "đã lên Kho" khi quét sang vụ KHÁC, không cần bấm nút "Xác nhận" mỗi lần — tiết kiệm thao
   // tác đúng nhịp quét nhanh bằng đầu đọc QR (chỉ tự xác nhận nếu vụ đó CHƯA được xác nhận từ
@@ -19264,7 +19294,24 @@ function ManSoLuuTru({ dot, dsHoSo }) {
     const maChuan = chuanHoaMaQuet(maTrim);
     const found = dsHoSo.find(h => h.maVuAn === maTrim)
       || (maChuan ? dsHoSo.find(h => chuanHoaMaQuet(h.maVuAn) === maChuan) : null);
-    if (!found) { setKetQuaQuet({ khongTim: true, ma: maTrim }); return; }
+    if (!found) {
+      // Đợt đang MỞ KHOÁ: quét 1 vụ chưa có trong sổ = bổ sung vào CUỐI sổ với số kế tiếp
+      // (không chèn xen, không đổi số các hồ sơ cũ). Đợt đã khoá thì chỉ báo "không tìm thấy".
+      if (dot.trangThai === "dang_mo" && maChuan) {
+        const docs = await dongBoColdCacheVuAnDaGiaiQuyet();
+        const vu = docs.find(v => !v.daXoa && ["tam_dinh_chi", "dinh_chi", "da_xet_xu"].includes(v.trangThai)
+          && (chuanHoaMaQuet(v.id) === maChuan || chuanHoaMaQuet(hienThiMa(v)) === maChuan));
+        if (vu) {
+          const kt = await db.collection("hoSoNopLuuKho").where("maVuAn", "==", vu.id).get();
+          if (!kt.empty) { addToast(`"${vu.tenVu}" đã nằm trong một đợt nộp lưu khác.`, "warn"); setKetQuaQuet({ khongTim: true, ma: maTrim }); return; }
+          const moi = await themCuoiSo(vu);
+          if (moi) setKetQuaQuet(moi);
+          return;
+        }
+      }
+      setKetQuaQuet({ khongTim: true, ma: maTrim });
+      return;
+    }
     if (found.thoiDiemQuetXacNhan) {
       addToast(`⚠ "${found.tenVu}" (Số ${found.nhanSo}) đã được xác nhận lên Kho từ trước (lúc ${fmtNgayGio(found.thoiDiemQuetXacNhan)}) — quét trùng.`, "warn");
     }
@@ -19332,6 +19379,15 @@ function ManSoLuuTru({ dot, dsHoSo }) {
         <div className="text-xs text-slate-400 ml-auto">{soLuong} vụ — {soDaLenKho}/{soLuong} đã lên Kho</div>
       </div>
 
+      {(() => {
+        const dem = {}; dsHoSo.forEach(h => { dem[h.nhanSo] = (dem[h.nhanSo] || 0) + 1; });
+        const trung = Object.keys(dem).filter(k => dem[k] > 1);
+        return trung.length ? (
+          <div className="mb-3 border-2 border-red-400 bg-red-50 text-red-700 rounded-lg p-3 text-sm font-medium">
+            ⚠ CẢNH BÁO: trùng số lưu trữ trong sổ: {trung.join(", ")} — cần kiểm tra và sửa ngay.
+          </div>
+        ) : null;
+      })()}
       <div className="bg-white border border-slate-200 rounded-xl p-3 mb-4">
         <div className="text-sm font-medium text-slate-700 mb-2">Quét QR tra cứu / xác nhận lên Kho</div>
         <input value={dsQuetTemp} onChange={e => setDsQuetTemp(e.target.value)} lang="en" autoComplete="off" spellCheck={false}
