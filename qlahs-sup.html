@@ -19283,7 +19283,7 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
   const taiExcelSo = async () => {
     try { await lamMoiThoiHan(); } catch (e) { console.error(e); }
     const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet("Sổ lưu trữ");
-    ws.addRow(["Số", "Tên vụ", "KSV", "Hình thức GQ", "Số QĐ KTVA", "Ngày QĐ KTVA", "Số QĐ GQ", "Ngày GQ", "Thời hạn bảo quản", "Số bút lục", "Số tập", "Lên Kho", "Ghi chú"]).font = { bold: true };
+    ws.addRow(["Số", "Tên vụ", "KSV", "Hình thức GQ", "Số QĐ KTVA", "Ngày QĐ KTVA", "Số QĐ GQ", "Ngày GQ", "Thời hạn bảo quản", "Số bút lục", "Số tập", "Lên Kho", "Đã nộp lưu", "Ghi chú"]).font = { bold: true };
     const sMoi = await db.collection("hoSoNopLuuKho").where("dotId", "==", dot.id).get();
     const dsMoi = sMoi.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.soThuTu || 0) - (b.soThuTu || 0));
     dsMoi.forEach(h => {
@@ -19291,9 +19291,10 @@ Vụ đã phục hồi ngày ${fmtDate(ph.ngay)}. Bạn có chắc muốn nộp 
       const ghi = [];
       if (ph?.ngay) ghi.push(`Vụ đã phục hồi điều tra ngày ${fmtDate(ph.ngay)}${ph.dangGQ ? " (hiện đang giải quyết)" : ""}`);
       if (h.khongNopLuu) ghi.unshift("KHÔNG NỘP LƯU (giữ số " + h.nhanSo + ")");
-      ws.addRow([h.nhanSo, h.tenVu, h.ksvChinh || "", NHAN_TRANG_THAI[h.hinhThucGiaiQuyet] || h.hinhThucGiaiQuyet, h.soQdKtva || "", fmtDate(h.ngayQdKtva), h.soQuyetDinhGiaiQuyet || "", fmtDate(h.ngayGiaiQuyet), h.thoiHanBaoQuan || "", h.soButLuc || "", h.soTapHoSo || "", h.thoiDiemQuetXacNhan ? fmtDate(h.thoiDiemQuetXacNhan) : "", ghi.join("; ")]);
+      ws.addRow([h.nhanSo, h.tenVu, h.ksvChinh || "", NHAN_TRANG_THAI[h.hinhThucGiaiQuyet] || h.hinhThucGiaiQuyet, h.soQdKtva || "", fmtDate(h.ngayQdKtva), h.soQuyetDinhGiaiQuyet || "", fmtDate(h.ngayGiaiQuyet), h.thoiHanBaoQuan || "", h.soButLuc || "", h.soTapHoSo || "", h.thoiDiemQuetXacNhan ? fmtDate(h.thoiDiemQuetXacNhan) : "", (h.thoiDiemQuetXacNhan && !h.khongNopLuu) ? "X" : "", ghi.join("; ")]);
     });
-    ws.columns.forEach((c, i) => { c.width = [8, 40, 20, 16, 14, 14, 14, 14, 16, 10, 8, 12, 50][i]; });
+    ws.columns.forEach((c, i) => { c.width = [8, 40, 20, 16, 14, 14, 14, 14, 16, 10, 8, 12, 11, 50][i];
+      if (i === 12) c.alignment = { horizontal: "center" }; });
     const buf = await wb.xlsx.writeBuffer();
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([buf])); a.download = `So_luu_tru_${dot.tenDot || "dot"}.xlsx`; a.click();
   };
