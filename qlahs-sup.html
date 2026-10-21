@@ -20111,6 +20111,51 @@ function PhanCongHoSoModule() {
     else { setSortCot(cot); setSortChieu(cot === "ksv" ? "asc" : "desc"); }
   };
 
+  // Xuất ÁN TỒN (vụ đang giải quyết) theo từng KSV chính, mỗi giai đoạn 1 sheet — cột đơn giản:
+  // Tên vụ, KSV, Số/Ngày QĐ KTVA, Bị can (tối đa 3 người, nhiều hơn ghi "và đồng phạm"), Số bị can, Tội.
+  const [dangXuatAnTon, setDangXuatAnTon] = useState(false);
+  const xuatAnTonTheoKsv = async () => {
+    setDangXuatAnTon(true);
+    try {
+      const byVu = await batchLayBiCanList(dsVu.map(v => v.id));
+      const wb = new ExcelJS.Workbook();
+      const VIEN = { style: "thin", color: { argb: "FFCBD5E1" } };
+      const oVien = { top: VIEN, left: VIEN, bottom: VIEN, right: VIEN };
+      const MAU = { dieu_tra: "FFDBEAFE", truy_to: "FFF3E8FF", xet_xu: "FFD1FAE5" };
+      const TIEU_DE = ["STT", "Kiểm sát viên", "Tên vụ án", "Số QĐ KTVA", "Ngày KTVA", "Bị can", "Số bị can", "Tội danh"];
+      const DO_RONG = [6, 24, 44, 14, 13, 40, 10, 36];
+      THU_TU_GIAI_DOAN.forEach(gd => {
+        const ws = wb.addWorksheet(NHAN_GIAI_DOAN[gd]);
+        const ds = dsVu.filter(v => v.coQuanThuLy === gd).map(v => ({ v, ksv: v.ksvChinh || "(chưa gán KSV)" }))
+          .sort((a, b) => a.ksv.localeCompare(b.ksv, "vi") || (a.v.tenVu || "").localeCompare(b.v.tenVu || "", "vi"));
+        ws.addRow([`ÁN TỒN ${NHAN_GIAI_DOAN[gd].toUpperCase()} THEO KIỂM SÁT VIÊN — ${ds.length} vụ (xuất ngày ${new Date().toLocaleDateString("vi-VN")})`]);
+        ws.mergeCells(1, 1, 1, TIEU_DE.length);
+        ws.getCell(1, 1).font = { bold: true, size: 13 };
+        const hr = ws.addRow(TIEU_DE);
+        hr.eachCell(c => { c.font = { bold: true }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: MAU[gd] } };
+          c.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; c.border = oVien; });
+        DO_RONG.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+        ws.views = [{ state: "frozen", ySplit: 2 }];
+        let stt = 0;
+        ds.forEach(({ v, ksv }) => {
+          const bcs = byVu[v.id] || [];
+          const ten = bcs.slice(0, 3).map(b => b.hoTen).filter(Boolean).join(", ") + (bcs.length > 3 ? " và đồng phạm" : "");
+          const bcChinh = bcs.length ? chonBiCanChinh(bcs) : null;
+          const toi = bcChinh?.toiDanh?.[0] || v.dieuLuat || "";
+          const r = ws.addRow([++stt, ksv, v.tenVu || "", v.soQdKtva || "", fmtDate(v.ngayQdKtva), ten, bcs.length, toi]);
+          r.eachCell((c, i) => { c.border = oVien; c.alignment = { vertical: "top", wrapText: true, horizontal: [1, 4, 5, 7].includes(i) ? "center" : "left" }; });
+        });
+      });
+      const buf = await wb.xlsx.writeBuffer();
+      const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = `An_ton_theo_KSV_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click(); URL.revokeObjectURL(url);
+    } catch (e) {
+      addToast("Lỗi xuất án tồn: " + e.message, "error");
+    } finally { setDangXuatAnTon(false); }
+  };
+
   // Excel format 2 hàng header nhóm+cột-con, viền lưới đầy đủ, tô màu theo NHÓM (khác hẳn tô theo
   // từng ô đơn lẻ) để mắt tách nhanh 3 giai đoạn/Tổng/2 vụ gần nhất — đúng yêu cầu "dễ quan sát
   // nhất" (2026-08-13, bản sửa lại theo phản hồi Dũng, thay hẳn bản đầu chỉ có 1 hàng header phẳng).
@@ -20277,6 +20322,10 @@ function PhanCongHoSoModule() {
           <button onClick={() => setHienBaoCaoChiTiet(true)}
                   className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
             📊 Báo cáo chi tiết theo kỳ
+          </button>
+          <button onClick={xuatAnTonTheoKsv} disabled={dangXuatAnTon || dangTai}
+                  className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
+            {dangXuatAnTon ? "Đang xuất..." : "📋 Xuất án tồn theo KSV"}
           </button>
           <button onClick={xuatExcelPhanCong}
                   className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">
