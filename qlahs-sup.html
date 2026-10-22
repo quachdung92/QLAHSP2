@@ -5391,17 +5391,11 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   // lọc theo từ khoá (thuần client, chạy lại mỗi lần gõ) — trước đây gộp chung 1 effect theo
   // [tuKhoa], nghĩa là MỖI KÝ TỰ gõ vào ô tìm kiếm đều gọi lại Firestore đọc tới 300 document, dù
   // "danh sách 300 vụ gần nhất" không hề đổi giữa các lần gõ liên tiếp trong CÙNG 1 lượt tìm.
-  const [dsUngVien, setDsUngVien] = useState(null);
+  // 2026-10-22: dùng TOÀN BỘ vụ đang giải quyết (hook dùng chung) thay vì chỉ 300 vụ tạo gần nhất —
+  // trước đây vụ đích cũ hơn 300 vụ mới nhất (VD QLVA_E01.53_2601_0030) gõ mã/tên không ra.
+  const [dsUngVien] = useDanhSachDangGiaiQuyet();
   useEffect(() => {
-    let active = true;
-    fetchWithTtlCache("vuan:300_gan_nhat", () => db.collection("vuan").orderBy("ngayTao", "desc").limit(300))
-      .then(docs => { if (active) setDsUngVien(docs); })
-      .catch(err => console.error(err));
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    if (!tuKhoa.trim() || !dsUngVien) { setKetQua([]); return; }
+    if (!tuKhoa.trim()) { setKetQua([]); return; }
     const k = tuKhoa.trim().toLowerCase();
     const list = dsUngVien
       .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet" && !v.daXoa)
