@@ -20124,11 +20124,17 @@ function PhanCongHoSoModule() {
       const MAU = { dieu_tra: "FFDBEAFE", truy_to: "FFF3E8FF", xet_xu: "FFD1FAE5" };
       const TIEU_DE = ["STT", "Kiểm sát viên", "Tên vụ án", "Số QĐ KTVA", "Ngày KTVA", "Bị can", "Số bị can", "Tội danh"];
       const DO_RONG = [6, 24, 44, 14, 13, 40, 10, 36];
-      THU_TU_GIAI_DOAN.forEach(gd => {
-        const ws = wb.addWorksheet(NHAN_GIAI_DOAN[gd]);
-        const ds = dsVu.filter(v => v.coQuanThuLy === gd).map(v => ({ v, ksv: v.ksvChinh || "(chưa gán KSV)" }))
-          .sort((a, b) => a.ksv.localeCompare(b.ksv, "vi") || (a.v.tenVu || "").localeCompare(b.v.tenVu || "", "vi"));
-        ws.addRow([`ÁN TỒN ${NHAN_GIAI_DOAN[gd].toUpperCase()} THEO KIỂM SÁT VIÊN — ${ds.length} vụ (xuất ngày ${new Date().toLocaleDateString("vi-VN")})`]);
+      const VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
+      const tenSheetDung = new Set();
+      const taoTenSheet = (goc) => {
+        let ten = goc.replace(/[\/?*\[\]:]/g, " ").slice(0, 31), n = 1;
+        while (tenSheetDung.has(ten.toLowerCase())) ten = goc.replace(/[\/?*\[\]:]/g, " ").slice(0, 28) + " " + (++n);
+        tenSheetDung.add(ten.toLowerCase());
+        return ten;
+      };
+      const ghiSheet = (gd, tenSheet, tieuDe, ds) => {
+        const ws = wb.addWorksheet(taoTenSheet(tenSheet));
+        ws.addRow([`${tieuDe} — ${ds.length} vụ (xuất ngày ${new Date().toLocaleDateString("vi-VN")})`]);
         ws.mergeCells(1, 1, 1, TIEU_DE.length);
         ws.getCell(1, 1).font = { bold: true, size: 13 };
         const hr = ws.addRow(TIEU_DE);
@@ -20145,7 +20151,19 @@ function PhanCongHoSoModule() {
           const r = ws.addRow([++stt, ksv, v.tenVu || "", v.soQdKtva || "", fmtDate(v.ngayQdKtva), ten, bcs.length, toi]);
           r.eachCell((c, i) => { c.border = oVien; c.alignment = { vertical: "top", wrapText: true, horizontal: [1, 4, 5, 7].includes(i) ? "center" : "left" }; });
         });
+      };
+      const dsTheoGd = {};
+      THU_TU_GIAI_DOAN.forEach(gd => {
+        dsTheoGd[gd] = dsVu.filter(v => v.coQuanThuLy === gd).map(v => ({ v, ksv: v.ksvChinh || "(chưa gán KSV)" }))
+          .sort((x, y) => x.ksv.localeCompare(y.ksv, "vi") || (x.v.tenVu || "").localeCompare(y.v.tenVu || "", "vi"));
+        ghiSheet(gd, NHAN_GIAI_DOAN[gd], `ÁN TỒN ${NHAN_GIAI_DOAN[gd].toUpperCase()} THEO KIỂM SÁT VIÊN`, dsTheoGd[gd]);
       });
+      // Các tab riêng từng KSV: "ĐT <tên>", "TT <tên>", "XX <tên>" (chỉ tạo khi KSV có vụ ở giai đoạn đó)
+      const dsKsvTen = [...new Set(THU_TU_GIAI_DOAN.flatMap(gd => dsTheoGd[gd].map(x => x.ksv)))].sort((x, y) => x.localeCompare(y, "vi"));
+      dsKsvTen.forEach(ksv => THU_TU_GIAI_DOAN.forEach(gd => {
+        const ds = dsTheoGd[gd].filter(x => x.ksv === ksv);
+        if (ds.length) ghiSheet(gd, `${VIET_TAT[gd]} ${ksv}`, `ÁN TỒN ${NHAN_GIAI_DOAN[gd].toUpperCase()} — ${ksv}`, ds);
+      }));
       const buf = await wb.xlsx.writeBuffer();
       const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
       const a = document.createElement("a");
