@@ -19960,8 +19960,8 @@ function PhanCongHoSoModule() {
       // cot: "ksv" (hiện cột KSV) hoặc "gd" (hiện cột Giai đoạn thay cho KSV)
       const ghiSheet = (mauGd, tenSheet, tieuDe, ds, cot) => {
         const dau = cot === "gd" ? "Giai đoạn" : "Kiểm sát viên";
-        const TIEU_DE = ["STT", dau, "Tên vụ án", "Số QĐ KTVA", "Ngày KTVA", "Bị can", "SL BC", "Tội danh"];
-        const DO_RONG = [5, cot === "gd" ? 12 : 18, 36, 11, 12, 30, 6, 28];
+        const TIEU_DE = ["STT", dau, "KSV hỗ trợ", "Tên vụ án", "Số QĐ KTVA", "Ngày KTVA", "Bị can", "SL BC", "Tội danh"];
+        const DO_RONG = [5, cot === "gd" ? 12 : 17, 16, 32, 11, 12, 26, 6, 25];
         const ws = wb.addWorksheet(taoTenSheet(tenSheet));
         ws.addRow([`${tieuDe} — ${ds.length} vụ (xuất ngày ${ngayXuat})`]);
         ws.mergeCells(1, 1, 1, TIEU_DE.length);
@@ -19977,9 +19977,9 @@ function PhanCongHoSoModule() {
           const ten = bcs.slice(0, 3).map(b => b.hoTen).filter(Boolean).join(", ") + (bcs.length > 3 ? " và đồng phạm" : "");
           const bcChinh = bcs.length ? chonBiCanChinh(bcs) : null;
           const toi = bcChinh?.toiDanh?.[0] || v.dieuLuat || "";
-          const r = ws.addRow([++stt, cot === "gd" ? NHAN_GIAI_DOAN[gd] : ksv, v.tenVu || "", v.soQdKtva || "", fmtDate(v.ngayQdKtva), ten, bcs.length, toi]);
+          const r = ws.addRow([++stt, cot === "gd" ? NHAN_GIAI_DOAN[gd] : ksv, [].concat(v.ksvHoTro || []).filter(Boolean).join(", "), v.tenVu || "", v.soQdKtva || "", fmtDate(v.ngayQdKtva), ten, bcs.length, toi]);
           r.eachCell((c, i) => { c.border = oVien; c.font = { size: 13 };
-            c.alignment = { vertical: "top", wrapText: true, horizontal: [1, 4, 5, 7].includes(i) ? "center" : "left" }; });
+            c.alignment = { vertical: "top", wrapText: true, horizontal: [1, 5, 6, 8].includes(i) ? "center" : "left" }; });
         });
         // In A4 nằm ngang, vừa 1 trang theo chiều rộng, lặp 2 hàng đầu mỗi trang
         ws.pageSetup = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0,
