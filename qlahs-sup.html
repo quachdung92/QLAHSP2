@@ -8488,7 +8488,11 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
       </div>
 
       <div className="p-5">
-        <div className="text-sm font-medium text-slate-600 mb-2">Lịch sử</div>
+        <div className="text-sm font-medium text-slate-600 mb-2 flex items-center justify-between">
+          <span>Lịch sử</span>
+          <button onClick={() => setModalMo("lichsu")} title="Phóng to / sửa / xuất Excel"
+            className="text-xs text-indigo-600 hover:underline">⤢ Phóng to</button>
+        </div>
         {lichSu.length === 0 && <div className="text-sm text-slate-400">Chưa có sự kiện nào.</div>}
         {lichSu.length > 0 && (
           <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -8552,6 +8556,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
                      onXong={(dichId) => { setModalMo(null); onDoiSelected && onDoiSelected(dichId); }} />
       )}
       {modalMo === "qr" && <InQRModal vuAn={vuAn} onDong={() => setModalMo(null)} />}
+      {modalMo === "lichsu" && <LichSuPhongToModal vuAn={vuAn} lichSu={lichSu} onDong={() => setModalMo(null)} />}
       {modalMo === "sua_thong_tin" && (
         <SuaVuAnForm vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
       )}
@@ -8603,6 +8608,112 @@ function taoMaXacNhanNgauNhien(soKyTu = 4) {
 // Xác nhận đổi từ "gõ lại đúng mã vụ" (dễ đoán, người dùng có sẵn mã vụ trước mắt) sang gõ lại 1 mã
 // NGẪU NHIÊN hiện ngay trên màn hình — vì giờ thao tác này CÓ THỂ hoàn tác (Khôi phục), không cần
 // mức xác nhận chặt như "Xoá vĩnh viễn" (vẫn giữ nguyên gõ lại đúng mã vụ, xem ThungRacModule).
+// Popup phóng to "Lịch sử" vụ án: xem đủ chi tiết từng sự kiện, sửa trực tiếp Ngày/Số QĐ/Ghi chú
+// (sửa thông tin thường, KHÔNG đổi kỳ báo cáo — muốn đổi kỳ dùng "Sửa kỳ" ở Nhật ký thao tác) và
+// xuất Excel. Dữ liệu `lichSu` do component cha truyền xuống (đã onSnapshot nên tự cập nhật sau khi lưu).
+function LichSuPhongToModal({ vuAn, lichSu, onDong }) {
+  const [suaId, setSuaId] = useState(null);
+  const [form, setForm] = useState({ ngay: "", soQd: "", ghiChu: "" });
+  const [dangLuu, setDangLuu] = useState(false);
+  const [loi, setLoi] = useState("");
+  const tenGd = (g) => (g ? (NHAN_GIAI_DOAN[g] || g) : "—");
+  const batDauSua = (ls) => {
+    setSuaId(ls.id); setLoi("");
+    setForm({ ngay: ls.ngaySuKien ? toInputDate(ls.ngaySuKien) : "", soQd: ls.soQuyetDinh || "", ghiChu: ls.ghiChu || "" });
+  };
+  const luu = async () => {
+    setDangLuu(true); setLoi("");
+    try {
+      const patch = { soQuyetDinh: form.soQd.trim(), ghiChu: form.ghiChu.trim() };
+      if (form.ngay) patch.ngaySuKien = new Date(form.ngay + "T00:00:00");
+      await db.collection("lichsuChuyenGiaiDoan").doc(suaId).update(patch);
+      setSuaId(null);
+    } catch (e) { setLoi("Lưu thất bại: " + e.message); }
+    setDangLuu(false);
+  };
+  const xuat = () => {
+    const rows = lichSu.map((ls, i) => ({
+      "STT": i + 1,
+      "Ngày": fmtDate(ls.ngaySuKien),
+      "Sự kiện": moTaLoaiSuKien(ls),
+      "Từ giai đoạn": tenGd(ls.tuGiaiDoan),
+      "Đến giai đoạn": tenGd(ls.denGiaiDoan),
+      "Số QĐ": ls.soQuyetDinh || "",
+      "Ghi chú": ls.ghiChu || "",
+      "Người thực hiện": ls.nguoiThucHien || "",
+      "Thời điểm ghi": fmtDate(ls.thoiDiemGhi),
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [6, 12, 28, 14, 14, 16, 50, 26, 14].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Lịch sử vụ án");
+    XLSX.writeFile(wb, `LichSu_${(hienThiMa(vuAn) || vuAn.id).replace(/[^\w.-]/g, "_")}.xlsx`);
+  };
+  const inp = "border border-slate-300 rounded px-2 py-1 text-xs w-full";
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onDong}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 p-4 border-b border-slate-200">
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-slate-800">Lịch sử vụ án ({lichSu.length} sự kiện)</div>
+            <div className="text-xs text-slate-500 truncate">{hienThiMa(vuAn)} — {vuAn.tenVu || "(chưa đặt tên)"}</div>
+          </div>
+          <button onClick={xuat} disabled={lichSu.length === 0}
+            className="px-3 py-1.5 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">⬇ Xuất Excel</button>
+          <button onClick={onDong} className="px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50">Đóng</button>
+        </div>
+        <div className="flex-1 overflow-auto p-4">
+          {loi && <div className="mb-2 text-sm text-red-600">{loi}</div>}
+          {lichSu.length === 0 ? <div className="text-sm text-slate-400">Chưa có sự kiện nào.</div> : (
+            <table className="w-full text-xs border border-slate-200">
+              <thead className="bg-slate-50 text-slate-500 sticky top-0">
+                <tr>
+                  <th className="text-left p-2 w-28">Ngày</th><th className="text-left p-2">Sự kiện</th>
+                  <th className="text-left p-2">Giai đoạn</th><th className="text-left p-2 w-32">Số QĐ</th>
+                  <th className="text-left p-2">Ghi chú</th><th className="text-left p-2">Người thực hiện</th>
+                  <th className="p-2 w-24"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {lichSu.map((ls, i) => {
+                  const dangSua = suaId === ls.id;
+                  return (
+                    <tr key={ls.id} className={`border-t border-slate-100 align-top ${i % 2 ? "bg-slate-50/70" : "bg-white"}`}>
+                      <td className="p-2 whitespace-nowrap">
+                        {dangSua ? <NhapNgay value={form.ngay} onChange={e => setForm(f => ({ ...f, ngay: e.target.value }))} className={inp} />
+                                 : <span className="text-slate-500">{fmtDate(ls.ngaySuKien)}</span>}
+                      </td>
+                      <td className="p-2"><Badge>{moTaLoaiSuKien(ls)}</Badge></td>
+                      <td className="p-2 text-slate-500 whitespace-nowrap">
+                        {ls.tuGiaiDoan || ls.denGiaiDoan ? `${tenGd(ls.tuGiaiDoan)} → ${tenGd(ls.denGiaiDoan)}` : "—"}
+                      </td>
+                      <td className="p-2">
+                        {dangSua ? <input className={inp} value={form.soQd} onChange={e => setForm(f => ({ ...f, soQd: e.target.value }))} />
+                                 : <span className="text-slate-500">{ls.soQuyetDinh || "—"}</span>}
+                      </td>
+                      <td className="p-2">
+                        {dangSua ? <textarea rows={2} className={inp} value={form.ghiChu} onChange={e => setForm(f => ({ ...f, ghiChu: e.target.value }))} />
+                                 : <span className="text-slate-500 whitespace-pre-wrap">{ls.ghiChu || "—"}</span>}
+                      </td>
+                      <td className="p-2 text-slate-400">{ls.nguoiThucHien || "—"}</td>
+                      <td className="p-2 whitespace-nowrap">
+                        {dangSua ? (<>
+                          <button onClick={luu} disabled={dangLuu} className="text-indigo-600 hover:underline mr-2">{dangLuu ? "..." : "Lưu"}</button>
+                          <button onClick={() => setSuaId(null)} className="text-slate-500 hover:underline">Huỷ</button>
+                        </>) : <button onClick={() => batDauSua(ls)} className="text-indigo-600 hover:underline">Sửa</button>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function XoaVuAnModal({ vuAn, biCanList, lichSu, onDong, onXong }) {
   const [dangKiemTra, setDangKiemTra] = useState(true);
   const [coVuCon, setCoVuCon] = useState(null); // null = chưa biết; mảng vụ đã tách ra còn tồn tại
@@ -9928,6 +10039,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
   const [vuAn, setVuAn] = useState(null);
   const [biCanList, setBiCanList] = useState([]);
   const [lichSu, setLichSu] = useState([]);
+  const [hienLichSuLon, setHienLichSuLon] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [ed, setEd] = useState({});          // editData — tên ngắn để dùng inline
   // Điều luật/tội danh vụ án — mảng nhiều dòng, dùng CHUNG cơ chế với SuaVuAnForm (ToiDanhInput +
@@ -10283,7 +10395,12 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
             </div>
             {/* Lịch sử */}
             <div className="p-5">
-              <div className="text-sm font-medium text-slate-600 mb-2">Lịch sử</div>
+              <div className="text-sm font-medium text-slate-600 mb-2 flex items-center justify-between">
+                <span>Lịch sử</span>
+                <button onClick={() => setHienLichSuLon(true)} title="Phóng to / sửa / xuất Excel"
+                  className="text-xs text-indigo-600 hover:underline">⤢ Phóng to</button>
+              </div>
+              {hienLichSuLon && <LichSuPhongToModal vuAn={vuAn} lichSu={lichSu} onDong={() => setHienLichSuLon(false)} />}
               {lichSu.length === 0 ? (
                 <div className="text-sm text-slate-400">Chưa có sự kiện nào.</div>
               ) : (
@@ -19820,56 +19937,80 @@ function PhanCongHoSoModule() {
   // Xuất ÁN TỒN (vụ đang giải quyết) theo từng KSV chính, mỗi giai đoạn 1 sheet — cột đơn giản:
   // Tên vụ, KSV, Số/Ngày QĐ KTVA, Bị can (tối đa 3 người, nhiều hơn ghi "và đồng phạm"), Số bị can, Tội.
   const [dangXuatAnTon, setDangXuatAnTon] = useState(false);
+  // kieuXuat: "theo_gd" = 3 tab tổng + tab ĐT/TT/XX từng KSV (như cũ); "gop" = mỗi KSV 1 sheet chứa
+  // cả 3 giai đoạn, thêm cột Giai đoạn (2026-10-27). Mọi sheet đặt sẵn in A4 ngang, vừa chiều rộng.
+  const [kieuXuat, setKieuXuat] = useState("theo_gd");
   const xuatAnTonTheoKsv = async () => {
     setDangXuatAnTon(true);
     try {
       const byVu = await batchLayBiCanList(dsVu.map(v => v.id));
       const wb = new ExcelJS.Workbook();
-      const VIEN = { style: "thin", color: { argb: "FFCBD5E1" } };
+      const VIEN = { style: "thin", color: { argb: "FF94A3B8" } };
       const oVien = { top: VIEN, left: VIEN, bottom: VIEN, right: VIEN };
       const MAU = { dieu_tra: "FFDBEAFE", truy_to: "FFF3E8FF", xet_xu: "FFD1FAE5" };
-      const TIEU_DE = ["STT", "Kiểm sát viên", "Tên vụ án", "Số QĐ KTVA", "Ngày KTVA", "Bị can", "Số bị can", "Tội danh"];
-      const DO_RONG = [6, 24, 44, 14, 13, 40, 10, 36];
       const VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
+      const ngayXuat = new Date().toLocaleDateString("vi-VN");
       const tenSheetDung = new Set();
       const taoTenSheet = (goc) => {
-        let ten = goc.replace(/[\/?*\[\]:]/g, " ").slice(0, 31), n = 1;
-        while (tenSheetDung.has(ten.toLowerCase())) ten = goc.replace(/[\/?*\[\]:]/g, " ").slice(0, 28) + " " + (++n);
+        const sach = goc.replace(/[\/?*\[\]:]/g, " ");
+        let ten = sach.slice(0, 31), n = 1;
+        while (tenSheetDung.has(ten.toLowerCase())) ten = sach.slice(0, 28) + " " + (++n);
         tenSheetDung.add(ten.toLowerCase());
         return ten;
       };
-      const ghiSheet = (gd, tenSheet, tieuDe, ds) => {
+      // cot: "ksv" (hiện cột KSV) hoặc "gd" (hiện cột Giai đoạn thay cho KSV)
+      const ghiSheet = (mauGd, tenSheet, tieuDe, ds, cot) => {
+        const dau = cot === "gd" ? "Giai đoạn" : "Kiểm sát viên";
+        const TIEU_DE = ["STT", dau, "Tên vụ án", "Số QĐ KTVA", "Ngày KTVA", "Bị can", "SL BC", "Tội danh"];
+        const DO_RONG = [5, cot === "gd" ? 11 : 20, 40, 12, 11, 34, 6, 30];
         const ws = wb.addWorksheet(taoTenSheet(tenSheet));
-        ws.addRow([`${tieuDe} — ${ds.length} vụ (xuất ngày ${new Date().toLocaleDateString("vi-VN")})`]);
+        ws.addRow([`${tieuDe} — ${ds.length} vụ (xuất ngày ${ngayXuat})`]);
         ws.mergeCells(1, 1, 1, TIEU_DE.length);
-        ws.getCell(1, 1).font = { bold: true, size: 13 };
+        ws.getCell(1, 1).font = { bold: true, size: 12 };
         const hr = ws.addRow(TIEU_DE);
-        hr.eachCell(c => { c.font = { bold: true }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: MAU[gd] } };
+        hr.eachCell(c => { c.font = { bold: true, size: 10 }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: MAU[mauGd] } };
           c.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; c.border = oVien; });
         DO_RONG.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
         ws.views = [{ state: "frozen", ySplit: 2 }];
         let stt = 0;
-        ds.forEach(({ v, ksv }) => {
+        ds.forEach(({ v, ksv, gd }) => {
           const bcs = byVu[v.id] || [];
           const ten = bcs.slice(0, 3).map(b => b.hoTen).filter(Boolean).join(", ") + (bcs.length > 3 ? " và đồng phạm" : "");
           const bcChinh = bcs.length ? chonBiCanChinh(bcs) : null;
           const toi = bcChinh?.toiDanh?.[0] || v.dieuLuat || "";
-          const r = ws.addRow([++stt, ksv, v.tenVu || "", v.soQdKtva || "", fmtDate(v.ngayQdKtva), ten, bcs.length, toi]);
-          r.eachCell((c, i) => { c.border = oVien; c.alignment = { vertical: "top", wrapText: true, horizontal: [1, 4, 5, 7].includes(i) ? "center" : "left" }; });
+          const r = ws.addRow([++stt, cot === "gd" ? NHAN_GIAI_DOAN[gd] : ksv, v.tenVu || "", v.soQdKtva || "", fmtDate(v.ngayQdKtva), ten, bcs.length, toi]);
+          r.eachCell((c, i) => { c.border = oVien; c.font = { size: 10 };
+            c.alignment = { vertical: "top", wrapText: true, horizontal: [1, 4, 5, 7].includes(i) ? "center" : "left" }; });
+          if (cot === "gd") r.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: MAU[gd] } };
         });
+        // In A4 nằm ngang, vừa 1 trang theo chiều rộng, lặp 2 hàng đầu mỗi trang
+        ws.pageSetup = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+          horizontalCentered: true, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
+          printTitlesRow: "1:2" };
+        ws.headerFooter = { oddFooter: "&CTrang &P / &N" };
       };
       const dsTheoGd = {};
       THU_TU_GIAI_DOAN.forEach(gd => {
-        dsTheoGd[gd] = dsVu.filter(v => v.coQuanThuLy === gd).map(v => ({ v, ksv: v.ksvChinh || "(chưa gán KSV)" }))
+        dsTheoGd[gd] = dsVu.filter(v => v.coQuanThuLy === gd).map(v => ({ v, gd, ksv: v.ksvChinh || "(chưa gán KSV)" }))
           .sort((x, y) => x.ksv.localeCompare(y.ksv, "vi") || (x.v.tenVu || "").localeCompare(y.v.tenVu || "", "vi"));
-        ghiSheet(gd, NHAN_GIAI_DOAN[gd], `ÁN TỒN ${NHAN_GIAI_DOAN[gd].toUpperCase()} THEO KIỂM SÁT VIÊN`, dsTheoGd[gd]);
       });
-      // Các tab riêng từng KSV: "ĐT <tên>", "TT <tên>", "XX <tên>" (chỉ tạo khi KSV có vụ ở giai đoạn đó)
       const dsKsvTen = [...new Set(THU_TU_GIAI_DOAN.flatMap(gd => dsTheoGd[gd].map(x => x.ksv)))].sort((x, y) => x.localeCompare(y, "vi"));
-      dsKsvTen.forEach(ksv => THU_TU_GIAI_DOAN.forEach(gd => {
-        const ds = dsTheoGd[gd].filter(x => x.ksv === ksv);
-        if (ds.length) ghiSheet(gd, `${VIET_TAT[gd]} ${ksv}`, `ÁN TỒN ${NHAN_GIAI_DOAN[gd].toUpperCase()} — ${ksv}`, ds);
-      }));
+      if (kieuXuat === "gop") {
+        // Mỗi KSV 1 sheet: sắp ĐT → TT → XX, trong giai đoạn theo tên vụ
+        dsKsvTen.forEach(ksv => {
+          const ds = THU_TU_GIAI_DOAN.flatMap(gd => dsTheoGd[gd].filter(x => x.ksv === ksv));
+          ghiSheet("dieu_tra", ksv, `ÁN TỒN — ${ksv}`, ds, "gd");
+        });
+      } else {
+        THU_TU_GIAI_DOAN.forEach(gd => {
+          ghiSheet(gd, NHAN_GIAI_DOAN[gd], `ÁN TỒN ${NHAN_GIAI_DOAN[gd].toUpperCase()} THEO KIỂM SÁT VIÊN`, dsTheoGd[gd], "ksv");
+        });
+        // Các tab riêng từng KSV: "ĐT <tên>", "TT <tên>", "XX <tên>" (chỉ tạo khi KSV có vụ ở giai đoạn đó)
+        dsKsvTen.forEach(ksv => THU_TU_GIAI_DOAN.forEach(gd => {
+          const ds = dsTheoGd[gd].filter(x => x.ksv === ksv);
+          if (ds.length) ghiSheet(gd, `${VIET_TAT[gd]} ${ksv}`, `ÁN TỒN ${NHAN_GIAI_DOAN[gd].toUpperCase()} — ${ksv}`, ds, "ksv");
+        }));
+      }
       const buf = await wb.xlsx.writeBuffer();
       const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
       const a = document.createElement("a");
@@ -20047,6 +20188,11 @@ function PhanCongHoSoModule() {
                   className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50">
             📊 Báo cáo chi tiết theo kỳ
           </button>
+          <select value={kieuXuat} onChange={e => setKieuXuat(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white" title="Kiểu xuất án tồn">
+            <option value="theo_gd">Án tồn: chia sheet theo giai đoạn</option>
+            <option value="gop">Án tồn: mỗi KSV 1 sheet (gộp giai đoạn)</option>
+          </select>
           <button onClick={xuatAnTonTheoKsv} disabled={dangXuatAnTon || dangTai}
                   className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
             {dangXuatAnTon ? "Đang xuất..." : "📋 Xuất án tồn theo KSV"}
