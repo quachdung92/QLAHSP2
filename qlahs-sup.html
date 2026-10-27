@@ -19945,9 +19945,8 @@ function PhanCongHoSoModule() {
     try {
       const byVu = await batchLayBiCanList(dsVu.map(v => v.id));
       const wb = new ExcelJS.Workbook();
-      const VIEN = { style: "thin", color: { argb: "FF94A3B8" } };
+      const VIEN = { style: "thin", color: { argb: "FF000000" } };
       const oVien = { top: VIEN, left: VIEN, bottom: VIEN, right: VIEN };
-      const MAU = { dieu_tra: "FFDBEAFE", truy_to: "FFF3E8FF", xet_xu: "FFD1FAE5" };
       const VIET_TAT = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
       const ngayXuat = new Date().toLocaleDateString("vi-VN");
       const tenSheetDung = new Set();
@@ -19962,13 +19961,13 @@ function PhanCongHoSoModule() {
       const ghiSheet = (mauGd, tenSheet, tieuDe, ds, cot) => {
         const dau = cot === "gd" ? "Giai đoạn" : "Kiểm sát viên";
         const TIEU_DE = ["STT", dau, "Tên vụ án", "Số QĐ KTVA", "Ngày KTVA", "Bị can", "SL BC", "Tội danh"];
-        const DO_RONG = [5, cot === "gd" ? 11 : 20, 40, 12, 11, 34, 6, 30];
+        const DO_RONG = [5, cot === "gd" ? 12 : 18, 36, 11, 12, 30, 6, 28];
         const ws = wb.addWorksheet(taoTenSheet(tenSheet));
         ws.addRow([`${tieuDe} — ${ds.length} vụ (xuất ngày ${ngayXuat})`]);
         ws.mergeCells(1, 1, 1, TIEU_DE.length);
-        ws.getCell(1, 1).font = { bold: true, size: 12 };
+        ws.getCell(1, 1).font = { bold: true, size: 14 };
         const hr = ws.addRow(TIEU_DE);
-        hr.eachCell(c => { c.font = { bold: true, size: 10 }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: MAU[mauGd] } };
+        hr.eachCell(c => { c.font = { bold: true, size: 13 };
           c.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; c.border = oVien; });
         DO_RONG.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
         ws.views = [{ state: "frozen", ySplit: 2 }];
@@ -19979,13 +19978,12 @@ function PhanCongHoSoModule() {
           const bcChinh = bcs.length ? chonBiCanChinh(bcs) : null;
           const toi = bcChinh?.toiDanh?.[0] || v.dieuLuat || "";
           const r = ws.addRow([++stt, cot === "gd" ? NHAN_GIAI_DOAN[gd] : ksv, v.tenVu || "", v.soQdKtva || "", fmtDate(v.ngayQdKtva), ten, bcs.length, toi]);
-          r.eachCell((c, i) => { c.border = oVien; c.font = { size: 10 };
+          r.eachCell((c, i) => { c.border = oVien; c.font = { size: 13 };
             c.alignment = { vertical: "top", wrapText: true, horizontal: [1, 4, 5, 7].includes(i) ? "center" : "left" }; });
-          if (cot === "gd") r.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: MAU[gd] } };
         });
         // In A4 nằm ngang, vừa 1 trang theo chiều rộng, lặp 2 hàng đầu mỗi trang
         ws.pageSetup = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0,
-          horizontalCentered: true, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
+          horizontalCentered: true, margins: { left: 0.2, right: 0.2, top: 0.3, bottom: 0.35, header: 0.1, footer: 0.15 },
           printTitlesRow: "1:2" };
         ws.headerFooter = { oddFooter: "&CTrang &P / &N" };
       };
