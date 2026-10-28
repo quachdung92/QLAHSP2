@@ -44,6 +44,13 @@ Chỉ compile-check — chưa đăng nhập được để chạy thử dữ li�
 - 2026-10-05: bọc khối dựng sheet Biểu 13 trong try/catch — lỗi ở Biểu 13 chỉ báo toast, KHÔNG làm
   hỏng cả file Xuất Excel báo cáo tháng. Deploy production cùng merge `tinh-quay-vong-2-chieu` vào `main`.
 
+## Biểu 2 D294/D298 — CHỈ đếm chuyển đi XX nếu truy tố cùng kỳ (2026-10-28, `qlahs-sup.html`, đã compile-check; thêm cột "Ghi chú (nơi chuyển đến)" ở sheet DS chuyển đi, chuyển đi mà ghi chú trống thì ghi nơi chuyển đến)
+
+Dũng: vụ truy tố ở kỳ trước rồi chuyển đi ở XX kỳ này (VD QLVA_E01.53_2604_0051: TT→XX kỳ 09, chuyển đi kỳ 10)
+KHÔNG dùng D294/D298 nữa, chỉ nằm ở dòng chuyển đi Biểu 3 (D70/D76) ⇒ không còn D294 > D292. Sheet "DS chuyển đi XX"
+thêm cột phụ "Truy tố cùng kỳ" (AJ, "x" nếu vụ ∈ `baoCao.truy_to.ds.chuyenDi`); D294/D298 = DS chuyển đi TT + phần
+đánh dấu "x" của DS chuyển đi XX. Thay thế mục 2026-09-29 ngay dưới về phần chuyển đi XX.
+
 ## Biểu 2 D294/D298 cộng thêm "DS chuyển đi XX" (2026-09-29, nhánh `tinh-quay-vong-2-chieu`)
 
 Dũng: vụ "chuyển đi" ở giai đoạn Xét xử cũng là "VKS cấp trên phân công VKS cấp dưới THQCT, KSXX sơ

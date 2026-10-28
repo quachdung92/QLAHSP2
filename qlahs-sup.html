@@ -5161,6 +5161,8 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
         const batch = db.batch();
         batch.update(db.collection("vuan").doc(vuAn.id), {
           trangThai: hinhThuc, noiChuyenDen: hinhThuc === "chuyen_di" ? noiChuyenDen.trim() : "",
+          // Chuyển đi mà vụ chưa có ghi chú ⇒ ghi luôn nơi chuyển đến vào ghi chú vụ
+          ...(hinhThuc === "chuyen_di" && !(vuAn.ghiChu || "").trim() ? { ghiChu: `Nơi chuyển đến: ${noiChuyenDen.trim()}` } : {}),
           ...(fieldVuAn ? { [fieldVuAn]: soQuyetDinh.trim() } : {}),
           // Index nhanh cho module Án đã giải quyết — không cần query log mỗi lần mở
           ngayQuyetDinh: ngaySuKien, kyHoanThanh: kyId,
@@ -8399,7 +8401,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
               const toa = tra.filter(l => l.denGiaiDoan === "truy_to").length;
               return `${tra.length} lần (VKS trả CQĐT: ${vks}, Toà trả VKS: ${toa})`;
             })()]]} />
-            <HangThongTin items={[["Ghi chú", vuAn.ghiChu]]} />
+            <HangThongTin items={[["Ghi chú", (vuAn.ghiChu || "").trim() || (vuAn.noiChuyenDen ? `Nơi chuyển đến: ${vuAn.noiChuyenDen}` : "")]]} />
           </tbody>
         </table>
       </div>
@@ -8908,7 +8910,7 @@ async function xuatExcel(setDangXuat, setLoiXuat) {
         v.ksvChinh||"", (v.ksvHoTro||[]).join(", "), v.dtvCbdt||"", v.donViThuLy||"", v.uyQuyenXetXu||"",
         v.dieuLuat||"", v.soQdKtva||"", fmtDate(v.ngayQdKtva), fmtDate(v.hanDieuTra),
         v.anDiem?"x":"", v.phienToaRutKN?"x":"", NHAN_NGUON[v.nguon]||v.nguon||"",
-        kyMoiTheoVu[v.id]||"", kyGiaiQuyetTheoVu[v.id]||"", v.ghiChu||"",
+        kyMoiTheoVu[v.id]||"", kyGiaiQuyetTheoVu[v.id]||"", (v.ghiChu || "").trim() || (v.noiChuyenDen ? `Nơi chuyển đến: ${v.noiChuyenDen}` : ""),
       ];
       const bcArr = bcByVu[v.id] || [];
       if (bcArr.length === 0) {
@@ -12647,10 +12649,15 @@ function tinhBieu2(baoCao, biCanByVu, tongC6, dtChuyenDi_LanDau, ttChuyenDi_LanD
   // 2026-09-29 (Dũng): vụ "chuyển đi" ở giai đoạn XÉT XỬ (Hoàn thành → Chuyển đi khi vụ đang ở XX)
   // cũng là VKS cấp trên phân công VKS cấp dưới THQCT, KSXX ⇒ cộng thêm "DS chuyển đi XX" vào D294/D298
   // (chỉ 2 dòng "Trong đó" này — D292/D296 KHÔNG đổi vì vụ đó đã tính truy tố lúc TT→XX).
-  const _xxCd = baoCao.xet_xu?.ds?.hoanThanh?.chuyen_di || [];
-  m.set(294, _fc(`${_sumSheetA("DS chuyển đi TT")}+${_sumSheetA("DS chuyển đi XX")}`,
+  // 2026-10-28 (Dũng): CHỈ đếm vụ chuyển đi ở XX nếu vụ đó TRUY TỐ (TT→XX) NGAY TRONG KỲ NÀY
+  // (cột phụ "Truy tố cùng kỳ" = "x" ở sheet "DS chuyển đi XX", cột AJ). Vụ đã truy tố ở kỳ trước rồi
+  // chuyển đi ở kỳ này KHÔNG vào D294/D298 (tránh D294 > D292) — chỉ nằm ở dòng chuyển đi của Biểu 3
+  // (D70/D76), số liệu liên biểu không bị ảnh hưởng.
+  const _ttCdKyIds = new Set((tt.chuyenDi || []).map(v => v.id));
+  const _xxCd = (baoCao.xet_xu?.ds?.hoanThanh?.chuyen_di || []).filter(v => _ttCdKyIds.has(v.id));
+  m.set(294, _fc(`${_sumSheetA("DS chuyển đi TT")}+${_sfVuCrit("DS chuyển đi XX", "AJ", "x")}`,
     (tt.hoanThanh?.chuyen_di || []).length + _xxCd.length));
-  m.set(298, _fc(demBcSheetM(["DS chuyển đi TT", "DS chuyển đi XX"]),
+  m.set(298, _fc(`${demBcSheet("DS chuyển đi TT")}+${_cfBcCrit("DS chuyển đi XX", "AJ", "x")}`,
     soBc(tt.hoanThanh?.chuyen_di) + soBc(_xxCd)));
   // D293/D297 — round-trip (KHÔNG lần đầu) của TT→XX, cùng khuôn D93/D96 nhưng trên sheet
   // "DS TT chuyển XX" (cột phụ "Lần đầu?" cũng thêm ở đây, xem addSheetVuKy). KHÔNG gồm "DS chuyển
@@ -13450,6 +13457,12 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     it_nghiem_trong:"Ít nghiêm trọng", nghiem_trong:"Nghiêm trọng",
     rat_nghiem_trong:"Rất nghiêm trọng", dac_biet_nghiem_trong:"Đặc biệt nghiêm trọng",
   };
+  // Ghi chú của vụ; để trống mà vụ đã "Chuyển đi" thì ghi luôn nơi chuyển đến (2026-10-28, Dũng).
+  function ghiChuHoacNoiChuyenDen(vu) {
+    const g = (vu?.ghiChu || "").trim();
+    if (g) return g;
+    return vu?.noiChuyenDen ? `Nơi chuyển đến: ${vu.noiChuyenDen}` : "";
+  }
   function vuBaseRow(vu) {
     return [
       hienThiMa(vu), vu.tenVu, vu.ksvChinh||"", vu.dtvCbdt||"", vu.dieuLuat||"",
@@ -15386,7 +15399,14 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     add(`DS chuyển đi ${gs}`,
       d.hoanThanh?.chuyen_di||[], ["Ngày CĐ", "Số QĐ"], _ngaySoQD,
       gd === "truy_to" ? ["Mức độ NT (BC)"] : undefined,
-      gd === "truy_to" ? (bc => [NHAN_MUC_DO_NT[bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc))] || ""]) : undefined);
+      gd === "truy_to" ? (bc => [NHAN_MUC_DO_NT[bc.mucDoNghiemTrong || mucDoNghiemTrongMacDinhTheoDieu(_tkGetDL(bc))] || ""]) : undefined,
+      // Xét xử: cột phụ cấp vụ "Truy tố cùng kỳ" (AJ) — "x" nếu vụ cũng TT→XX trong kỳ này (Biểu 2 D294/D298).
+      // Cột cuối "Ghi chú (nơi chuyển đến)": ghi chú của vụ; để trống thì ghi nơi chuyển đến (vị trí AK
+      // ở TT, AK ở XX — sau AJ nên không xê dịch cột nào công thức đang tham chiếu).
+      gd === "xet_xu" ? ["Truy tố cùng kỳ", "Ghi chú (nơi chuyển đến)"] : ["Ghi chú (nơi chuyển đến)"],
+      gd === "xet_xu"
+        ? ((vu) => [(baoCao.truy_to.ds.chuyenDi || []).some(t => t.id === vu.id) ? "x" : "", ghiChuHoacNoiChuyenDen(vu)])
+        : ((vu) => [ghiChuHoacNoiChuyenDen(vu)]));
 
     add(`DS tạm đình chỉ ${gs}`,
       d.hoanThanh?.tam_dinh_chi||[], ["Ngày TĐC", "Số QĐ TĐC"], _ngaySoQD);
