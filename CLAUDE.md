@@ -44,6 +44,19 @@ có 0 bị can) — nghi ngờ ban đầu là mất dữ liệu, nhưng Dũng x�
 cơ chế gộp theo `nhomBiCanId` hoặc quy trình khác mà Dũng đã biết) — **KHÔNG tự ý can thiệp/sửa gì
 theo hướng này**, chỉ ghi lại ở đây để phiên sau biết bối cảnh nếu Dũng hỏi lại.
 
+## Nhập vụ: hỏi đối chiếu bị can trùng + cách tính "ra" của bị can (2026-10-28, `qlahs-sup.html`, CHƯA deploy, chưa thử UI thật)
+
+Dũng: vụ 10 bị can nhập vụ 6 bị can mà 6 người đó đã nằm trong 10 thì còn 10, không phải 16. `NhapVuModal`
+sau khi chọn vụ đích tải bị can 2 vụ, mỗi bị can nguồn có dropdown "Cùng người với ... / Người khác"
+(gợi ý sẵn theo `nhomBiCanId` hoặc Họ tên + Năm sinh). Người trùng → gộp tội danh theo cặp song song
+(`toiDanh`/`dieuLuatBC`/`hinhPhatChiTiet`) vào bản ghi đích, xoá bản ghi nguồn; người khác → chuyển `maVuAn`.
+`biCanSnapshot` của sự kiện `nhap_vu` giờ CHỈ chứa bị can thực sự "ra" khỏi thụ lý giai đoạn nguồn:
+bị can trùng (luôn), bị can chuyển như người mới (chỉ khi nhập KHÁC giai đoạn). Lý do: tồn bị can lấy
+từ dữ liệu gốc đếm theo bản ghi, nên cùng giai đoạn mà trừ cả bị can chuyển sang sẽ làm D68/D79 lệch D156.
+Cột `biCanSnapshot` đã ALTER lên Supabase thật 2026-10-28. 315 vụ nhập kỳ 10 tạo trước đó không có snapshot
+(rơi về đếm live = 0, đúng với trường hợp cùng giai đoạn không trùng). Tách vụ "ở cả 2 vụ" tạo bản sao
+bị can (+1 bản ghi ở D67) và nhập lại sẽ trừ 1 khi gộp — cộng trừ nhất quán theo bản ghi.
+
 ## Cài đặt → "Kiểm tra số liệu" (2026-10-01, nhánh `kiem-tra-so-lieu`, ĐÃ merge `main` + deploy `qlahs-sup.web.app` VÀ `qlahsp2.web.app` 2026-10-05, CHƯA kiểm chứng UI thật)
 
 Công cụ CHỈ ĐỌC để tự tìm vụ gây lệch số liệu, thay việc truy vấn tay Postgres/đọc công thức Excel
