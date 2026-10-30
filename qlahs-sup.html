@@ -7488,12 +7488,18 @@ function DanhSachPanel({ selectedId, onSelect }) {
     }
   };
 
-  // Khi đang ở tab "Tất cả" và danh sách đã bị cắt bớt (vuotGioiHan) mà người dùng gõ tìm kiếm,
-  // phải tải đủ TOÀN BỘ vuan 1 lần (KHÔNG realtime — chỉ 1 lần lúc bắt đầu gõ) để không bỏ sót
-  // các vụ nằm ngoài số dòng đã tải (dsCoBan + dsThem). "Đang giải quyết" không cần vì list ở đó
-  // vốn đã đầy đủ (không bị giới hạn).
+  // Khi đang ở tab "Tất cả" và danh sách đã bị cắt bớt (vuotGioiHan) mà người dùng gõ tìm kiếm HOẶC
+  // lọc theo KSV/giai đoạn, phải tải đủ TOÀN BỘ vuan 1 lần (KHÔNG realtime — chỉ 1 lần lúc bắt đầu
+  // lọc) để không bỏ sót các vụ nằm ngoài số dòng đã tải (dsCoBan + dsThem). "Đang giải quyết" không
+  // cần vì list ở đó vốn đã đầy đủ (không bị giới hạn).
+  // Bug đã sửa (2026-10-30, phát hiện qua Dũng báo "lọc KSV ra 13/77 vụ") — bản trước CHỈ kích hoạt
+  // tải đầy đủ khi gõ `tuKhoa`, KHÔNG tính lọc `ksv`/`giaiDoan` — lọc riêng 1 trong 2 field đó (không
+  // gõ gì vào ô tìm kiếm) chỉ lọc trên 500 vụ MỚI NHẤT đã tải (trang đầu "Tất cả"), làm "biến mất"
+  // đúng những vụ CŨ không rơi vào top 500 theo ngày tạo — y hệt kịch bản Dũng gặp (77 vụ thật,
+  // chỉ 13 nằm trong top 500). Đã kiểm chứng trực tiếp qua Supabase thật trước khi sửa.
   const [dsTimKiemDayDu, setDsTimKiemDayDu] = useState(null);
-  const canTimDayDu = !chiDangGiaiQuyet && vuotGioiHan && tuKhoa.trim() !== "";
+  const canTimDayDu = !chiDangGiaiQuyet && vuotGioiHan
+    && (tuKhoa.trim() !== "" || ksv !== "tat_ca" || giaiDoan !== "tat_ca");
   useEffect(() => {
     if (!canTimDayDu) { setDsTimKiemDayDu(null); return; }
     let huy = false;
@@ -7880,7 +7886,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
       <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-400 bg-slate-50/60 flex items-center justify-between gap-3">
         <span>
           {sorted.length} / {nguonDanhSach.length} vụ án
-          {dangTaiTimDayDu && " — đang tải toàn bộ dữ liệu để tìm kiếm..."}
+          {dangTaiTimDayDu && " — đang tải toàn bộ dữ liệu để lọc/tìm kiếm cho đủ..."}
           {dangTaiTimBiCan && " — đang tìm theo tên bị can..."}
         </span>
         {vuotGioiHan && !dsTimKiemDayDu && (

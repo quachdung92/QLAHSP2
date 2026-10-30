@@ -2,9 +2,47 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Bug đã sửa: lọc KSV/giai đoạn ở tab "Tất cả" (Danh sách vụ án) chỉ lọc trên 500 vụ mới nhất, bỏ sót vụ cũ (2026-10-30, `qlahs-sup.html`, nhánh `main`, ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app`)
 
+Dũng báo: lọc theo KSV "Quách Tiến Dũng" ở tab "Tất cả" chỉ ra **13 vụ**, trong khi tab "Đang giải
+quyết" đã có sẵn 11 vụ — "chứng tỏ thiếu rất nhiều, việc tra cứu đang không hiệu quả". Đã kiểm
+chứng trực tiếp qua Supabase thật (Session pooler, Dũng cấp mật khẩu DB trong chat, chỉ dùng qua
+biến môi trường lúc chạy script tạm trong scratchpad, không ghi vào file nào, gỡ sạch script sau
+khi xong) — KSV "Quách Tiến Dũng" có **77 vụ thật** (không tính đã xoá), nhưng trong hệ thống
+2615 vụ án, tổng số đó khớp **chính xác 13/77** khi chỉ xét 500 vụ có `ngayTao` mới nhất.
 
+**Nguyên nhân**: `DanhSachPanel`'s tab "Tất cả" (`chiDangGiaiQuyet=false`) chỉ tự tải trang đầu
+500 vụ (`TRANG_KICH_THUOC`, xem cơ chế "cursor pagination thật" ở mục Tối ưu Firestore Đợt 3) —
+muốn xem hết phải bấm "Tải thêm" nhiều lần, HOẶC gõ chữ vào ô tìm kiếm tự do (kích hoạt
+`canTimDayDu` → tải đủ toàn bộ `vuan` 1 lần). Lọc riêng theo **KSV** hoặc **Giai đoạn** (2 dropdown
+cạnh ô tìm kiếm) trước đây **KHÔNG kích hoạt** `canTimDayDu` — chỉ lọc trên 500 vụ đã tải ở trang
+đầu, nên vụ CŨ (không rơi vào top 500 theo `ngayTao`) "biến mất" khỏi kết quả lọc mà không có cảnh
+báo gì, dễ hiểu lầm là dữ liệu bị mất thật.
 
+**Đã sửa**: `canTimDayDu` giờ cũng kích hoạt khi `ksv !== "tat_ca"` hoặc `giaiDoan !== "tat_ca"`
+(không chỉ khi có `tuKhoa`) — lọc theo KSV/giai đoạn ở tab "Tất cả" giờ tự tải đủ toàn bộ dữ liệu
+trước khi lọc, y hệt hành vi khi gõ tìm kiếm. Dòng trạng thái "đang tải toàn bộ dữ liệu..." cũng
+sửa chữ cho đúng cả 2 trường hợp (lọc hoặc tìm kiếm). **Tab "Đang giải quyết" KHÔNG bị ảnh hưởng**
+(vốn đã không giới hạn số dòng, lọc KSV/giai đoạn ở đó luôn đúng từ trước).
+
+Đã compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong scratchpad) — sạch. Đã
+deploy `qlahs-sup.web.app` (test, smoke test console sạch) rồi `qlahsp2.web.app` (production, theo
+xác nhận trực tiếp của Dũng "đưa lên product đi") — smoke test cả 2 URL sau deploy: trang tải sạch,
+0 lỗi console thật (chỉ cảnh báo Babel kích thước file vô hại đã biết). **⚠ Lưu ý quan trọng**: lúc
+deploy lần đầu, local `main` đang LỆCH SAU `origin/main` 28 commit (nhiều phiên khác đã push trong
+lúc phiên này đang điều tra/sửa) — đã deploy nhầm 1 lần từ bản CŨ (thiếu 28 commit đó), phát hiện
+ngay khi chuẩn bị commit (`git status` báo "behind 28 commits"), đã `git fetch` + `git pull --ff-
+only` lấy đủ rồi **deploy lại NGAY** bản đầy đủ (28 commit + fix này) để không để production kẹt ở
+bản thiếu — xem [[qlahsp2_main_concurrent_edits]]. Từ nay LUÔN `git fetch`+kiểm tra "behind" TRƯỚC
+khi deploy, không chỉ trước khi commit.
+
+**Phát hiện phụ trong lúc điều tra (không liên quan bug trên, đã báo Dũng riêng, Dũng xác nhận
+"tunglaw đang nhập đúng nghiệp vụ, không cần can thiệp")**: tài khoản `tunglaw0701@gmail.com` đã
+thực hiện hàng loạt "Nhập vụ" (gộp vụ, ~378 lượt, 07:13–09:46 sáng 30/10) — vài trường hợp kiểm tra
+tay cho thấy bị can của vụ nguồn **không còn xuất hiện ở vụ đích** (vụ đích nhận 56 lượt nhập hiện
+có 0 bị can) — nghi ngờ ban đầu là mất dữ liệu, nhưng Dũng xác nhận đây là nghiệp vụ hợp lệ (có thể
+cơ chế gộp theo `nhomBiCanId` hoặc quy trình khác mà Dũng đã biết) — **KHÔNG tự ý can thiệp/sửa gì
+theo hướng này**, chỉ ghi lại ở đây để phiên sau biết bối cảnh nếu Dũng hỏi lại.
 
 ## Cài đặt → "Kiểm tra số liệu" (2026-10-01, nhánh `kiem-tra-so-lieu`, ĐÃ merge `main` + deploy `qlahs-sup.web.app` VÀ `qlahsp2.web.app` 2026-10-05, CHƯA kiểm chứng UI thật)
 
