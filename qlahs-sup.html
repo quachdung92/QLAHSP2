@@ -9655,7 +9655,9 @@ async function vuAnTuLogDocs(logDocs, kyRankMap = null) {
     const l = d.data();
     const idThat = idVuThatCuaLog(l);
     const vu = vuanMap[idThat];
-    if (!vu) return null;
+    // 2026-11-02 (Dũng: "đã xóa thì không tính báo cáo, mềm hay cứng không quan trọng"): vụ trong Thùng
+    // rác (daXoa) bị loại khỏi MỌI mảng ds.* (đây là chokepoint duy nhất) — khớp RPC tồn vốn đã loại.
+    if (!vu || vu.daXoa) return null;
     const bcListGoc = biCanByVu[idThat] || [];
     const bcListDung = locBiCanTheoKy(bcListGoc, l.kyThongKe, bcKyKhoiToMap, kyRankMap);
     const bcChinh = bcListDung.length ? chonBiCanChinh(bcListDung) : null;
@@ -9689,7 +9691,7 @@ async function vuBiCanTuLogDocs(logDocs) {
     const l = d.data();
     const vu = vuanMap[l.maVuAn];
     const bc = bicanMap[l.maBiCan];
-    if (!vu || !bc) return null;
+    if (!vu || vu.daXoa || !bc) return null;
     return { ...vu, _log: l, _logId: d.id, _bican: bc };
   }).filter(Boolean);
 }
@@ -9835,7 +9837,7 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
         db.collection("vuan").doc(l.maVuAn).get(),
         batchLayBiCanList([l.maVuAn]),
       ]);
-      if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
+      if (!vuDoc.exists || vuDoc.data().daXoa || vuDoc.data().coQuanThuLy !== gd) return;
       const bcLoc = locBiCanTheoKy(bcByVu[l.maVuAn] || [], l.kyThongKe, bcKyKhoiToRa, kyRankMap);
       const bcChinh = bcLoc.length ? chonBiCanChinh(bcLoc) : null;
       const entry = { id: vuDoc.id, ...vuDoc.data(), _log: l, _logId: d.id, _soBiCan: bcLoc.length,
@@ -9860,7 +9862,7 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
         db.collection("vuan").doc(l.maVuAn).get(),
         (l.biCanSnapshot && l.biCanSnapshot.length) ? biCanInfoTuDanhSach(l.biCanSnapshot) : layBiCanInfo(l.maVuAn),
       ]);
-      if (!vuDoc.exists || vuDoc.data().coQuanThuLy !== gd) return;
+      if (!vuDoc.exists || vuDoc.data().daXoa || vuDoc.data().coQuanThuLy !== gd) return;
       soNhapVu++;
       dsNhapVu.push({ id: vuDoc.id, ...vuDoc.data(), _log: l, _logId: d.id, _soBiCan: bcInfo.soBiCan, _toiDanhChinh: toiDanhChinhCuaVu(vuDoc.data(), bcInfo.toiDanhChinh) });
     }));
@@ -9929,7 +9931,7 @@ async function tinhBaoCaoKyTuLog(ky, kyTruoc) {
     const tonCuoiBiCanKy = (rpcTon.vuTheoGD[gd] || []).reduce((s, id) => s + (rpcTon.bcTonTheoVu.get(id)?.size || 0), 0);
 
     baoCao[gd] = {
-      tonDauKy, tonDauBiCan, soMoi, chuyenDi: chuyenDi.size, traDi: traDi.size,
+      tonDauKy, tonDauBiCan, soMoi, chuyenDi: dsChuyenDiArr.length, traDi: dsTraDiArr.length,
       hoanThanhTheoGD, soNhapVu, tonCuoiKy, tonCuoiBiCanKy,
       soVuTon, soBiCanTon,
       // Bộ đếm "trả hồ sơ điều tra bổ sung" — SỐ LẦN (số sự kiện `tra_ho_so`, KHÔNG dedup theo vụ,
@@ -15533,6 +15535,43 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     ws.state = "hidden";
     ws.properties.tabColor = { argb: MAU_TAB_GD_CHITIET[gd] };
   });
+
+  // Sheet "Ghi chú điều chỉnh" (2026-11-02) — ghi lại các lần chỉnh dữ liệu làm số các kỳ cũ khác
+  // so với báo cáo đã gửi trước đó. Thêm mục mới vào mảng dưới đây khi có điều chỉnh tương tự.
+  if (!tuyChon.chiTraSoLieu) {
+    const GHI_CHU_DIEU_CHINH = [
+      {
+        ngay: "02/11/2026",
+        vu: "QLVA_E01.53_2506_0048 (Trần Đại Quân và đồng phạm)",
+        noiDung: "Bị can Trần Văn Tuế đã được đình chỉ từ trước nhưng vẫn nằm trong vụ và bị tính là bị can đang thụ lý, rồi tính vào số đã xét xử. Đã tách bị can này sang vụ riêng QLVA_E01.53_2506_0048_2 (trạng thái Đình chỉ) và xếp vào kỳ lưu trữ \"Án lưu 2026\" để loại khỏi thống kê. Vụ gốc còn 65 bị can.",
+        anhHuong: "Số BỊ CAN (không đổi số vụ) giảm 1 so với báo cáo đã gửi ở: Truy tố - mới/thụ lý kỳ 06/2026 và tồn cuối các kỳ 06-09/2026; Xét xử - tồn cuối các kỳ 08-09/2026 và số bị can đã xét xử kỳ 10/2026. Số tồn cuối kỳ 10/2026 không đổi.",
+      },
+      {
+        ngay: "02/11/2026",
+        vu: "QLVA_E01.53_2506_0048_1 (Vũ Tất Đạt, vụ tách ra)",
+        noiDung: "Vụ tách ra từ vụ trên được tính vào giai đoạn Điều tra của kỳ 10/2026 (trước đó ghi nhầm Xét xử), cùng kỳ tạm đình chỉ.",
+        anhHuong: "Kỳ 10/2026: Điều tra +1 vụ/1 bị can mới và +1 vụ/1 bị can tạm đình chỉ; Xét xử -1 vụ/1 bị can mới. Tồn cuối kỳ không đổi.",
+      },
+    ];
+    const wsGc = wb.addWorksheet("Ghi chú điều chỉnh");
+    wsGc.properties.tabColor = { argb: "FFF59E0B" };
+    wsGc.columns = [{ width: 6 }, { width: 14 }, { width: 38 }, { width: 70 }, { width: 70 }];
+    wsGc.mergeCells("A1:E1");
+    wsGc.getCell("A1").value = "GHI CHÚ ĐIỀU CHỈNH SỐ LIỆU - số các kỳ trước có thể khác báo cáo hàng tháng đã gửi";
+    wsGc.getCell("A1").font = { bold: true, size: 13 };
+    wsGc.addRow([]);
+    const hdr = wsGc.addRow(["STT", "Ngày chỉnh", "Vụ án", "Nội dung điều chỉnh", "Ảnh hưởng đến số liệu"]);
+    hdr.font = { bold: true };
+    hdr.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } }; });
+    GHI_CHU_DIEU_CHINH.forEach((g, i) => wsGc.addRow([i + 1, g.ngay, g.vu, g.noiDung, g.anhHuong]));
+    wsGc.eachRow((row, rn) => {
+      if (rn < 3) return;
+      row.eachCell((c) => {
+        c.alignment = { wrapText: true, vertical: "top" };
+        c.border = { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } };
+      });
+    });
+  }
 
   if (tuyChon.chiTraSoLieu) {
     // Cn → chỉ số vals[] của B10 (nhãn "(Cn)" trong B10_HEADER_CHI_TIET; vals idx = j - 2; C14-C18 liền sau C13)
