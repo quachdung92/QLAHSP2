@@ -748,8 +748,17 @@ function xoaToanBoBiCanCache() { /* no-op — không còn cache, xem ghi chú tr
 // thống nhất ở tinhBieu10.vuPrimaryDL/vuPrimaryDL_xuat (bị can loaiKhoiTo="ban_dau", hoặc phần tử
 // đầu nếu không có) — KHÔNG lấy bừa phần tử đầu tiên Postgres trả về (không có ORDER BY tường
 // minh, không đảm bảo đúng thứ tự "ban_dau" luôn đứng trước).
+function laBiCanGietNguoi(bc) {
+  const dl = (bc.dieuLuatBC || [])[0] || "";
+  const ten = String((bc.toiDanh || [])[0] || "").trim();
+  return /Điều\s*123\s+BLHS\s*(2025|2015)/i.test(dl) || /^tội giết người$/i.test(ten);
+}
+// (2026-11-03, theo Dũng) Vụ có bị can phạm tội GIẾT NGƯỜI (Điều 123) thì LUÔN lấy tội đó làm tội
+// chính của vụ (ưu tiên bị can ban đầu); còn lại giữ quy ước cũ (bị can "ban_dau" đầu tiên).
 function chonBiCanChinh(bcList) {
-  return bcList.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList[0];
+  return bcList.find(bc => bc.loaiKhoiTo === "ban_dau" && laBiCanGietNguoi(bc))
+    || bcList.find(laBiCanGietNguoi)
+    || bcList.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList[0];
 }
 
 // Bảng thứ tự các KỲ THẬT (loai IS NULL), theo ngayBatDau tăng dần → Map<kyId, rank 0,1,2...>.
@@ -11236,7 +11245,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
   const vuPrimaryDL = (vu) => {
     const bcs = biCanByVu[vu.id] || [];
     if (!bcs.length) return normTen((vu.dieuLuat || "").split(";")[0].trim()) || "";
-    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
+    const bcChinh = chonBiCanChinh(bcs);
     return getDL(bcChinh);
   };
   const vuCoD = (vuArr, D) => vuArr.filter(vu => vuPrimaryDL(vu) === D);
@@ -11301,7 +11310,7 @@ function tinhBieu10(ky, kyTruoc, baoCao, biCanByVu, danhMuc, bcKyKhoiToMap = new
       for (const vu of (list[gd] || [])) {
         const bcIdsTon = vu._bcIdsTon || new Set();
         const bcTon = (biCanByVu[vu.id] || []).filter(bc => bcIdsTon.has(bc.id));
-        const bcChinh = bcTon.length ? (bcTon.find(bc => bc.loaiKhoiTo === "ban_dau") || bcTon[0]) : null;
+        const bcChinh = bcTon.length ? chonBiCanChinh(bcTon) : null;
         const vuDL = bcChinh ? getDL(bcChinh) : (normTen((vu.dieuLuat || "").split(";")[0].trim()) || "");
         if (vuDL) {
           if (!ket[gd][vuDL]) ket[gd][vuDL] = { vu: 0, bc: 0 };
@@ -13664,7 +13673,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
         stats[td][`vu${cat}`]++; stats[td][`bc${cat}`]++;
       } else {
         // Tội danh chính của vụ: BC ban_dau (hoặc BC đầu tiên) — đồng nhất với vuPrimaryDL trong B10
-        const bcChinh_tk = bcList_vu.find(bc => bc.loaiKhoiTo === "ban_dau") || bcList_vu[0];
+        const bcChinh_tk = chonBiCanChinh(bcList_vu);
         const tdVu = _tkGetDL(bcChinh_tk);
         if (!stats[tdVu]) stats[tdVu] = {vuM:0,bcM:0,tgM:0, vuT:0,bcT:0,tgT:0, vuG:0,bcG:0};
         stats[tdVu][`vu${cat}`]++;
@@ -14858,7 +14867,7 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
   const vuPrimaryDL_xuat = (vu) => {
     const bcs = biCanByVu[vu.id] || [];
     if (!bcs.length) return _tkGetDLVu(vu);
-    const bcChinh = bcs.find(bc => bc.loaiKhoiTo === "ban_dau") || bcs[0];
+    const bcChinh = chonBiCanChinh(bcs);
     return _tkGetDL(bcChinh);
   };
   // (2026-08-29) Bỏ `vuPrimaryMucDoNT_xuat` — cột "Mức độ NT (BC)" ở "DS TT chuyển XX" nay tính
