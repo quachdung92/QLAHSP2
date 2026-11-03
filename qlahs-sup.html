@@ -1286,6 +1286,23 @@ function taoSuKien(overrides) {
   };
 }
 
+// Hiển thị trong "Lịch sử": sự kiện "Khởi tố bị can"/"Bổ sung bị can" phải nói rõ bị can NÀO và Số QĐ
+// khởi tố bị can là gì. Sự kiện mới đã ghi sẵn vào soQuyetDinh/ghiChu; sự kiện cũ (chưa ghi) được bổ
+// sung lúc hiển thị từ bản ghi bị can (CHỈ để xem — không ghi ngược vào dữ liệu).
+function moTaSuKienBiCan(ls, biCanList) {
+  const raw = { soQd: ls.soQuyetDinh || "", ghiChu: ls.ghiChu || "" };
+  if (!ls.maBiCan || (ls.loaiSuKien !== "bo_sung_bican" && ls.loaiSuKien !== "khoi_to_bican")) return raw;
+  const bc = (biCanList || []).find(b => b.id === ls.maBiCan);
+  if (!bc) return raw;
+  const soQd = raw.soQd || bc.soQdKtBiCan || "";
+  let ghiChu = raw.ghiChu;
+  if (!ghiChu.includes(bc.hoTen || "")) {
+    ghiChu = `Bị can: ${bc.hoTen}${bc.namSinh ? ` (sinh ${bc.namSinh})` : ""}` +
+      (soQd ? ` — Số QĐ khởi tố bị can: ${soQd}` : "") + (ghiChu ? ` — ${ghiChu}` : "");
+  }
+  return { soQd, ghiChu };
+}
+
 // Tách 1 phần bị can của vuGoc ra vụ mới — dùng chung cho luồng "Hoàn thành vụ án"
 // (khi TĐC/ĐC chỉ áp dụng 1 phần bị can) và luồng "Tách vụ án" thủ công.
 // Trả về batch CHƯA commit để nơi gọi ghi thêm log rồi tự commit.
@@ -7214,6 +7231,7 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
         maVuAn: vuAn.id, loaiSuKien: "khoi_to_bican", maBiCan: bcRef.id,
         tuGiaiDoan: null, denGiaiDoan: null, hanCu: null, hanMoi: null,
         hinhThucHoanThanh: null, vuTachRa: null, lyDoTach: null, vuNhapVao: null,
+        soQuyetDinh: soQdKtBiCan.trim(),
         ngaySuKien: ngayKT || null, kyThongKe: kyId || null, lichSuSuaKy: [], ghiChu: "",
         nguoiThucHien, thoiDiemGhi: now,
       });
@@ -7225,6 +7243,11 @@ function ThemBiCanForm({ vuAn, onDong, onXong }) {
       batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
         maVuAn: vuAn.id, loaiSuKien: "bo_sung_bican", maBiCan: bcRef.id,
         denGiaiDoan: vuAn.coQuanThuLy,
+        soQuyetDinh: soQdKtBiCan.trim(),
+        ghiChu: `Bổ sung bị can: ${hoTen.trim()}${namSinh ? ` (sinh ${namSinh})` : ""}` +
+          (soQdKtBiCan.trim() ? ` — Số QĐ khởi tố bị can: ${soQdKtBiCan.trim()}` : "") +
+          (ngayKT ? ` — ngày ${fmtDate(ngayKT)}` : "") +
+          (toiDanhSach.length ? ` — Tội danh: ${toiDanhSach.join("; ")}` : ""),
         ngaySuKien: ngayKT || null, kyThongKe: kyId || null,
         nguoiThucHien, thoiDiemGhi: now,
       }));
@@ -8615,8 +8638,8 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
                   <tr key={ls.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
                     <td className="p-2 text-slate-400 whitespace-nowrap">{fmtDate(ls.ngaySuKien)}</td>
                     <td className="p-2"><Badge>{moTaLoaiSuKien(ls)}</Badge></td>
-                    <td className="p-2 text-slate-500 whitespace-nowrap">{ls.soQuyetDinh || "—"}</td>
-                    <td className="p-2 text-slate-500">{ls.ghiChu || "—"}</td>
+                    <td className="p-2 text-slate-500 whitespace-nowrap">{moTaSuKienBiCan(ls, biCanList).soQd || "—"}</td>
+                    <td className="p-2 text-slate-500">{moTaSuKienBiCan(ls, biCanList).ghiChu || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -8661,7 +8684,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
                      onXong={(dichId) => { setModalMo(null); onDoiSelected && onDoiSelected(dichId); }} />
       )}
       {modalMo === "qr" && <InQRModal vuAn={vuAn} onDong={() => setModalMo(null)} />}
-      {modalMo === "lichsu" && <LichSuPhongToModal vuAn={vuAn} lichSu={lichSu} onDong={() => setModalMo(null)} />}
+      {modalMo === "lichsu" && <LichSuPhongToModal vuAn={vuAn} lichSu={lichSu} biCanList={biCanList} onDong={() => setModalMo(null)} />}
       {modalMo === "sua_thong_tin" && (
         <SuaVuAnForm vuAn={vuAn} onDong={() => setModalMo(null)} onXong={() => setModalMo(null)} />
       )}
@@ -8716,7 +8739,7 @@ function taoMaXacNhanNgauNhien(soKyTu = 4) {
 // Popup phóng to "Lịch sử" vụ án: xem đủ chi tiết từng sự kiện, sửa trực tiếp Ngày/Số QĐ/Ghi chú
 // (sửa thông tin thường, KHÔNG đổi kỳ báo cáo — muốn đổi kỳ dùng "Sửa kỳ" ở Nhật ký thao tác) và
 // xuất Excel. Dữ liệu `lichSu` do component cha truyền xuống (đã onSnapshot nên tự cập nhật sau khi lưu).
-function LichSuPhongToModal({ vuAn, lichSu, onDong }) {
+function LichSuPhongToModal({ vuAn, lichSu, biCanList, onDong }) {
   const [suaId, setSuaId] = useState(null);
   const [form, setForm] = useState({ ngay: "", soQd: "", ghiChu: "" });
   const [dangLuu, setDangLuu] = useState(false);
@@ -8743,8 +8766,8 @@ function LichSuPhongToModal({ vuAn, lichSu, onDong }) {
       "Sự kiện": moTaLoaiSuKien(ls),
       "Từ giai đoạn": tenGd(ls.tuGiaiDoan),
       "Đến giai đoạn": tenGd(ls.denGiaiDoan),
-      "Số QĐ": ls.soQuyetDinh || "",
-      "Ghi chú": ls.ghiChu || "",
+      "Số QĐ": moTaSuKienBiCan(ls, biCanList).soQd,
+      "Ghi chú": moTaSuKienBiCan(ls, biCanList).ghiChu,
       "Người thực hiện": ls.nguoiThucHien || "",
       "Thời điểm ghi": fmtDate(ls.thoiDiemGhi),
     }));
@@ -8794,11 +8817,11 @@ function LichSuPhongToModal({ vuAn, lichSu, onDong }) {
                       </td>
                       <td className="p-2">
                         {dangSua ? <input className={inp} value={form.soQd} onChange={e => setForm(f => ({ ...f, soQd: e.target.value }))} />
-                                 : <span className="text-slate-500">{ls.soQuyetDinh || "—"}</span>}
+                                 : <span className="text-slate-500">{moTaSuKienBiCan(ls, biCanList).soQd || "—"}</span>}
                       </td>
                       <td className="p-2">
                         {dangSua ? <textarea rows={2} className={inp} value={form.ghiChu} onChange={e => setForm(f => ({ ...f, ghiChu: e.target.value }))} />
-                                 : <span className="text-slate-500 whitespace-pre-wrap">{ls.ghiChu || "—"}</span>}
+                                 : <span className="text-slate-500 whitespace-pre-wrap">{moTaSuKienBiCan(ls, biCanList).ghiChu || "—"}</span>}
                       </td>
                       <td className="p-2 text-slate-400">{ls.nguoiThucHien || "—"}</td>
                       <td className="p-2 whitespace-nowrap">
@@ -10507,7 +10530,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                 <button onClick={() => setHienLichSuLon(true)} title="Phóng to / sửa / xuất Excel"
                   className="text-xs text-indigo-600 hover:underline">⤢ Phóng to</button>
               </div>
-              {hienLichSuLon && <LichSuPhongToModal vuAn={vuAn} lichSu={lichSu} onDong={() => setHienLichSuLon(false)} />}
+              {hienLichSuLon && <LichSuPhongToModal vuAn={vuAn} lichSu={lichSu} biCanList={biCanList} onDong={() => setHienLichSuLon(false)} />}
               {lichSu.length === 0 ? (
                 <div className="text-sm text-slate-400">Chưa có sự kiện nào.</div>
               ) : (
@@ -10526,8 +10549,8 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                         <tr key={ls.id} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/70"}`}>
                           <td className="p-2 text-slate-400 whitespace-nowrap">{fmtDate(ls.ngaySuKien)}</td>
                           <td className="p-2"><Badge>{moTaLoaiSuKien(ls)}</Badge></td>
-                          <td className="p-2 text-slate-500 whitespace-nowrap">{ls.soQuyetDinh || "—"}</td>
-                          <td className="p-2 text-slate-500">{ls.ghiChu || "—"}</td>
+                          <td className="p-2 text-slate-500 whitespace-nowrap">{moTaSuKienBiCan(ls, biCanList).soQd || "—"}</td>
+                          <td className="p-2 text-slate-500">{moTaSuKienBiCan(ls, biCanList).ghiChu || "—"}</td>
                         </tr>
                       ))}
                     </tbody>
