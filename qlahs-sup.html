@@ -15402,7 +15402,20 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     // Phục hồi vụ Tạm đình chỉ (PhucHoiModal) + Nhận lại vụ đã Chuyển đi (NhanLaiChuyenDiModal) —
     // 2 sheet MỚI (2026-08-01), KHÁC hẳn "DS phục hồi {gs}" ngay trên (đó là nguồn "Khởi tố mới"
     // chọn tay lúc TẠO vụ mới, còn đây là sự kiện log thật khi TÁI KÍCH HOẠT 1 vụ đã có sẵn).
-    add(`DS phục hồi TĐC ${gs}`, d.phucHoi||[], ["Ngày phục hồi", "Số QĐ"], _ngaySoQD);
+    // Cột "Ghi chú đối chiếu" (2026-11-03): đánh dấu dòng báo cáo KHÔNG tính để lọc bỏ cho danh sách khớp
+    // báo cáo — (1) sự kiện phục hồi ghi trùng (cùng vụ/ngày/số QĐ), (2) bị can đã tính ở "bổ sung bị can".
+    const _phucHoiIds = new Set((d.phucHoi||[]).map(v => v.id));
+    const _boSungBcIds = new Set((d.boSungBiCan||[]).map(v => v._bican?.id).filter(Boolean));
+    const _phDaThay = new Set(); const _phKey = new Set();
+    (d.phucHoi||[]).forEach(v => {
+      const k = [v.id, fmtDate(v._log?.ngaySuKien), v._log?.soQuyetDinh || ""].join("|");
+      if (_phKey.has(k)) _phDaThay.add(v); else _phKey.add(k);
+    });
+    add(`DS phục hồi TĐC ${gs}`, d.phucHoi||[], ["Ngày phục hồi", "Số QĐ"], _ngaySoQD,
+      ["Ghi chú đối chiếu (bị can)"],
+      (bc) => [_boSungBcIds.has(bc.id) ? "Đã tính ở khởi tố bổ sung bị can — báo cáo không tính ở phục hồi" : ""],
+      ["Ghi chú đối chiếu (vụ)"],
+      (vu) => [_phDaThay.has(vu) ? "Sự kiện phục hồi ghi TRÙNG (cùng ngày, số QĐ) — nên xoá 1 sự kiện trong Lịch sử" : ""]);
     add(`DS nhận lại CĐ ${gs}`, d.nhanLai||[], ["Ngày nhận lại", "Số QĐ"], _ngaySoQD);
     // "DS huỷ ĐT lại {gs}" (2026-09-10, HuyDieuTraLaiModal) — vụ đã có kết quả bị Toà cấp trên huỷ
     // bản án/QĐ để điều tra lại. LUÔN denGiaiDoan="dieu_tra" nên chỉ "DS huỷ ĐT lại ĐT" có dữ liệu
@@ -15537,7 +15550,9 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
         : ((vu) => [ghiChuHoacNoiChuyenDen(vu)]));
 
     add(`DS tạm đình chỉ ${gs}`,
-      d.hoanThanh?.tam_dinh_chi||[], ["Ngày TĐC", "Số QĐ TĐC"], _ngaySoQD);
+      d.hoanThanh?.tam_dinh_chi||[], ["Ngày TĐC", "Số QĐ TĐC"], _ngaySoQD,
+      undefined, undefined, ["Ghi chú đối chiếu"],
+      (vu) => [_phucHoiIds.has(vu.id) ? "Vụ đã phục hồi cùng kỳ (đang tồn) — báo cáo không tính TĐC" : ""]);
 
     add(`DS đình chỉ ${gs}`,
       d.hoanThanh?.dinh_chi||[], ["Ngày ĐC", "Số QĐ ĐC"], _ngaySoQD);
