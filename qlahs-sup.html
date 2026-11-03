@@ -8631,6 +8631,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
                   <th className="text-left p-2">Sự kiện</th>
                   <th className="text-left p-2">Số QĐ</th>
                   <th className="text-left p-2">Ghi chú</th>
+                  <th className="text-left p-2 whitespace-nowrap">Ngày thao tác</th>
                 </tr>
               </thead>
               <tbody>
@@ -8640,6 +8641,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
                     <td className="p-2"><Badge>{moTaLoaiSuKien(ls)}</Badge></td>
                     <td className="p-2 text-slate-500 whitespace-nowrap">{moTaSuKienBiCan(ls, biCanList).soQd || "—"}</td>
                     <td className="p-2 text-slate-500">{moTaSuKienBiCan(ls, biCanList).ghiChu || "—"}</td>
+                    <td className="p-2 text-slate-400 whitespace-nowrap">{ls.thoiDiemGhi ? fmtNgayGio(ls.thoiDiemGhi) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -8769,10 +8771,10 @@ function LichSuPhongToModal({ vuAn, lichSu, biCanList, onDong }) {
       "Số QĐ": moTaSuKienBiCan(ls, biCanList).soQd,
       "Ghi chú": moTaSuKienBiCan(ls, biCanList).ghiChu,
       "Người thực hiện": ls.nguoiThucHien || "",
-      "Thời điểm ghi": fmtDate(ls.thoiDiemGhi),
+      "Ngày thao tác": ls.thoiDiemGhi ? fmtNgayGio(ls.thoiDiemGhi) : "",
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [6, 12, 28, 14, 14, 16, 50, 26, 14].map(w => ({ wch: w }));
+    ws["!cols"] = [6, 12, 28, 14, 14, 16, 50, 26, 18].map(w => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Lịch sử vụ án");
     XLSX.writeFile(wb, `LichSu_${(hienThiMa(vuAn) || vuAn.id).replace(/[^\w.-]/g, "_")}.xlsx`);
@@ -8798,7 +8800,7 @@ function LichSuPhongToModal({ vuAn, lichSu, biCanList, onDong }) {
                 <tr>
                   <th className="text-left p-2 w-28">Ngày</th><th className="text-left p-2">Sự kiện</th>
                   <th className="text-left p-2">Giai đoạn</th><th className="text-left p-2 w-32">Số QĐ</th>
-                  <th className="text-left p-2">Ghi chú</th><th className="text-left p-2">Người thực hiện</th>
+                  <th className="text-left p-2">Ghi chú</th><th className="text-left p-2 whitespace-nowrap">Ngày thao tác</th><th className="text-left p-2">Người thực hiện</th>
                   <th className="p-2 w-24"></th>
                 </tr>
               </thead>
@@ -8823,6 +8825,7 @@ function LichSuPhongToModal({ vuAn, lichSu, biCanList, onDong }) {
                         {dangSua ? <textarea rows={2} className={inp} value={form.ghiChu} onChange={e => setForm(f => ({ ...f, ghiChu: e.target.value }))} />
                                  : <span className="text-slate-500 whitespace-pre-wrap">{moTaSuKienBiCan(ls, biCanList).ghiChu || "—"}</span>}
                       </td>
+                      <td className="p-2 text-slate-400 whitespace-nowrap">{ls.thoiDiemGhi ? fmtNgayGio(ls.thoiDiemGhi) : "—"}</td>
                       <td className="p-2 text-slate-400">{ls.nguoiThucHien || "—"}</td>
                       <td className="p-2 whitespace-nowrap">
                         {dangSua ? (<>
@@ -10542,6 +10545,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                         <th className="text-left p-2">Sự kiện</th>
                         <th className="text-left p-2">Số QĐ</th>
                         <th className="text-left p-2">Ghi chú</th>
+                        <th className="text-left p-2 whitespace-nowrap">Ngày thao tác</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -10551,6 +10555,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                           <td className="p-2"><Badge>{moTaLoaiSuKien(ls)}</Badge></td>
                           <td className="p-2 text-slate-500 whitespace-nowrap">{moTaSuKienBiCan(ls, biCanList).soQd || "—"}</td>
                           <td className="p-2 text-slate-500">{moTaSuKienBiCan(ls, biCanList).ghiChu || "—"}</td>
+                          <td className="p-2 text-slate-400 whitespace-nowrap">{ls.thoiDiemGhi ? fmtNgayGio(ls.thoiDiemGhi) : "—"}</td>
                         </tr>
                       ))}
                     </tbody>
