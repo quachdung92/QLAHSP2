@@ -5730,6 +5730,26 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
   // Nguồn "Huỷ điều tra lại" (2026-11-05): Số/Ngày QĐ huỷ của Toà cấp trên.
   const [soQdHuyDieuTra, setSoQdHuyDieuTra] = useState("");
   const [ngayHuyDieuTra, setNgayHuyDieuTra] = useState("");
+  // Số thụ lý (2026-11-05): tự gợi ý = số thụ lý của vụ tạo gần nhất (có số dạng số) + 1; sửa tay được.
+  // Bấm Lưu → hỏi xác nhận "tạo vụ gì, số thụ lý bao nhiêu" trước khi hỏi kỳ báo cáo.
+  const [soThuLy, setSoThuLy] = useState("");
+  const [soThuLyDaSua, setSoThuLyDaSua] = useState(false);
+  const [dsSoThuLyGanDay, setDsSoThuLyGanDay] = useState([]);
+  const [xacNhanTao, setXacNhanTao] = useState(false);
+  useEffect(() => {
+    let huy = false;
+    (async () => {
+      try {
+        const snap = await db.collection("vuan").orderBy("ngayTao", "desc").limit(200).get();
+        const ds = snap.docs.map(d => String(d.data().soThuLy || "").trim()).filter(Boolean);
+        if (huy) return;
+        setDsSoThuLyGanDay(ds);
+        const gan = ds.find(s => /^\d+$/.test(s));
+        if (gan) setSoThuLy(cu => cu || String(parseInt(gan, 10) + 1));
+      } catch (err) { console.error("Không gợi ý được số thụ lý:", err); }
+    })();
+    return () => { huy = true; };
+  }, []);
   const [hanDieuTra, setHanDieuTra] = useState("");
   const [ksvChinh, setKsvChinh] = useState("");
   const [ksvHoTro, setKsvHoTro] = useState("");
@@ -5937,7 +5957,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
     }
     setLoi("");
     setInBiaSauKhiLuu(inBia);
-    setHienModalKy(true);
+    setXacNhanTao(true); // hỏi xác nhận tạo vụ + số thụ lý, rồi mới hỏi kỳ báo cáo
   };
 
   const onXacNhanKy = async (kyId) => {
@@ -5969,6 +5989,7 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
       batch.set(db.collection("vuan").doc(maNoiSinh), {
         maNoiSinh, maNganhCap: maNganhCap.trim() || null, tenVu: tenVu.trim(),
         nguon, nguonChiTiet: nguon === "an_noi_khac_chuyen_den" ? nguonChiTiet.trim() : "",
+        soThuLy: soThuLy.trim() || null,
         soQdPhucHoiDieuTra: laPhucHoiDieuTra ? soQdPhucHoiDieuTra.trim() : null,
         ngayPhucHoiDieuTra: laPhucHoiDieuTra && ngayPhucHoiDieuTra ? fromInputDate(ngayPhucHoiDieuTra) : null,
         soQdHuyDieuTra: laHuyDieuTraLai ? soQdHuyDieuTra.trim() : null,
@@ -6131,6 +6152,10 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         <div className="grid grid-cols-2 gap-3 mb-3">
           <Truong nhan="Mã ngành cấp (nếu có)">
             <input value={maNganhCap} onChange={e => setMaNganhCap(e.target.value)} className={oInput} placeholder="Chưa có thì để trống" />
+          </Truong>
+          <Truong nhan="Số thụ lý">
+            <input value={soThuLy} onChange={e => { setSoThuLy(e.target.value); setSoThuLyDaSua(true); }} className={oInput}
+                   placeholder="Tự gợi ý = số gần nhất + 1" />
           </Truong>
           <Truong nhan="Tên vụ" rong2>
             <input value={tenVu} onChange={e => { setTenVu(e.target.value); setTenVuDaSua(true); }} className={oInput} />
@@ -6537,6 +6562,39 @@ function ThemVuAnForm({ currentUser, onDong, onDaLuu }) {
         </div>
       </div>
 
+      {xacNhanTao && (() => {
+        const so = soThuLy.trim();
+        const trung = so && dsSoThuLyGanDay.includes(so);
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-lg w-[460px] max-w-[95vw] p-5">
+              <h3 className="text-base font-semibold mb-3">Xác nhận tạo vụ án</h3>
+              <div className="text-sm text-slate-700 space-y-1 mb-3">
+                <div>Vụ án: <b>{tenVu.trim() || "(tên vụ tự đặt theo bị can)"}</b></div>
+                <div>Số thụ lý: <b className="text-indigo-700 text-lg">{so || "(chưa có)"}</b></div>
+                <div>Nguồn: {NHAN_NGUON[nguon] || nguon} · Giai đoạn: {NHAN_GIAI_DOAN[coQuanThuLy] || coQuanThuLy}</div>
+              </div>
+              {trung && (
+                <div className="bg-amber-50 border border-amber-300 text-amber-800 text-xs rounded-lg p-2 mb-3">
+                  ⚠ Số thụ lý {so} đã có ở một vụ khác gần đây. Kiểm tra lại nếu không cố ý trùng.
+                </div>
+              )}
+              {!so && (
+                <div className="bg-slate-50 border border-slate-200 text-slate-600 text-xs rounded-lg p-2 mb-3">
+                  Chưa nhập số thụ lý — vụ sẽ được tạo không có số (bổ sung sau qua "Sửa thông tin vụ án").
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setXacNhanTao(false)} className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100">Quay lại sửa</button>
+                <button onClick={() => { setXacNhanTao(false); setHienModalKy(true); }}
+                        className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">
+                  Xác nhận tạo vụ án
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       <ModalXacNhanKy open={hienModalKy} onHuy={() => setHienModalKy(false)} onXacNhan={onXacNhanKy} />
       {duLieuBiaMoi && <BiaHoSoModal duLieu={duLieuBiaMoi} onDong={() => onDaLuu(duLieuBiaMoi.maNoiSinh)} />}
     </div>
@@ -13373,6 +13431,10 @@ const BIEU3_QUY_TAC_RAW = [
   "C63_10173=D22",
   "C71_10173=D98",
   "C72_10173=D113",
+  // Quy tắc BỔ SUNG theo cấp trên (2026-11-06), KHÔNG có trong quy_tac_bieu_3.md ngành: số mới Toà thụ lý
+  // phải bằng số Viện truy tố LẦN ĐẦU ở Biểu 2 (truy tố − truy tố kỳ trước − VKS cấp trên phân công).
+  "D9=D292_10238-D293_10238-D294_10238",
+  "D12=D296_10238-D297_10238-D298_10238",
 ];
 
 function phanTichQuyTacDong(raw) {

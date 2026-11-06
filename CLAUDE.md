@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Số thụ lý khi thêm vụ án + hộp xác nhận tạo vụ (2026-11-05, `qlahs-sup.html`, ĐÃ chạy ALTER + deploy)
+
+`vuan.soThuLy` (text, migration `supabase/add_so_thu_ly_2026-11-05.sql`, đã chạy). `ThemVuAnForm`: ô "Số thụ lý" tự điền = số thụ lý dạng số của vụ tạo gần nhất (200 vụ mới nhất theo `ngayTao`) + 1, sửa tay được. Bấm Lưu → hộp "Xác nhận tạo vụ án" (tên vụ + số thụ lý, cảnh báo nếu trùng số gần đây) → rồi mới hỏi kỳ báo cáo. Chưa có ở form Sửa vụ án/Import Excel. Không reset theo năm.
+
 ## Nguồn "Huỷ điều tra lại" + ràng buộc Ngày KTBC vs Ngày QĐ huỷ/phục hồi (2026-11-05, `qlahs-sup.html`, ĐÃ chạy migration + deploy)
 
 Nguồn vụ mới `huy_dieu_tra_lai` (Số/Ngày QĐ huỷ: `vuan.soQdHuyDieuTra/ngayHuyDieuTra`). Khi nhập vụ ghi thêm sự kiện `huy_dieu_tra_lai` (cờ `huyKhiTaoVu`, ngaySuKien = Ngày QĐ huỷ); nguồn "Phục hồi điều tra" ghi sự kiện `phuc_hoi` có cờ `phucHoiKhiTaoVu`. Trong `tinhBaoCaoKyTuLog`: bị can KTBC < ngày huỷ/phục hồi đi cùng vụ (D65/D69); KTBC ≥ ngày đó → `_bcBoSauTra`, tính bị can khởi tố mới qua `dt_boSungBc` (D72/C7). Vụ nguồn phục hồi cũ KHÔNG có ngày phục hồi: bị can cũ nếu KTBC < ngày nhập vụ (`ngayTao`), không dùng ngưỡng tháng. Sự kiện phục hồi cũ KHÔNG bị đổi. Migration: `supabase/add_nguon_huy_dieu_tra_lai_2026-11-05.sql` (đã chạy). Chưa kiểm chứng Excel thật.
