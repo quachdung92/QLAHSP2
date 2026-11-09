@@ -693,6 +693,11 @@ function fmtDate(d) {
   return `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}/${dt.getFullYear()}`;
 }
 
+// Chuẩn hoá để tìm kiếm không phân biệt dấu/hoa thường (VD "lê đình phong" khớp "le dinh phóng").
+function bd(s) {
+  return String(s == null ? "" : s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
+}
+
 // Khớp tìm kiếm theo "Số QĐ KTVA" — hỗ trợ định dạng "số-ngày" (VD "835-12/09/2024") để phân biệt
 // các vụ TRÙNG SỐ quyết định nhưng khác NGÀY quyết định (rất hay gặp trong thực tế, số QĐ KTVA
 // thường lặp lại giữa các đơn vị/năm khác nhau). Gõ theo định dạng này → phải khớp CẢ số lẫn ngày;
@@ -5462,10 +5467,10 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   const [dsUngVien] = useDanhSachDangGiaiQuyet();
   useEffect(() => {
     if (!tuKhoa.trim()) { setKetQua([]); return; }
-    const k = tuKhoa.trim().toLowerCase();
+    const k = bd(tuKhoa.trim());
     const list = dsUngVien
       .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet" && !v.daXoa)
-      .filter(v => (hienThiMa(v) || "").toLowerCase().includes(k) || (v.tenVu || "").toLowerCase().includes(k))
+      .filter(v => bd(hienThiMa(v)).includes(k) || bd(v.tenVu).includes(k))
       .slice(0, 10);
     setKetQua(list);
   }, [tuKhoa, dsUngVien, vuAn.id]);
@@ -7905,17 +7910,17 @@ function DanhSachPanel({ selectedId, onSelect }) {
     if (giaiDoan !== "tat_ca" && v.coQuanThuLy !== giaiDoan) return false;
     if (ksv !== "tat_ca" && !(v.ksvChinh || "").toLowerCase().includes(ksv.trim().toLowerCase())) return false;
     if (tuKhoa.trim()) {
-      const k = tuKhoa.trim().toLowerCase();
+      const k = bd(tuKhoa.trim());
       // dsBiCan: tải theo yêu cầu (debounce, xem effect ở trên) — trong lúc chưa tải xong, vẫn
       // khớp ngay theo biCanDaiDien (đại diện, đã có sẵn trên vuan) để không có cảm giác "0 kết
       // quả" trong lúc chờ; kết quả khớp bị can KHÁC (không phải đại diện) hiện thêm khi tải xong.
       const dsBiCan = bicanTimKiemTheoVu[v.id] || [];
-      const hit = (hienThiMa(v) || "").toLowerCase().includes(k)
-        || (v.tenVu || "").toLowerCase().includes(k)
-        || (v.dieuLuat || "").toLowerCase().includes(k)
+      const hit = bd(hienThiMa(v)).includes(k)
+        || bd(v.tenVu).includes(k)
+        || bd(v.dieuLuat).includes(k)
         || khopSoQdKtva(v, k)
-        || (v.biCanDaiDien || "").toLowerCase().includes(k)
-        || dsBiCan.some(bc => (bc.hoTen || "").toLowerCase().includes(k));
+        || bd(v.biCanDaiDien).includes(k)
+        || dsBiCan.some(bc => bd(bc.hoTen).includes(k));
       if (!hit) return false;
     }
     return true;
@@ -8678,11 +8683,11 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
         </div>
         {(() => {
           const coNhieuBiCan = biCanList.length > SO_BI_CAN_MAC_DINH;
-          const tuKhoaBiCan = timBiCan.trim().toLowerCase();
+          const tuKhoaBiCan = bd(timBiCan.trim());
           const biCanLoc = tuKhoaBiCan
             ? biCanList.filter(bc =>
-                (bc.hoTen || "").toLowerCase().includes(tuKhoaBiCan) ||
-                (bc.toiDanh || []).some(t => (t || "").toLowerCase().includes(tuKhoaBiCan)))
+                bd(bc.hoTen).includes(tuKhoaBiCan) ||
+                (bc.toiDanh || []).some(t => bd(t).includes(tuKhoaBiCan)))
             : biCanList;
           const dangThuGon = !tuKhoaBiCan && !xemHetBiCan && biCanLoc.length > SO_BI_CAN_MAC_DINH;
           const biCanHienThi = dangThuGon ? biCanLoc.slice(0, SO_BI_CAN_MAC_DINH) : biCanLoc;
@@ -16560,14 +16565,14 @@ function BanAnCuaVu({ vu, onSaved }) {
 
   const loc = useMemo(() => {
     if (!bcList) return [];
-    const k = tuKhoa.trim().toLowerCase();
+    const k = bd(tuKhoa.trim());
     if (!k) return bcList;
     return bcList.filter(bc =>
-      (bc.hoTen || "").toLowerCase().includes(k)
-      || (bc.tenPhapNhan || "").toLowerCase().includes(k)
-      || (bc.diaChi || "").toLowerCase().includes(k)
+      bd(bc.hoTen).includes(k)
+      || bd(bc.tenPhapNhan).includes(k)
+      || bd(bc.diaChi).includes(k)
       || String(bc.namSinh || "").includes(k)
-      || (bc.toiDanh || []).some(t => (t || "").toLowerCase().includes(k))
+      || (bc.toiDanh || []).some(t => bd(t).includes(k))
     );
   }, [bcList, tuKhoa]);
 
@@ -16833,15 +16838,15 @@ function AnDaGiaiQuyetModule() {
     let rows = (!tabCgdDangChon && locKy && locKy !== "tat_ca")
       ? listTheoHinhThuc.filter(v => v.kyHoanThanh === locKy) : listTheoHinhThuc;
     if (ksv !== "tat_ca") rows = rows.filter(v => v.ksvChinh === ksv);
-    const k = tuKhoa.trim().toLowerCase();
+    const k = bd(tuKhoa.trim());
     if (k) {
       rows = rows.filter(v =>
-        (hienThiMa(v) || "").toLowerCase().includes(k)
-        || (v.tenVu || "").toLowerCase().includes(k)
-        || (v.dieuLuat || "").toLowerCase().includes(k)
-        || (v.ksvChinh || "").toLowerCase().includes(k)
-        || (v.ksvHoTro || []).some(t => (t || "").toLowerCase().includes(k))
-        || (v.ghiChu || "").toLowerCase().includes(k)
+        bd(hienThiMa(v)).includes(k)
+        || bd(v.tenVu).includes(k)
+        || bd(v.dieuLuat).includes(k)
+        || bd(v.ksvChinh).includes(k)
+        || (v.ksvHoTro || []).some(t => bd(t).includes(k))
+        || bd(v.ghiChu).includes(k)
         || khopSoQdKtva(v, k)
       );
     }
@@ -17892,10 +17897,10 @@ function GiaoNhanHoSoModule({ currentUser }) {
   );
 
   const khopTuKhoaTim = (v, k) =>
-    (hienThiMa(v) || "").toLowerCase().includes(k)
-    || (v.tenVu || "").toLowerCase().includes(k)
-    || (v.dieuLuat || "").toLowerCase().includes(k)
-    || (v.ksvChinh || "").toLowerCase().includes(k)
+    bd(hienThiMa(v)).includes(k)
+    || bd(v.tenVu).includes(k)
+    || bd(v.dieuLuat).includes(k)
+    || bd(v.ksvChinh).includes(k)
     || khopSoQdKtva(v, k);
 
   // Nguồn vụ để tìm — theo phạm vi đang chọn (đang / đã / cả 2 giải quyết). `null` = chưa nạp xong.
@@ -17914,7 +17919,7 @@ function GiaoNhanHoSoModule({ currentUser }) {
   const GIOI_HAN_KET_QUA_TIM = 30;
   const ketQuaTimThuCong = useMemo(() => {
     if (!nguonTim) return { list: [], tong: 0 };
-    const k = tuKhoaTim.trim().toLowerCase();
+    const k = bd(tuKhoaTim.trim());
     if (!k && ksvTim === "tat_ca") return { list: [], tong: 0 };
     let rows = nguonTim;
     // Khớp "chứa" (không phải "===") để ô KSV cho gõ tự do tìm theo tên — đồng bộ với LocKsvComboBox
@@ -18691,17 +18696,17 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
   const dsKsvLoc = useMemo(() => [...new Set(ungVien.map(v => v.ksvChinh || "(chưa gán KSV)"))].sort((a, b) => a.localeCompare(b)), [ungVien]);
 
   const dsHienThi = useMemo(() => {
-    const k = tuKhoaLoc.trim().toLowerCase();
+    const k = bd(tuKhoaLoc.trim());
     return ungVien.filter(v => {
       if (locKsv !== "tat_ca" && (v.ksvChinh || "(chưa gán KSV)") !== locKsv) return false;
       if (locHinhThuc !== "tat_ca" && v.trangThai !== locHinhThuc) return false;
       if (locNop === "da_nop" && !v.daNop) return false;
       if (locNop === "chua_nop" && v.daNop) return false;
       if (k && !(
-        (v.tenVu || "").toLowerCase().includes(k) ||
-        (hienThiMa(v) || "").toLowerCase().includes(k) ||
-        (v.ksvChinh || "").toLowerCase().includes(k) ||
-        (v.soQdKtva || "").toLowerCase().includes(k)
+        bd(v.tenVu).includes(k) ||
+        bd(hienThiMa(v)).includes(k) ||
+        bd(v.ksvChinh).includes(k) ||
+        bd(v.soQdKtva).includes(k)
       )) return false;
       return true;
     });
@@ -18723,13 +18728,13 @@ function ManChuanBiDanhSach({ onXemTruoc }) {
   const timThemVu = async (tk) => {
     setTuKhoaThemVu(tk);
     if (!tk.trim()) { setKetQuaThemVu([]); return; }
-    const k = tk.trim().toLowerCase();
+    const k = bd(tk.trim());
     const docs = await dongBoColdCacheVuAnDaGiaiQuyet();
     const idsHienCo = new Set(ungVien.map(v => v.id));
     const ketQua = docs.filter(v =>
       !v.daXoa && ["tam_dinh_chi", "dinh_chi", "da_xet_xu"].includes(v.trangThai) && !idsHienCo.has(v.id)
-      && ((v.tenVu || "").toLowerCase().includes(k) || (hienThiMa(v) || "").toLowerCase().includes(k)
-          || (v.ksvChinh || "").toLowerCase().includes(k) || (v.soQdKtva || "").toLowerCase().includes(k))
+      && (bd(v.tenVu).includes(k) || bd(hienThiMa(v)).includes(k)
+          || bd(v.ksvChinh).includes(k) || bd(v.soQdKtva).includes(k))
     ).slice(0, 15);
     setKetQuaThemVu(ketQua);
   };
@@ -19366,11 +19371,11 @@ function ManSuaLaiDanhSachDaChot({ dot, dsHoSo, onXemTruoc, onHuy }) {
   const [dangThemVu, setDangThemVu] = useState(false);
 
   const dsHienThi = useMemo(() => {
-    const k = tuKhoaLoc.trim().toLowerCase();
+    const k = bd(tuKhoaLoc.trim());
     if (!k) return ungVien;
     return ungVien.filter(v =>
-      (v.tenVu || "").toLowerCase().includes(k) || (v.ksvChinh || "").toLowerCase().includes(k)
-      || (v.soQdKtva || "").toLowerCase().includes(k)
+      bd(v.tenVu).includes(k) || bd(v.ksvChinh).includes(k)
+      || bd(v.soQdKtva).includes(k)
     );
   }, [ungVien, tuKhoaLoc]);
 
@@ -19379,13 +19384,13 @@ function ManSuaLaiDanhSachDaChot({ dot, dsHoSo, onXemTruoc, onHuy }) {
   const timThemVu = async (tk) => {
     setTuKhoaThemVu(tk);
     if (!tk.trim()) { setKetQuaThemVu([]); return; }
-    const k = tk.trim().toLowerCase();
+    const k = bd(tk.trim());
     const docs = await dongBoColdCacheVuAnDaGiaiQuyet();
     const idsHienCo = new Set(ungVien.map(v => v.id));
     const ketQua = docs.filter(v =>
       !v.daXoa && ["tam_dinh_chi", "dinh_chi", "da_xet_xu"].includes(v.trangThai) && !idsHienCo.has(v.id)
-      && ((v.tenVu || "").toLowerCase().includes(k) || (hienThiMa(v) || "").toLowerCase().includes(k)
-          || (v.ksvChinh || "").toLowerCase().includes(k) || (v.soQdKtva || "").toLowerCase().includes(k))
+      && (bd(v.tenVu).includes(k) || bd(hienThiMa(v)).includes(k)
+          || bd(v.ksvChinh).includes(k) || bd(v.soQdKtva).includes(k))
     ).slice(0, 15);
     setKetQuaThemVu(ketQua);
   };
@@ -19761,12 +19766,12 @@ function ManSoLuuTru({ dot, dsHoSo }) {
   const timChen = async (tk) => {
     setTuKhoaChen(tk);
     if (!tk.trim()) { setKetQuaChen([]); return; }
-    const k = tk.trim().toLowerCase();
+    const k = bd(tk.trim());
     const docs = await dongBoColdCacheVuAnDaGiaiQuyet();
     const idsDaCo = new Set(dsHoSo.map(h => h.maVuAn));
     const ketQua = docs.filter(v =>
       !v.daXoa && ["tam_dinh_chi", "dinh_chi", "da_xet_xu"].includes(v.trangThai) && !idsDaCo.has(v.id)
-      && ((v.tenVu || "").toLowerCase().includes(k) || (hienThiMa(v) || "").toLowerCase().includes(k) || (v.ksvChinh || "").toLowerCase().includes(k))
+      && (bd(v.tenVu).includes(k) || bd(hienThiMa(v)).includes(k) || bd(v.ksvChinh).includes(k))
     ).slice(0, 15);
     setKetQuaChen(ketQua);
   };
@@ -22637,12 +22642,12 @@ function BangExcelModule() {
   };
 
   const dsTimKiem = useMemo(() => {
-    const k = tuKhoa.trim().toLowerCase();
+    const k = bd(tuKhoa.trim());
     if (!k) return list;
     return list.filter(v =>
-      (hienThiMa(v) || "").toLowerCase().includes(k) ||
-      (v.tenVu || "").toLowerCase().includes(k) ||
-      (v.ksvChinh || "").toLowerCase().includes(k) ||
+      bd(hienThiMa(v)).includes(k) ||
+      bd(v.tenVu).includes(k) ||
+      bd(v.ksvChinh).includes(k) ||
       khopSoQdKtva(v, k)
     );
   }, [list, tuKhoa]);
