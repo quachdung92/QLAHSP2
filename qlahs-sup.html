@@ -9511,11 +9511,21 @@ function ThongKeKyHienTai() {
 
   useEffect(() => {
     let huy = false;
-    db.collection("kybaocao").where("trangThai", "==", "dang_mo").limit(1).get()
+    // 2026-11-09: có thể có nhiều kỳ "đang mở" cùng lúc (cho phép bỏ qua cảnh báo kỳ trước chưa chốt)
+    // và kỳ lưu trữ án cũ cũng ở trạng thái đang mở — trước đây `.limit(1)` không sắp xếp nên lấy
+    // nhầm kỳ cũ (tháng 9). Nay lấy hết kỳ đang mở, bỏ kỳ lưu trữ, chọn kỳ có ngày bắt đầu MUỘN NHẤT.
+    db.collection("kybaocao").where("trangThai", "==", "dang_mo").get()
       .then(async snap => {
         if (huy) return;
-        if (snap.empty) { setKy(null); return; }
-        const kyDoc = { id: snap.docs[0].id, ...snap.docs[0].data() };
+        const msKy = (k) => {
+          const v = k.ngayBatDau;
+          const t = v?.toDate ? v.toDate().getTime() : (v ? new Date(v).getTime() : 0);
+          return isNaN(t) ? 0 : t;
+        };
+        const dsMo = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(k => k.loai !== "luu_tru");
+        if (dsMo.length === 0) { setKy(null); return; }
+        dsMo.sort((a, b) => msKy(b) - msKy(a));
+        const kyDoc = dsMo[0];
         setKy(kyDoc);
         // 2026-07-19: thêm "số bị can" bên cạnh "số vụ" (trước chỉ có 1 trọng số). "BC mới" dùng
         // ĐÚNG cùng tiêu chí đã audit cho khối C7-C24 của Biểu B10 (sự kiện khoi_to_bican khớp
