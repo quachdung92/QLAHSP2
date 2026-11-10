@@ -6667,6 +6667,7 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
   const [soQdHuyDieuTra, setSoQdHuyDieuTra] = useState(vuAn.soQdHuyDieuTra || "");
   const [ngayHuyDieuTra, setNgayHuyDieuTra] = useState(toInputDate(vuAn.ngayHuyDieuTra));
   const [soQdKtva, setSoQdKtva] = useState(vuAn.soQdKtva || "");
+  const [soThuLy, setSoThuLy] = useState(vuAn.soThuLy || "");
   const [ngayQdKtva, setNgayQdKtva] = useState(toInputDate(vuAn.ngayQdKtva));
   const [hanDieuTra, setHanDieuTra] = useState(toInputDate(vuAn.hanDieuTra));
   const [ksvChinh, setKsvChinh] = useState(vuAn.ksvChinh || "");
@@ -6763,6 +6764,7 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
         soQdHuyDieuTra: nguon === "huy_dieu_tra_lai" ? soQdHuyDieuTra.trim() : null,
         ngayHuyDieuTra: nguon === "huy_dieu_tra_lai" && ngayHuyDieuTra ? fromInputDate(ngayHuyDieuTra) : null,
         soQdKtva: soQdKtva.trim(), ngayQdKtva: fromInputDate(ngayQdKtva),
+        soThuLy: soThuLy.trim() || null,
         hanDieuTra: hanDieuTra ? fromInputDate(hanDieuTra) : null,
         ksvChinh: ksvChinh.trim(), ksvHoTro: ksvHoTro.split(",").map(s => s.trim()).filter(Boolean),
         dtvCbdt: dtvCbdt.trim(), donViThuLy: donViThuLy.trim(), uyQuyenXetXu: uyQuyenXetXu.trim(),
@@ -6887,6 +6889,9 @@ function SuaVuAnForm({ vuAn, onDong, onXong }) {
                         onTachSo={setSoQdHuyDieuTra} className={oInput} />
             </Truong>
           </>)}
+          <Truong nhan="Số thụ lý">
+            <input value={soThuLy} onChange={e => setSoThuLy(e.target.value)} className={oInput} />
+          </Truong>
           <Truong nhan="Số QĐ khởi tố VA">
             <input value={soQdKtva} onChange={e => setSoQdKtva(e.target.value)} className={oInput} />
           </Truong>
@@ -7919,6 +7924,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
         || bd(v.tenVu).includes(k)
         || bd(v.dieuLuat).includes(k)
         || khopSoQdKtva(v, k)
+        || bd(v.soThuLy).includes(k)
         || bd(v.biCanDaiDien).includes(k)
         || dsBiCan.some(bc => bd(bc.hoTen).includes(k));
       if (!hit) return false;
@@ -8035,6 +8041,10 @@ function DanhSachPanel({ selectedId, onSelect }) {
                 <td className="hidden md:table-cell px-3 py-2 text-xs text-slate-500 align-top whitespace-nowrap">{hienThiMa(v)}</td>
                 <td className="px-3 py-2 align-top">
                   <div className="font-medium text-slate-800">{v.tenVu || "(chưa đặt tên)"}
+                    {v.soThuLy && (
+                      <span className="ml-1.5 inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 align-middle whitespace-nowrap"
+                            title={`Số thụ lý: ${v.soThuLy}`}>TL {v.soThuLy}</span>
+                    )}
                     {soLanTraDTBS[v.id]?.tong > 0 && (
                       <span className="ml-1.5 inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle"
                             title={`Đã trả hồ sơ điều tra bổ sung ${soLanTraDTBS[v.id].tong} lần (VKS trả CQĐT: ${soLanTraDTBS[v.id].vksTra}, Toà trả VKS: ${soLanTraDTBS[v.id].toaTra})`}>
@@ -8653,6 +8663,7 @@ function ChiTietPanel({ vuAnId, onDoiSelected, onDong }) {
             <HangThongTin items={[["Đơn vị thụ lý", vuAn.donViThuLy]]} />
             <HangThongTin items={[["Điều luật", vuAn.dieuLuat]]} />
             <HangThongTin items={[["Số/ngày QĐ KTVA", `${vuAn.soQdKtva || "—"} — ${fmtDate(vuAn.ngayQdKtva)}`]]} />
+            <HangThongTin items={[["Số thụ lý", vuAn.soThuLy ? <span className="font-semibold text-sky-700">{vuAn.soThuLy}</span> : "—"]]} />
             <HangThongTin items={[["Mức độ nghiêm trọng", NHAN_MUC_DO_NGHIEM_TRONG[vuAn.mucDoNghiemTrong] || "—"]]} />
             <HangThongTin items={[["Hạn điều tra",
               vuAn.coQuanThuLy === "dieu_tra"
@@ -10426,6 +10437,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
       soQdHuyDieuTra: vuAn.soQdHuyDieuTra || "",
       ngayHuyDieuTra: toInputDate(vuAn.ngayHuyDieuTra),
       soQdKtva: vuAn.soQdKtva || "",
+      soThuLy: vuAn.soThuLy || "",
       ngayQdKtva: toInputDate(vuAn.ngayQdKtva),
       hanDieuTra: toInputDate(vuAn.hanDieuTra),
       ksvChinh: vuAn.ksvChinh || "",
@@ -10475,6 +10487,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
         soQdHuyDieuTra: ed.nguon === "huy_dieu_tra_lai" ? (ed.soQdHuyDieuTra || "").trim() : null,
         ngayHuyDieuTra: ed.nguon === "huy_dieu_tra_lai" && ed.ngayHuyDieuTra ? fromInputDate(ed.ngayHuyDieuTra) : null,
         soQdKtva: ed.soQdKtva.trim(),
+        soThuLy: (ed.soThuLy || "").trim() || null,
         ngayQdKtva: fromInputDate(ed.ngayQdKtva),
         hanDieuTra: ed.hanDieuTra ? fromInputDate(ed.hanDieuTra) : null,
         ksvChinh: ed.ksvChinh.trim(),
@@ -10563,6 +10576,9 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                       onTachSo={so => set("soQdPhucHoiDieuTra", so)} className={oInput} />
           </Truong>
         </>)}
+        <Truong nhan="Số thụ lý">
+          <input value={ed.soThuLy} onChange={e => set("soThuLy", e.target.value)} className={oInput} />
+        </Truong>
         <Truong nhan="Số QĐ khởi tố VA">
           <input value={ed.soQdKtva} onChange={e => set("soQdKtva", e.target.value)} className={oInput} />
         </Truong>
@@ -10706,6 +10722,7 @@ function ChiTietVuAnModal({ vuAnId, onDong }) {
                     <HangThongTin items={[["ĐTV/CBĐT", vuAn.dtvCbdt || "—"]]} />
                     <HangThongTin items={[["Điều luật", vuAn.dieuLuat || "—"]]} />
                     <HangThongTin items={[["Số QĐ KTVA", vuAn.soQdKtva || "—"]]} />
+                    <HangThongTin items={[["Số thụ lý", vuAn.soThuLy || "—"]]} />
                     <HangThongTin items={[["Ngày QĐ KTVA", fmtDate(vuAn.ngayQdKtva)]]} />
                     <HangThongTin items={[["Mức độ nghiêm trọng", NHAN_MUC_DO_NGHIEM_TRONG[vuAn.mucDoNghiemTrong] || "—"]]} />
                     <HangThongTin items={[["Hạn điều tra",
