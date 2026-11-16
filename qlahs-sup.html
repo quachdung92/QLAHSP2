@@ -7667,6 +7667,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
   const [dangTai, setDangTai] = useState(true);
   const [giaiDoan, setGiaiDoan] = useState("tat_ca");
   const [ksv, setKsv] = useState("tat_ca");
+  const [nguon, setNguon] = useState("tat_ca");
   const [tuKhoa, setTuKhoa] = useState("");
   const [chiDangGiaiQuyet, setChiDangGiaiQuyet] = useState(true);
   const [sortCot, setSortCot] = useState(null);
@@ -7763,17 +7764,18 @@ function DanhSachPanel({ selectedId, onSelect }) {
   };
 
   // Khi đang ở tab "Tất cả" và danh sách đã bị cắt bớt (vuotGioiHan) mà người dùng gõ tìm kiếm HOẶC
-  // lọc theo KSV/giai đoạn, phải tải đủ TOÀN BỘ vuan 1 lần (KHÔNG realtime — chỉ 1 lần lúc bắt đầu
-  // lọc) để không bỏ sót các vụ nằm ngoài số dòng đã tải (dsCoBan + dsThem). "Đang giải quyết" không
-  // cần vì list ở đó vốn đã đầy đủ (không bị giới hạn).
+  // lọc theo KSV/giai đoạn/nguồn, phải tải đủ TOÀN BỘ vuan 1 lần (KHÔNG realtime — chỉ 1 lần lúc bắt
+  // đầu lọc) để không bỏ sót các vụ nằm ngoài số dòng đã tải (dsCoBan + dsThem). "Đang giải quyết"
+  // không cần vì list ở đó vốn đã đầy đủ (không bị giới hạn).
   // Bug đã sửa (2026-10-30, phát hiện qua Dũng báo "lọc KSV ra 13/77 vụ") — bản trước CHỈ kích hoạt
   // tải đầy đủ khi gõ `tuKhoa`, KHÔNG tính lọc `ksv`/`giaiDoan` — lọc riêng 1 trong 2 field đó (không
   // gõ gì vào ô tìm kiếm) chỉ lọc trên 500 vụ MỚI NHẤT đã tải (trang đầu "Tất cả"), làm "biến mất"
   // đúng những vụ CŨ không rơi vào top 500 theo ngày tạo — y hệt kịch bản Dũng gặp (77 vụ thật,
-  // chỉ 13 nằm trong top 500). Đã kiểm chứng trực tiếp qua Supabase thật trước khi sửa.
+  // chỉ 13 nằm trong top 500). Đã kiểm chứng trực tiếp qua Supabase thật trước khi sửa. Lọc theo
+  // "Nguồn" (thêm 2026-11-16) áp dụng ĐÚNG cùng nguyên tắc ngay từ đầu, tránh lặp lại lỗi này.
   const [dsTimKiemDayDu, setDsTimKiemDayDu] = useState(null);
   const canTimDayDu = !chiDangGiaiQuyet && vuotGioiHan
-    && (tuKhoa.trim() !== "" || ksv !== "tat_ca" || giaiDoan !== "tat_ca");
+    && (tuKhoa.trim() !== "" || ksv !== "tat_ca" || giaiDoan !== "tat_ca" || nguon !== "tat_ca");
   useEffect(() => {
     if (!canTimDayDu) { setDsTimKiemDayDu(null); return; }
     let huy = false;
@@ -7927,6 +7929,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
     if (chiDangGiaiQuyet && v.trangThai !== "dang_giai_quyet") return false;
     if (giaiDoan !== "tat_ca" && v.coQuanThuLy !== giaiDoan) return false;
     if (ksv !== "tat_ca" && !(v.ksvChinh || "").toLowerCase().includes(ksv.trim().toLowerCase())) return false;
+    if (nguon !== "tat_ca" && (v.nguon || "an_khoi_to_moi") !== nguon) return false;
     if (tuKhoa.trim()) {
       const k = bd(tuKhoa.trim());
       // dsBiCan: tải theo yêu cầu (debounce, xem effect ở trên) — trong lúc chưa tải xong, vẫn
@@ -7944,7 +7947,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
       if (!hit) return false;
     }
     return true;
-  }), [nguonDanhSach, chiDangGiaiQuyet, giaiDoan, ksv, tuKhoa, bicanTimKiemTheoVu]);
+  }), [nguonDanhSach, chiDangGiaiQuyet, giaiDoan, ksv, nguon, tuKhoa, bicanTimKiemTheoVu]);
 
   // Sắp xếp theo cột (bấm tiêu đề) — chỉ áp dụng cho cột có giá trị so sánh rõ ràng
   // (mã vụ/ngày). Không sort theo "Kỳ mới"/"Kỳ giải quyết" vì đó là chuỗi hiển thị dạng
@@ -8013,6 +8016,11 @@ function DanhSachPanel({ selectedId, onSelect }) {
           ))}
         </div>
         <LocKsvComboBox dsKsv={dsKsv} ksv={ksv} onDoi={setKsv} />
+        <select value={nguon} onChange={e => setNguon(e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white text-slate-700">
+          <option value="tat_ca">Tất cả nguồn đầu vào</option>
+          {Object.entries(NHAN_NGUON).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
       </div>
       <div className="flex-1 overflow-auto">
         <table className="w-full text-sm border-collapse">

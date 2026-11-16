@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Danh sách vụ án — thêm filter theo "Nguồn" (nguồn đầu vào) (2026-11-16, `qlahs-sup.html`, nhánh `them-filter-nguon`, ĐÃ push + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (production) — chỉ compile-check, CHƯA kiểm chứng qua UI thật/dữ liệu Supabase thật)
+
+Theo yêu cầu Dũng: `DanhSachPanel` trước đây chỉ lọc theo Giai đoạn/KSV/tìm kiếm tự do, không lọc
+được theo **Nguồn** (`vuan.nguon` — "Án khởi tố mới"/"Tin báo khởi tố lên"/"Án nơi khác chuyển
+đến"/"Phục hồi điều tra"/"Tách vụ án"/"Huỷ điều tra lại", xem `NHAN_NGUON`) dù field này đã có
+sẵn trên mọi vụ từ lâu — chỉ mới dùng ở cột filter của "Bảng dữ liệu Excel" (Cài đặt), không có ở
+màn hình chính.
+
+Thêm `<select>` thuần (đúng "Quy chuẩn UI" — Nguồn là enum CỐ ĐỊNH, không phải danh sách mở nên
+KHÔNG dùng combobox gõ tìm kiểu `LocKsvComboBox`) ngay dưới `LocKsvComboBox`, giá trị mặc định
+`"tat_ca"`. Lọc: `(v.nguon || "an_khoi_to_moi") !== nguon` (fallback khớp đúng mặc định `vuan.nguon`
+dùng ở mọi nơi khác trong file). Đã áp dụng ĐÚNG cùng lớp sửa đã có cho KSV/giai đoạn
+(`canTimDayDu`, bug "lọc KSV ra 13/77 vụ" 2026-10-30) — lọc theo Nguồn ở tab "Tất cả" khi đã vượt
+500 dòng trang đầu cũng tự tải đủ toàn bộ `vuan` 1 lần, không chỉ lọc trên 500 dòng mới nhất, tránh
+lặp lại đúng bug đó cho field mới.
+
+Compile-check qua `@babel/core`+`@babel/preset-react` (cài tạm trong scratchpad) — sạch. Đã push
+nhánh + deploy `qlahs-sup.web.app` (test) rồi `qlahsp2.web.app` (production) theo yêu cầu trực
+tiếp của Dũng, qua `./deploy.sh sup` rồi `./deploy.sh prod` — smoke test sau deploy (`curl`) cả 2
+URL trả `200`. **CHƯA kiểm chứng qua UI thật với dữ liệu Supabase thật** (không có tài khoản đăng
+nhập trong phiên này) — nên tự thử trên `qlahsp2.web.app`: mở "Danh sách vụ án", chọn tab "Tất
+cả", lọc theo 1 giá trị "Nguồn" cụ thể (VD "Phục hồi điều tra"), xác nhận ra đúng kết quả kể cả
+khi vụ đó không nằm trong 500 vụ mới nhất. **CHƯA merge vào `main`** — nhánh `them-filter-nguon`
+vẫn tách riêng, deploy chỉ copy thẳng nội dung file hiện có trên nhánh đó lên hosting (độc lập với
+lịch sử git), không phụ thuộc việc đã merge hay chưa.
+
 ## Số thụ lý khi thêm vụ án + hộp xác nhận tạo vụ (2026-11-05, `qlahs-sup.html`, ĐÃ chạy ALTER + deploy)
 
 `vuan.soThuLy` (text, migration `supabase/add_so_thu_ly_2026-11-05.sql`, đã chạy). `ThemVuAnForm`: ô "Số thụ lý" tự điền = số thụ lý dạng số của vụ tạo gần nhất (200 vụ mới nhất theo `ngayTao`) + 1, sửa tay được. Bấm Lưu → hộp "Xác nhận tạo vụ án" (tên vụ + số thụ lý, cảnh báo nếu trùng số gần đây) → rồi mới hỏi kỳ báo cáo. Chưa có ở form Sửa vụ án/Import Excel. Không reset theo năm.
