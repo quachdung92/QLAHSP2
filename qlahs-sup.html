@@ -5488,12 +5488,21 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   // "danh sách 300 vụ gần nhất" không hề đổi giữa các lần gõ liên tiếp trong CÙNG 1 lượt tìm.
   // 2026-10-22: dùng TOÀN BỘ vụ đang giải quyết (hook dùng chung) thay vì chỉ 300 vụ tạo gần nhất —
   // trước đây vụ đích cũ hơn 300 vụ mới nhất (VD QLVA_E01.53_2601_0030) gõ mã/tên không ra.
-  const [dsUngVien] = useDanhSachDangGiaiQuyet();
+  const [dsDangGQ] = useDanhSachDangGiaiQuyet();
+  // Vụ đích có thể là vụ ĐANG TẠM ĐÌNH CHỈ (không nằm trong danh sách đang giải quyết) — lấy từ cache
+  // vụ đã giải quyết, lọc đúng trạng thái tam_dinh_chi.
+  const [dsTamDinhChi, setDsTamDinhChi] = useState([]);
+  useEffect(() => {
+    let huy = false;
+    dongBoColdCacheVuAnDaGiaiQuyet().then(ds => { if (!huy) setDsTamDinhChi(ds.filter(v => v.trangThai === "tam_dinh_chi")); }).catch(console.error);
+    return () => { huy = true; };
+  }, []);
+  const dsUngVien = useMemo(() => [...dsDangGQ, ...dsTamDinhChi], [dsDangGQ, dsTamDinhChi]);
   useEffect(() => {
     if (!tuKhoa.trim()) { setKetQua([]); return; }
     const k = bd(tuKhoa.trim());
     const list = dsUngVien
-      .filter(v => v.id !== vuAn.id && v.trangThai === "dang_giai_quyet" && !v.daXoa)
+      .filter(v => v.id !== vuAn.id && (v.trangThai === "dang_giai_quyet" || v.trangThai === "tam_dinh_chi") && !v.daXoa)
       .filter(v => bd(hienThiMa(v)).includes(k) || bd(v.tenVu).includes(k))
       .slice(0, 10);
     setKetQua(list);
@@ -5626,7 +5635,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
               setDichMa(hienThiMa(v)); setDichGhiChuHienTai(v.ghiChu || "");
               setXacNhanKhacGD(false); setTuKhoa(""); setKetQua([]);
             }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50">
-              <div className="text-xs text-slate-400">{hienThiMa(v)}</div>
+              <div className="text-xs text-slate-400">{hienThiMa(v)}{v.trangThai === "tam_dinh_chi" && <span className="ml-1 text-amber-600 font-medium">· Tạm đình chỉ</span>}</div>
               <div>{v.tenVu}</div>
             </button>
           ))}
@@ -7740,6 +7749,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
   const [ksv, setKsv] = useState("tat_ca");
   const [nguon, setNguon] = useState("tat_ca");
   const [locHoSo, setLocHoSo] = useState("tat_ca"); // tat_ca | chua_co | ro (rổ chờ nhập)
+  const [hienLoc, setHienLoc] = useState(false); // bộ lọc (giai đoạn/KSV/nguồn/hồ sơ) ẩn mặc định cho đỡ rối
   const [tuKhoa, setTuKhoa] = useState("");
   const [chiDangGiaiQuyet, setChiDangGiaiQuyet] = useState(true);
   const [sortCot, setSortCot] = useState(null);
@@ -8060,6 +8070,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
     return arr;
   }, [filtered, sortCot, sortChieu]);
 
+  const soLocDangDung = [giaiDoan !== "tat_ca", ksv !== "tat_ca", nguon !== "tat_ca", locHoSo !== "tat_ca"].filter(Boolean).length;
   const bamSort = (cot) => {
     if (sortCot === cot) setSortChieu(c => c === "asc" ? "desc" : "asc");
     else { setSortCot(cot); setSortChieu("asc"); }
@@ -8079,8 +8090,15 @@ function DanhSachPanel({ selectedId, onSelect }) {
               </button>
             ))}
           </div>
-          <ChonCotHienThi cotAn={cotAn} onDoi={toggleCot} />
+          <div className="flex items-center gap-2">
+            <button onClick={() => setHienLoc(h => !h)}
+                    className={`text-xs px-2.5 py-1 rounded-md border font-medium ${hienLoc || soLocDangDung ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"}`}>
+              Bộ lọc{soLocDangDung ? ` (${soLocDangDung})` : ""} {hienLoc ? "▴" : "▾"}
+            </button>
+            <ChonCotHienThi cotAn={cotAn} onDoi={toggleCot} />
+          </div>
         </div>
+        {hienLoc && <>
         <div className="flex gap-1">
           {[["tat_ca", "Tất cả"], ["dieu_tra", "Điều tra"], ["truy_to", "Truy tố"], ["xet_xu", "Xét xử"]].map(([v, l]) => (
             <button key={v} onClick={() => setGiaiDoan(v)}
@@ -8103,6 +8121,7 @@ function DanhSachPanel({ selectedId, onSelect }) {
             </button>
           ))}
         </div>
+        </>}
       </div>
       <div className="flex-1 overflow-auto">
         <table className="w-full text-sm border-collapse">
