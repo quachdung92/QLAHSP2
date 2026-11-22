@@ -3605,6 +3605,33 @@ function BackfillHoanThanhConThieuTool() {
   );
 }
 
+// Công thức =HYPERLINK("#'Tên sheet'!A1","chữ hiển thị") — cách DUY NHẤT tin cậy để nhảy sang
+// sheet khác trong CÙNG workbook bằng ExcelJS. Gán trực tiếp cell.value = {text, hyperlink:
+// "'Sheet'!A1"} LUÔN bị ExcelJS ghi kèm 1 relationship TargetMode="External" dù đích là nội bộ
+// (đã đọc thẳng node_modules/exceljs/lib/xlsx/xform/sheet/worksheet-xform.js để xác nhận) —
+// Excel cố mở "file" đó (chính là chuỗi tham chiếu sheet) và báo "Cannot open the specified
+// file". Dùng công thức HYPERLINK() thì không đụng tới cơ chế relationship này.
+function congThucNhaySheet(tenSheet, chuHienThi) {
+  const esc = (s) => String(s).replace(/"/g, '""');
+  return `HYPERLINK("#'${esc(tenSheet).replace(/'/g, "''")}'!A1","${esc(chuHienThi)}")`;
+}
+
+// Tên sheet Excel tối đa 31 ký tự, không chứa * ? : \ / [ ] — khử ký tự cấm + cắt độ dài + khử
+// trùng nếu 2 mã vụ khác nhau trùng nhau sau khi cắt (hiếm, nhưng vẫn phải phòng).
+function taoTenSheetAnToan(raw, daDung) {
+  let s = String(raw || "VuDich").replace(/[*?:\\/\[\]]/g, "_").trim();
+  if (!s) s = "VuDich";
+  if (s.length > 31) s = s.slice(0, 31);
+  let ten = s, i = 2;
+  while (daDung.has(ten.toLowerCase())) {
+    const suffix = ` (${i})`;
+    ten = s.slice(0, 31 - suffix.length) + suffix;
+    i++;
+  }
+  daDung.add(ten.toLowerCase());
+  return ten;
+}
+
 const TEN_SHEET_DANH_SACH_AN = "Danh sách án";
 
 function timTuNhan(nhanMap, text) {
@@ -22981,6 +23008,17 @@ function NhapVuChuyenDeModule() {
   const [ketQuaTim, setKetQuaTim] = useState(null); // null = chưa tìm; mảng id vụ khớp
   const docsRef = useRef({});
   docsRef.current = docs;
+  // Dùng chung cache "kybaocao:desc" với NhatKyModule/DanhSachPanel/KyBaoCaoModule/... — không mở
+  // thêm listener riêng. Dùng để hiện "Nhập vào kỳ báo cáo nào" (2026-11-22, theo yêu cầu Dũng).
+  const danhSachKy = useCollectionCache(
+    "kybaocao:desc", () => db.collection("kybaocao").orderBy("ngayBatDau", "desc")
+  );
+  const kyTenTheoId = useMemo(() => {
+    const m = new Map();
+    danhSachKy.forEach(k => m.set(k.id, k.tenKy + (k.loai === "luu_tru" ? " [Lưu trữ]" : "")));
+    return m;
+  }, [danhSachKy]);
+  const tenKyCuaSuKien = (e) => e.kyThongKe ? (kyTenTheoId.get(e.kyThongKe) || "(kỳ đã xoá)") : "(chưa gán kỳ)";
   const napVu = async (ids) => {
     const can = [...new Set(ids)].filter(id => id && !docsRef.current[id]);
     if (!can.length) return;
@@ -23077,14 +23115,14 @@ function NhapVuChuyenDeModule() {
     await napVu(cacCay.flatMap(({ cay }) => cay.map(c => c.e.maVuAn)));
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Chuyên đề nhập vụ");
-    ws.addRow(["Vụ đích", "Tên vụ đích", "KSV", "Cấp", "Vụ con", "Tên vụ con", "Ngày nhập", "Số QĐ nhập", "Có hồ sơ", "Trong khoảng đếm", "Số vụ con trực tiếp", "Tổng vụ con (cả chuỗi)"]);
+    ws.addRow(["Vụ đích", "Tên vụ đích", "KSV", "Cấp", "Vụ con", "Tên vụ con", "Ngày nhập", "Nhập vào kỳ báo cáo", "Số QĐ nhập", "Có hồ sơ", "Trong khoảng đếm", "Số vụ con trực tiếp", "Tổng vụ con (cả chuỗi)"]);
     ws.getRow(1).font = { bold: true };
     cacCay.forEach(({ d, cay }) => {
       const dich = docsRef.current[d.id] || {};
       cay.forEach(({ e, cap, trong }) => {
         const c = docsRef.current[e.maVuAn] || {};
         ws.addRow([hienThiMa(dich), dich.tenVu || "", dich.ksvChinh || "", cap + 1, hienThiMa(c), c.tenVu || "",
-          fmtDate(e.ngaySuKien), e.soQuyetDinh || "", c.coHoSo === false ? "Chưa có" : "Có", trong ? "Có" : "Không", d.soTruc, d.soTong]);
+          fmtDate(e.ngaySuKien), tenKyCuaSuKien(e), e.soQuyetDinh || "", c.coHoSo === false ? "Chưa có" : "Có", trong ? "Có" : "Không", d.soTruc, d.soTong]);
       });
     });
     const ws2 = wb.addWorksheet("Rổ chờ nhập");
@@ -23098,6 +23136,85 @@ function NhapVuChuyenDeModule() {
     a.download = `chuyen_de_nhap_vu_${soThang}thang.xlsx`;
     a.click();
   };
+  const [dangXuatDayDu, setDangXuatDayDu] = useState(false);
+  // Xuất TOÀN BỘ vụ đã Nhập vụ (không giới hạn ngưỡng/khoảng tháng như "⬇ Xuất Excel" ở trên —
+  // đây là danh sách đầy đủ để lưu hồ sơ/đối chiếu, không phải công cụ dò vụ nghi vấn gộp hàng
+  // loạt), mỗi vụ ĐÍCH (gốc của cả chuỗi — qua goc()/conCua, xử lý đúng cả chuỗi nhập nhiều tầng
+  // A→B→C) 1 sheet riêng + 1 sheet "Tổng hợp theo vụ đích" bấm mã vụ nhảy thẳng sang sheet con
+  // (2026-11-22, theo yêu cầu Dũng). Cột "Nhập vào kỳ báo cáo" lấy từ kyThongKe của ĐÚNG sự kiện
+  // "nhap_vu" của từng vụ con.
+  const xuatDayDu = async () => {
+    setDangXuatDayDu(true);
+    try {
+      const tatCaRoots = Object.keys(conCua).filter(id => !chaCua[id]);
+      const cacCay = tatCaRoots.map(id => ({ id, cay: dsCon(id) })).sort((a, b) => b.cay.length - a.cay.length);
+      await napVu([...tatCaRoots, ...cacCay.flatMap(({ cay }) => cay.map(c => c.e.maVuAn))]);
+
+      const wb = new ExcelJS.Workbook();
+      const wsSum = wb.addWorksheet("Tổng hợp theo vụ đích");
+      wsSum.views = [{ state: "frozen", ySplit: 1 }];
+      wsSum.addRow(["STT", "Mã vụ ĐÍCH (bấm để mở sheet chi tiết)", "Tên vụ ĐÍCH", "KSV vụ ĐÍCH", "Số vụ đã nhập vào (cả chuỗi)"]);
+      const sumHeaderRow = wsSum.getRow(1);
+      sumHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      sumHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF059669" } };
+
+      const tenSheetDaDung = new Set(["tổng hợp theo vụ đích".toLowerCase()]);
+      const tenSheetCuaId = new Map();
+      let stt = 1;
+      for (const { id, cay } of cacCay) {
+        const dich = docsRef.current[id] || {};
+        const tenGoiY = dich.id ? hienThiMa(dich) : `VuDich_${stt}`;
+        const tenSheet = taoTenSheetAnToan(tenGoiY, tenSheetDaDung);
+        tenSheetCuaId.set(id, tenSheet);
+        const row = wsSum.addRow([stt, { formula: congThucNhaySheet(tenSheet, hienThiMa(dich) || id) }, dich.tenVu || "", dich.ksvChinh || "", cay.length]);
+        row.getCell(2).font = { bold: true, color: { argb: "FF4F46E5" }, underline: true };
+        stt++;
+      }
+      wsSum.columns = [{ width: 6 }, { width: 28 }, { width: 36 }, { width: 18 }, { width: 22 }];
+
+      for (const { id, cay } of cacCay) {
+        const dich = docsRef.current[id] || {};
+        const tenSheet = tenSheetCuaId.get(id);
+        const ws = wb.addWorksheet(tenSheet);
+        ws.views = [{ state: "frozen", ySplit: 6 }];
+        const linkBack = ws.addRow([{ formula: congThucNhaySheet("Tổng hợp theo vụ đích", "◀ Quay lại Tổng hợp theo vụ đích") }]);
+        linkBack.getCell(1).font = { color: { argb: "FF4F46E5" }, underline: true, italic: true };
+        ws.addRow([]);
+        ws.addRow(["VỤ ĐÍCH: " + (hienThiMa(dich) || id)]).getCell(1).font = { bold: true, size: 14 };
+        ws.addRow(["Tên vụ:", dich.tenVu || "", "KSV:", dich.ksvChinh || ""]);
+        ws.addRow([`Đã nhận nhập từ ${cay.length} vụ (gồm cả chuỗi nhiều tầng):`]).getCell(1).font = { bold: true };
+        ws.addRow(["STT", "Cấp", "Mã vụ nguồn", "Tên vụ nguồn", "KSV vụ nguồn", "Ngày nhập vụ", "Nhập vào kỳ báo cáo", "Số QĐ nhập", "Có hồ sơ"]);
+        const hRow = ws.getRow(6);
+        hRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } };
+
+        let sttCon = 1;
+        for (const { e, cap } of cay) {
+          const c = docsRef.current[e.maVuAn] || {};
+          const row = ws.addRow([
+            sttCon++, cap + 1, hienThiMa(c), c.tenVu || "(chưa đặt tên)", c.ksvChinh || "",
+            fmtDate(e.ngaySuKien), tenKyCuaSuKien(e), e.soQuyetDinh || "",
+            c.coHoSo === false ? "Chưa có" : "Có",
+          ]);
+          if (c.coHoSo === false) row.getCell(9).font = { color: { argb: "FFDC2626" }, bold: true };
+          if (c.daXoa) row.getCell(4).font = { italic: true, color: { argb: "FF94A3B8" } };
+        }
+        ws.columns = [{ width: 6 }, { width: 6 }, { width: 16 }, { width: 34 }, { width: 18 }, { width: 13 }, { width: 18 }, { width: 16 }, { width: 10 }];
+      }
+
+      const buf = await wb.xlsx.writeBuffer();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      a.download = `QLVA_DS_vu_an_nhap_vu_theo_vu_dich_${toInputDateNhanh(new Date())}.xlsx`;
+      a.click();
+      addToast(`Đã xuất ${cacCay.reduce((s, c) => s + c.cay.length, 0)} vụ, gộp vào ${cacCay.length} vụ đích.`);
+    } catch (e) {
+      console.error(e);
+      addToast("Lỗi khi xuất: " + (e.message || e), "error");
+    } finally {
+      setDangXuatDayDu(false);
+    }
+  };
   const roChoNhap = useMemo(() => ro.filter(v => v.trangThai === "da_nhap" && !v.nhapVaoVu && !chaCua[v.id])
     .sort((a, b) => msCua(b.ngayTao) - msCua(a.ngayTao)), [ro, chaCua]);
   const oSo = "border border-slate-300 rounded px-2 py-1 text-sm w-16";
@@ -23109,7 +23226,10 @@ function NhapVuChuyenDeModule() {
         <button onClick={() => setTab("ro")} className={"px-3 py-1 rounded text-sm " + (tab === "ro" ? "bg-indigo-600 text-white" : "bg-slate-100")}>Rổ chờ nhập ({roChoNhap.length})</button>
         <label className="text-sm ml-4">Trong <input type="number" min="1" value={soThang} onChange={e => setSoThang(+e.target.value || 12)} className={oSo} /> tháng gần đây</label>
         <label className="text-sm">Ngưỡng &gt; <input type="number" min="0" value={nguong} onChange={e => setNguong(+e.target.value || 0)} className={oSo} /> vụ con</label>
-        <button onClick={xuat} disabled={dangTai} className="ml-auto px-3 py-1.5 text-sm rounded bg-emerald-600 text-white disabled:opacity-50">⬇ Xuất Excel</button>
+        <button onClick={xuat} disabled={dangTai} className="ml-auto px-3 py-1.5 text-sm rounded bg-emerald-600 text-white disabled:opacity-50" title="Chỉ xuất các vụ đích vượt ngưỡng/trong khoảng tháng đang chọn (dùng để dò vụ nghi vấn)">⬇ Xuất Excel</button>
+        <button onClick={xuatDayDu} disabled={dangTai || dangXuatDayDu} className="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white disabled:opacity-50" title="Xuất TOÀN BỘ vụ đã Nhập vụ — không giới hạn ngưỡng/khoảng tháng, mỗi vụ đích 1 sheet riêng">
+          {dangXuatDayDu ? "Đang xuất..." : "⬇ Xuất TOÀN BỘ (chia theo vụ đích)"}
+        </button>
       </div>
       {tab === "chuyende" && (
         <div className="flex items-center gap-2 mb-2">
