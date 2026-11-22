@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## "Chuyên đề nhập vụ" — xuất TOÀN BỘ danh sách (không giới hạn ngưỡng), chia theo vụ đích + cột "Nhập vào kỳ báo cáo" (2026-11-22, `qlahs-sup.html`, nhánh `main`, CHƯA push/deploy, chỉ compile-check)
+## "Chuyên đề nhập vụ" — xuất TOÀN BỘ danh sách (không giới hạn ngưỡng), chia theo vụ đích + cột "Nhập vào kỳ báo cáo" (2026-11-22, `qlahs-sup.html`, nhánh `xuat-day-du-nhap-vu`, ĐÃ merge vào `main` + push + DEPLOY `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production) — chỉ compile-check, CHƯA kiểm chứng qua UI thật)
 
 Dũng yêu cầu 1 danh sách TOÀN BỘ vụ án đã "Nhập vụ", ghi chú rõ vụ nào là vụ đích — lúc bắt tay làm
 mới phát hiện `main` đã có sẵn module **`NhapVuChuyenDeModule`** ("Chuyên đề nhập vụ", tab riêng
@@ -53,7 +53,13 @@ khác, gộp thêm các destination bị nhập tiếp vào 1 destination khác)
 này, chỉ có mật khẩu DB) — Dũng nên tự thử trên `qlahs-sup.web.app`: vào "Chuyên đề nhập vụ", bấm
 "⬇ Xuất TOÀN BỘ (chia theo vụ đích)", xác nhận file có đủ sheet theo từng vụ đích, bấm link ở sheet
 "Tổng hợp theo vụ đích" nhảy đúng sang sheet con, và cột "Nhập vào kỳ báo cáo" hiện đúng tên kỳ
-(không phải "(chưa gán kỳ)" cho các vụ chắc chắn đã gán kỳ). **CHƯA commit/push/deploy.**
+(không phải "(chưa gán kỳ)" cho các vụ chắc chắn đã gán kỳ).
+
+Đã commit nhánh `xuat-day-du-nhap-vu` (không có conflict với `main` — `main` không đổi gì thêm kể
+từ lúc fetch lúc đầu phiên), merge `--no-ff` vào `main`, push, rồi deploy `qlahs-sup.web.app`
+(test) trước, smoke test `curl` ra `200`, rồi mới `qlahsp2.web.app` (production), cũng `200` — theo
+yêu cầu trực tiếp "commit merge và deploy full" của Dũng. **Vẫn CHƯA kiểm chứng qua UI thật** (xem
+checklist ngay trên) — không có tài khoản đăng nhập app trong phiên này.
 
 ## Danh sách vụ án — thêm filter theo "Nguồn" (nguồn đầu vào) (2026-11-16, `qlahs-sup.html`, nhánh `them-filter-nguon`, ĐÃ push + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (production) — chỉ compile-check, CHƯA kiểm chứng qua UI thật/dữ liệu Supabase thật)
 
