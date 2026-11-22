@@ -23115,13 +23115,14 @@ function NhapVuChuyenDeModule() {
     await napVu(cacCay.flatMap(({ cay }) => cay.map(c => c.e.maVuAn)));
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Chuyên đề nhập vụ");
-    ws.addRow(["Vụ đích", "Tên vụ đích", "KSV", "Cấp", "Vụ con", "Tên vụ con", "Ngày nhập", "Nhập vào kỳ báo cáo", "Số QĐ nhập", "Có hồ sơ", "Trong khoảng đếm", "Số vụ con trực tiếp", "Tổng vụ con (cả chuỗi)"]);
+    ws.addRow(["Vụ đích", "Tên vụ đích", "KSV", "Cấp", "Vụ con", "Tên vụ con", "KSV vụ con", "Số QĐ KTVA (vụ con)", "Ngày QĐ KTVA (vụ con)", "Ngày nhập", "Nhập vào kỳ báo cáo", "Số QĐ nhập", "Có hồ sơ", "Trong khoảng đếm", "Số vụ con trực tiếp", "Tổng vụ con (cả chuỗi)"]);
     ws.getRow(1).font = { bold: true };
     cacCay.forEach(({ d, cay }) => {
       const dich = docsRef.current[d.id] || {};
       cay.forEach(({ e, cap, trong }) => {
         const c = docsRef.current[e.maVuAn] || {};
         ws.addRow([hienThiMa(dich), dich.tenVu || "", dich.ksvChinh || "", cap + 1, hienThiMa(c), c.tenVu || "",
+          c.ksvChinh || "", c.soQdKtva || "", fmtDate(c.ngayQdKtva),
           fmtDate(e.ngaySuKien), tenKyCuaSuKien(e), e.soQuyetDinh || "", c.coHoSo === false ? "Chưa có" : "Có", trong ? "Có" : "Không", d.soTruc, d.soTong]);
       });
     });
@@ -23183,7 +23184,7 @@ function NhapVuChuyenDeModule() {
         ws.addRow(["VỤ ĐÍCH: " + (hienThiMa(dich) || id)]).getCell(1).font = { bold: true, size: 14 };
         ws.addRow(["Tên vụ:", dich.tenVu || "", "KSV:", dich.ksvChinh || ""]);
         ws.addRow([`Đã nhận nhập từ ${cay.length} vụ (gồm cả chuỗi nhiều tầng):`]).getCell(1).font = { bold: true };
-        ws.addRow(["STT", "Cấp", "Mã vụ nguồn", "Tên vụ nguồn", "KSV vụ nguồn", "Ngày nhập vụ", "Nhập vào kỳ báo cáo", "Số QĐ nhập", "Có hồ sơ"]);
+        ws.addRow(["STT", "Cấp", "Mã vụ nguồn", "Tên vụ nguồn", "KSV vụ nguồn", "Số QĐ KTVA", "Ngày QĐ KTVA", "Ngày nhập vụ", "Nhập vào kỳ báo cáo", "Số QĐ nhập", "Có hồ sơ"]);
         const hRow = ws.getRow(6);
         hRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
         hRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } };
@@ -23193,13 +23194,14 @@ function NhapVuChuyenDeModule() {
           const c = docsRef.current[e.maVuAn] || {};
           const row = ws.addRow([
             sttCon++, cap + 1, hienThiMa(c), c.tenVu || "(chưa đặt tên)", c.ksvChinh || "",
+            c.soQdKtva || "", fmtDate(c.ngayQdKtva),
             fmtDate(e.ngaySuKien), tenKyCuaSuKien(e), e.soQuyetDinh || "",
             c.coHoSo === false ? "Chưa có" : "Có",
           ]);
-          if (c.coHoSo === false) row.getCell(9).font = { color: { argb: "FFDC2626" }, bold: true };
+          if (c.coHoSo === false) row.getCell(11).font = { color: { argb: "FFDC2626" }, bold: true };
           if (c.daXoa) row.getCell(4).font = { italic: true, color: { argb: "FF94A3B8" } };
         }
-        ws.columns = [{ width: 6 }, { width: 6 }, { width: 16 }, { width: 34 }, { width: 18 }, { width: 13 }, { width: 18 }, { width: 16 }, { width: 10 }];
+        ws.columns = [{ width: 6 }, { width: 6 }, { width: 16 }, { width: 34 }, { width: 18 }, { width: 16 }, { width: 13 }, { width: 13 }, { width: 18 }, { width: 16 }, { width: 10 }];
       }
 
       const buf = await wb.xlsx.writeBuffer();
@@ -23251,11 +23253,16 @@ function NhapVuChuyenDeModule() {
             dsHienThi.length === 0 ? <div className="p-4 text-sm text-slate-500">Không có vụ đích nào{ketQuaTim === null ? ` vượt ngưỡng trong ${soThang} tháng` : " khớp"}.</div> : (
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 sticky top-0"><tr className="text-left text-xs text-slate-500">
-                  <th className="p-2">Vụ đích</th><th className="p-2">KSV</th><th className="p-2 text-center">Trực tiếp</th><th className="p-2 text-center">Cả chuỗi</th><th className="p-2"></th></tr></thead>
+                  <th className="p-2">Vụ</th><th className="p-2">KSV</th>
+                  <th className="p-2">Số/Ngày QĐ KTVA</th><th className="p-2">Ngày + Số QĐ nhập</th>
+                  <th className="p-2 text-center">Hồ sơ</th>
+                  <th className="p-2 text-center">Trực tiếp</th><th className="p-2 text-center">Cả chuỗi</th><th className="p-2"></th></tr></thead>
                 <tbody>{dsHienThi.map(d => (
                   <React.Fragment key={d.id}>
                     <tr className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => bamMoRong(d.id)}>
                       <td className="p-2 font-medium">{tenVu(d.id)}</td><td className="p-2">{docs[d.id]?.ksvChinh || "—"}</td>
+                      <td className="p-2 text-slate-400" colSpan={2}>— (vụ đích)</td>
+                      <td className="p-2 text-center text-slate-400">—</td>
                       <td className="p-2 text-center">{d.soTruc}</td><td className={"p-2 text-center font-bold " + (d.soTong > nguong ? "text-red-600" : "")}>{d.soTong}</td>
                       <td className="p-2 text-xs text-indigo-600">{moRong[d.id] ? "▾ Thu gọn" : "▸ Xem vụ con"}</td>
                     </tr>
@@ -23265,8 +23272,11 @@ function NhapVuChuyenDeModule() {
                       return (
                         <tr key={e.id} className={"text-xs border-t border-slate-100 " + (khopTim ? "bg-yellow-100" : "bg-slate-50/60") + (trong ? "" : " opacity-50")}>
                           <td className="p-2" style={{ paddingLeft: 16 + cap * 18 }}>↳ {tenVu(e.maVuAn)}</td>
-                          <td className="p-2">{fmtDate(e.ngaySuKien)}{e.soQuyetDinh ? ` · QĐ ${e.soQuyetDinh}` : ""}</td>
-                          <td className="p-2 text-center" colSpan={3}>{c.coHoSo === false ? <span className="text-red-600 font-semibold">Chưa có hồ sơ</span> : "Có hồ sơ"}{trong ? "" : " · ngoài khoảng đếm"}</td>
+                          <td className="p-2">{c.ksvChinh || "—"}</td>
+                          <td className="p-2 whitespace-nowrap">{c.soQdKtva ? `${c.soQdKtva} · ${fmtDate(c.ngayQdKtva)}` : "—"}</td>
+                          <td className="p-2 whitespace-nowrap">{fmtDate(e.ngaySuKien)}{e.soQuyetDinh ? ` · QĐ ${e.soQuyetDinh}` : ""}</td>
+                          <td className="p-2 text-center">{c.coHoSo === false ? <span className="text-red-600 font-semibold">Chưa có hồ sơ</span> : "Có hồ sơ"}{trong ? "" : " · ngoài khoảng đếm"}</td>
+                          <td className="p-2" colSpan={3}></td>
                         </tr>
                       );
                     })}
