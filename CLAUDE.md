@@ -61,6 +61,22 @@ từ lúc fetch lúc đầu phiên), merge `--no-ff` vào `main`, push, rồi de
 yêu cầu trực tiếp "commit merge và deploy full" của Dũng. **Vẫn CHƯA kiểm chứng qua UI thật** (xem
 checklist ngay trên) — không có tài khoản đăng nhập app trong phiên này.
 
+**Bổ sung ngay sau đó (cùng ngày, theo yêu cầu Dũng "thêm 1 số thông tin sau để dễ tra cứu ngay:
+ngày số QĐ khởi tố vụ án; KSV vụ gốc; ngày tiến hành nhập")** — tập trung vào BẢNG TRÊN MÀN HÌNH
+(tab "Vụ đích vượt ngưỡng", không phải chỉ file Excel) vì "tra cứu ngay" nghĩa là xem được không
+cần xuất file. Bảng cây từ 5 cột (`Vụ đích`/`KSV`[của đích]/`Trực tiếp`/`Cả chuỗi`/toggle) lên 8
+cột thống nhất cho cả dòng gốc và dòng con (dòng gốc để trống 3 cột chỉ-có-ý-nghĩa-với-dòng-con,
+dòng con để trống 3 cột chỉ-có-ý-nghĩa-với-dòng-gốc, qua `colSpan`): mỗi dòng con (vụ đã bị nhập —
+Dũng gọi là "vụ gốc" nghĩa là vụ NGUỒN/vụ con trong cây, không phải vụ đích) giờ hiện riêng **KSV**
+(`c.ksvChinh`, trước đây dòng con hoàn toàn không có cột KSV), **Số/Ngày QĐ KTVA** (`c.soQdKtva`/
+`c.ngayQdKtva` — để đối chiếu đúng hồ sơ giấy của vụ gốc, KHÁC "Ngày nhập"/"Số QĐ nhập" vốn đã có
+sẵn là ngày/số QĐ của HÀNH ĐỘNG nhập vụ, không phải của vụ). Cũng thêm 2 cột tương ứng ("KSV vụ
+con", "Số/Ngày QĐ KTVA (vụ con)") vào sheet "Chuyên đề nhập vụ" của nút Excel cũ, và cột "Số QĐ
+KTVA"/"Ngày QĐ KTVA" vào sheet con của nút "⬇ Xuất TOÀN BỘ" (vốn đã có KSV vụ nguồn + Ngày nhập vụ
+từ bản đầu) — đồng bộ cả 2 nút Excel với bảng màn hình. Compile-check qua `@babel/core`+
+`@babel/preset-react` — sạch. **CHƯA kiểm chứng qua UI thật** (vẫn không có tài khoản đăng nhập
+app trong phiên này).
+
 ## Danh sách vụ án — thêm filter theo "Nguồn" (nguồn đầu vào) (2026-11-16, `qlahs-sup.html`, nhánh `them-filter-nguon`, ĐÃ push + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (production) — chỉ compile-check, CHƯA kiểm chứng qua UI thật/dữ liệu Supabase thật)
 
 Theo yêu cầu Dũng: `DanhSachPanel` trước đây chỉ lọc theo Giai đoạn/KSV/tìm kiếm tự do, không lọc
