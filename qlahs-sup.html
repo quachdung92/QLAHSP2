@@ -5446,7 +5446,36 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   // giữ chỗ đã ghi sẵn (vào rồi ra cùng kỳ) nên KHÔNG ghi nhap_vu thứ 2 — chỉ điền vụ đích vào sự
   // kiện cũ, và bị can chuyển sang vụ đích được ghi là "bổ sung bị can" (bo_sung_bican) ở vụ đích.
   const daTinhNhap = !!(vuAn.choNhapVu && vuAn.trangThai === "da_nhap" && !vuAn.nhapVaoVu);
-  const khacGiaiDoan = !daTinhNhap && !!(dichId && dichGD && dichGD !== vuAn.coQuanThuLy);
+  // "Đưa vào rổ chờ nhập" (2026-11-27, theo yêu cầu Dũng) — vụ ĐANG TỒN biết chắc sẽ nhập vào vụ
+  // khác nhưng chưa xác định được vụ đích: cho ra khỏi tồn ngay (giải quyết nhanh án tồn), vụ đích
+  // điền sau từ chính modal này (nhánh daTinhNhap). Ghi 1 sự kiện nhap_vu GIỮ CHỖ (vuNhapVao=null)
+  // ở kỳ chọn, biCanSnapshot = TOÀN BỘ bị can hiện có (họ rời số tồn cùng vụ — khớp RPC tồn vì vụ
+  // da_nhap không còn tồn). Khác rổ từ Phục hồi/Thêm vụ (vào rồi ra cùng kỳ, snapshot rỗng).
+  const [vaoRo, setVaoRo] = useState(false);
+  const khacGiaiDoan = !daTinhNhap && !vaoRo && !!(dichId && dichGD && dichGD !== vuAn.coQuanThuLy);
+
+  const luuVaoRo = () => {
+    if (!ngay) { hd.setLoi("Cần nhập ngày nhập vụ."); return; }
+    hd.batDauXacNhanKy(async (kyId) => {
+      const now = new Date();
+      const nguoiThucHien = auth.currentUser?.email || "";
+      const bcSnap = await db.collection("bican").where("maVuAn", "==", vuAn.id).get();
+      const batch = db.batch();
+      batch.update(db.collection("vuan").doc(vuAn.id), {
+        trangThai: "da_nhap", choNhapVu: true,
+        ghiChu: (vuAn.ghiChu ? vuAn.ghiChu + "\n" : "") + "Đưa vào rổ chờ nhập (chưa xác định vụ đích).",
+        ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+      });
+      batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+        maVuAn: vuAn.id, loaiSuKien: "nhap_vu", vuNhapVao: null, soQuyetDinh: soQuyetDinh.trim(),
+        ngaySuKien: fromInputDate(ngay), kyThongKe: kyId,
+        ghiChu: (ghiChu ? ghiChu + " — " : "") + "Hồ sơ nhập — chờ xác định vụ đích (đưa vào rổ từ án tồn)",
+        nguoiThucHien, thoiDiemGhi: now, biCanSnapshot: bcSnap.docs.map(d => d.data()),
+      }));
+      await batch.commit();
+      onXong(vuAn.id);
+    });
+  };
   // Đối chiếu bị can trùng giữa vụ nguồn và vụ đích (2026-10-28, theo yêu cầu Dũng): vụ 10 bị can
   // nhập vụ 6 bị can mà 6 người đó đã nằm trong 10 thì kết quả chỉ còn 10, không phải 16. mapTrung:
   // { idBiCanNguon: idBiCanDich } — bị can nguồn được chọn "cùng người" với 1 bị can đích sẽ được
@@ -5509,6 +5538,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   }, [tuKhoa, dsUngVien, vuAn.id]);
 
   const luu = () => {
+    if (vaoRo) { luuVaoRo(); return; }
     if (!dichId) { hd.setLoi("Cần chọn vụ đích để nhập vào."); return; }
     if (!ngay) { hd.setLoi("Cần nhập ngày nhập vụ."); return; }
     if (khacGiaiDoan && !xacNhanKhacGD) {
@@ -5570,6 +5600,17 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
         } else {
           batch.update(d.ref, { maVuAn: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
           if (khacGiaiDoan) biCanSnapshot.push(d.data());
+          // Vụ đưa vào rổ TỪ ÁN TỒN (sự kiện giữ chỗ có biCanSnapshot = toàn bộ bị can — họ đã bị
+          // trừ khỏi tồn lúc vào rổ): bị can chuyển sang vụ đích như người mới phải ghi "vào" lại
+          // ở vụ đích (bo_sung_bican), nếu không tồn bị can vụ đích lệch so với RPC. Người trùng
+          // (gộp) thì không — họ đã có sẵn ở vụ đích.
+          if (daTinhNhap && suKienGiuCho && (suKienGiuCho.data().biCanSnapshot || []).length > 0) {
+            batch.set(db.collection("lichsuChuyenGiaiDoan").doc(), taoSuKien({
+              maVuAn: dichId, loaiSuKien: "bo_sung_bican", maBiCan: d.id, denGiaiDoan: dichGD || vuAn.coQuanThuLy,
+              ghiChu: `Bị can nhập từ vụ ${hienThiMa(vuAn)} (rổ chờ nhập): ${bc.hoTen || ""}`,
+              ngaySuKien: fromInputDate(ngay), kyThongKe: kyId, nguoiThucHien, thoiDiemGhi: now,
+            }));
+          }
         }
       });
       // Ghi rõ 2 chiều "nhập vào vụ nào/nhận nhập từ vụ nào" vào chính GHI CHÚ của vụ (2026-09-06,
@@ -5625,9 +5666,29 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
   return (
     <KhungModalHanhDong tieuDe="Nhập vụ án vào vụ khác" rong>
       {hd.loi && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{hd.loi}</div>}
+      {!daTinhNhap && (
+        <label className="flex items-start gap-2 text-sm font-semibold bg-amber-100 border-2 border-amber-400 rounded-lg px-3 py-2 mb-3 cursor-pointer">
+          <input type="checkbox" className="mt-0.5" checked={vaoRo}
+                 onChange={e => { setVaoRo(e.target.checked); setDichId(null); setDichGD(null); setXacNhanKhacGD(false); setTuKhoa(""); }} />
+          <span>
+            Chưa xác định vụ đích — đưa vào rổ chờ nhập
+            <span className="block text-xs font-normal text-amber-700">
+              Vụ ra khỏi số tồn ngay ở kỳ chọn (cùng toàn bộ bị can). Sau này chọn vụ đích bằng nút
+              "Nhập vào vụ khác" trên chính vụ này hoặc ở tab "Rổ chờ nhập".
+            </span>
+          </span>
+        </label>
+      )}
+      {daTinhNhap && (
+        <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-800 mb-3">
+          Vụ đang nằm trong <b>rổ chờ nhập</b> — chọn vụ đích để hoàn tất nhập (không tính "ra" lần nữa).
+        </div>
+      )}
+      {!vaoRo && <>
       <label className="text-xs text-slate-500 block mb-1">Tìm vụ đích (theo mã vụ hoặc tên vụ)</label>
       <input value={tuKhoa} onChange={e => { setTuKhoa(e.target.value); setDichId(null); }} className={oInput + " mb-2"} />
-      {ketQua.length > 0 && !dichId && (
+      </>}
+      {!vaoRo && ketQua.length > 0 && !dichId && (
         <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 mb-3 max-h-40 overflow-auto">
           {ketQua.map(v => (
             <button key={v.id} onClick={() => {
@@ -5713,7 +5774,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
         <button onClick={onDong} className="px-4 py-2 text-sm rounded-lg text-red-600 hover:bg-red-50">Huỷ</button>
         <button onClick={luu} disabled={hd.dangLuu || hd.hienModalKy || dangTaiBc || (khacGiaiDoan && !xacNhanKhacGD)}
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50">
-          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : "Xác nhận"}
+          {hd.dangLuu ? <span className="flex items-center gap-1.5"><Spinner />Đang lưu...</span> : vaoRo ? "Đưa vào rổ chờ nhập" : "Xác nhận"}
         </button>
       </div>
       <ModalXacNhanKy open={hd.hienModalKy} onHuy={hd.onHuyKy} onXacNhan={hd.onXacNhanKy} />
