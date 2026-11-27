@@ -2,6 +2,81 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## "Chuyên đề nhập vụ" — xuất TOÀN BỘ danh sách (không giới hạn ngưỡng), chia theo vụ đích + cột "Nhập vào kỳ báo cáo" (2026-11-22, `qlahs-sup.html`, nhánh `xuat-day-du-nhap-vu`, ĐÃ merge vào `main` + push + DEPLOY `qlahs-sup.web.app` VÀ `qlahsp2.web.app` (production) — chỉ compile-check, CHƯA kiểm chứng qua UI thật)
+
+Dũng yêu cầu 1 danh sách TOÀN BỘ vụ án đã "Nhập vụ", ghi chú rõ vụ nào là vụ đích — lúc bắt tay làm
+mới phát hiện `main` đã có sẵn module **`NhapVuChuyenDeModule`** ("Chuyên đề nhập vụ", tab riêng
+trong `MODULES`) do 1 nhánh khác vừa merge xong (`feat/nhap-vu-chuyen-de` → `main`, commit
+`230c100`/`3804a54`/`69813fd` — xem `git log`), có cây nhập vụ nhiều tầng (`conCua`/`chaCua`/
+`goc`/`dsCon`), tab "Rổ chờ nhập", và nút "⬇ Xuất Excel" riêng — nhưng nút đó CHỈ xuất các vụ đích
+**vượt ngưỡng** (mặc định >5 vụ con, trong N tháng gần đây) — đúng vai trò "dò vụ nghi vấn nhập
+hàng loạt", KHÔNG phải danh sách đầy đủ để lưu hồ sơ/đối chiếu như Dũng cần. (Thử ban đầu: tự viết
+riêng 1 công cụ `XuatDsNhapVuTool` trong Cài đặt → Import Excel, truy vấn Supabase trực tiếp qua
+`pg` — đã xoá bỏ sau khi phát hiện module trên, giữ lại đúng 2 hàm thuần `congThucNhaySheet`/
+`taoTenSheetAnToan` vì tái dùng được, xem ngay dưới.)
+
+**Đã thêm vào ĐÚNG `NhapVuChuyenDeModule` thay vì tạo công cụ riêng trùng lặp**:
+1. Cache `danhSachKy` (dùng chung cacheKey `"kybaocao:desc"` với `NhatKyModule`/`DanhSachPanel`/
+   `KyBaoCaoModule`...) + `kyTenTheoId`/`tenKyCuaSuKien(e)` — tra tên kỳ từ `kyThongKe` của sự
+   kiện `nhap_vu`, nhãn `" [Lưu trữ]"` nếu kỳ đó là kỳ lưu trữ (đúng quy ước `SuaKyModal`/
+   `ModalXacNhanKy`).
+2. Nút **"⬇ Xuất Excel"** CŨ (vượt ngưỡng) — thêm cột **"Nhập vào kỳ báo cáo"** vào sheet "Chuyên
+   đề nhập vụ" (ngay sau "Ngày nhập"). Sheet "Rổ chờ nhập" KHÔNG thêm (vụ trong rổ CHƯA thực sự
+   nhập vào đâu, không có sự kiện `nhap_vu` nào để tra kỳ).
+3. Nút MỚI **"⬇ Xuất TOÀN BỘ (chia theo vụ đích)"** (`xuatDayDu`) — lấy MỌI root
+   (`Object.keys(conCua).filter(id => !chaCua[id])`, không lọc ngưỡng/khoảng tháng), mỗi root 1
+   sheet riêng (tên = mã vụ đích) + 1 sheet **"Tổng hợp theo vụ đích"** đầu tiên có công thức
+   `HYPERLINK()` bấm vào nhảy thẳng sang đúng sheet con. Mỗi sheet con liệt kê toàn bộ vụ đã nhập
+   vào root đó qua MỌI tầng (`dsCon`, xử lý đúng chuỗi A→B→C), cột "Cấp" = độ sâu, cộng cột "Nhập
+   vào kỳ báo cáo" + "Có hồ sơ" (đọc `coHoSo`).
+
+**Bug ExcelJS đã gặp + sửa lúc làm bản thử đầu tiên, giữ lại trong 2 hàm `congThucNhaySheet`/
+`taoTenSheetAnToan` (đặt cạnh `BackfillHoanThanhConThieuTool`)**: gán trực tiếp `cell.value =
+{text, hyperlink: "'Sheet'!A1"}` để nhảy sang sheet KHÁC trong CÙNG workbook LUÔN bị ExcelJS ghi
+kèm 1 relationship `TargetMode="External"` dù đích là nội bộ (đọc thẳng
+`node_modules/exceljs/lib/xlsx/xform/sheet/worksheet-xform.js` để xác nhận — mọi `cell.value=
+{hyperlink}` đều bị đẩy vào `model.hyperlinks` rồi LUÔN gắn `TargetMode: 'External'`, bất kể
+`hyperlink-xform.js`'s `isInternalLink()` có nhận ra đích hợp lệ nội bộ hay không) — Excel cố mở
+"file" đó (chuỗi tham chiếu sheet) và báo **"Cannot open the specified file"**. Dùng công thức
+`=HYPERLINK("#'Tên sheet'!A1","chữ hiển thị")` thay vì gán property `hyperlink` thì không đụng
+tới cơ chế relationship này — đã xác nhận bằng cách giải nén file `.xlsx` xuất thử, `grep` thấy
+0 file `_rels` cho hyperlink (so với bản gán `cell.value={hyperlink}` cũ luôn sinh 1 relationship
+`TargetMode="External"` vô nghĩa) và công thức `HYPERLINK(...)` ghi đúng trong `sheet.xml`.
+
+**Đã kiểm chứng**: biên dịch qua `@babel/core`+`@babel/preset-react` toàn file — sạch. Đã truy vấn
+Supabase thật (Session pooler, Dũng cấp mật khẩu DB qua chat, chỉ qua biến môi trường lúc chạy
+script tạm trong scratchpad, không ghi vào file nào, gỡ sạch sau khi xong) để dò số liệu thật
+TRƯỚC khi biết có module này sẵn: 461 vụ đã "Nhập vụ", gộp vào 45 vụ đích khác nhau (không tính
+chuỗi nhiều tầng — `xuatDayDu` trong app tính đúng cả chuỗi nên số liệu thật khi xuất từ UI có thể
+khác, gộp thêm các destination bị nhập tiếp vào 1 destination khác). **CHƯA kiểm chứng
+`xuatDayDu`/cột "Nhập vào kỳ báo cáo" bằng UI thật** (không có tài khoản đăng nhập app trong phiên
+này, chỉ có mật khẩu DB) — Dũng nên tự thử trên `qlahs-sup.web.app`: vào "Chuyên đề nhập vụ", bấm
+"⬇ Xuất TOÀN BỘ (chia theo vụ đích)", xác nhận file có đủ sheet theo từng vụ đích, bấm link ở sheet
+"Tổng hợp theo vụ đích" nhảy đúng sang sheet con, và cột "Nhập vào kỳ báo cáo" hiện đúng tên kỳ
+(không phải "(chưa gán kỳ)" cho các vụ chắc chắn đã gán kỳ).
+
+Đã commit nhánh `xuat-day-du-nhap-vu` (không có conflict với `main` — `main` không đổi gì thêm kể
+từ lúc fetch lúc đầu phiên), merge `--no-ff` vào `main`, push, rồi deploy `qlahs-sup.web.app`
+(test) trước, smoke test `curl` ra `200`, rồi mới `qlahsp2.web.app` (production), cũng `200` — theo
+yêu cầu trực tiếp "commit merge và deploy full" của Dũng. **Vẫn CHƯA kiểm chứng qua UI thật** (xem
+checklist ngay trên) — không có tài khoản đăng nhập app trong phiên này.
+
+**Bổ sung ngay sau đó (cùng ngày, theo yêu cầu Dũng "thêm 1 số thông tin sau để dễ tra cứu ngay:
+ngày số QĐ khởi tố vụ án; KSV vụ gốc; ngày tiến hành nhập")** — tập trung vào BẢNG TRÊN MÀN HÌNH
+(tab "Vụ đích vượt ngưỡng", không phải chỉ file Excel) vì "tra cứu ngay" nghĩa là xem được không
+cần xuất file. Bảng cây từ 5 cột (`Vụ đích`/`KSV`[của đích]/`Trực tiếp`/`Cả chuỗi`/toggle) lên 8
+cột thống nhất cho cả dòng gốc và dòng con (dòng gốc để trống 3 cột chỉ-có-ý-nghĩa-với-dòng-con,
+dòng con để trống 3 cột chỉ-có-ý-nghĩa-với-dòng-gốc, qua `colSpan`): mỗi dòng con (vụ đã bị nhập —
+Dũng gọi là "vụ gốc" nghĩa là vụ NGUỒN/vụ con trong cây, không phải vụ đích) giờ hiện riêng **KSV**
+(`c.ksvChinh`, trước đây dòng con hoàn toàn không có cột KSV), **Số/Ngày QĐ KTVA** (`c.soQdKtva`/
+`c.ngayQdKtva` — để đối chiếu đúng hồ sơ giấy của vụ gốc, KHÁC "Ngày nhập"/"Số QĐ nhập" vốn đã có
+sẵn là ngày/số QĐ của HÀNH ĐỘNG nhập vụ, không phải của vụ). Cũng thêm 2 cột tương ứng ("KSV vụ
+con", "Số/Ngày QĐ KTVA (vụ con)") vào sheet "Chuyên đề nhập vụ" của nút Excel cũ, và cột "Số QĐ
+KTVA"/"Ngày QĐ KTVA" vào sheet con của nút "⬇ Xuất TOÀN BỘ" (vốn đã có KSV vụ nguồn + Ngày nhập vụ
+từ bản đầu) — đồng bộ cả 2 nút Excel với bảng màn hình. Compile-check qua `@babel/core`+
+`@babel/preset-react` — sạch. **CHƯA kiểm chứng qua UI thật** (vẫn không có tài khoản đăng nhập
+app trong phiên này).
+
 ## Danh sách vụ án — thêm filter theo "Nguồn" (nguồn đầu vào) (2026-11-16, `qlahs-sup.html`, nhánh `them-filter-nguon`, ĐÃ push + ĐÃ DEPLOY `qlahs-sup.web.app` + `qlahsp2.web.app` (production) — chỉ compile-check, CHƯA kiểm chứng qua UI thật/dữ liệu Supabase thật)
 
 Theo yêu cầu Dũng: `DanhSachPanel` trước đây chỉ lọc theo Giai đoạn/KSV/tìm kiếm tự do, không lọc
