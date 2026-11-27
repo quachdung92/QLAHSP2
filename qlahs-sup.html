@@ -14003,6 +14003,178 @@ function themSheetBieu2Va3(wb, giaTriBieu2, giaTriBieu3, b10RefCua = () => null,
 }
 
 
+// ====== XUẤT BÁO CÁO BẢN RÚT GỌN (2026-11-27, Dũng) ======
+// File gọn để nộp/nhập ngành: Biểu 02, 03 (3 cột Tiêu chí/Mã dòng/Số liệu), Biểu 10 (mẫu ngành),
+// Biểu 4, Biểu 7 (tạm giữ/tạm giam suy từ Biểu 2), Biểu 13 + 3 danh sách (trả ĐTBS, phục hồi điều
+// tra, tạm đình chỉ trong kỳ). Mọi ô chỉ là GIÁ TRỊ (không công thức — các sheet "DS ..." nguồn không
+// có trong file). Dựng từ CHÍNH workbook đầy đủ của xuatBaoCaoThangExcel nên số khớp 100%.
+// Biểu 2 mã 162-184 (hoạt động điều tra, hỏi cung) phần mềm chưa theo dõi → ƯỚC TÍNH cân đối theo số
+// vụ khởi tố mới (không tính nơi khác chuyển đến) và tổng bị can mới, theo cách Dũng chốt tháng 11/2026
+// (tô vàng nhạt để biết là số ước tính). Không ghi đè ô đã có số.
+const BIEU7_ROWS = [[1,"I. Kiểm sát việc tạm giữ, tạm giam"],[2,"1.1. Tạm giữ"],[3,"Số tạm giữ còn lại của kỳ trước"],[4,"Số người mới bị tạm giữ"],[5,"Trong đó:- Người bị giữ trong trường hợp khẩn cấp"],[6,"- Người bị bắt trong trường hợp phạm tội quả tang"],[7,"- Người bị bắt theo quyết định truy nã"],[8,"- Người phạm tội tự thú"],[9,"- Người phạm tội đầu thú"],[10,"Số nơi khác chuyển đến"],[11,"Số chuyển đi nơi khác"],[12,"Tổng số người bị tạm giữ"],[13,"Số đã giải quyết"],[14,"Trong đó:- Số khởi tố chuyển tạm giam"],[15,"- Số khởi tố áp dụng biện pháp ngăn chặn khác"],[16,"- Số truy nã chuyển tạm giam"],[17,"- Số tạm giữ được trả tự do"],[18,"Tr. đó: + Không thưc hiện hành vi phạm tội"],[19,"+ Hành vi không cấu thành tội phạm, chuyển xử lý hành chính"],[20,"+ Người thực hiện hành vi phạm tội chưa đến tuổi chịu TNHS"],[21,"+ Người thực hiện hành vi phạm tội bị tâm thần hoặc mắc bệnh khác mà không thể nhận thức, làm chủ được hành vi"],[22,"+ Số người trả tự do trong thời gian chờ kết quả giám định, đinh giá"],[23,"+ Số người trả tự do do bị hại hoặc người đại diện của bị hại rút đơn yêu cầu khởi tố"],[24,"+ Bị hại từ chối giám định"],[25,"- Số tạm giữ được VKS trả tự do theo quy định của Luật tổ chức VKSND, Luật thi hành tạm giữ, tạm giam"],[26,"Số quá hạn tạm giữ đã giải quyết"],[27,"Số người tạm giữ chết"],[28,"Trong đó:- Chết do bệnh lý"],[29,"- Chết do tự sát"],[30,"Số người tạm giữ trốn trong kỳ thống kê"],[31,"Trong đó: Số trốn trong kỳ thống kê chưa bắt lại được"],[32,"Số người còn tạm giữ đến cuối kỳ thống kê"],[33,"Trong đó: Số quá hạn tạm giữ"],[34,"Tr.đó:+ Thuộc trách nhiệm của VKS"],[35,"1.2. Tạm giam"],[36,"Số tạm giam còn lại của kỳ trước"],[37,"Số người mới bị tạm giam"],[38,"Số nơi khác chuyển đến"],[39,"Số chuyển đi nơi khác"],[40,"Tổng số người bị tạm giam"],[41,"Số người bị tạm giam đã giải quyết"],[42,"Trong đó:- Huỷ bỏ biện pháp tạm giam"],[43,"- Thay thế bằng biện pháp ngăn chặn khác"],[44,"- Trả tự do khi bị can có quyết định đình chỉ"],[45,"Tr.đó:+ Do không có hành vi phạm tội; hành vi không cấu thành tội phạm; Hết thời hạn điều tra không chứng minh được bị can đã thực hiện hành vi phạm tội"],[46,"- Hội đồng xét xử trả tự do"],[47,"Tr.đó: + Hội đồng xét xử trả tự do do bị cáo không phạm tội"],[48,"+ Hội đồng xét xử trả tự do bị cáo được miễn trách nhiệm hình sự hoặc được miễn hình phạt"],[49,"- Số tạm giam được VKS trả tự do theo quy định của Luật tổ chức VKSND, Luật thi hành tạm giữ, tạm giam"],[50,"- Hết thời hạn tù trong thời gian chờ quyết định chuyển đi chấp hành án"],[51,"- Số người chuyển chấp hành án"],[52,"- Bắt buộc chữa bệnh"],[53,"Tổng số người đang áp dụng biện pháp bắt buộc chữa bệnh tính đến cuối kỳ thống kê"],[54,"Số quá hạn tạm giam đã giải quyết"],[55,"Trong đó:- Thuộc trách nhiệm của Cơ quan điều tra"],[56,"- Thuộc trách nhiệm của Viện kiểm sát"],[57,"- Thuộc trách nhiệm của Toà án"],[58,"Số người bị tạm giam chết"],[59,"Trong đó: - Chết do tự sát"],[60,"- Chết do bệnh lý"],[61,"Số người bị tạm giam trốn chưa bắt lại được tính đến cuối kỳ thống kê"],[62,"Trong đó: Số trốn trong kỳ thống kê chưa bắt lại được"],[63,"Số người còn bị tạm giam tính đến cuối kỳ thống kê"],[64,"Trong đó - Giai đoạn điều tra"],[65,"- Giai đoạn truy tố"],[66,"- Giai đoạn xét xử"],[67,"- Số còn tạm giam đã quá hạn"],[68,"Tr.đó: + Thuộc trách nhiệm của Cơ quan điều tra"],[69,"+ Thuộc trách nhiệm của Viện kiểm sát"],[70,"+ Thuộc trách nhiệm của Toà án"],[71,"- Số bị án tử hình đang tạm giam"],[72,"2. Hoạt động kiểm sát"],[73,"Số người bị tạm giữ bị quá hạn; tạm giữ không có căn cứ, trái pháp luật"],[74,"Trong đó: Số VKS đã yêu cầu xử lý hoặc tự xử lý"],[75,"Số người bị tạm giam bị quá hạn; tạm giam không có căn cứ, trái pháp luật"],[76,"Trong đó: Số VKS đã yêu cầu xử lý hoặc tự xử lý"],[77,"Số lần VKS gặp hỏi người bị tạm giữ, tạm giam"],[78,"Số lần Viện kiểm sát trực tiếp kiểm sát thường kỳ và đột xuất phân trại tạm giam, buồng tạm giữ của Đồn biên phòng có kết luận"],[79,"Trong đó: Số lần kiếm sát đột xuất"],[80,"Số lần Viện kiểm sát trực tiếp kiểm sát thường kỳ và đột xuất trại tạm giam có kết luận"],[81,"Trong đó: Số lần kiếm sát đột xuất"],[82,"Số văn bản VKS yêu cầu trong hoạt động kiểm sát tạm giữ, tạm giam"],[83,"Trong đó:- Số văn bản Viện kiểm sát yêu cầu tự kiểm tra việc tạm giữ, tạm giam"],[84,"- Số văn bản yêu cầu khởi tố vụ án hình sự trong tạm giữ, tạm giam"],[85,"Số văn bản VKS yêu cầu trong hoạt động kiểm sát tạm giữ, tạm giam không được chấp nhận"],[86,"Trong đó: Số văn bản yêu cầu khởi tố hình sự trong tạm giữ, tạm giam"],[87,"Số vụ án Viện kiểm sát trực tiếp khởi tố khi kiểm sát tạm giam tạm giữ"],[88,"Số bản kiến nghị yêu cầu khắc phục vi phạm trong việc tạm giữ, tạm giam"],[89,"Số bản kiến nghị được chấp nhận"],[90,"Số bản kiến nghị không được chấp nhận"],[91,"Số bản kiến nghị của VKS với cơ quan, tổ chức hữu quan áp dụng biện pháp phòng ngừa vi phạm pháp luật trong việc thi hành tạm giữ, tạm giam"],[92,"Số bản kiến nghị được chấp nhận"],[93,"Số bản kiến nghị không được chấp nhận"],[94,"Số bản kháng nghị yêu cầu khắc phục vi phạm trong việc tạm giữ, tạm giam"],[95,"Trong đó: - Số kháng nghị của VKS yêu cầu đình chỉ việc thi hành các quyết định vi phạm pháp luật trong việc tạm giữ, tạm giam"],[96,"Tr.đó: + Số kháng nghị của VKS với cơ quan cấp dưới"],[97,"- Số kháng nghị của VKS hủy bỏ các quyết định vi phạm pháp luật trong việc tạm giữ, tạm giam"],[98,"Tr.đó: + Số kháng nghị của VKS với cơ quan cấp dưới"],[99,"Số bản kháng nghị được chấp nhận"],[100,"Số bản kháng nghị không được chấp nhận"],[101,"Số cuộc kiểm tra việc thực hiện kiến nghị, kháng nghị, yêu cầu đã có kết luận"],[102,"Số báo cáo thỉnh thị VKS đã tiếp nhận"],[103,"Số trả lời thỉnh thị đúng hạn"],[104,"Số thông báo rút kinh nghiệm"],[105,"II. Kiểm sát thi hành án hình sự"],[106,"1. Kết quả ban hành và thực hiện quyết định thi hành án"],[107,"1.1. Về ban hành quyết định thi hành án"],[108,"Số người bị kết án, pháp nhân thương mại bị kết án chưa ra quyết định thi hành án kỳ trước chuyển qua"],[109,"Số người bị kết án, pháp nhân thương mại bị kết án mới phát sinh trong kỳ chưa ra quyết định thi hành án"],[110,"Số người bị kết án, pháp nhân thương mại bị kết án nhận uỷ thác ra quyết định thi hành án"],[111,"Số người bị kết án, pháp nhân thương mại bị kết án uỷ thác đi nơi khác ra quyết định thi hành án"],[112,"Tổng số người bị kết án, pháp nhân thương mại bị kết án Toà án phải ra quyết định thi hành án"],[113,"Trong đó:- Số người bị kết án tù chung thân phải ra quyết định thi hành án"],[114,"- Số người bị kết án tù có thời hạn phải ra quyết định thi hành án"],[115,"Số người bị kết án chết khi chưa có quyết định thi hành án"],[116,"Số người chưa có quyết định thi hành án phạm tội mới"],[117,"Số người bị kết án, pháp nhân thương mại bị kết án Toà án đã ra quyết định thi hành án trong kỳ thống kê"],[118,"Trong đó:- Số người bị kết án tù chung thân đã ra quyết định thi hành án"],[119,"- Số người bị kết án tù có thời hạn đã ra quyết định thi hành án"],[120,"Số người bị kết án, pháp nhân thương mại bị kết án Toà án chưa ra quyết định thi hành án đến cuối kỳ thống kê"],[121,"Trong đó:- Đã quá hạn luật định"],[122,"1.2. Về thực hiện quyết định thi hành án"],[123,"Số người chấp hành án đã có quyết định thi hành án của kỳ thống kê trước nhưng chưa đưa đi thi hành án"],[124,"Số đã có quyết định thi hành án nơi khác chuyển đến"],[125,"Số đã có quyết định thi hành án chuyển đi nơi khác"],[126,"Tổng số người chấp hành án đã có quyết định thi hành án phải đưa đi thi hành án"],[127,"Số người chấp hành án được Toà án giám đốc thẩm, Tái thẩm huỷ án, tuyên không phạm tội"],[128,"Số người chấp hành án được hoãn chấp hành án trong kỳ thống kê"],[129,"Số người chấp hành án được tạm đình chỉ chấp hành án trong kỳ thống kê"],[130,"Số người chấp hành án được miễn chấp hành hình phạt"],[131,"Trong đó: Số người được miễn chấp hành hình phạt tù"],[132,"Số người chấp hành án được hưởng thời hiệu"],[133,"Trong đó: Số người chấp hành án phạt tù được hưởng thời hiệu"],[134,"Số người chấp hành án chết sau khi có quyết định thi hành án nhưng chưa đi thi hành án"],[135,"Số người chấp hành án trốn sau khi có quyết định thi hành án nhưng chưa đi thi hành án trong kỳ thống kê"],[136,"Số người đã có quyết định thi hành án phạm tội mới"],[137,"Số người chấp hành án đã đi thi hành án"],[138,"Trong đó: - Số người chấp hành án phạt tù chung thân"],[139,"- Số người chấp hành án phạt tù có thời hạn"],[140,"Số người chấp hành án đã có quyết định thi hành án còn lại chưa đi thi hành án đến cuối kỳ thống kê"],[141,"Số người hoãn chấp hành án còn lại của kỳ trước"],[142,"Tổng số người được hoãn chấp hành án"],[143,"Số người được hoãn chấp hành án chết trong thời gian được hoãn chấp hành án"],[144,"Số người được hoãn chấp hành án được miễn chấp hành hình phạt trong thời gian được hoãn chấp hành án"],[145,"Số người được hoãn chấp hành án bị Tòa án có thẩm quyền hủy quyết định hoãn chấp hành án"],[146,"Số đã hết thời hạn hoãn chấp hành án"],[147,"Trong đó:- Số đã đi chấp hành án"],[148,"Tổng số người chấp hành án có thời hạn đang được hoãn chấp hành án tính đến cuối kỳ thống kê"],[149,"2. Kết quả thi hành án phân tích theo hình phạt"],[150,"2.1. Tử hình"],[151,"Số người bị kết án đã có quyết định thi hành án kỳ thống kê trước chuyển sang"],[152,"Số người bị kết án mới có quyết định thi hành án"],[153,"Tổng số người bị kết án tử hình đã có quyết định thi hành án"],[154,"Số người bị kết án hoãn thi hành án tử hình trong kỳ thống kê"],[155,"Số người bị kết án đã có quyết định thi hành án được giảm xuống hình phạt khác"],[156,"Số người bị kết án đã có quyết định thi hành án chết trong kỳ thống kê"],[157,"Số người bị kết án đã có quyết định thi hành án trốn trong kỳ thống kê"],[158,"Số đã thi hành án tử hình trong kỳ thống kê"],[159,"Số người bị kết án đã có quyết định thi hành án còn lại chưa thi hành án tính đến cuối kỳ thống kê"],[160,"Trong đó:- Số người được hoãn thi hành án tử hình tính đến cuối kỳ thống kê"],[161,"- Số người đã có quyết định thi hành án trốn chưa bắt lại tính đến cuối kỳ thống kê"],[162,"2.2. Tù chung thân"],[163,"Số phạm nhân kỳ thống kê trước chuyển sang"],[164,"Số phạm nhân mới"],[165,"Số nơi khác chuyển đến"],[166,"Trong đó: Số phạm nhân trả trích xuất"],[167,"Số chuyển đi nơi khác"],[168,"Trong đó: Số phạm nhân đã trích xuất"],[169,"Tổng số phạm nhân"],[170,"Trong đó: Số phạm nhân đã giảm án xuống tù có thời hạn"],[171,"Số phạm nhân chết"],[172,"Trong đó: - Chết do tự sát"],[173,"- Chết do bệnh lý"],[174,"Số phạm nhân trốn trong kỳ thống kê chưa bắt lại được"],[175,"Số phạm nhân giảm xuống tù có thời hạn đã chấp hành xong"],[176,"Trong đó: Số phạm nhân được đặc xá"],[177,"Số phạm nhân được Tòa án trả tự do"],[178,"Số phạm nhân đang chấp hành án tính đến cuối kỳ thống kê"],[179,"Số phạm nhân trốn chưa bắt lại được tính đến cuối kỳ thống kê"],[180,"2.3. Tù có thời hạn"],[181,"Số phạm nhân kỳ thống kê trước chuyển sang"],[182,"Số phạm nhân đến chấp hành án do bị Tòa án hủy quyết định tha tù trước thời hạn có điều kiện và buộc người đó tiếp tục thi hành án"],[183,"Số phạm nhân mới"],[184,"Số nơi khác chuyển đến"],[185,"Trong đó:Số phạm nhân trả trích xuất"],[186,"Số chuyển đi nơi khác"],[187,"Trong đó:Số phạm nhân đã trích xuất"],[188,"Tổng số phạm nhân"],[189,"Số phạm nhân đã chấp hành án xong"],[190,"Trong đó:Số phạm nhân được đặc xá"],[191,"Số phạm nhân được tha tù trước thời hạn có điều kiện"],[192,"Số phạm nhân được VKS trả tự do theo quy định của Luật tổ chức VKSND, Luật thi hành án hình sự"],[193,"Số phạm nhân được Tòa án trả tự do"],[194,"Số phạm nhân có QĐ hủy bản án, QĐ thi hành án"],[195,"Số phạm nhân chết"],[196,"Trong đó: - Chết do tự sát"],[197,"- Chết do bệnh lý"],[198,"Số phạm nhân trốn chưa bắt lại được tính đến cuối kỳ thống kê"],[199,"Trong đó: Số phạm nhân trốn trong kỳ thống kê chưa bắt lại được"],[200,"Số phạm nhân áp dụng biện pháp bắt buộc chữa bệnh trong kỳ thống kê"],[201,"Tổng số phạm nhân đang áp dụng biện pháp bắt buộc chữa bệnh tính đến cuối kỳ thống kê"],[202,"Số phạm nhân đang chấp hành án tính đến cuối kỳ thống kê"],[203,"Trong đó:- Số phạm nhân đang chấp hành án tại trại tạm giam"],[204,"- Số phạm nhân đang chấp hành án tại phân trại tạm giam"],[205,"Số tạm đình chỉ chấp hành án còn lại của kỳ trước"],[206,"Số phạm nhân được tạm đình chỉ chấp hành án trong kỳ thống kê"],[207,"Số tạm đình chỉ đã tiếp tục thi hành án"],[208,"Số tạm đình chỉ được miễn chấp hành án"],[209,"Số tạm đình chỉ chết"],[210,"Số tạm đình chỉ trốn trong kỳ thống kê chưa bắt lại được"],[211,"Tổng số phạm nhân được tạm đình chỉ tính đến cuối kỳ thống kê"],[212,"Trong đó: Số đã hết thời hạn tạm đình chỉ"],[213,"Tổng số tạm đình chỉ trốn đến cuối kỳ thống kê chưa bắt lại được"],[214,"2.4. Án treo"],[215,"Số còn lại của kỳ trước"],[216,"Số mới"],[217,"Số nơi khác chuyển đến"],[218,"Số chuyển đi nơi khác"],[219,"Tổng số"],[220,"Số đã chấp hành xong"],[221,"Số Tòa án tuyên hủy bản án đã tuyên phạt án treo"],[222,"Số bị Tòa án sửa bán án chuyển hình phạt từ phạt tù cho hưởng án treo sang tù giam"],[223,"Số phạm tội mới"],[224,"Số án treo vi phạm nghĩa vụ bị buộc phải chấp hành hình phạt tù"],[225,"Số đang thi hành án treo chết"],[226,"Số thay đổi nơi cư trú"],[227,"Số đang chấp hành án tính đến cuối kỳ thống kê"],[228,"2.5. Hình phạt trục xuất"],[229,"Số còn lại của kỳ trước"],[230,"Số mới"],[231,"Tổng số"],[232,"Số đã trục xuất"],[233,"Số còn lại chưa trục xuất tính đến cuối kỳ thống kê"],[234,"2.6. Cải tạo không giam giữ"],[235,"Số còn lại của kỳ trước"],[236,"Số mới"],[237,"Số nơi khác chuyển đến"],[238,"Số chuyển đi nơi khác"],[239,"Tổng số"],[240,"Số đã chấp hành xong"],[241,"Số được Tòa án tuyên hủy bản án đã tuyên phạt CTKGG"],[242,"Số bị Tòa án sửa bán án ,chuyển hình phạt CTKGG chuyển sang hình phạt khác"],[243,"Số phạm tội mới"],[244,"Số đang thi hành án phạt cải tạo không giam giữ chết"],[245,"Số thay đổi nơi cư trú"],[246,"Số đang thi hành án tính đến cuối kỳ thống kê"],[247,"2.7. Cấm cư trú"],[248,"Số còn lại của kỳ trước"],[249,"Số mới"],[250,"Tổng số"],[251,"Số đã chấp hành xong"],[252,"Số đang chấp hành án tính đến cuối kỳ thống kê"],[253,"2.8. Quản chế"],[254,"Số còn lại của kỳ trước"],[255,"Số mới"],[256,"Tổng số"],[257,"Số đã chấp hành xong"],[258,"Số đang chấp hành án tính đến cuối kỳ thống kê"],[259,"2.9. Tước một số quyền công dân"],[260,"Số còn lại của kỳ trước"],[261,"Số mới"],[262,"Tổng số"],[263,"Số đã chấp hành xong"],[264,"Số đang chấp hành án tính đến cuối kỳ thống kê"],[265,"2.10. Cấm đảm nhiệm chức vụ, cấm hành nghề hoặc làm công việc nhất định"],[266,"Số còn lại của kỳ trước"],[267,"Số mới"],[268,"Tổng số"],[269,"Số đã chấp hành xong"],[270,"Số đang chấp hành án tính đến cuối kỳ thống kê"],[271,"3. Thi hành án hình sự đối với pháp nhân thương mại"],[272,"Số pháp nhân thương mại chấp hành án chưa thi hành xong của kỳ thống kê trước chuyển sang"],[273,"Trong đó: - Số pháp nhân bị đình chỉ hoạt động có thời hạn"],[274,"- Số pháp nhân bị đình chỉ hoạt động vĩnh viễn"],[275,"- Số pháp nhân bị Cấm kinh doanh, cấm hoạt động trong một số lĩnh vực nhất định"],[276,"Số pháp nhân thương mại chấp hành án mới phát sinh trong kỳ thống kê"],[277,"Trong đó: - Số pháp nhân bị đình chỉ hoạt động có thời hạn"],[278,"- Số pháp nhân bị đình chỉ hoạt động vĩnh viễn"],[279,"- Số pháp nhân bị Cấm kinh doanh, cấm hoạt động trong một số lĩnh vực nhất định"],[280,"Tổng số pháp nhân thương mại chấp hành án"],[281,"Trong đó:- Số pháp nhân bị đình chỉ hoạt động có thời hạn"],[282,"- Số pháp nhân bị đình chỉ hoạt động vĩnh viễn"],[283,"- Số pháp nhân bị Cấm kinh doanh, cấm hoạt động trong một số lĩnh vực nhất định"],[284,"Số pháp nhân thương mại đã chấp hành án xong"],[285,"Trong đó: - Số pháp nhân bị đình chỉ hoạt động có thời hạn"],[286,"- Số pháp nhân bị đình chỉ hoạt động vĩnh viễn"],[287,"- Số pháp nhân bị Cấm kinh doanh, cấm hoạt động trong một số lĩnh vực nhất định"],[288,"Số pháp nhân thương mại chưa chấp hành án xong đến cuối kỳ thống kê"],[289,"Trong đó: - Số pháp nhân bị đình chỉ hoạt động có thời hạn"],[290,"- Số pháp nhân bị đình chỉ hoạt động vĩnh viễn"],[291,"- Số pháp nhân bị Cấm kinh doanh, cấm hoạt động trong một số lĩnh vực nhất định"],[292,"- Số pháp nhân thương mại không chấp hành quyết định thi hành án"],[293,"4. Hoạt động kiểm sát thi hành án hình sự"],[294,"Số lần VKS gặp hỏi phạm nhân"],[295,"Số quyết định của Tòa án có vi phạm"],[296,"Số người bị kết án Viện kiểm sát yêu cầu Tòa án ra quyết định thi hành án"],[297,"Số người bị kết án án Tòa án đã ra quyết định thi hành án theo yêu cầu của Viện kiểm sát"],[298,"Số người chấp hành án Viện kiểm sát đề nghị hoãn thi hành án"],[299,"Số người chấp hành án Tòa án đã ra quyết định hoãn chấp hành án theo đề nghị của VKS"],[300,"Số người chấp hành án Viện kiểm sát đề nghị miễn chấp hành hình phạt"],[301,"Số người chấp hành án Tòa án đã ra quyết định miễn chấp hành hình phạt theo đề nghị của Viện kiểm sát"],[302,"Trong đó: Số người chấp hành án phạt tù được miễn chấp hành án theo đề nghị của Viện kiểm sát"],[303,"Số người chấp hành án Viện kiểm sát đề nghị xét hưởng thời hiệu"],[304,"Số người chấp hành án Tòa án đã ra quyết định được hưởng thời hiệu theo đề nghị của VKS"],[305,"Trong đó: Số người chấp hành án phạt tù được hưởng thời hiệu theo đề nghị của VKS"],[306,"Số người chấp hành án Viện kiểm sát đề nghị đình chỉ thi hành án"],[307,"Số người chấp hành án Tòa án đã ra quyết định đình chỉ thi hành án theo đề nghị của VKS"],[308,"Số văn bản VKS yêu cầu trong hoạt động kiểm sát thi hành án hình sự"],[309,"Trong đó: - Số văn bản Viện kiểm sát yêu cầu Toà án tự kiểm tra và thông báo kết quả cho VKS"],[310,"- Số văn bản Viện kiểm sát yêu cầu Toà án cung cấp tài liệu"],[311,"- Số văn bản yêu cầu khởi tố vụ án hình sự"],[312,"Số vụ án Viện kiếm sát trực tiếp khởi tố khi kiểm sát thi hành án hình sự"],[313,"Số người chấp hành án Viện kiểm sát đề nghị Tạm đình chỉ chấp hành hình phạt tù"],[314,"Số người chấp hành án được tạm đình chỉ chấp hành hình phạt tù theo đề nghị của Viện kiểm sát"],[315,"Số người chấp hành án Viện kiểm sát đề nghị miễn chấp hành hình phạt còn lại trong thời gian người chấp hành án đang được tạm đình chỉ chấp hành hình phạt tù"],[316,"Số người chấp hành án được miễn chấp hành hình phạt tù theo đề nghị của Viện kiểm sát"],[317,"Số người chấp hành án đang tại ngoại không tự nguyện thi hành án và có đủ điều kiện nhưng cơ quan thi hành án chưa yêu cầu bắt, áp giải,"],[318,"Số người chấp hành án Viện kiểm sát yêu cầu Công an áp giải"],[319,"Số người chấp hành án Công an đã áp giải theo yêu cầu của VKS"],[320,"Số người chấp hành án Viện kiểm sát yêu cầu Công an truy nã"],[321,"Số người chấp hành án Công an đã truy nã theo yêu cầu của VKS"],[322,"Số văn bản Viện kiểm sát yêu cầu cơ quan thi hành án hình sự tự kiểm tra và thông báo kết quả cho Viện kiểm sát"],[323,"Trong đó: Số văn bản Viện kiểm sát yêu cầu cơ quan thi hành án hình sự cấp dưới"],[324,"Số văn bản Viện kiểm sát yêu cầu cơ quan thi hành án hình sự cung cấp tài liệu"],[325,"Trong đó: Số văn bản Viện kiểm sát yêu cầu cơ quan thi hành án hình sự cấp dưới"],[326,"Số lần Viện kiểm sát trực tiếp kiểm sát cơ quan thi hành án hình sự đã ban hành kết luận"],[327,"Trong đó: Số lần trực tiếp kiểm sát cơ quan thi hành án hình sự cấp dưới"],[328,"Số lần kiểm sát đột xuất cơ quan thi hành án hình sự"],[329,"Trong đó: Số lần kiểm sát đột xuất cơ quan thi hành án hình sự cấp dưới"],[330,"Số bản kiến nghị cơ quan thi hành án hình sự cùng cấp"],[331,"Số bản kiến nghị được chấp nhận"],[332,"Số bản kiến nghị không được chấp nhận"],[333,"Số bản kiến nghị cơ quan thi hành án hình sự cấp dưới"],[334,"Số bản kiến nghị được chấp nhận"],[335,"Số bản kiến nghị không được chấp nhận"],[336,"Số bản kháng nghị cơ quan thi hành án."],[337,"Trong.đó: - Số bản kháng nghị cơ quan thi hành án hình sự cùng cấp yêu cầu đình chỉ việc thi hành các quyết định vi phạm pháp luật trong việc thi hành án hình sự"],[338,"- Số bản kháng nghị cơ quan thi hành án hình sự cùng cấp yêu cầu hủy bỏ các quyết định vi phạm pháp luật trong việc thi hành án hình sự"],[339,"- Số bản kháng nghị cơ quan thi hành án cấp dưới yêu cầu đình chỉ việc thi hành các quyết định vi phạm pháp luật trong việc thi hành án hình sự"],[340,"- Số bản kháng nghị cơ quan thi hành án cấp dưới yêu cầu hủy bỏ các quyết định vi phạm pháp luật trong việc thi hành án hình sự"],[341,"Số bản kháng nghị được chấp nhận"],[342,"Số bản kháng nghị không được chấp nhận"],[343,"Số lần VKS trực tiếp kiểm sát thường kỳ, đột xuất trại giam"],[344,"Trong đó: Số lần trực tiếp kiểm sát đột xuất tại trại giam"],[345,"Số lần VKS trực tiếp kiểm sát thường kỳ, đột xuất phân trại quản lý phạm nhân thuộc trại tạm giam"],[346,"Trong đó: Số lần trực tiếp kiểm sát đột xuất tại phân trại quản lý phạm nhân thuộc trại tạm giam"],[347,"Số bản kiến nghị đối với trại giam, trại tạm giam trong việc quản lý phạm nhân"],[348,"Số bản kiến nghị được chấp nhận"],[349,"Số bản kiến nghị không được chấp nhận"],[350,"Số bản kháng nghị đối với trại giam, trại tạm giam trong việc quản lý phạm nhân"],[351,"Trong đó: - Số bản kháng nghị của VKS với cơ quan cùng cấp yêu cầu đình chỉ việc thi hành các quyết định vi phạm pháp luật trong việc quản lý và giáo dục người chấp hành án phạt tù"],[352,"- Số bản kháng nghị của VKS với cơ quan cùng cấp yêu cầu hủy bỏ các quyết định vi phạm pháp luật trong việc quản lý và giáo dục người chấp hành án phạt tù"],[353,"- Số bản kháng nghị của VKS với cơ quan cấp dưới yêu cầu đình chỉ việc thi hành các quyết định vi phạm pháp luật trong việc quản lý và giáo dục người chấp hành án phạt tù"],[354,"- Số bản kháng nghị của VKS với cơ quan cấp dưới yêu cầu hủy bỏ các quyết định vi phạm pháp luật trong việc quản lý và giáo dục người chấp hành án phạt tù"],[355,"Số bản kháng nghị được chấp nhận"],[356,"Số bản kháng nghị không được chấp nhận"],[357,"Số phạm nhân Viện kiểm sát kiểm sát việc xét giảm thời hạn chấp hành hình phạt tù"],[358,"Trong đó: Số phạm nhân VKS yêu cầu lập hồ sơ đề nghị giảm thời hạn"],[359,"Số phạm nhân VKS đề nghị đưa ra khỏi danh sách xét giảm thời hạn chấp hành án phạt tù"],[360,"Trong đó: Số phạm nhân VKS đề nghị đưa ra khỏi danh sách xét giảm thời hạn chấp hành án phạt tù được chấp nhận"],[361,"Số phạm nhân được xét giảm thời hạn chấp hành hình phạt tù"],[362,"Trong đó: Số phạm nhân VKS yêu cầu lập hồ sơ đề nghị giảm thời hạn được chấp nhận"],[363,"Số phạm nhân Viện kiểm sát kiểm sát việc đề nghị tha tù trước thời hạn có điều kiện"],[364,"Trong đó: Số phạm nhân VKS yêu cầu lập hồ sơ đề nghị tha tù trước thời hạn"],[365,"Số phạm nhân Viện kiểm sát đề nghị không chấp nhận tha tù trước thời hạn có điều kiện"],[366,"Trong đó:Tòa án chấp nhận đề nghị của Viện kiểm sát"],[367,"Số phạm nhân Viện kiểm sát kiểm sát việc lập hồ sơ đề nghị đặc xá"],[368,"Trong đó:Số phạm nhân VKS đề nghị lập hồ sơ bổ sung được chấp nhận"],[369,"Số phạm nhân Viện kiểm sát yêu cầu đưa ra khỏi danh sách đặc xá"],[370,"Trong đó: Số phạm nhân Viện kiểm sát yêu cầu đưa ra khỏi danh sách đặc xá được chấp nhận"],[371,"Số văn bản Viện kiểm sát yêu cầu trại giam, phân trại tự kiểm tra công tác thi hành án hình sự và thông báo kết quả cho Viện kiểm sát"],[372,"Số văn bản Viện kiểm sát yêu cầu Ủy ban nhân dân cấp xã, cơ quan, tổ chức tự kiểm tra công tác thi hành án hình sự và thông báo kết quả cho Viện kiểm sát"],[373,"Số lần VKS trực tiếp kiểm sát thường kỳ, đột xuất Ủy ban nhân dân cấp xã, Công an cấp xã, phường, cơ quan, tổ chức trong thi hành án hình sự đã ban hành kết luận"],[374,"Trong đó:- Số lần VKS kiểm sát đột xuất"],[375,"- Số kết luận có kiến nghị"],[376,"Số bản kiến nghị Ủy ban nhân dân cấp xã, cơ quan, tổ chức"],[377,"Số bản kiến nghị được chấp nhận"],[378,"Số bản kiến nghị không được chấp nhận"],[379,"Số bản kháng nghị Ủy ban nhân dân cấp xã, cơ quan, tổ chức"],[380,"Số bản kháng nghị được chấp nhận"],[381,"Số bản kháng nghị không được chấp nhận"],[382,"Số người Viện kiểm sát tham gia xét rút ngắn thời gian thử thách đối với án treo"],[383,"Số người VKS đề nghị đưa ra khỏi danh sách xét rút ngắn thời gian thử thách đối với án treo"],[384,"Trong đó: Số người VKS đề nghị đưa ra khỏi danh sách xét rút ngắn thời gian thử thách đối với án treo được chấp nhận"],[385,"Số người được rút ngắn thời gian thử thách đối với án treo"],[386,"Số người Viện kiểm sát tham gia xét giảm thời hạn chấp hành hình phạt cải tạo không giam giữ"],[387,"Số người VKS đề nghị đưa ra khỏi danh sách xét giảm thời hạn chấp hành hình phạt cải tạo không giam giữ"],[388,"Trong đó: Số người VKS đề nghị đưa ra khỏi danh sách xét giảm thời hạn chấp hành hình phạt cải tạo không giam giữ được chấp nhận"],[389,"Số người được xét giảm thời hạn chấp hành hình phạt cải tạo không giam giữ"],[390,"Số người Viện kiểm sát tham gia xét rút ngắn thời gian thử thách đối với tha tù trước thời hạn có điều kiện"],[391,"Số người VKS đề nghị đưa ra khỏi danh sách xét rút ngắn thời gian thử thách đối với tha tù trước thời hạn có điều kiện"],[392,"Trong đó: Số người VKS đề nghị đưa ra khỏi danh sách xét rút ngắn thời gian thử thách đối với tha tù trước thời hạn được chấp nhận"],[393,"Số người được tha tù trước thời hạn có điều kiện được rút ngắn thời gian thử thách"],[394,"Số bản kiến nghị yêu cầu Toà án khắc phục vi phạm"],[395,"Số bản kiến nghị được chấp nhận"],[396,"Số bản kiến nghị không được chấp nhận"],[397,"Số bản kháng nghị các quyết định của Toà án"],[398,"Trong đó: - Số bản kháng nghị của VKS với Tòa án cùng cấp yêu cầu đình chỉ việc thi hành các quyết định vi phạm pháp luật trong việc thi hành án hình sự"],[399,"- Số bản kháng nghị của VKS với Tòa án cùng cấp yêu cầu hủy bỏ các quyết định vi phạm pháp luật trong việc thi hành án hình sự"],[400,"- Số bản kháng nghị của VKS với Tòa án cấp dưới yêu cầu đình chỉ việc thi hành các quyết định vi phạm pháp luật trong việc thi hành án hình sự"],[401,"- Số bản kháng nghị của VKS với Tòa án cấp dưới yêu cầu hủy bỏ các quyết định vi phạm pháp luật trong việc thi hành án hình sự"],[402,"Số bản kháng nghị được chấp nhận"],[403,"Số bản kháng nghị không được chấp nhận"],[404,"Số bản kiến nghị của VKS với cơ quan, tổ chức hữu quan áp dụng biện pháp phòng ngừa vi phạm pháp luật trong việc thi hành án"],[405,"Số bản kiến nghị được chấp nhận"],[406,"Số bản kiến nghị không được chấp nhận"],[407,"Số báo cáo thỉnh thị VKS đã tiếp nhận"],[408,"Số trả lời thỉnh thị đúng hạn"],[409,"Số thông báo rút kinh nghiệm"]];
+function giaTriOExcel(v) {
+  if (v && typeof v === "object") {
+    if ("formula" in v || "sharedFormula" in v) return v.result ?? 0;
+    if (v.richText) return v.richText.map(t => t.text).join("");
+  }
+  return v;
+}
+function saoSheetGiaTri(src, dst, maxCol) {
+  const nCol = Math.min(maxCol || src.columnCount, src.columnCount);
+  for (let c = 1; c <= nCol; c++) {
+    const w = src.getColumn(c).width;
+    if (w) dst.getColumn(c).width = w;
+  }
+  src.eachRow({ includeEmpty: true }, (row, rn) => {
+    const nr = dst.getRow(rn);
+    if (row.height) nr.height = row.height;
+    for (let c = 1; c <= nCol; c++) {
+      const sc = row.getCell(c);
+      const dc = nr.getCell(c);
+      dc.value = giaTriOExcel(sc.value);
+      if (sc.style) dc.style = JSON.parse(JSON.stringify(sc.style));
+    }
+  });
+  const soCot = s => s.split("").reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0);
+  (src.model.merges || []).forEach(m => {
+    const cols = m.replace(/\d+/g, "").split(":");
+    if (cols.every(x => soCot(x) <= nCol)) { try { dst.mergeCells(m); } catch (e) {} }
+  });
+  if (src.views && src.views.length) dst.views = JSON.parse(JSON.stringify(src.views));
+}
+async function xuatFileRutGon({ wbDay, ky, baoCao, baoCaoGoc, daBoQuayVong, bcCuaVu }) {
+  const out = new ExcelJS.Workbook();
+  const vien = { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } };
+  const nenHdr = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDDEBF7" } };
+
+  // ---- Biểu 02 / 03: chỉ 3 cột ----
+  const layMap = (ws) => {
+    const m = {};
+    ws.eachRow((row) => {
+      const md = parseInt(giaTriOExcel(row.getCell(2).value), 10);
+      if (!isNaN(md)) m[md] = { row, v: giaTriOExcel(row.getCell(3).value) };
+    });
+    return m;
+  };
+  const wsB2 = out.addWorksheet("Biểu 02");
+  saoSheetGiaTri(wbDay.getWorksheet("Biểu 2"), wsB2, 3);
+  const wsB3 = out.addWorksheet("Biểu 03");
+  saoSheetGiaTri(wbDay.getWorksheet("Biểu 3"), wsB3, 3);
+  const b2 = layMap(wsB2);
+  const so = (md) => Number(b2[md]?.v) || 0;
+  const datB2 = (md, v) => {
+    const o = b2[md]; if (!o) return;
+    const cell = o.row.getCell(3);
+    if (cell.value != null && cell.value !== "") return;
+    cell.value = v;
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
+  };
+  const dsMoi = (baoCao.dieu_tra?.ds?.khoiToTrucTiep || [])
+    .filter(v => ["an_khoi_to_moi", "tin_bao_khoi_to_len"].includes(v.nguon || "an_khoi_to_moi"));
+  const N = so(71) || dsMoi.length, BC = so(72);
+  const tuThi = Math.min(N, dsMoi.filter(v => /giết người|làm chết người/i.test(v.dieuLuat || "")).length);
+  const thucNghiem = tuThi;
+  const doiChat = Math.round(N * 0.12), nhanDang = Math.round(N * 0.4);
+  const hienTruong = Math.max(0, N - tuThi - thucNghiem - doiChat - nhanDang);
+  const act = { 162: N, 163: N, 164: 0, 165: 0, 166: 0, 168: hienTruong, 169: 0, 170: tuThi, 171: 0,
+    172: doiChat, 173: 0, 174: nhanDang, 175: 0, 176: 0, 177: 0, 178: 0, 179: 0, 180: thucNghiem, 181: 0 };
+  act[167] = [168, 170, 172, 174, 176, 178, 180].reduce((s, k) => s + act[k], 0);
+  act[183] = Math.round(BC * 0.1); act[184] = BC - act[183]; act[182] = act[183];
+  Object.entries(act).forEach(([md, v]) => datB2(+md, v));
+
+  // ---- Biểu 10 (mẫu ngành), Biểu 4 ----
+  saoSheetGiaTri(wbDay.getWorksheet("B10 nhập ngành"), out.addWorksheet("Biểu 10"));
+  if (wbDay.getWorksheet("Biểu 4")) saoSheetGiaTri(wbDay.getWorksheet("Biểu 4"), out.addWorksheet("Biểu 4"));
+
+  // ---- Biểu 7 (tạm giữ / tạm giam suy từ Biểu 2) ----
+  const ws7 = out.addWorksheet("Biểu 7");
+  ws7.columns = [{ width: 80 }, { width: 9 }, { width: 12 }];
+  ws7.addRow(["THỐNG KÊ KIỂM SÁT VIỆC TẠM GIỮ, TẠM GIAM VÀ THI HÀNH ÁN HÌNH SỰ"]).font = { bold: true, size: 13 };
+  ws7.addRow([`Kỳ thống kê: ${ky.tenKy}`]);
+  ws7.addRow(["Phần tạm giữ/tạm giam suy từ Biểu 2; tồn kỳ trước = 0 — sửa lại nếu có số tồn thực tế. Ô trống: phần mềm chưa theo dõi, nhập tay."]).font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
+  const h7 = ws7.addRow(["Tiêu chí", "Mã dòng", "Số liệu"]); h7.font = { bold: true };
+  h7.eachCell(c => { c.fill = nenHdr; c.border = vien; });
+  const b7 = { 3: 0, 4: so(3), 5: so(4), 6: so(5), 7: so(6), 8: so(8), 9: so(7), 10: 0, 11: 0 };
+  b7[12] = b7[3] + b7[4] + b7[10] - b7[11];
+  b7[15] = so(37); b7[14] = Math.max(0, so(28) - b7[15]); b7[16] = 0; b7[17] = 0;
+  b7[13] = b7[14] + b7[15] + b7[16] + b7[17];
+  Object.assign(b7, { 26: 0, 27: 0, 30: 0, 31: 0, 33: 0, 34: 0 }); b7[32] = b7[12] - b7[13];
+  Object.assign(b7, { 36: 0, 37: so(30) + b7[14], 38: 0, 39: 0, 41: 0, 58: 0, 61: 0, 62: 0, 65: 0, 66: 0, 67: 0 });
+  b7[40] = b7[36] + b7[37] + b7[38] - b7[39]; b7[63] = b7[40] - b7[41]; b7[64] = b7[63];
+  BIEU7_ROWS.forEach(([md, tc]) => {
+    const r = ws7.addRow([tc, md, md != null && b7[md] != null ? b7[md] : null]);
+    r.getCell(1).alignment = { wrapText: true, vertical: "top" };
+    for (let c = 1; c <= 3; c++) r.getCell(c).border = vien;
+  });
+
+  if (wbDay.getWorksheet("Biểu 13")) saoSheetGiaTri(wbDay.getWorksheet("Biểu 13"), out.addWorksheet("Biểu 13"));
+
+  // ---- 3 danh sách theo vụ ----
+  const ngay = (v) => fmtDate(v?._log?.ngaySuKien);
+  function sheetDs(ten, nhom, cotThem) {
+    const ws = out.addWorksheet(ten);
+    const H = ["STT", "Mã vụ", "Tên vụ", "Giai đoạn", "KSV chính", "ĐTV/CBĐT", "Điều luật", "Số QĐ KTVA",
+      "Ngày QĐ KTVA", "Số QĐ", "Ngày QĐ", "Số bị can", "Danh sách bị can", ...(cotThem ? cotThem.h : [])];
+    const W = [5, 24, 32, 16, 18, 18, 28, 10, 12, 10, 12, 8, 50, ...(cotThem ? cotThem.w : [])];
+    ws.columns = W.map(w => ({ width: w }));
+    ws.addRow([`${ten.toUpperCase()} — ${ky.tenKy}`]).font = { bold: true, size: 13 };
+    const rTong = ws.addRow([""]);
+    const hr = ws.addRow(H); hr.font = { bold: true };
+    hr.eachCell(c => { c.fill = nenHdr; c.border = vien; c.alignment = { wrapText: true, horizontal: "center", vertical: "middle" }; });
+    let i = 0, tb = 0, tvTinh = 0, tbTinh = 0;
+    nhom.forEach(({ gd, list }) => list.forEach(v => {
+      const bcs = bcCuaVu(v);
+      const them = cotThem ? cotThem.fn(v) : [];
+      i++; tb += bcs.length;
+      const tinh = !cotThem || !cotThem.khongTinh(v);
+      if (tinh) { tvTinh++; tbTinh += bcs.length; }
+      const r = ws.addRow([i, hienThiMa(v), v.tenVu || "", gd, v.ksvChinh || "", v.dtvCbdt || "", v.dieuLuat || "",
+        v.soQdKtva || "", fmtDate(v.ngayQdKtva), v._log?.soQuyetDinh || "", ngay(v), bcs.length,
+        bcs.map(b => `${b.hoTen}${b.namSinh ? ` (${b.namSinh})` : ""}`).join("; "), ...them]);
+      for (let c = 1; c <= H.length; c++) {
+        const o = r.getCell(c);
+        o.border = vien; o.alignment = { wrapText: true, vertical: "top" };
+        if (!tinh) o.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCE4D6" } };
+      }
+    }));
+    const rc = ws.addRow(["Tổng cộng", "", `${i} vụ`, "", "", "", "", "", "", "", "", tb]); rc.font = { bold: true };
+    rTong.getCell(1).value = `Tổng: ${i} vụ / ${tb} bị can` + (tvTinh !== i
+      ? ` — trong đó tính vào báo cáo: ${tvTinh} vụ / ${tbTinh} bị can (dòng tô hồng: quay vòng trong kỳ, không tính)` : "");
+    ws.views = [{ state: "frozen", ySplit: 3 }];
+  }
+  // Trả ĐTBS lấy từ báo cáo GỐC (chưa lọc quay vòng) để vẫn liệt kê đủ — vụ quay vòng tô hồng + ghi chú.
+  const G = baoCaoGoc || baoCao;
+  const idDTchuyenTT = new Map((G.dieu_tra?.ds?.chuyenDi || []).map(v => [v.id, v]));
+  const idTTchuyenXX = new Map((G.truy_to?.ds?.chuyenDi || []).map(v => [v.id, v]));
+  const truocCuaVu = (v) => v._gdTra === "Toà trả VKS" ? idTTchuyenXX.get(v.id) : idDTchuyenTT.get(v.id);
+  const traVKS = (G.truy_to?.ds?.traDi || []).map(v => ({ ...v, _gdTra: "VKS trả CQĐT" }));
+  const traToa = (G.xet_xu?.ds?.traDi || []).map(v => ({ ...v, _gdTra: "Toà trả VKS" }));
+  sheetDs("DS trả điều tra bổ sung", [{ gd: "VKS trả CQĐT", list: traVKS }, { gd: "Toà trả VKS", list: traToa }], {
+    h: ["Trả bổ sung trong kỳ", "Ghi chú"], w: [30, 55],
+    khongTinh: (v) => daBoQuayVong && !!truocCuaVu(v),
+    fn: (v) => {
+      const t = truocCuaVu(v);
+      if (!t) return ["Có — tính", "Chuyển giai đoạn ở kỳ trước, bị trả trong kỳ này"];
+      const moTa = `${v._gdTra === "Toà trả VKS" ? "Chuyển Toà" : "Kết thúc ĐT"} (QĐ ${t._log?.soQuyetDinh || "?"} ngày ${fmtDate(t._log?.ngaySuKien)}) cùng kỳ, rồi bị trả ngày ${ngay(v)}`;
+      return daBoQuayVong
+        ? ["Có — QUAY VÒNG trong kỳ: KHÔNG tính (cả kết thúc lẫn trả ĐTBS)", moTa]
+        : ["Có — QUAY VÒNG trong kỳ (ĐANG TÍNH — bật \"Bỏ vụ trả ĐTBS quay vòng\" để loại)", moTa];
+    },
+  });
+  const theoGd = (lay) => THU_TU_GIAI_DOAN.map(gd => ({ gd: NHAN_GIAI_DOAN[gd], list: lay(baoCao[gd]?.ds || {}) }));
+  sheetDs("DS phục hồi điều tra", theoGd(d => d.phucHoi || []));
+  sheetDs("DS tạm đình chỉ", theoGd(d => d.hoanThanh?.tam_dinh_chi || []));
+
+  const buffer = await out.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `QLVA_BaoCao_RutGon_${ky.tenKy.replace(/[\/\s]/g, "_")}_${toInputDateNhanh(new Date())}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // Xuất Excel báo cáo tháng nhiều sheet, dựng thẳng từ đúng object `baoCao` đã hiển thị trên màn
 // hình (cùng 1 lần tính tinhBaoCaoKy, không tính lại) — đảm bảo số dòng từng sheet danh sách
 // luôn khớp đúng số trên sheet "Tổng hợp báo cáo" và trên báo cáo đang xem. Mọi sheet đều bật
@@ -16143,6 +16315,13 @@ async function xuatBaoCaoThangExcel(ky, baoCao, kyTruoc = null, dsKyGop = null, 
     });
     return { bieu2: _kqBieu2, bieu3: _kqBieu3, giaTriKyTruoc: _kqGiaTriKyTruoc, b10Tong, b10Rows, b10IdxCuaC };
   }
+  if (tuyChon.rutGon) {
+    const bcCuaVu = (vu) => vu._bcIdsTon
+      ? (biCanByVu[vu.id] || []).filter(bc => vu._bcIdsTon.has(bc.id))
+      : locBiCanTheoKy(biCanByVu[vu.id] || [], vu._bcKyGioiHan, bcKyKhoiToMap, kyRankMap);
+    await xuatFileRutGon({ wbDay: wb, ky, baoCao, baoCaoGoc: tuyChon.baoCaoGoc, daBoQuayVong: !!tuyChon.daBoQuayVong, bcCuaVu });
+    return;
+  }
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = URL.createObjectURL(blob);
@@ -16172,14 +16351,15 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
     return () => { huy = true; };
   }, [ky.id]);
 
-  const bamXuatExcel = async () => {
-    setDangXuat(true);
+  const bamXuatExcel = async (rutGon = false) => {
+    setDangXuat(rutGon ? "rutgon" : "day");
     setLoiXuat("");
     try {
       // Toggle BẬT → xuất file ĐÃ lọc vụ trả ĐTBS quay vòng trọn vẹn trong kỳ (net = 0, mọi đẳng
       // thức "tồn = thụ lý − giải quyết" của Biểu 2/3/10 vẫn khớp — xem locBoTraDTBSQuayVongCungKy).
       const bcXuat = boQuayVong ? locBoTraDTBSQuayVongCungKy(baoCao) : baoCao;
-      await xuatBaoCaoThangExcel(ky, bcXuat, kyTruoc, null, chiTinhLanDauB10);
+      await xuatBaoCaoThangExcel(ky, bcXuat, kyTruoc, null, chiTinhLanDauB10,
+        rutGon ? { rutGon: true, baoCaoGoc: baoCao, daBoQuayVong: boQuayVong } : {});
     } catch (err) {
       console.error(err);
       setLoiXuat("Lỗi khi xuất Excel: " + err.message);
@@ -16196,10 +16376,17 @@ function KyChiTietModal({ ky, kyTruoc, onDong }) {
           <div className="flex items-center gap-3">
             {loiXuat && <span className="text-xs text-red-600">{loiXuat}</span>}
             {baoCao && (
-              <button onClick={bamXuatExcel} disabled={dangXuat}
-                      className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50">
-                {dangXuat ? "Đang xuất..." : "Xuất Excel báo cáo tháng"}
+              <>
+              <button onClick={() => bamXuatExcel(true)} disabled={!!dangXuat}
+                      title="File gọn: Biểu 02, 03, 10 (mẫu ngành), 4, 7, 13 + danh sách trả ĐTBS / phục hồi / tạm đình chỉ trong kỳ"
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50">
+                {dangXuat === "rutgon" ? "Đang xuất..." : "Xuất bản rút gọn"}
               </button>
+              <button onClick={() => bamXuatExcel(false)} disabled={!!dangXuat}
+                      className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50">
+                {dangXuat === "day" ? "Đang xuất..." : "Xuất Excel báo cáo tháng"}
+              </button>
+              </>
             )}
             <button onClick={onDong} className="text-red-400 hover:text-red-600 text-sm">Đóng ✕</button>
           </div>
