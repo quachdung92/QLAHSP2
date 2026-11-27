@@ -5602,7 +5602,23 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       // → ra 4, còn 12.
       const biCanSnapshot = [];
 
+      // Bị can nguồn trùng người ở vụ đích sẽ bị XOÁ bản ghi — nhưng các sự kiện log (khoi_to_bican,
+      // bo_sung_bican...) vẫn trỏ "maBiCan" về bản ghi đó (khoá ngoại "lichsuChuyenGiaiDoan_maBiCan_fkey")
+      // nên Postgres chặn xoá (lỗi thật 2026-11-27). Gỡ liên kết (maBiCan = null) TRƯỚC khi xoá — batch
+      // chạy update trước delete. Sự kiện vẫn giữ nguyên trong lịch sử vụ nguồn, ghi chú thêm tên bị can.
+      const idsBcTrung = bcSnap.docs.filter(d => mapTrung[d.id] && bcDichTheoId.get(mapTrung[d.id])).map(d => d.id);
+      const logTroBcTrung = idsBcTrung.length ? await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maBiCan", idsBcTrung) : [];
+
       const batch = db.batch();
+      const tenBcNguon = Object.fromEntries(bcSnap.docs.map(d => [d.id, d.data().hoTen || ""]));
+      logTroBcTrung.forEach(d => {
+        const l = d.data();
+        const ten = tenBcNguon[l.maBiCan] || "";
+        batch.update(d.ref, {
+          maBiCan: null,
+          ghiChu: (l.ghiChu || "") + (ten && !(l.ghiChu || "").includes(ten) ? ` (bị can ${ten} — đã gộp vào vụ ${dichMa})` : ` (đã gộp vào vụ ${dichMa})`),
+        });
+      });
       bcSnap.docs.forEach(d => {
         const bc = { id: d.id, ref: d.ref, ...d.data() };
         const chon = mapTrung[d.id];
