@@ -5256,15 +5256,22 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
           soQuyetDinh: soQuyetDinh.trim(),
           ngaySuKien, kyThongKe: kyId, ghiChu, nguoiThucHien, thoiDiemGhi: now,
         }));
-        if (hinhThuc === "da_xet_xu") {
-          bcMucAnPatches.forEach(p => {
-            batch.update(db.collection("bican").doc(p.id), {
-              mucAnLoai: p.mucAnLoai, mucAnNam: p.mucAnNam, mucAnThang: p.mucAnThang,
-              ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
-            });
-          });
-        }
         await batch.commit();
+        // Mức án từng bị can ghi THEO LÔ NHỎ, SAU khi vụ đã lưu: mỗi lượt sửa bị can kích hoạt
+        // trigger đồng bộ vuan (quét toàn bộ bị can của vụ) — vụ rất nhiều bị can (VD 188) gộp chung
+        // 1 batch bị lỗi "statement timeout" làm mất luôn kết quả xét xử.
+        if (hinhThuc === "da_xet_xu") {
+          for (let i = 0; i < bcMucAnPatches.length; i += 20) {
+            const b2 = db.batch();
+            bcMucAnPatches.slice(i, i + 20).forEach(p => {
+              b2.update(db.collection("bican").doc(p.id), {
+                mucAnLoai: p.mucAnLoai, mucAnNam: p.mucAnNam, mucAnThang: p.mucAnThang,
+                ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien,
+              });
+            });
+            await b2.commit();
+          }
+        }
         if (hinhThuc === "da_xet_xu" && biCanList.length > 0) xoaBiCanCache(vuAn.id);
       } else {
         const { maVuMoi, batch } = await tachVuAn({
