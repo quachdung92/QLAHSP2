@@ -21901,6 +21901,21 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
   const [dangLuu, setDangLuu] = useState(false);
   const [loi, setLoi] = useState("");
   const [daHieuAnhHuongChot, setDaHieuAnhHuongChot] = useState(false);
+  // 2026-11-28 (vụ 2610_0012/0013): sửa kỳ "khởi tố vụ" từ kỳ 10 sang 11 nhưng 7 sự kiện "khởi tố
+  // bị can" cùng vụ vẫn ở kỳ 10 ⇒ bị can không được tính "mới" ở tháng nào (lọt mã 72/C7). Sửa kỳ
+  // khởi tố vụ thì mặc định đổi kèm các sự kiện khởi tố bị can CÙNG vụ đang ở CÙNG kỳ cũ.
+  const [bcCungKy, setBcCungKy] = useState([]);
+  const [doiKemBiCan, setDoiKemBiCan] = useState(true);
+  useEffect(() => {
+    if (suKien.loaiSuKien !== "khoi_to_vu" || !suKien.maVuAn) return;
+    let huy = false;
+    db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", suKien.maVuAn).get().then(snap => {
+      if (huy) return;
+      setBcCungKy(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(l => l.loaiSuKien === "khoi_to_bican" && (l.kyThongKe || null) === (suKien.kyThongKe || null)));
+    }).catch(err => console.error(err));
+    return () => { huy = true; };
+  }, [suKien.id]);
 
   const kyCuObj = danhSachKy.find(k => k.id === (suKien.kyThongKe || null)) || null;
   const kyMoiObj = danhSachKy.find(k => k.id === kyChon) || null;
@@ -21917,12 +21932,16 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
     try {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
-      await db.collection("lichsuChuyenGiaiDoan").doc(suKien.id).update({
+      const dsSua = [suKien.id, ...(doiKemBiCan ? bcCungKy.map(l => l.id) : [])];
+      const batch = db.batch();
+      dsSua.forEach(id => batch.update(db.collection("lichsuChuyenGiaiDoan").doc(id), {
         kyThongKe: kyMoi,
         lichSuSuaKy: firebase.firestore.FieldValue.arrayUnion({
-          tuKy: kyCu, denKy: kyMoi, lyDo: lyDo.trim(), nguoiThucHien, thoiDiem: now,
+          tuKy: kyCu, denKy: kyMoi, nguoiThucHien, thoiDiem: now,
+          lyDo: id === suKien.id ? lyDo.trim() : ("Đổi kèm theo kỳ khởi tố vụ" + (lyDo.trim() ? " — " + lyDo.trim() : "")),
         }),
-      });
+      }));
+      await batch.commit();
       onXong();
     } catch (err) {
       console.error(err);
@@ -21962,6 +21981,13 @@ function SuaKyModal({ suKien, danhSachKy, onDong, onXong }) {
             Tôi hiểu và vẫn muốn sửa
           </label>
         </div>
+      )}
+      {bcCungKy.length > 0 && (
+        <label className="flex items-start gap-2 bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-900 mb-3">
+          <input type="checkbox" className="mt-0.5" checked={doiKemBiCan} onChange={e => setDoiKemBiCan(e.target.checked)} />
+          <span>Đổi kỳ luôn cho <b>{bcCungKy.length} sự kiện khởi tố bị can</b> của vụ này đang cùng kỳ cũ (nên giữ tích —
+            nếu bỏ, các bị can này sẽ lệch kỳ với vụ và không được tính "bị can mới khởi tố" ở tháng nào).</span>
+        </label>
       )}
       <label className="text-xs text-slate-500 block mb-1">Lý do sửa (không bắt buộc)</label>
       <textarea value={lyDo} onChange={e => setLyDo(e.target.value)} rows={2} className={oInput + " mb-4"} />
