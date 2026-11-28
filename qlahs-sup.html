@@ -5154,6 +5154,31 @@ function tongHopHinhPhat(hpct) {
     : { mucAnLoai: null, mucAnNam: null, mucAnThang: null };
 }
 
+// Chặn lệch số "ra mà chưa từng vào" (2026-11-28, vụ 2511_0027 "BH Đỗ Thị Mến"): vụ chỉ được khởi
+// tố/vào giai đoạn ở KỲ LƯU TRỮ (không tính thống kê) mà nay ghi giải quyết vào 1 kỳ THẬT ⇒ kỳ đó
+// trừ 1 vụ chưa từng nằm trong tồn ⇒ Biểu 2 lệch, phải bù tay. Trả về câu cảnh báo (hoặc null).
+async function canhBaoVuChuaVaoThongKe(maVuAn, kyId) {
+  const kySnap = await db.collection("kybaocao").get();
+  const kyById = new Map(kySnap.docs.map(d => [d.id, d.data()]));
+  const kyChon = kyById.get(kyId);
+  if (!kyChon || kyChon.loai === "luu_tru") return null;
+  const VAO = ["khoi_to_vu", "chuyen_giai_doan", "tra_ho_so", "phuc_hoi", "nhan_lai_chuyen_di", "huy_dieu_tra_lai"];
+  const [logSnap, tachSnap] = await Promise.all([
+    db.collection("lichsuChuyenGiaiDoan").where("maVuAn", "==", maVuAn).get(),
+    db.collection("lichsuChuyenGiaiDoan").where("vuTachRa", "==", maVuAn).get(),
+  ]);
+  const suKienVao = [
+    ...logSnap.docs.map(d => d.data()).filter(l => VAO.includes(l.loaiSuKien)),
+    ...tachSnap.docs.map(d => d.data()).filter(l => l.loaiSuKien === "tach_vu"),
+  ];
+  if (!suKienVao.length) return null; // dữ liệu cũ chưa có log — không đoán
+  const coKyThat = suKienVao.some(l => { const k = kyById.get(l.kyThongKe); return k && k.loai !== "luu_tru"; });
+  if (coKyThat) return null;
+  return `⚠ Vụ này chỉ được ghi nhận ở KỲ LƯU TRỮ (chưa từng tính vào thống kê), nhưng bạn đang ghi kết quả vào kỳ "${kyChon.tenKy}".\n\n` +
+    `Như vậy kỳ "${kyChon.tenKy}" sẽ trừ 1 vụ chưa từng nằm trong số tồn ⇒ Biểu 2/3/10 bị lệch.\n\n` +
+    `Nên bấm Huỷ rồi chọn lại kỳ lưu trữ. Bấm OK chỉ khi chắc chắn muốn tính vào kỳ này.`;
+}
+
 function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
   const hd = useHanhDongVuAn();
   const [vuAn, setVuAn] = useState(null);
@@ -5223,6 +5248,8 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
     if (laTdcDc && biCanList.length > 0 && idsChuyenHan.size + idsSaoChep.size === 0) { hd.setLoi("Cần chọn ít nhất 1 bị can thuộc diện."); return; }
 
     hd.batDauXacNhanKy(async (kyId) => {
+      const canhBaoTk = await canhBaoVuChuaVaoThongKe(vuAn.id, kyId);
+      if (canhBaoTk && !window.confirm(canhBaoTk)) return;
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
       const ngaySuKien = fromInputDate(ngay);
@@ -5613,19 +5640,12 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
       // bo_sung_bican...) vẫn trỏ "maBiCan" về bản ghi đó (khoá ngoại "lichsuChuyenGiaiDoan_maBiCan_fkey")
       // nên Postgres chặn xoá (lỗi thật 2026-11-27). Gỡ liên kết (maBiCan = null) TRƯỚC khi xoá — batch
       // chạy update trước delete. Sự kiện vẫn giữ nguyên trong lịch sử vụ nguồn, ghi chú thêm tên bị can.
-      const idsBcTrung = bcSnap.docs.filter(d => mapTrung[d.id] && bcDichTheoId.get(mapTrung[d.id])).map(d => d.id);
-      const logTroBcTrung = idsBcTrung.length ? await chiaLoTruyVanIn("lichsuChuyenGiaiDoan", "maBiCan", idsBcTrung) : [];
-
+      // 2026-11-28 (vụ 2601_0057 → 2601_0044): KHÔNG XOÁ bản ghi nguồn của người trùng nữa. Xoá làm
+      // RPC tính tồn TÍNH LẠI HỒI TỐ các kỳ trước (bản ghi biến mất ⇒ tồn tháng trước tụt, lệch số đã
+      // nộp ngành). Giữ nguyên bản ghi ở vụ nguồn (vụ "da_nhap" không còn tồn từ kỳ nhập ⇒ kỳ nhập
+      // trở đi tự không đếm; các kỳ trước vẫn đúng như đã báo cáo), đánh dấu nhomBiCanId = bản ghi
+      // đích (cùng 1 người). Không còn phải gỡ maBiCan khỏi log (khoá ngoại) như trước.
       const batch = db.batch();
-      const tenBcNguon = Object.fromEntries(bcSnap.docs.map(d => [d.id, d.data().hoTen || ""]));
-      logTroBcTrung.forEach(d => {
-        const l = d.data();
-        const ten = tenBcNguon[l.maBiCan] || "";
-        batch.update(d.ref, {
-          maBiCan: null,
-          ghiChu: (l.ghiChu || "") + (ten && !(l.ghiChu || "").includes(ten) ? ` (bị can ${ten} — đã gộp vào vụ ${dichMa})` : ` (đã gộp vào vụ ${dichMa})`),
-        });
-      });
       bcSnap.docs.forEach(d => {
         const bc = { id: d.id, ref: d.ref, ...d.data() };
         const chon = mapTrung[d.id];
@@ -5645,7 +5665,7 @@ function NhapVuModal({ vuAn, onDong, onXong }) {
           // Ô tội danh rỗng ở đầu bản ghi đích (chưa nhập) bị bỏ khi đã có tội danh thật.
           if (toiDanh.length > 1 && !toiDanh[0]) { toiDanh.shift(); dieuLuatBC.shift(); hinhPhat.shift(); }
           batch.update(trung.ref, { toiDanh, dieuLuatBC, hinhPhatChiTiet: hinhPhat, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
-          batch.delete(d.ref);
+          batch.update(d.ref, { nhomBiCanId: trung.id, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
           biCanSnapshot.push(d.data());
         } else {
           batch.update(d.ref, { maVuAn: dichId, ngayCapNhat: now, nguoiCapNhatCuoi: nguoiThucHien });
@@ -14164,6 +14184,77 @@ async function xuatFileRutGon({ wbDay, ky, baoCao, baoCaoGoc, daBoQuayVong, bcCu
   const theoGd = (lay) => THU_TU_GIAI_DOAN.map(gd => ({ gd: NHAN_GIAI_DOAN[gd], list: lay(baoCao[gd]?.ds || {}) }));
   sheetDs("DS phục hồi điều tra", theoGd(d => d.phucHoi || []));
   sheetDs("DS tạm đình chỉ", theoGd(d => d.hoanThanh?.tam_dinh_chi || []));
+
+  // ---- Đối chiếu lệch (2026-11-28, Dũng: "lệch thì phải báo cáo, không tự ý fix") ----
+  // Sổ cái = tồn đầu (RPC kỳ trước) + Σ sheet "vào" − Σ sheet "ra"; so với tồn cuối (RPC kỳ này)
+  // theo TỪNG vụ / TỪNG bị can — liệt kê đích danh vụ/bị can lệch để rà, KHÔNG sửa số nào.
+  {
+    const GS = { dieu_tra: "ĐT", truy_to: "TT", xet_xu: "XX" };
+    const VAO = {
+      dieu_tra: ["DS khởi tố ĐT","DS phục hồi ĐT","DS phục hồi TĐC ĐT","DS nhận lại CĐ ĐT","DS huỷ ĐT lại ĐT","DS vụ tách ĐT","DS trả về ĐT","DS bổ sung BC ĐT (C7-C24)"],
+      truy_to:  ["DS khởi tố TT","DS phục hồi TT","DS phục hồi TĐC TT","DS nhận lại CĐ TT","DS huỷ ĐT lại TT","DS vụ tách TT","DS chuyển đến TT","DS trả về TT"],
+      xet_xu:   ["DS khởi tố XX","DS phục hồi XX","DS phục hồi TĐC XX","DS nhận lại CĐ XX","DS huỷ ĐT lại XX","DS vụ tách XX","DS chuyển đến XX"],
+    };
+    const RA = {
+      dieu_tra: ["DS ĐT chuyển TT","DS đã xét xử ĐT","DS chuyển đi ĐT","DS tạm đình chỉ ĐT","DS đình chỉ ĐT","DS án huỷ ĐT","DS nhập vụ ĐT"],
+      truy_to:  ["DS TT chuyển XX","DS TT trả ĐT","DS đã xét xử TT","DS chuyển đi TT","DS tạm đình chỉ TT","DS đình chỉ TT","DS án huỷ TT","DS nhập vụ TT"],
+      xet_xu:   ["DS XX trả TT","DS đã xét xử XX","DS chuyển đi XX","DS tạm đình chỉ XX","DS đình chỉ XX","DS án huỷ XX","DS nhập vụ XX"],
+    };
+    const docSheet = (ten, dau, cong, laBc, tenVu) => {
+      const ws = wbDay.getWorksheet(ten); if (!ws) return;
+      ws.eachRow((row, rn) => {
+        if (rn === 1) return;
+        const ma = giaTriOExcel(row.getCell(3).value);
+        if (!ma) return;
+        { const tv = String(giaTriOExcel(row.getCell(4).value) || ""); if (tv && !tv.startsWith("▸")) tenVu[ma] = tv; }
+        if (laBc) {
+          const bc = giaTriOExcel(row.getCell(13).value);
+          if (!bc || bc === "(Chưa có BC)") return;
+          const k = ma + "|" + bc; cong[k] = (cong[k] || 0) + dau;
+        } else if (Number(giaTriOExcel(row.getCell(1).value)) === 1) cong[ma] = (cong[ma] || 0) + dau;
+      });
+    };
+    const wsL = out.addWorksheet("Đối chiếu lệch");
+    wsL.columns = [{ width: 12 }, { width: 10 }, { width: 26 }, { width: 34 }, { width: 24 }, { width: 10 }, { width: 10 }, { width: 60 }];
+    wsL.addRow([`ĐỐI CHIẾU LỆCH SỐ TỒN — ${ky.tenKy}`]).font = { bold: true, size: 13 };
+    wsL.addRow(["Sổ cái = tồn đầu kỳ + các danh sách VÀO − các danh sách RA; RPC = tồn cuối kỳ phần mềm tính trực tiếp. Dòng nào lệch là vụ/bị can cần rà — KHÔNG tự bù số."]).font = { italic: true, size: 9 };
+    const hL = wsL.addRow(["Giai đoạn", "Loại", "Mã vụ", "Tên vụ", "Bị can", "Sổ cái", "RPC", "Gợi ý"]); hL.font = { bold: true };
+    hL.eachCell(c => { c.fill = nenHdr; c.border = vien; });
+    let soLech = 0;
+    for (const gd of THU_TU_GIAI_DOAN) {
+      const gs = GS[gd];
+      for (const laBc of [false, true]) {
+        const tenVu = {}, so = {}, rpc = {};
+        docSheet(`DS tồn cuối kỳ trước ${gs}`, 1, so, laBc, tenVu);
+        VAO[gd].forEach(t => { if (laBc || !/bổ sung BC/.test(t)) docSheet(t, 1, so, laBc, tenVu); });
+        RA[gd].forEach(t => docSheet(t, -1, so, laBc, tenVu));
+        docSheet(`DS tồn cuối kỳ ${gs}`, 1, rpc, laBc, tenVu);
+        const keys = new Set([...Object.keys(so), ...Object.keys(rpc)]);
+        const tong = (m) => Object.values(m).reduce((a, b) => a + b, 0);
+        const r0 = wsL.addRow([NHAN_GIAI_DOAN[gd], laBc ? "Bị can" : "Vụ", "TỔNG", "", "", tong(so), tong(rpc),
+          tong(so) === tong(rpc) ? "Khớp" : `Lệch ${tong(so) - tong(rpc)}`]);
+        r0.font = { bold: true };
+        r0.eachCell({ includeEmpty: true }, c => { c.border = vien; });
+        for (const k of keys) {
+          const a = so[k] || 0, b = rpc[k] || 0;
+          if (a === b) continue;
+          soLech++;
+          const [ma, bc] = laBc ? k.split("|") : [k, ""];
+          const goiY = (laBc && gd !== "dieu_tra" && a < b)
+            ? "Bị can khởi tố BỔ SUNG khi vụ đã ở giai đoạn này — mẫu ngành không có dòng nhận; cần báo cáo, đưa về đầu vào Điều tra (không bù ở giai đoạn giữa)"
+            : a < b
+            ? (a < 0 ? "Bị tính RA nhưng không có trong tồn đầu kỳ/không có sự kiện VÀO (VD vụ chỉ khởi tố ở kỳ lưu trữ, hoặc bản ghi đã bị xoá/gộp)"
+                     : "Có trong tồn cuối nhưng thiếu sự kiện VÀO trong kỳ (VD bổ sung bị can, khởi tố thiếu kỳ)")
+            : (b === 0 && a > 0 ? "Sổ cái còn nhưng RPC không còn tồn (thiếu sự kiện RA, hoặc dữ liệu kỳ trước bị sửa hồi tố)"
+                                : "Đếm trùng (VD 2 bản ghi cùng tên trong 1 vụ, hoặc vào 2 lần trong kỳ)");
+          const r = wsL.addRow([NHAN_GIAI_DOAN[gd], laBc ? "Bị can" : "Vụ", ma, tenVu[ma] || "", bc, a, b, goiY]);
+          r.eachCell({ includeEmpty: true }, c => { c.border = vien; c.alignment = { wrapText: true, vertical: "top" }; });
+        }
+      }
+    }
+    if (!soLech) wsL.addRow(["Không có vụ/bị can nào lệch."]);
+    wsL.views = [{ state: "frozen", ySplit: 3 }];
+  }
 
   const buffer = await out.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
