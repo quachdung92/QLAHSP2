@@ -5176,7 +5176,9 @@ async function canhBaoVuChuaVaoThongKe(maVuAn, kyId) {
   if (coKyThat) return null;
   return `⚠ Vụ này chỉ được ghi nhận ở KỲ LƯU TRỮ (chưa từng tính vào thống kê), nhưng bạn đang ghi kết quả vào kỳ "${kyChon.tenKy}".\n\n` +
     `Như vậy kỳ "${kyChon.tenKy}" sẽ trừ 1 vụ chưa từng nằm trong số tồn ⇒ Biểu 2/3/10 bị lệch.\n\n` +
-    `Nên bấm Huỷ rồi chọn lại kỳ lưu trữ. Bấm OK chỉ khi chắc chắn muốn tính vào kỳ này.`;
+    `• Bấm OK: tính vào kỳ này — phần mềm TỰ GHI thêm 1 sự kiện "phục hồi" cùng kỳ để vụ được tính vào (Biểu 2 mã 62) rồi mới ra, số liệu tự cân đối.
+` +
+    `• Bấm Huỷ: quay lại chọn kỳ lưu trữ (nếu là án cũ chỉ nhập bổ sung cho đủ hồ sơ).`;
 }
 
 function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
@@ -5253,6 +5255,16 @@ function HoanThanhVuAnModal({ vuAnId, onDong, onXong }) {
       const now = new Date();
       const nguoiThucHien = auth.currentUser?.email || "";
       const ngaySuKien = fromInputDate(ngay);
+      // Dũng chốt 28/11/2026 (vụ 2511_0027): vụ chỉ có ở kỳ lưu trữ mà ghi kết quả vào kỳ thật ⇒ tự
+      // ghi 1 sự kiện "phục hồi" CÙNG kỳ (trước sự kiện kết quả) để vụ được tính "vào" (Biểu 2 mã 62)
+      // rồi mới "ra" — số liệu tự cân đối, không phải bù tay.
+      if (canhBaoTk) {
+        await db.collection("lichsuChuyenGiaiDoan").doc().set(taoSuKien({
+          maVuAn: vuAn.id, loaiSuKien: "phuc_hoi", denGiaiDoan: vuAn.coQuanThuLy,
+          ngaySuKien, kyThongKe: kyId, nguoiThucHien, thoiDiemGhi: new Date(now.getTime() - 1000),
+          ghiChu: "Tự ghi: vụ trước đây chỉ ở kỳ lưu trữ — tính vào thống kê qua dòng phục hồi để cân đối số liệu",
+        }));
+      }
 
       const fieldVuAn = fieldSoQuyetDinhTrenVuAn(hinhThuc);
 
